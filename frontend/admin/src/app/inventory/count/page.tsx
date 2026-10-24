@@ -151,6 +151,13 @@ export default function PhysicalCountPage() {
     onSuccess: (r) => { setSuggested(r.items); setShowAll(false); setSearch('') },
   })
 
+  // The count schedule (2026-10-24): daily items every day, weekly items until counted this week, at this outlet.
+  const due = useMutation({
+    mutationFn: () => api.get<{ items: SuggestedItem[] }>(
+      `/crosschecks/physical-counts/due${locationId ? `?locationId=${encodeURIComponent(locationId)}` : ''}`),
+    onSuccess: (r) => { setSuggested(r.items); setShowAll(false); setSearch('') },
+  })
+
   const draft = (id: string): DraftLine => lines[id] ?? { qty: '', reason: '', costPkr: '' }
   function patch(id: string, p: Partial<DraftLine>) { setLines((prev) => ({ ...prev, [id]: { ...(prev[id] ?? { qty: '', reason: '', costPkr: '' }), ...p } })) }
 
@@ -304,15 +311,20 @@ export default function PhysicalCountPage() {
           <div className="flex flex-wrap items-center gap-2">
             {canSpot && <ModeButton on={mode === 'spot'} onClick={() => { setMode('spot'); setResult(null) }}>Spot count</ModeButton>}
             {canOpening && <ModeButton on={mode === 'opening'} onClick={() => { setMode('opening'); setSuggested(null); setResult(null) }}>Opening count</ModeButton>}
-            {mode === 'spot' && canSpot && (
-              <button type="button" onClick={() => suggest.mutate()} disabled={suggest.isPending}
+            {mode === 'spot' && canSpot && (<>
+              <button type="button" onClick={() => due.mutate()} disabled={due.isPending}
                 className="ml-auto rounded-xl border border-s-border px-4 py-2 text-xs font-bold text-s-text hover:border-primary hover:text-primary-ink disabled:opacity-50">
+                {due.isPending ? 'Loading…' : 'Due today'}
+              </button>
+              <button type="button" onClick={() => suggest.mutate()} disabled={suggest.isPending}
+                className="rounded-xl border border-s-border px-4 py-2 text-xs font-bold text-s-text hover:border-primary hover:text-primary-ink disabled:opacity-50">
                 {suggest.isPending ? 'Choosing…' : 'Suggest a spot count'}
               </button>
-            )}
+            </>)}
           </div>
         )}
         {suggest.error && <p role="alert" className="text-xs text-s-red">{stockErrorText(suggest.error)}</p>}
+        {due.error && <p role="alert" className="text-xs text-s-red">{stockErrorText(due.error)}</p>}
 
         {/* Outlet + search */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -321,7 +333,7 @@ export default function PhysicalCountPage() {
             placeholder="Search items…" className={fi} aria-label="Search items" />
           {outlets.length > 0 && (
             <Select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fi} aria-label="Outlet counted">
-              <option value="">Outlet: whole company</option>
+              <option value="">Outlet: pick the one counted</option>
               {outlets.map((l) => <option key={l.id} value={l.id}>{l.name}{l.tenant?.name ? ` — ${l.tenant.name}` : ''}</option>)}
             </Select>
           )}

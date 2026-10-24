@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { assertConceptOwned, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { assertConceptOwned, resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { emitItem86d } from '../../lib/ws.js'
 import { seedAvailability } from '../../lib/reservation.js'
@@ -37,6 +37,23 @@ const createItemSchema = z.object({
 })
 
 const updateItemSchema = createItemSchema.partial()
+
+/**
+ * The recipe gate (owner, 2026-10-24): a dish may be switched ON (or created
+ * live) only when its plate recipe is approved — Recipe.status 'production'.
+ * 422 RECIPE_NOT_APPROVED otherwise. Items already live without one stay live
+ * (only the switch-on is checked); GET /menu/items/live-without-recipe lists them.
+ */
+async function assertRecipeApprovedForLive(menuItemId: string | null, liveAtRecipeGate = false): Promise<void> {
+  // Grandfathered: live at go-live with no approved recipe (MenuItem.liveAtRecipeGate, set once by the migration).
+  if (liveAtRecipeGate) return
+  const ok = menuItemId
+    ? await prisma.recipe.findFirst({ where: { menuItemId, kind: 'plate', status: 'production' }, select: { id: true } })
+    : null
+  if (!ok) {
+    throw new AppError('RECIPE_NOT_APPROVED', 'A dish goes live only once its recipe is approved — submit the recipe for approval first', 422)
+  }
+}
 
 const createCategorySchema = z.object({
   conceptId: z.string().uuid(),
@@ -239,7 +256,11 @@ export async function menuRoutes(fastify: FastifyInstance) {
   // POST /menu/items — the brand must be one of the ACTIVE company's, and the
   // category and station must be that brand's.
   fastify.post('/items', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
-    const body = createItemSchema.parse(req.body)
+    // Recipe gate (owner, 2026-10-24): a dish goes live only once its recipe is approved (production). A new item has
+    // no recipe yet, so it is created switched off; asking for it live is 422 RECIPE_NOT_APPROVED.
+    const live = (req.body as { isAvailable?: unknown } | null)?.isAvailable === true
+    if (live) await assertRecipeApprovedForLive(null)
+    const body = { ...createItemSchema.parse(req.body), isAvailable: false }
     await assertConceptOwned(req, body.conceptId, 'create')
     await assertCategoryOf(body.conceptId, body.categoryId)
     if (body.stationId) await assertStationOf(body.conceptId, body.stationId)
@@ -269,6 +290,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
       if (data.categoryId) await assertCategoryOf(item.conceptId, data.categoryId)
       if (data.stationId) await assertStationOf(item.conceptId, data.stationId)
       if (data.itemCode) await assertItemCodeFree(item.conceptId, data.itemCode, item.id)
+      if (data.isAvailable === true && !item.isAvailable) await assertRecipeApprovedForLive(item.id, item.liveAtRecipeGate)
       const updated = await prisma.menuItem.update({ where: { id: req.params.id }, data })
       // Seed Redis availability whenever portionsAvailable is set
       if (typeof body.portionsAvailable === 'number') {
@@ -277,6 +299,24 @@ export async function menuRoutes(fastify: FastifyInstance) {
       return updated
     },
   )
+
+  // GET /menu/items/live-without-recipe — dishes on sale with no approved
+  // (production) recipe: live before the recipe gate (2026-10-24), never
+  // switched off by it. The recipes page lists them. Companies in view only.
+  fastify.get<{ Querystring: { conceptId?: string } }>('/items/live-without-recipe', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    if (req.query.conceptId) await assertConceptOwned(req, req.query.conceptId, 'read')
+    const { tenantIds } = await resolveTenantScope(req)
+    return prisma.menuItem.findMany({
+      where: {
+        deletedAt: null, isAvailable: true,
+        concept: { tenantId: { in: tenantIds }, deletedAt: null },
+        ...(req.query.conceptId ? { conceptId: req.query.conceptId } : {}),
+        NOT: { recipe: { is: { status: 'production' } } },
+      },
+      select: { id: true, name: true, conceptId: true, concept: { select: { name: true } }, recipe: { select: { id: true, status: true } } },
+      orderBy: [{ conceptId: 'asc' }, { name: 'asc' }],
+    })
+  })
 
   // PATCH /menu/items/:id/availability — 86 an item
   fastify.patch<{ Params: { id: string }; Body: { isAvailable: boolean } }>(
@@ -292,6 +332,7 @@ export async function menuRoutes(fastify: FastifyInstance) {
         },
       })
       if (!item) throw new NotFoundError('MenuItem', req.params.id)
+      if (isAvailable && !item.isAvailable) await assertRecipeApprovedForLive(item.id, item.liveAtRecipeGate)
 
       const updated = await prisma.menuItem.update({
         where: { id: req.params.id },

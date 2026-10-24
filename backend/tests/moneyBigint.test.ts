@@ -159,6 +159,8 @@ const EXPECTED_BIGINT_FIELDS = [
   'SupplierBill.creditedCents', 'SupplierCreditApplication.amountCents',
   'SalesTaxPayment.outputSetOffCents', 'SalesTaxPayment.inputSetOffCents', 'SalesTaxPayment.paidCents',
   'ReceivablePayment.amountCents',
+  // City Ledger (2026-10-24): one settlement can pay many bills of a client — company-level money.
+  'CityLedgerSettlement.amountCents',
   // Finance gaps wave B (2026-10-14, migration 20261014090000): company-level
   // money. FIFO stock lots and their movements, GRNI, count and prep values
   // (food cost); the fixed-asset register v2 (events, tax years, runs);
@@ -209,10 +211,10 @@ describe('(1) the money boundary', () => {
     expect(() => JSON.stringify({ a: 2n ** 60n })).toThrow(expect.objectContaining({ code: 'AMOUNT_OUT_OF_RANGE' }))
   })
 
-  it('DMMF canary: the BIGINT fields are exactly the 101 money fields', () => {
+  it('DMMF canary: the BIGINT fields are exactly the 102 money fields', () => {
     const got = Prisma.dmmf.datamodel.models.flatMap((m) => m.fields.filter((f) => f.type === 'BigInt').map((f) => `${m.name}.${f.name}`)).sort()
     expect(got).toEqual(EXPECTED_BIGINT_FIELDS)
-    expect(got).toHaveLength(101)
+    expect(got).toHaveLength(102)
   })
 
   describe('a PKR 25m entry reads back as an exact JS number through every shape, on both clients', () => {

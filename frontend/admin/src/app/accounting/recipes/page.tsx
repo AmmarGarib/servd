@@ -3,6 +3,7 @@ import { Button, CheckLabel, Dialog, FieldLabel, Input, LinkButton, Textarea, Fi
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { LiveWithoutRecipe } from '@/components/recipes/LiveWithoutRecipe'
 import { api, deleteWithUndo } from '../../../lib/api'
 import Link from 'next/link'
 import { RecipeStepsEditor } from '../../../components/recipe/RecipeStepsEditor'
@@ -442,6 +443,8 @@ export default function RecipesPage() {
           </CheckLabel>
         </div>
       </header>
+
+      {!kitchenView && <LiveWithoutRecipe conceptId={conceptFilter || undefined} />}
 
       <div className="p-6 space-y-4 max-w-7xl mx-auto">
 

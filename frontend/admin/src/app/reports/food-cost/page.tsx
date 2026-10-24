@@ -17,15 +17,17 @@ import { CompanySummary } from './components/SummaryTab'
 import { IngredientsTab } from './components/IngredientsTab'
 import { ValuationTab } from './components/ValuationTab'
 import { FlagsTab } from './components/FlagsTab'
+import { WeeklyVarianceTab } from './components/WeeklyVarianceTab'
 import { ErrorNote } from './components/ui'
 import type { SummaryResponse } from './components/types'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
-type Tab = 'summary' | 'ingredients' | 'valuation' | 'flags'
+type Tab = 'summary' | 'ingredients' | 'variance' | 'valuation' | 'flags'
 const TABS: Array<{ key: Tab; label: string }> = [
-  { key: 'summary', label: 'Summary' }, { key: 'ingredients', label: 'Ingredients' }, { key: 'valuation', label: 'Valuation' }, { key: 'flags', label: 'Flags' },
+  { key: 'summary', label: 'Summary' }, { key: 'ingredients', label: 'Ingredients' }, { key: 'variance', label: 'Weekly variance' },
+  { key: 'valuation', label: 'Valuation' }, { key: 'flags', label: 'Flags' },
 ]
 
 function shiftDays(iso: string, days: number): string {
@@ -85,7 +87,7 @@ export default function FoodCostReportPage() {
               Food, drinks and packaging; by brand, by order type and by ingredient.
             </p>
           </div>
-          <ExportMenu className="s-btn-secondary" path={`/reports/food-cost/export.csv?${exportQs}`} filename={`food-cost-${exportView}-${range.from}-${range.to}`} onError={(m) => setCsvErr(m)} />
+          {tab !== 'variance' && <ExportMenu className="s-btn-secondary" path={`/reports/food-cost/export.csv?${exportQs}`} filename={`food-cost-${exportView}-${range.from}-${range.to}`} onError={(m) => setCsvErr(m)} />}
         </div>
         {csvErr && <p className="mt-2 text-sm" style={{ color: 'var(--erp-danger)' }}>{csvErr}</p>}
 
@@ -143,6 +145,7 @@ export default function FoodCostReportPage() {
         {tab === 'ingredients' && company && (
           <IngredientsTab tenantId={company.tenantId} range={range} brands={companyBrands} />
         )}
+        {tab === 'variance' && company && <WeeklyVarianceTab tenantId={company.tenantId} />}
         {tab === 'valuation' && company && <ValuationTab tenantId={company.tenantId} isCeo={me?.role === 'admin'} />}
         {tab === 'flags' && company && <FlagsTab tenantId={company.tenantId} />}
       </div>

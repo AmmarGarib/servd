@@ -502,6 +502,9 @@ model MenuItem {
   // other per item from the admin.
   videoUrl          String?
   isAvailable       Boolean @default(true)
+  // The recipe gate (owner 2026-10-24): true only for dishes LIVE at go-live with no approved recipe (set by
+  // migration 20261024140000) — they may come back on after an 86; every other dish needs a production recipe.
+  liveAtRecipeGate  Boolean @default(false)
   portionsAvailable Int? // null = unlimited; set per service for live stock tracking
   displayOrder      Int     @default(0)
   stationId         String? // default routing station
@@ -2202,41 +2205,51 @@ model GroupOrderItem {
 // ─── InventoryItem ────────────────────────────────────────────────────────────
 
 model InventoryItem {
-  id             String    @id @default(uuid())
+  id                 String    @id @default(uuid())
   // Tenant the ingredient stock belongs to. Critical: inventory is per-
   // company — GS Foods Bukhari's chicken doesn't show up in GS x Viva
   // Clifton's par sheet. Backfilled to the supplier's tenant where one
   // exists; legacy rows with no supplier remain nullable until the CEO
   // assigns them via the inventory edit drawer.
-  tenantId       String?
-  name           String
-  unit           String // e.g. "kg", "pcs", "litres"
-  parLevel       Float     @default(0)
-  currentStock   Float     @default(0)
+  tenantId           String?
+  name               String
+  unit               String // e.g. "kg", "pcs", "litres"
+  parLevel           Float     @default(0)
+  currentStock       Float     @default(0)
   // Cost per purchase unit (paisa). Since wave B (food cost on FIFO lots) = the FIFO HEAD cost: the oldest open lot,
   // else the latest lot, else the typed estimate. Every recipe/pricing/menu-engineering screen reads it. Editable only
   // while the item has no lots (422 COST_FROM_DELIVERIES — existing error name kept).
-  unitCostCents  Int?
+  unitCostCents      Int?
   // The negotiated price on the sourcing sheet. A reference only; never the cost.
-  listPriceCents Int?
+  listPriceCents     Int?
   // Edible portion after trim/peel/loss. The Recipe page uses this as the
   // default yield when adding this ingredient to a recipe; per-recipe rows
   // can still override on RecipeIngredient.yieldPct.
-  yieldPct       Float     @default(100)
+  yieldPct           Float     @default(100)
   // Dietary tags surfaced on Recipe / Menu pages — e.g. ['dairy','gluten'].
-  allergens      String[]  @default([])
+  allergens          String[]  @default([])
   // Classification: protein | produce | dairy | dry_goods | sauce | beverage | packaging | other — z.enum in the
   // route (lib/inventoryClass.ts INVENTORY_CATEGORIES; legacy values normalised by migration 20261014090000).
   // Cost class: beverage → 1220/5020, packaging → 1230/5030, everything else food (1210/5010).
-  category       String?
-  supplierId     String?
-  notes          String?
+  category           String?
+  supplierId         String?
+  notes              String?
   // Unmeasured consumables (oil, salt, items on no recipe): each receipt is issued straight to cost of sales
   // ('issue_on_receipt', an explained bucket of the food-cost report) instead of waiting for a count.
-  issueOnReceipt Boolean   @default(false)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  deletedAt      DateTime?
+  issueOnReceipt     Boolean   @default(false)
+  // Stock by site, prep as stock (owner, 2026-10-24). kind 'stock' = bought; 'prep' = a prep (sub-recipe) item made in
+  // house by a prep batch (prepRecipeId = its recipe, one item per recipe). CHECK inventory_items_kind_chk (SQL only).
+  kind               String    @default("stock")
+  prepRecipeId       String?   @unique
+  // Units: the unit it is BOUGHT in (e.g. "case of 24") and how many stock units (`unit`) one purchase unit holds.
+  // PO / receipt / bill lines may be typed in the purchase unit; the dock converts (qty × factor, cost ÷ factor).
+  purchaseUnit       String?
+  purchaseUnitFactor Float     @default(1)
+  // Count schedule: 'daily' | 'weekly' (GET /physical-counts/due). CHECK inventory_items_count_frequency_chk.
+  countFrequency     String    @default("weekly")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
 
   supplier           Supplier?           @relation(fields: [supplierId], references: [id])
   tenant             Tenant?             @relation("TenantInventoryItems", fields: [tenantId], references: [id], onDelete: SetNull)
@@ -2248,9 +2261,30 @@ model InventoryItem {
   components         Component[]
   stockTransfers     StockTransfer[]
   lots               StockLot[]
+  stockBalances      StockBalance[]
+  prepRecipe         Recipe?             @relation("PrepRecipeItem", fields: [prepRecipeId], references: [id])
 
   @@index([tenantId])
   @@map("inventory_items")
+}
+
+// Stock by site (owner, 2026-10-24): the per-site on-hand cache — Σ remainingQty of the item's lots at that location.
+// Kept by lib/stockLedger.ts with every lot change (InventoryItem.currentStock stays the company total). Lots with no
+// site (a company with no location) have no row.
+model StockBalance {
+  id              String   @id @default(uuid())
+  tenantId        String
+  inventoryItemId String
+  locationId      String
+  qty             Float    @default(0)
+  updatedAt       DateTime @updatedAt
+
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@unique([inventoryItemId, locationId])
+  @@index([tenantId])
+  @@index([tenantId, locationId])
+  @@map("stock_balances")
 }
 
 // ─── WasteLog ─────────────────────────────────────────────────────────────────
@@ -2409,6 +2443,9 @@ model Recipe {
   // cost-per-gram calculation: batchCost ÷ yieldGrams = costPerGram. Required
   // when kind=component; null when kind=plate (which uses portionSizeG instead).
   yieldGrams              Float?
+  // The unit yieldGrams counts in for a prep (component) recipe — 'g' (default), 'ml' or 'pcs' (e.g. a bun batch makes
+  // 24 pcs) — and the unit of its prep stock item (owner 2026-10-24, D3). CHECK recipes_yield_unit_chk (SQL only).
+  yieldUnit               String       @default("g")
   servings                Int          @default(1) // portions per batch (plate recipes)
   portionSizeG            Float? // grams per portion (display reference, plate recipes)
   laborMinutes            Int          @default(0)
@@ -2480,6 +2517,8 @@ model Recipe {
   // another recipe (only meaningful for prep recipes). Used to detect when
   // editing/deleting a prep would affect plate recipes.
   usedInPlates RecipeIngredient[]  @relation("RecipeAsIngredient")
+  // The stock item a prep (component) recipe makes (InventoryItem.prepRecipeId; owner 2026-10-24, D3).
+  prepItem     InventoryItem?      @relation("PrepRecipeItem")
   recipeSteps  RecipeStep[]
   testAttempts RecipeTestAttempt[]
 
@@ -5920,8 +5959,10 @@ model StockLot {
   id                  String   @id @default(uuid())
   tenantId            String
   inventoryItemId     String
-  locationId          String? // outlet tag; per-outlet pools are the NEXT build
-  sourceType          String // goods_receipt_line | count_gain | opening | fifo_cutover | legacy_return
+  // The site (outlet) holding the lot (owner, 2026-10-24: per-site stock). Every new lot names one (lib/stockSite.ts);
+  // NULL only for a company with no location (its one pool) and pre-cut-over history.
+  locationId          String?
+  sourceType          String // goods_receipt_line | count_gain | opening | fifo_cutover | legacy_return | transfer_in | prep_batch
   // goods_receipt_line: '<receiptLineId>:<grniMatchId|po|dock>' (a receipt line may open SEVERAL lots: a pending-bill
   // quantity at the billed price + the rest at the PO price); legacy_return: '<orderItemId>:<event>';
   // count_gain/opening: '<countLineId>'; fifo_cutover: '<tenantId>'.
@@ -5944,6 +5985,7 @@ model StockLot {
   @@unique([tenantId, sourceType, sourceId, inventoryItemId])
   @@index([tenantId, inventoryItemId, receivedAt])
   @@index([receiptLineId])
+  @@index([inventoryItemId, locationId])
   @@map("stock_lots")
 }
 
@@ -5958,7 +6000,7 @@ model StockMovement {
   lotKey              String   @default("") // lotId or '' (part of the idempotency key)
   // receipt | opening | fifo_cutover | count_gain | count_loss | sale | sale_return | sale_void | waste | prep_draw |
   // supplier_return | cost_adjust | class_reclass | legacy_return | issue_on_receipt | shortfall_settle |
-  // transfer_out | transfer_in ('transfer_*' reserved for per-outlet stock, the next build; wave B never writes them)
+  // transfer_out | transfer_in (a stock transfer between two sites of one company; owner 2026-10-24)
   kind                String
   qty                 Float // signed, purchase units
   valueCents          BigInt // signed lot value moved
@@ -5984,6 +6026,7 @@ model StockMovement {
   @@unique([tenantId, sourceType, sourceId, inventoryItemId, kind, lotKey])
   @@index([tenantId, occurredAt])
   @@index([tenantId, inventoryItemId, occurredAt])
+  @@index([tenantId, locationId, occurredAt])
   @@index([orderId])
   @@index([orderItemId])
   @@index([lotId])

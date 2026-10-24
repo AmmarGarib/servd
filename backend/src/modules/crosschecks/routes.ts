@@ -21,17 +21,20 @@ import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { receiveGoods } from '../procurement/receiving.js'
 import { decodeRecordFiles, zRecordFile, RECORD_FILES_BODY_LIMIT, RECORD_FILES_MAX_PER_UPLOAD } from '../../lib/recordFiles.js'
 import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors.js'
-import { toPurchaseUnits } from '../../lib/recipeCost.js'
+import { explodeForPrepBatch, livePrepItems, loadRecipeGraph, toPurchaseUnits } from '../../lib/recipeCost.js'
+import { COST_CLASSES, costClassOf, zeroByClass } from '../../lib/inventoryClass.js'
+import { ensurePrepItemTx } from '../inventory/prepItems.js'
 import { activeTenantId, resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { subRecipeIdsForCompany } from '../par-sheet/routes.js'
 import { assertLocationOfCompany } from '../financePlanning/companyRefs.js'
 import { assertInt4Fits, sumCents, toCents, zInt4Cents } from '../../lib/money.js'
 import {
-  addLotTx, consumeFifoTx, ensureFifoReady, latestPurchaseCostCents, lockItemsTx, STOCK_EPS, STOCK_SOURCE,
+  addLotTx, consumeFifoTx, ensureFifoReady, latestPurchaseCostCents, lockItemsTx, siteOnHandMany, STOCK_EPS, STOCK_SOURCE,
 } from '../../lib/stockLedger.js'
-import { postInventoryDocInSavepoint, COUNT_SOURCE_TYPE, PREP_DRAW_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
+import { stockHomeOf, stockSiteForDocument } from '../../lib/stockSite.js'
+import { postInventoryDocInSavepoint, postItemReclassTx, COUNT_SOURCE_TYPE, PREP_DRAW_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
 import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js'
-import { parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
+import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
 import { costsHiddenFor, OPENING_COUNT_ROLES } from '../inventory/routes.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 
@@ -151,6 +154,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
         inventoryItemId:   z.string().uuid().nullable().optional(),
         quantityReceived:  z.number().min(0),
         unitCostCents:     z.number().int().min(0).nullable().optional(),
+        // No-PO lines (2026-10-24): typed in the item's purchase unit ("case") — converted to stock units at the dock.
+        unit:              z.string().trim().max(30).nullable().optional(),
         discrepancyReason: z.enum(['short_shipment', 'over_shipment', 'damaged', 'wrong_item', 'quality_issue']).nullable().optional(),
         notes:             z.string().max(200).nullable().optional(),
       })).min(1),
@@ -203,116 +208,157 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     const body = z.object({
       recipeId:         z.string().uuid().nullable().optional(),
       itemName:         z.string().min(1).max(120),
+      // Ad-hoc batches: what was drawn. A RECIPE batch draws its recipe scaled to `batches` (these are kept as typed).
       inputs:           z.array(z.object({
         inventoryItemId: z.string().uuid(),
         qtyDrawn:        z.number().min(0),
         unit:            z.string().max(20).default('g'),
-      })).min(1),
+      })).default([]),
+      // Recipe batches: how many whole recipe batches were made (default: expected yield ÷ the recipe's yield, else 1).
+      batches:          z.number().positive().max(10_000).optional(),
       expectedYieldQty: z.number().min(0).nullable().optional(),
       actualYieldQty:   z.number().min(0),
       unit:             z.string().max(20).default('g'),
-      // The outlet the batch was made at (one of the active company's). Stock
-      // is still one pool per company — per-outlet stock is the next build.
+      // The outlet the batch was made at (per-site stock, 2026-10-24): its inputs leave, and the prep item lands, there.
       locationId:       z.string().uuid().nullable().optional(),
       photoUrl:         z.string().url().nullable().optional(),
       notes:            z.string().max(500).nullable().optional(),
     }).parse(req.body)
 
-    let yieldVariancePct: number | null = null
-    if (body.expectedYieldQty && body.expectedYieldQty > 0) {
-      yieldVariancePct = body.actualYieldQty / body.expectedYieldQty
-    }
-
-    // Inputs are weighed in the kitchen (grams by default) but stock is held
-    // in PURCHASE units (kg / litres / pcs). The old code subtracted the gram
-    // figure straight from kilo stock — 500 g of garlic took 500 kg. Convert
-    // through lib/recipeCost.ts (the same unit rules as the recipe explosion)
-    // and refuse a unit that can't be reconciled rather than guess.
     // Inputs must be the active company's own items: a batch draws that
     // company's stock, and the batch is stamped with it.
     const tenantId = activeTenantId(req, 'a prep batch draws one company\'s stock')
-    if (body.locationId) await assertLocationOfCompany(tenantId, body.locationId)
-    const invItems = await prisma.inventoryItem.findMany({
-      where: { id: { in: body.inputs.map((i) => i.inventoryItemId) }, deletedAt: null, tenantId },
-      select: { id: true, name: true, unit: true },
-    })
-    const invById = new Map(invItems.map((i) => [i.id, i]))
-    const inputs = body.inputs.map((i) => {
-      const inv = invById.get(i.inventoryItemId)
-      if (!inv) throw new NotFoundError('InventoryItem', i.inventoryItemId)
-      const qtyPurchaseUnits = toPurchaseUnits(i.qtyDrawn, i.unit, inv.unit)
-      if (qtyPurchaseUnits == null) {
-        throw new AppError('UNIT_MISMATCH', `${inv.name} is stocked in ${inv.unit}; ${i.unit} can't be converted to it`, 422)
-      }
-      return { ...i, qtyPurchaseUnits, stockUnit: inv.unit }
-    })
+    // Per-site stock (2026-10-24): a batch draws (and makes) stock at ONE site.
+    const site = await stockSiteForDocument(prisma, tenantId, body.locationId)
 
-    // A batch of a SUB-RECIPE (recipeId → kind 'component') is a yield record
-    // only: sale-time depletion already explodes that sub-recipe into its raw
-    // ingredients when the plates using it sell (the same explosion the ledger
-    // costs COGS on), so taking the inputs out here as well would count them
-    // twice. Ad-hoc batches (no recipe) still draw their inputs from stock —
-    // FIFO, oldest lot first ('prep_draw'), posted Dr 50x0 / Cr 12x0
-    // ('inventory.prep_draw:<batchId>', brand split by usage).
-    //
     // The recipe is resolved inside the ACTIVE company (BOH-R2-04): a batch may
     // cite only a sub-recipe the company's brands use — the list the par sheet
-    // and the prep page offer (subRecipeIdsForCompany). Any other id (another
-    // company's sub-recipe, a plate, an id that does not exist) is refused 422
-    // rather than stored: citing a foreign sub-recipe used to log a batch that
-    // drew none of this company's stock.
-    let subRecipe: { id: string } | null = null
+    // and the prep page offer (subRecipeIdsForCompany). Any other id is 422.
+    let subRecipe: { id: string; yieldGrams: number | null; yieldUnit: string } | null = null
     if (body.recipeId) {
       const companySubRecipes = await subRecipeIdsForCompany(tenantId)
       subRecipe = companySubRecipes.has(body.recipeId)
-        ? await prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' }, select: { id: true } })
+        ? await prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' }, select: { id: true, yieldGrams: true, yieldUnit: true } })
         : null
       if (!subRecipe) {
         throw new AppError('RECIPE_NOT_IN_COMPANY', 'That sub-recipe is not one of this company\'s — pick one from the prep list, or log the batch without a recipe', 422)
       }
+    } else if (body.inputs.length === 0) {
+      throw new AppError('INPUTS_REQUIRED', 'A batch without a recipe lists what it drew (inputs)', 400)
     }
 
-    // One draw per item (a document draws each item once — merge repeats).
+    // ── What the batch draws, per item, in PURCHASE units ──
+    // Ad-hoc: the typed inputs (weighed in grams by default; converted through
+    // lib/recipeCost.ts — a unit that can't be reconciled is refused, never
+    // guessed). Recipe (prep as stock, D3): the recipe scaled by `batches` —
+    // its raw lines (yield grossed up) and any prep item it uses.
     const drawByItem = new Map<string, number>()
-    if (!subRecipe) {
-      for (const i of inputs) {
-        if (i.qtyPurchaseUnits > 0) drawByItem.set(i.inventoryItemId, (drawByItem.get(i.inventoryItemId) ?? 0) + i.qtyPurchaseUnits)
+    let batches: number | null = null
+    let expectedYieldQty = body.expectedYieldQty ?? null
+    let prep: Awaited<ReturnType<typeof ensurePrepItemTx>> | null = null
+    let yieldQty = 0
+    const inputs: Array<Record<string, unknown>> = []
+    if (subRecipe) {
+      const yieldG = subRecipe.yieldGrams && subRecipe.yieldGrams > 0 ? subRecipe.yieldGrams : null
+      const expectedG = expectedYieldQty != null && expectedYieldQty > 0 ? toPurchaseUnits(expectedYieldQty, body.unit, subRecipe.yieldUnit) : null
+      batches = body.batches ?? (expectedG && yieldG ? expectedG / yieldG : 1)
+      if (expectedYieldQty == null && yieldG) {
+        const back = toPurchaseUnits(batches * yieldG, subRecipe.yieldUnit, body.unit)
+        if (back != null) expectedYieldQty = back
       }
-      if (drawByItem.size > 0) await ensureFifoReady(tenantId)
+      prep = await ensurePrepItemTx(prisma, subRecipe.id, tenantId)
+      const y = toPurchaseUnits(body.actualYieldQty, body.unit, prep.unit)
+      if (y == null) throw new AppError('UNIT_MISMATCH', `${prep.name} is kept in ${prep.unit}; ${body.unit} can't be converted to it`, 422)
+      if (!(y > STOCK_EPS)) {
+        throw new AppError('INVALID_QTY', 'A recipe batch must yield something — log a batch that came to nothing as waste of its ingredients', 422)
+      }
+      yieldQty = y
+      const { graph } = await loadRecipeGraph({ id: subRecipe.id })
+      // A prep inside this prep draws its prep item only where this site has held it (per-site liveness), else raw.
+      const live = await livePrepItems(prisma, graph, { siteId: site })
+      for (const [id, q] of explodeForPrepBatch(graph, subRecipe.id, batches, { tenantId, live })) {
+        if (q > STOCK_EPS) drawByItem.set(id, q)
+      }
+      for (const i of body.inputs) inputs.push({ ...i, typedOnly: true })
+    }
+    const invItems = await prisma.inventoryItem.findMany({
+      where: { id: { in: [...new Set([...body.inputs.map((i) => i.inventoryItemId), ...drawByItem.keys()])] }, deletedAt: null, tenantId },
+      select: { id: true, name: true, unit: true, issueOnReceipt: true },
+    })
+    const invById = new Map(invItems.map((i) => [i.id, i]))
+    if (subRecipe) {
+      for (const id of drawByItem.keys()) {
+        if (!invById.has(id)) throw new AppError('INGREDIENT_NOT_IN_COMPANY', 'The recipe uses an ingredient of another company (or one in the Trash) — fix the recipe first', 422)
+      }
+      // Issued-on-receipt consumables (oil, salt) are cost of sales when delivered — never on lots, never drawn.
+      for (const id of [...drawByItem.keys()]) if (invById.get(id)!.issueOnReceipt) drawByItem.delete(id)
+      for (const [id, q] of drawByItem) inputs.push({ inventoryItemId: id, qtyPurchaseUnits: q, stockUnit: invById.get(id)!.unit, fromRecipe: true })
+    } else {
+      for (const i of body.inputs) {
+        const inv = invById.get(i.inventoryItemId)
+        if (!inv) throw new NotFoundError('InventoryItem', i.inventoryItemId)
+        const qtyPurchaseUnits = toPurchaseUnits(i.qtyDrawn, i.unit, inv.unit)
+        if (qtyPurchaseUnits == null) {
+          throw new AppError('UNIT_MISMATCH', `${inv.name} is stocked in ${inv.unit}; ${i.unit} can't be converted to it`, 422)
+        }
+        inputs.push({ ...i, qtyPurchaseUnits, stockUnit: inv.unit })
+        // One draw per item (a document draws each item once — merge repeats).
+        if (qtyPurchaseUnits > 0) drawByItem.set(i.inventoryItemId, (drawByItem.get(i.inventoryItemId) ?? 0) + qtyPurchaseUnits)
+      }
     }
 
-    const { batch, ledger, failure } = await prisma.$transaction(async (tx) => {
+    let yieldVariancePct: number | null = null
+    if (expectedYieldQty && expectedYieldQty > 0) yieldVariancePct = body.actualYieldQty / expectedYieldQty
+    if (drawByItem.size > 0 || prep) await ensureFifoReady(tenantId)
+
+    const { batch, ledger, failure, made } = await prisma.$transaction(async (tx) => {
       const itemIds = [...drawByItem.keys()].sort()
-      await lockItemsTx(tx, itemIds)
+      await lockItemsTx(tx, [...itemIds, ...(prep ? [prep.id] : [])])
+      // Not enough on the site's lots fails the whole batch (no clamp): a draw
+      // that did not happen is never recorded. Every short item is listed.
+      const onHand = await siteOnHandMany(tx, itemIds, site)
+      const orphan = site && site === await stockHomeOf(tx, tenantId) ? await siteOnHandMany(tx, itemIds, null) : new Map<string, number>()
+      const short = itemIds
+        .map((id) => ({ id, need: drawByItem.get(id)!, have: (onHand.get(id) ?? 0) + (orphan.get(id) ?? 0) }))
+        .filter((x) => x.need - x.have > 1e-9)
+      if (short.length > 0) {
+        throw new AppError(
+          'INSUFFICIENT_STOCK',
+          `Not enough on hand for this batch: ${short.map((x) => `${invById.get(x.id)?.name ?? 'an item'} (need ${fmtQty(x.need)} ${invById.get(x.id)?.unit ?? ''}, have ${fmtQty(x.have)})`).join(', ')}`,
+          409,
+          { short: short.map((x) => ({ inventoryItemId: x.id, name: invById.get(x.id)?.name ?? null, unit: invById.get(x.id)?.unit ?? null, needQty: x.need, onHandQty: x.have })) },
+        )
+      }
       const created = await tx.prepBatch.create({
         data: {
           tenantId,
           recipeId: subRecipe?.id ?? null,
           itemName: body.itemName,
-          inputs,
-          expectedYieldQty: body.expectedYieldQty ?? null,
+          inputs: inputs as Prisma.InputJsonValue,
+          expectedYieldQty,
           actualYieldQty: body.actualYieldQty,
           unit: body.unit,
           yieldVariancePct,
           staffId: req.staffUser!.id,
-          locationId: body.locationId ?? null,
+          locationId: site,
           photoUrl: body.photoUrl ?? null,
           notes: body.notes ?? null,
         },
       })
-      if (itemIds.length === 0) return { batch: created, ledger: null as StockDocLedger | null, failure: null as PostingFailure | null }
+      if (itemIds.length === 0 && !prep) return { batch: created, ledger: null as StockDocLedger | null, failure: null as PostingFailure | null, made: null }
 
-      // Not enough on the lots fails the whole batch (no clamp): a draw that
-      // did not happen is never recorded.
       let value = 0
+      const byClass = zeroByClass()
       for (const id of itemIds) {
         try {
           const r = await consumeFifoTx(tx, {
             tenantId, inventoryItemId: id, qty: drawByItem.get(id)!, kind: 'prep_draw',
-            sourceType: STOCK_SOURCE.prepBatch, sourceId: created.id, clamp: false,
-            locationId: body.locationId ?? null, occurredAt: created.createdAt, createdById: req.staffUser!.id,
+            // A recipe batch's raw draw is a 12x0 → 12x0 move into the prep item (no cost of sales): its own source.
+            sourceType: prep ? STOCK_SOURCE.prepInput : STOCK_SOURCE.prepBatch, sourceId: created.id, clamp: false,
+            locationId: site, occurredAt: created.createdAt, createdById: req.staffUser!.id,
           })
           value += r.valueCents
+          for (const row of r.rows) byClass[row.costClass] += -row.valueCents
         } catch (err) {
           if ((err as { code?: string }).code === 'NEGATIVE_STOCK') {
             throw new AppError('INSUFFICIENT_STOCK', `Not enough ${invById.get(id)?.name ?? 'stock'} on hand for this batch — ${(err as Error).message}`, 409)
@@ -321,11 +367,25 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
         }
       }
       const saved = await tx.prepBatch.update({ where: { id: created.id }, data: { drawValueCents: value } })
+      if (prep) {
+        // D3: the prep item comes in as ONE lot at the ACTUAL yield, valued at exactly what was drawn.
+        const toClass = costClassOf(prep.category)
+        const lot = await addLotTx(tx, {
+          tenantId, inventoryItemId: prep.id, qty: yieldQty, unitCostCents: Math.max(0, Math.round(value / yieldQty)), valueCents: value,
+          kind: 'prep_make', lotSourceType: 'prep_batch', lotSourceId: created.id, movementSourceType: STOCK_SOURCE.prepBatch, movementSourceId: created.id,
+          locationId: site, receivedAt: created.createdAt, createdById: req.staffUser!.id, costClass: toClass,
+        })
+        // Inputs of another cost class move into the prep item's (12x0 → 12x0, the existing class-change posting).
+        for (const c of COST_CLASSES) {
+          if (c === toClass || byClass[c] === 0) continue
+          await postItemReclassTx(tx, { itemId: prep.id, auditLogId: `prep_batch:${created.id}:${c}`, fromClass: c, toClass, valueCents: byClass[c] })
+        }
+        return { batch: saved, ledger: null as StockDocLedger | null, failure: null as PostingFailure | null, made: { inventoryItemId: prep.id, lotId: lot.lotId, qty: yieldQty, unit: prep.unit, valueCents: value } }
+      }
       const post = await postInventoryDocInSavepoint(tx, PREP_DRAW_SOURCE_TYPE, created.id, { tenantId, actorId: req.staffUser!.id, amountCents: value })
-      return { batch: saved, ledger: post.ledger as StockDocLedger, failure: post.failure }
+      return { batch: saved, ledger: post.ledger as StockDocLedger, failure: post.failure, made: null }
     }, TX_OPTS)
     await flagRefused(failure, batch.createdAt)
-
     // Flag if yield is suspiciously low
     if (yieldVariancePct != null && yieldVariancePct < YIELD_LOW_THRESHOLD) {
       const staffUser = await prisma.user.findUnique({ where: { id: req.staffUser!.id }, select: { name: true } })
@@ -342,7 +402,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       })
     }
 
-    const out = { ...batch, ledger }
+    const out = { ...batch, ledger, ...(made ? { made: costsHiddenFor(req) ? { ...made, valueCents: null } : made } : {}) }
     return reply.status(201).send(costsHiddenFor(req) ? { ...out, drawValueCents: null, costsHidden: true } : out)
   })
 
@@ -414,7 +474,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       const [onHand, usage, recent] = await Promise.all([
         prisma.stockLot.groupBy({
           by: ['inventoryItemId'],
-          where: { tenantId, remainingQty: { gt: 0.000001 } },
+          // Per-site stock (2026-10-24): an outlet's own lots when one is named.
+          where: { tenantId, remainingQty: { gt: 0.000001 }, ...(req.query.locationId ? { locationId: req.query.locationId } : {}) },
           _sum: { remainingQty: true, remainingValueCents: true },
         }),
         prisma.stockMovement.groupBy({
@@ -463,6 +524,44 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // The count schedule (owner, 2026-10-24): what is due to be counted at a
+  // site today — 'daily' items not yet counted at that site today (PKT), and
+  // 'weekly' items not yet counted there since this week's Monday (PKT).
+  // Tracked items only (issue-on-receipt consumables are never counted). The
+  // active company; a site of another company is 422 LOCATION_NOT_IN_COMPANY,
+  // and two or more outlets with none named is 422 LOCATION_REQUIRED.
+  fastify.get<{ Querystring: { locationId?: string } }>('/physical-counts/due', { preHandler: requireAuth(...STOCK_COUNTERS) }, async (req) => {
+    const tenantId = activeTenantId(req, 'a count is one company\'s stock')
+    const site = await stockSiteForDocument(prisma, tenantId, req.query.locationId)
+    const today = fmtPktDate(new Date())
+    const dayStart = parsePktStartOfDay(today)
+    const dow = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7
+    const weekStart = parsePktStartOfDay(new Date(new Date(`${today}T00:00:00Z`).getTime() - dow * DAY_MS).toISOString().slice(0, 10))
+    const items = await prisma.inventoryItem.findMany({
+      where: { tenantId, deletedAt: null, issueOnReceipt: false },
+      select: { id: true, name: true, unit: true, countFrequency: true, kind: true },
+      orderBy: { name: 'asc' },
+    })
+    const counted = await prisma.physicalCountLine.findMany({
+      where: { inventoryItemId: { in: items.map((i) => i.id) }, count: { tenantId, locationId: site, countedAt: { gte: weekStart } } },
+      select: { inventoryItemId: true, count: { select: { countedAt: true } } },
+    })
+    const lastAt = new Map<string, Date>()
+    for (const c of counted) {
+      const prev = lastAt.get(c.inventoryItemId)
+      if (!prev || c.count.countedAt > prev) lastAt.set(c.inventoryItemId, c.count.countedAt)
+    }
+    const onHand = await siteOnHandMany(prisma, items.map((i) => i.id), site)
+    const due = items.filter((i) => {
+      const last = lastAt.get(i.id)
+      return i.countFrequency === 'daily' ? !last || last < dayStart : !last
+    })
+    return {
+      locationId: site, date: today, weekStart: fmtPktDate(weekStart),
+      items: due.map((i) => ({ id: i.id, name: i.name, unit: i.unit, kind: i.kind, countFrequency: i.countFrequency, onHandQty: Math.round((onHand.get(i.id) ?? 0) * 1000) / 1000 })),
+    }
+  })
+
   fastify.get<{ Params: { id: string } }>('/physical-counts/:id', { preHandler: requireAuth(...COUNT_POSTERS) }, async (req) => {
     const count = await prisma.physicalCount.findFirst({
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'read')) },
@@ -500,7 +599,9 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     // has to be exact: every line is an item of the ACTIVE company (another
     // company's is 404, a company-less one 422), at an outlet of that company.
     const tenantId = activeTenantId(req, 'a count is one company\'s stock')
-    if (body.locationId) await assertLocationOfCompany(tenantId, body.locationId)
+    // Per-site stock (2026-10-24): a count is of ONE site's stock (422 LOCATION_REQUIRED when the company has two
+    // or more outlets and none is named; the only outlet / the stock home otherwise).
+    const site = await stockSiteForDocument(prisma, tenantId, body.locationId)
     const ids = body.lines.map((l) => l.inventoryItemId)
     if (new Set(ids).size !== ids.length) throw new AppError('DUPLICATE_LINE', 'An item appears twice in the count', 400)
     const items = await prisma.inventoryItem.findMany({
@@ -513,9 +614,13 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       if (!it.tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', `${it.name} belongs to no company yet — assign it on the Sourcing sheet first`, 422)
     }
 
+    // Separation of duties (owner, 2026-10-24): whoever raised or approved a purchase order for an item in the last
+    // 14 days does not count that item at that site (403 COUNTER_ORDERS_ITEM; the CEO is exempt). A PO's site is
+    // where it was received; one not received yet counts for every site.
+    if (body.kind === 'spot' && role !== 'admin') await assertCounterDidNotOrder(req.staffUser!.id, tenantId, site, ids)
     await ensureFifoReady(tenantId)
     const r = await prisma.$transaction((tx) => recordPhysicalCountTx(tx, {
-      tenantId, kind: body.kind, locationId: body.locationId ?? null, notes: body.notes ?? null, actorId: req.staffUser!.id,
+      tenantId, kind: body.kind, locationId: site, notes: body.notes ?? null, actorId: req.staffUser!.id,
       lines: body.lines.map((l) => ({ inventoryItemId: l.inventoryItemId, physicalQty: l.physicalQty, reason: l.reason ?? null, unitCostCents: l.unitCostCents ?? null })),
     }), TX_OPTS)
     await raiseCountFlags(r, req.staffUser!.id)
@@ -663,6 +768,37 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   )
 }
 
+/** Days a PO raiser / approver is kept off counting its items (owner, 2026-10-24). */
+export const COUNT_ORDER_SOD_DAYS = 14
+
+/** 403 COUNTER_ORDERS_ITEM when `userId` raised or approved a PO of one of `itemIds` at `site` in the last 14 days. */
+export async function assertCounterDidNotOrder(userId: string, tenantId: string, site: string | null, itemIds: string[]): Promise<void> {
+  const since = new Date(Date.now() - COUNT_ORDER_SOD_DAYS * DAY_MS)
+  const pos = await prisma.purchaseOrder.findMany({
+    where: {
+      supplier: { tenantId },
+      OR: [{ createdBy: userId, createdAt: { gte: since } }, { approvedById: userId, approvedAt: { gte: since } }],
+      lines: { some: { inventoryItemId: { in: itemIds } } },
+    },
+    select: { id: true, lines: { where: { inventoryItemId: { in: itemIds } }, select: { inventoryItemId: true } } },
+  })
+  if (pos.length === 0) return
+  const receipts = await prisma.goodsReceipt.findMany({ where: { poId: { in: pos.map((p) => p.id) } }, select: { poId: true, locationId: true } })
+  const sitesOf = new Map<string, Set<string | null>>()
+  for (const r of receipts) if (r.poId) sitesOf.set(r.poId, (sitesOf.get(r.poId) ?? new Set()).add(r.locationId))
+  for (const po of pos) {
+    const sites = sitesOf.get(po.id)
+    if (sites && sites.size > 0 && !sites.has(site) && !(site == null)) continue
+    const itemId = po.lines[0]?.inventoryItemId
+    const item = itemId ? await prisma.inventoryItem.findUnique({ where: { id: itemId }, select: { name: true } }) : null
+    throw new AppError(
+      'COUNTER_ORDERS_ITEM',
+      `You ordered or approved ${item?.name ?? 'an item on this count'} in the last ${COUNT_ORDER_SOD_DAYS} days — someone else counts it at this site.`,
+      403,
+    )
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // THE count engine — spot counts, opening counts, and the opening count made
 // when a company-less item holding stock is given a company (PATCH
@@ -762,10 +898,16 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
   const ids = input.lines.map((l) => l.inventoryItemId)
   if (new Set(ids).size !== ids.length) throw new AppError('DUPLICATE_LINE', 'An item appears twice in the count', 400)
   await lockItemsTx(tx, ids)
-  const items = await tx.inventoryItem.findMany({
+  // The book is the SITE's (per-site stock, 2026-10-24): what the counted site's lots hold.
+  const site = input.locationId ?? await stockHomeOf(tx, input.tenantId)
+  const rawItems = await tx.inventoryItem.findMany({
     where: { id: { in: ids }, deletedAt: null },
     select: { id: true, name: true, unit: true, tenantId: true, currentStock: true, unitCostCents: true },
   })
+  const onSite = await siteOnHandMany(tx, ids, site)
+  // Lots with no site (history before per-site stock) are the stock home's: they move there on the first write.
+  const orphan = site && site === await stockHomeOf(tx, input.tenantId) ? await siteOnHandMany(tx, ids, null) : new Map<string, number>()
+  const items = rawItems.map((i) => ({ ...i, currentStock: (onSite.get(i.id) ?? 0) + (orphan.get(i.id) ?? 0) }))
   const byId = new Map(items.map((i) => [i.id, i]))
   for (const id of ids) {
     const it = byId.get(id)
@@ -814,7 +956,7 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
   const count = await tx.physicalCount.create({
     data: {
       tenantId: input.tenantId, countedById: input.actorId, countedAt, notes: input.notes, status: 'completed',
-      kind: input.kind, locationId: input.locationId,
+      kind: input.kind, locationId: site,
     },
   })
   const shrinkage: RecordCountResult['shrinkage'] = []
@@ -838,7 +980,7 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
       const r = await consumeFifoTx(tx, {
         tenantId: input.tenantId, inventoryItemId: p.item.id, qty: p.book - physical, kind: 'count_loss',
         sourceType: STOCK_SOURCE.countLine, sourceId: row.id, clamp: false,
-        locationId: input.locationId, occurredAt: countedAt, createdById: input.actorId,
+        locationId: site, occurredAt: countedAt, createdById: input.actorId,
       })
       valueCents = -r.valueCents
       unitCostCents = r.takenQty > STOCK_EPS ? Math.round(r.valueCents / r.takenQty) : null
@@ -848,7 +990,7 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
       await addLotTx(tx, {
         tenantId: input.tenantId, inventoryItemId: p.item.id, qty, unitCostCents: p.cost, kind,
         lotSourceType: kind, lotSourceId: row.id, movementSourceType: STOCK_SOURCE.countLine, movementSourceId: row.id,
-        locationId: input.locationId, receivedAt: countedAt, createdById: input.actorId,
+        locationId: site, receivedAt: countedAt, createdById: input.actorId,
       })
       valueCents = Math.round(qty * p.cost)   // = addLotTx's lot value
       unitCostCents = p.cost

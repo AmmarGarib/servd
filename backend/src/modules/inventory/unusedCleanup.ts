@@ -144,7 +144,8 @@ export interface SkippedRow extends CleanupRow { reasons: string[] }
 
 async function preview(tenantId: string) {
   const items = await prisma.inventoryItem.findMany({
-    where: { tenantId, deletedAt: null },
+    // A prep item (made by prep batches, owner 2026-10-24) is never "unused stock" — it belongs to its prep recipe.
+    where: { tenantId, deletedAt: null, kind: { not: 'prep' }, prepRecipeId: null },
     select: { id: true, name: true, unit: true, category: true, currentStock: true },
     orderBy: { name: 'asc' },
   })
@@ -183,7 +184,7 @@ export async function unusedCleanupRoutes(fastify: FastifyInstance) {
         const res = await prisma.$transaction(async (tx) => {
           await lockItemsTx(tx, [id])
           const it = await tx.inventoryItem.findFirst({
-            where: { id, tenantId, deletedAt: null },
+            where: { id, tenantId, deletedAt: null, kind: { not: 'prep' }, prepRecipeId: null },
             select: { id: true, name: true, unit: true, category: true, currentStock: true },
           })
           if (!it) return { skip: { id, name: '—', unit: '', category: null, reasons: ['Not a live ingredient of this company'] } }

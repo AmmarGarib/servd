@@ -24,15 +24,26 @@
 // company-less item is refused (422 ITEM_HAS_NO_COMPANY): its stock is on no
 // company's lots.
 //
-// Stock (finance wave B): stock is one FIFO pool per company — per-outlet
-// stock is the next build — so a transfer moves nothing between lots. What
-// did NOT arrive (received below sent) left the company's stock: it is booked
-// on receipt as WASTE, reason 'transit_loss' — drawn FIFO from the lots
-// ('waste'), a WasteLog in the item's company tagged with the sending outlet,
-// and 'inventory.waste:<wasteLogId>' (Dr 1290 / Cr the class inventory,
-// accounting/inventoryPosting.ts postWasteLog) behind a savepoint, flagged
-// posting_failed after commit when refused. A shortfall needs a reason; more
-// than was sent is 422 OVER_RECEIVED.
+// Stock BY SITE (owner, 2026-10-24, D4). A transfer moves stock between two
+// sites of ONE company (two companies: 422 TRANSFER_CROSS_COMPANY — the
+// inter-company engine is a later build):
+//   • SHIP takes the quantity out of the sending site's lots, FIFO, at lot
+//     cost ('transfer_out', lib/stockLedger.ts consumeFifoTx), never clamped:
+//     short → 409 INSUFFICIENT_STOCK and nothing moves. The stock is then IN
+//     TRANSIT (off the lots, still in the company's 12x0 — lotValuation adds
+//     it back; no posting: same company, same account).
+//   • RECEIVE puts it into new lots at the receiving site at the shipped cost
+//     (transferInTx, 'transfer_in'). What did NOT arrive (received below
+//     sent; a reason is required) is WASTE at the receiving site, reason
+//     'transfer_shortfall', drawn from those new lots and posted
+//     'inventory.waste:<wasteLogId>' (Dr 1290 / Cr the class inventory —
+//     postWasteLog) behind a savepoint, flagged posting_failed after commit
+//     when refused. More than was sent is 422 OVER_RECEIVED.
+//   • CANCEL after ship gives the stock back to the very lots it left
+//     (returnToLotsTx kind 'transfer_in', 'stock_transfer.cancel').
+// A transfer shipped before per-site stock (no 'transfer_out' rows) keeps the
+// old rule on receipt: its shortfall is 'transit_loss' waste at the sending
+// site.
 
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
@@ -46,8 +57,11 @@ import { approvalWaiting } from '../approvals/notify.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { toPurchaseUnits } from '../../lib/recipeCost.js'
 import { assertInt4Fits } from '../../lib/money.js'
-import { consumeFifoTx, ensureFifoReady, lockItemsTx, STOCK_EPS, STOCK_SOURCE } from '../../lib/stockLedger.js'
+import {
+  consumeFifoTx, ensureFifoReady, lockItemsTx, returnToLotsTx, settleTransferLotsTx, STOCK_EPS, STOCK_SOURCE, transferInTx, transferOutRowsTx,
+} from '../../lib/stockLedger.js'
 import { postInventoryDocInSavepoint, WASTE_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
+import { costsHiddenFor } from '../inventory/routes.js'
 import { flagPostingFailed } from '../accounting/journal.js'
 
 /** A transfer's shortfall reason, like every waste and count difference, is read by the CEO before its cost is settled (H20). */
@@ -117,6 +131,14 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
     // Both ends must be live locations of the ACTIVE company — a transfer
     // never spans companies, and a guessed foreign location id must not bind.
     if (!req.staffUser!.tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before requesting a transfer', 422)
+    // Two sites of two companies the operator belongs to: stock never moves across companies here.
+    const both = await prisma.location.findMany({
+      where: { id: { in: [body.fromLocationId, body.toLocationId] }, deletedAt: null, ...(await scopeTenantWhere(req, 'write')) },
+      select: { tenantId: true },
+    })
+    if (both.length === 2 && both[0]!.tenantId !== both[1]!.tenantId) {
+      throw new AppError('TRANSFER_CROSS_COMPANY', 'A stock transfer moves stock between two outlets of ONE company — these belong to two companies', 422)
+    }
     const createWhere = await scopeTenantWhere(req, 'create')
     const locations = await prisma.location.findMany({
       where: { id: { in: [body.fromLocationId, body.toLocationId] }, deletedAt: null, ...createWhere },
@@ -169,9 +191,45 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
     return moved
   })
 
-  // PATCH /stock-transfers/:id/ship — sender confirms driver picked up
+  // PATCH /stock-transfers/:id/ship — sender confirms driver picked up. The
+  // quantity leaves the sending site's lots now (see the header): short → 409
+  // INSUFFICIENT_STOCK and the transfer stays approved.
   fastify.patch<{ Params: { id: string } }>('/:id/ship', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-    return transition(req.params.id, 'approved', 'shipped', { shippedById: req.staffUser!.id, shippedAt: new Date() }, req)
+    const t = await findOwnedTransfer(req, req.params.id)
+    if (t.status !== 'approved') {
+      throw new AppError('BAD_STATE', `Cannot transition from '${t.status}' to 'shipped'. Expected 'approved'.`, 409)
+    }
+    const { item, qty } = await transferStock(t)
+    await ensureFifoReady(item.tenantId)
+    const actorId = req.staffUser!.id
+    const shippedAt = new Date()
+    const shipped = await prisma.$transaction(async (tx) => {
+      const moved = await tx.stockTransfer.updateMany({
+        where: { id: t.id, status: 'approved' },
+        data: { status: 'shipped', shippedById: actorId, shippedAt },
+      })
+      if (moved.count === 0) throw new AppError('BAD_STATE', 'This transfer is no longer \'approved\' — reload it.', 409)
+      await lockItemsTx(tx, [item.id])
+      try {
+        const r = await consumeFifoTx(tx, {
+          tenantId: item.tenantId, inventoryItemId: item.id, qty, kind: 'transfer_out', sourceType: STOCK_SOURCE.transferShip, sourceId: t.id,
+          clamp: false, locationId: t.fromLocationId, occurredAt: shippedAt, createdById: actorId,
+        })
+        return { qty: r.takenQty, valueCents: r.valueCents }
+      } catch (err) {
+        if ((err as { code?: string }).code === 'NEGATIVE_STOCK') {
+          throw new AppError('INSUFFICIENT_STOCK', `Not enough ${item.name} at the sending outlet — ${(err as Error).message}`, 409)
+        }
+        throw err
+      }
+    }, TX_OPTS)
+    const updated = await prisma.stockTransfer.findUniqueOrThrow({ where: { id: t.id } })
+    await audit({ category: 'identity',
+      action: 'stock-transfer.shipped', entity: 'StockTransfer', entityId: t.id,
+      userId: actorId, tenantId: item.tenantId, userEmail: req.staffUser?.email ?? null,
+      before: { status: 'approved' }, after: { status: 'shipped' }, metadata: { shippedQty: shipped.qty, unit: item.unit },
+    })
+    return costsHiddenFor(req) ? updated : { ...updated, shippedValueCents: shipped.valueCents }
   })
 
   // PATCH /stock-transfers/:id/receive — receiver confirms the quantity that
@@ -210,16 +268,16 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
         where: { id: t.inventoryItemId },
         select: { id: true, name: true, unit: true, tenantId: true },
       })
+      if (!item.tenantId) {
+        throw new AppError('ITEM_HAS_NO_COMPANY', `${item.name} belongs to no company — assign it one before receiving it.`, 422)
+      }
       let lossQty = 0
       if (shortfall > 0) {
-        if (!item.tenantId) {
-          throw new AppError('ITEM_HAS_NO_COMPANY', `${item.name} belongs to no company — assign it one before booking the transit loss.`, 422)
-        }
         const q = toPurchaseUnits(shortfall, t.unit, item.unit)
         if (q == null) throw new AppError('UNIT_MISMATCH', `${item.name} is stocked in ${item.unit}; the transfer's ${t.unit} can't be converted to it`, 422)
         lossQty = q
-        await ensureFifoReady(item.tenantId)
       }
+      await ensureFifoReady(item.tenantId)
 
       const actorId = req.staffUser!.id
       const res = await prisma.$transaction(async (tx) => {
@@ -229,26 +287,37 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
           data: { status: 'received', receivedById: actorId, receivedAt: new Date(), receivedQuantity: received },
         })
         if (moved.count === 0) throw new AppError('BAD_STATE', 'This transfer was received or cancelled meanwhile.', 409)
-        if (!(lossQty > STOCK_EPS) || !item.tenantId) return { wasteLogId: null, ledger: null, failure: null, at: new Date() }
-
-        const tenantId = item.tenantId
+        const tenantId = item.tenantId!
         await lockItemsTx(tx, [item.id])
-        const wasteLogId = randomUUID()
         const at = new Date()
+        // Per-site stock: what was shipped lands in new lots at the receiving site (none for a transfer shipped
+        // before per-site stock — its shortfall keeps the old rule below).
+        // The loss is booked from the arrived lots FIRST; only then do they settle the site's earlier shortfalls.
+        const landed = await transferInTx(tx, {
+          tenantId, inventoryItemId: item.id, transferId: t.id, toLocationId: t.toLocationId, receivedAt: at, createdById: actorId, settle: false,
+        })
+        const perSite = landed.lotIds.length > 0
+        const settle = () => settleTransferLotsTx(tx, { tenantId, inventoryItemId: item.id, lotIds: landed.lotIds, at })
+        if (!(lossQty > STOCK_EPS)) { await settle(); return { wasteLogId: null, ledger: null, failure: null, at } }
+
+        const wasteLogId = randomUUID()
+        // Shipped before per-site stock: the old rule — its loss leaves the company's pool, now the stock home (null).
+        const wasteSite = perSite ? t.toLocationId : t.fromLocationId
         const r = await consumeFifoTx(tx, {
           tenantId, inventoryItemId: item.id, qty: lossQty, kind: 'waste', sourceType: STOCK_SOURCE.wasteLog, sourceId: wasteLogId,
-          clamp: false, locationId: t.fromLocationId, occurredAt: at, createdById: actorId,
+          clamp: false, locationId: perSite ? t.toLocationId : null, occurredAt: at, createdById: actorId, ...(perSite ? { preferLotIds: landed.lotIds } : {}),
         })
         assertInt4Fits(r.valueCents, `The transit loss of ${item.name}`)
         await tx.wasteLog.create({
           data: {
-            id: wasteLogId, tenantId, locationId: t.fromLocationId, inventoryItemId: item.id,
-            quantity: lossQty, unit: item.unit, reason: 'transit_loss', estimatedCostCents: r.valueCents,
+            id: wasteLogId, tenantId, locationId: wasteSite, inventoryItemId: item.id,
+            quantity: lossQty, unit: item.unit, reason: perSite ? 'transfer_shortfall' : 'transit_loss', estimatedCostCents: r.valueCents,
             notes: `Transfer ${t.id.slice(-8).toUpperCase()}: sent ${t.quantity} ${t.unit}, received ${received} ${t.unit} — ${reason}`.slice(0, 1000),
             recordedById: actorId, recordedAt: at,
           },
         })
         const post = await postInventoryDocInSavepoint(tx, WASTE_SOURCE_TYPE, wasteLogId, { tenantId, actorId, amountCents: r.valueCents })
+        await settle()
         return { wasteLogId, ledger: post.ledger, failure: post.failure, at }
       }, TX_OPTS)
       if (res.failure) {
@@ -286,12 +355,25 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       if (t.status === 'cancelled') return t
       // Conditional on the status read (stock-04): a receive that committed
       // meanwhile (with its transit-loss waste and entry) is never overwritten
-      // by a cancel that read the transfer before it.
-      const moved = await prisma.stockTransfer.updateMany({
-        where: { id: t.id, status: t.status },
-        data: { status: 'cancelled', cancelledAt: new Date(), cancelledById: req.staffUser!.id, cancelReason: body.reason ?? null },
-      })
-      if (moved.count === 0) throw new AppError('BAD_STATE', 'This transfer was received, cancelled or moved on meanwhile — reload it.', 409)
+      // by a cancel that read the transfer before it. A shipped transfer gives
+      // its stock back to the very lots it left, in the same transaction.
+      const item = await prisma.inventoryItem.findUnique({ where: { id: t.inventoryItemId }, select: { tenantId: true } })
+      if (t.status === 'shipped' && item?.tenantId) await ensureFifoReady(item.tenantId)
+      await prisma.$transaction(async (tx) => {
+        const moved = await tx.stockTransfer.updateMany({
+          where: { id: t.id, status: t.status },
+          data: { status: 'cancelled', cancelledAt: new Date(), cancelledById: req.staffUser!.id, cancelReason: body.reason ?? null },
+        })
+        if (moved.count === 0) throw new AppError('BAD_STATE', 'This transfer was received, cancelled or moved on meanwhile — reload it.', 409)
+        if (t.status !== 'shipped' || !item?.tenantId) return
+        await lockItemsTx(tx, [t.inventoryItemId])
+        const rows = await transferOutRowsTx(tx, item.tenantId, t.id)
+        if (rows.length === 0) return
+        await returnToLotsTx(tx, {
+          rows, kind: 'transfer_in', sourceType: STOCK_SOURCE.transferCancel, sourceId: t.id, occurredAt: new Date(),
+          tenantId: item.tenantId, createdById: req.staffUser!.id,
+        })
+      }, TX_OPTS)
       const updated = await prisma.stockTransfer.findUniqueOrThrow({ where: { id: t.id } })
       await audit({ category: 'identity',
         action: 'stock-transfer.cancel', entity: 'StockTransfer', entityId: t.id,
@@ -353,4 +435,13 @@ async function transition(
     before: { status: expected }, after: { status: next },
   })
   return updated
+}
+
+/** The transfer's item (must have a company) and its quantity in the item's stock unit (422 UNIT_MISMATCH). */
+async function transferStock(t: { inventoryItemId: string; quantity: number; unit: string }) {
+  const it = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: t.inventoryItemId }, select: { id: true, name: true, unit: true, tenantId: true } })
+  if (!it.tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', `${it.name} belongs to no company yet — assign it one before moving it.`, 422)
+  const qty = toPurchaseUnits(t.quantity, t.unit, it.unit)
+  if (qty == null) throw new AppError('UNIT_MISMATCH', `${it.name} is stocked in ${it.unit}; the transfer's ${t.unit} can't be converted to it`, 422)
+  return { item: { ...it, tenantId: it.tenantId }, qty }
 }

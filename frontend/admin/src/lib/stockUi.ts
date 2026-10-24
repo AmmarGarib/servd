@@ -83,6 +83,12 @@ const NEXT_STEP: Record<string, string> = {
   NO_ACTIVE_COMPANY: 'Pick a company in the header first.',
   INGREDIENT_NOT_IN_COMPANY: 'Use a sub-recipe of this dish’s own company (sub-recipes are never shared across companies).',
   ITEM_NOT_IN_COMPANY: 'Use stock of the company whose dishes use this recipe.',
+  // Stock by site, prep as stock (2026-10-24).
+  LOCATION_REQUIRED: 'Pick the outlet whose stock this is.',
+  TRANSFER_CROSS_COMPANY: 'Transfers move stock between outlets of one company only.',
+  COUNTER_ORDERS_ITEM: 'Someone who did not order it counts this item.',
+  RECIPE_NOT_APPROVED: 'Approve the dish’s recipe first, then switch it on.',
+  PREP_UNIT_LOCKED: 'The prep is already kept in stock in this unit.',
 }
 
 /** The API's error in words: the server's message, then the next step for the codes above. */

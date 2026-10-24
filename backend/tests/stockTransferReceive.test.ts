@@ -1,12 +1,14 @@
 // Stock transfers on FIFO lots (finance wave B) — PATCH /stock-transfers/:id/receive.
 //
-// What this guards:
-//   - Stock is one pool per company: a full receipt moves no lot.
+// What this guards (per-site stock, owner 2026-10-24):
+//   - Ship takes the stock out of the sending site's lots (in transit); a full
+//     receipt lands it at the receiving site — the company total is back.
 //   - Received above sent → 422 OVER_RECEIVED; a shortfall needs a reason
 //     (422 SHORTFALL_REASON_REQUIRED) — nothing changes on a refusal.
-//   - A shortfall is booked as waste reason 'transit_loss': drawn FIFO, a
-//     WasteLog in the item's company tagged with the sending outlet, and
-//     'inventory.waste:<id>' Dr 1290 / Cr 1210, once (a second receive is 409).
+//   - A shortfall is booked as waste reason 'transfer_shortfall' at the
+//     RECEIVING site: drawn from the arrived lots, a WasteLog in the item's
+//     company, and 'inventory.waste:<id>' Dr 1290 / Cr 1210, once (a second
+//     receive is 409).
 //   - Two companies: another company's transfer is 404; a company-less item
 //     cannot be transferred.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -14,7 +16,7 @@ import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { AppError } from '../src/lib/errors.js'
-import { addLotTx, ensureFifoReady } from '../src/lib/stockLedger.js'
+import { addLotTx, ensureFifoReady, siteOnHand } from '../src/lib/stockLedger.js'
 import { stockTransferRoutes } from '../src/modules/stockTransfers/routes.js'
 import { mkCompany, mkUser, type Company, type Who } from './connectorsFixtures.js'
 
@@ -49,6 +51,7 @@ async function shipped(itemId: string, qty: number, unit = 'kg') {
   return id
 }
 const stockOf = async (id: string) => (await prisma.inventoryItem.findUniqueOrThrow({ where: { id } })).currentStock
+const siteStock = (id: string, locationId: string) => siteOnHand(prisma, id, locationId)
 
 beforeAll(async () => {
   A = await mkCompany('xfer-a')
@@ -71,14 +74,17 @@ afterAll(async () => {
 })
 
 describe('receiving a transfer', () => {
-  it('in full: received, no stock moves, no waste', async () => {
+  it('in full: shipped stock is in transit, then lands at the receiving site; no waste', async () => {
     const it0 = await item(A, 10, 10_000)
     const id = await shipped(it0.id, 4)
+    expect(await stockOf(it0.id)).toBe(6)
     const res = await call(u.mgrA!, 'PATCH', `/stock-transfers/${id}/receive`, {})
     expect(res.statusCode, res.body).toBe(200)
     expect(res.json()).toMatchObject({ status: 'received', receivedQuantity: 4 })
     expect(res.json().transitLoss).toBeUndefined()
     expect(await stockOf(it0.id)).toBe(10)
+    expect(await siteStock(it0.id, A.locationId)).toBe(6)
+    expect(await siteStock(it0.id, A2)).toBe(4)
     expect(await prisma.wasteLog.count({ where: { inventoryItemId: it0.id } })).toBe(0)
   })
 
@@ -94,10 +100,10 @@ describe('receiving a transfer', () => {
       expect(r.json().error.code).toBe('SHORTFALL_REASON_REQUIRED')
     }
     expect((await prisma.stockTransfer.findUniqueOrThrow({ where: { id } })).status).toBe('shipped')
-    expect(await stockOf(it0.id)).toBe(10)
+    expect(await stockOf(it0.id)).toBe(6)
   })
 
-  it('a shortfall is transit-loss waste: FIFO value, the sending outlet, Dr 1290 / Cr 1210 — once', async () => {
+  it('a shortfall is transfer-shortfall waste: shipped value, the receiving outlet, Dr 1290 / Cr 1210 — once', async () => {
     const it0 = await item(A, 10, 10_000)
     const id = await shipped(it0.id, 4000, 'g')
     const res = await call(u.mgrA!, 'PATCH', `/stock-transfers/${id}/receive`, { receivedQuantity: 3500, shortfallReason: 'bag split in the van' })
@@ -105,7 +111,9 @@ describe('receiving a transfer', () => {
     expect(res.json()).toMatchObject({ status: 'received', receivedQuantity: 3500, transitLoss: { quantity: 0.5, unit: 'kg', ledger: { posted: true } } })
     expect(await stockOf(it0.id)).toBe(9.5)
     const log = await prisma.wasteLog.findUniqueOrThrow({ where: { id: res.json().transitLoss.wasteLogId } })
-    expect(log).toMatchObject({ tenantId: A.tenantId, locationId: A.locationId, reason: 'transit_loss', quantity: 0.5, unit: 'kg', estimatedCostCents: 5_000 })
+    expect(log).toMatchObject({ tenantId: A.tenantId, locationId: A2, reason: 'transfer_shortfall', quantity: 0.5, unit: 'kg', estimatedCostCents: 5_000 })
+    expect(await siteStock(it0.id, A2)).toBe(3.5)
+    expect(await siteStock(it0.id, A.locationId)).toBe(6)
     expect(log.notes).toContain('bag split in the van')
     const e = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: A.tenantId, reference: `inventory.waste:${log.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
     expect(e.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)]).sort()).toEqual([['1210', 'credit', 5_000], ['1290', 'debit', 5_000]])
@@ -124,7 +132,7 @@ describe('two companies', () => {
     const res = await call(u.mgrB!, 'PATCH', `/stock-transfers/${id}/receive`, { receivedQuantity: 1, shortfallReason: 'stolen claim' })
     expect(res.statusCode).toBe(404)
     expect((await prisma.stockTransfer.findUniqueOrThrow({ where: { id } })).status).toBe('shipped')
-    expect(await stockOf(it0.id)).toBe(10)
+    expect(await stockOf(it0.id)).toBe(8)
 
     const orphan = await prisma.inventoryItem.create({ data: { name: 'Transfer orphan', unit: 'kg', currentStock: 5 } })
     const create = await call(u.mgrA!, 'POST', '/stock-transfers', { inventoryItemId: orphan.id, fromLocationId: A.locationId, toLocationId: A2, quantity: 1, unit: 'kg' })

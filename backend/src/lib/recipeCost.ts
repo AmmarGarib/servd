@@ -50,6 +50,13 @@
 //     Recipe.modifierId): what ONE unit of the add-on uses, per unit of the
 //     dish. Only a modifier recipe may carry negative lines ('removes', e.g.
 //     "no cheese"); a line's total per ingredient is clamped at zero.
+//   • Prep as stock (owner, 2026-10-24, D3): a sub-recipe with a PREP ITEM
+//     (InventoryItem.prepRecipeId) is stock of its own — a prep batch takes
+//     its raw ingredients out and adds the prep item. A sale (and a prep batch
+//     that uses another prep) draws the PREP ITEM, in its own unit, the
+//     quantity on the plate — never its raw ingredients again. A sub-recipe
+//     with no prep item still explodes to its raw ingredients. Costing
+//     (recipeCost) and explodeRecipe (par sheet, prep list) stay raw.
 //   • A sale consumes only the ORDER's company's items: an item of another
 //     company, or of none, is excluded (never consumed) and reported.
 //
@@ -165,6 +172,12 @@ export interface CostRecipe {
   ingredients: CostLine[]
   /** A plate's brand vessel (Concept.serviceVessel) — decides the dine-in target MC. Null/undefined = 'plate'. */
   serviceVessel?: string | null
+  /**
+   * kind 'component': the stock item the recipe MAKES (InventoryItem.prepRecipeId — owner 2026-10-24, D3: "prep items
+   * become stock"). When set, what consumes this sub-recipe draws THIS item (its own unit, the quantity on the plate,
+   * no yield gross-up) — never its raw ingredients again: they left stock when the batch was made.
+   */
+  prepItem?: CostItem | null
 }
 
 /** Every recipe a costing or explosion may need, by id (plates + their sub-recipes). */
@@ -196,8 +209,32 @@ interface TopFilter {
   allowNegative: boolean
 }
 
+/**
+ * Prep as stock, PER SITE (owner 2026-10-24, D3): a sub-recipe draws its prep
+ * item only when the item is of `tenantId` AND is in `live` — the prep items
+ * the cooking site has ever held a lot of. At any other site (or for another
+ * company) the sub-recipe explodes to its raw ingredients, as before.
+ */
+export interface PrepStock { tenantId: string; live: Set<string> }
+
+/**
+ * The prep items of `graph` live at a site: ever held a lot there (`siteId`
+ * null = the company pool of a company with no location). 'any' = a lot
+ * anywhere (company-level readers).
+ */
+export async function livePrepItems(db: Db, graph: RecipeGraph, at: 'any' | { siteId: string | null }): Promise<Set<string>> {
+  const ids = [...new Set([...graph.values()].map((r) => r.prepItem?.id).filter((x): x is string => !!x))]
+  if (ids.length === 0 || at === 'any') return new Set(ids)
+  const rows = await db.stockLot.findMany({
+    where: { inventoryItemId: { in: ids }, locationId: at.siteId }, select: { inventoryItemId: true }, distinct: ['inventoryItemId'],
+  })
+  return new Set(rows.map((r) => r.inventoryItemId))
+}
+
 function explodeBatches(
   graph: RecipeGraph, recipeId: string, batches: number, out: Map<string, number>, stack: Set<string>, top: TopFilter | null,
+  /** Which prep items count as stock here (see PrepStock); false = raw. */
+  prepAsStock: PrepStock | false = false,
 ): void {
   const r = graph.get(recipeId)
   if (!r || stack.has(recipeId) || !(batches > 0)) return   // unknown, cyclic (A→B→A) or nothing to make
@@ -207,14 +244,21 @@ function explodeBatches(
     if (line.quantity < 0 && !top?.allowNegative) continue
     if (line.prepRecipeId) {
       const sub = graph.get(line.prepRecipeId)
+      if (prepAsStock && sub?.prepItem && sub.prepItem.tenantId === prepAsStock.tenantId && prepAsStock.live.has(sub.prepItem.id)) {
+        // Prep as stock (D3): the prep ITEM, in its own unit, the quantity on the plate (no yield gross-up — the
+        // batch's actual yield already carries the loss). A 'removes' line takes it back out (negative).
+        const item = sub.prepItem
+        out.set(item.id, (out.get(item.id) ?? 0) + batches * measureToPurchaseUnits(line.quantity, item.unit))
+        continue
+      }
       // A sub-recipe with no batch yield can't be scaled to the grams used.
       if (sub?.yieldGrams && sub.yieldGrams > 0) {
         if (line.quantity > 0) {
-          explodeBatches(graph, sub.id, batches * (line.quantity / sub.yieldGrams), out, stack, null)
+          explodeBatches(graph, sub.id, batches * (line.quantity / sub.yieldGrams), out, stack, null, prepAsStock)
         } else if (line.quantity < 0) {
           // A modifier that removes a sub-recipe: its exploded quantities, negated.
           const back = new Map<string, number>()
-          explodeBatches(graph, sub.id, batches * (-line.quantity / sub.yieldGrams), back, stack, null)
+          explodeBatches(graph, sub.id, batches * (-line.quantity / sub.yieldGrams), back, stack, null, prepAsStock)
           for (const [k, v] of back) out.set(k, (out.get(k) ?? 0) - v)
         }
       }
@@ -247,6 +291,19 @@ export function explodeRecipe(graph: RecipeGraph, recipeId: string, qty: number,
   const r = graph.get(recipeId)
   if (!r) return out
   explodeBatches(graph, recipeId, batchesOf(r, qty, per), out, new Set(), { sections: 'all', allowNegative: r.kind === 'modifier' })
+  return out
+}
+
+/**
+ * What ONE prep batch run of `batches` whole batches of a sub-recipe draws from
+ * stock, per item, in purchase units: its own raw lines (yield grossed up) and,
+ * for a sub-recipe inside it that has a prep item, that prep item (D3) — never
+ * the recipe's own prep item. Packaging lines are not on sub-recipes.
+ */
+export function explodeForPrepBatch(graph: RecipeGraph, recipeId: string, batches: number, prep: PrepStock): Map<string, number> {
+  const out = new Map<string, number>()
+  if (!graph.get(recipeId)) return out
+  explodeBatches(graph, recipeId, batches, out, new Set(), { sections: 'all', allowNegative: false }, prep)
   return out
 }
 
@@ -425,6 +482,10 @@ type Db = Prisma.TransactionClient
 const COST_RECIPE_SELECT = {
   id: true, kind: true, menuItemId: true, modifierId: true, servings: true, yieldGrams: true, qFactorPct: true,
   menuItem: { select: { concept: { select: { serviceVessel: true } } } },
+  // `lots` (one row): the prep item switches on only once a batch has made stock — until then the dish explodes its
+  // prep to raw ingredients as before, so a kitchen that has not logged a batch yet never runs short (owner card:
+  // "run it in the family kitchen first, then Flipd").
+  prepItem: { select: { id: true, unit: true, unitCostCents: true, tenantId: true, category: true, deletedAt: true, lots: { select: { id: true }, take: 1 } } },
   ingredients: {
     select: {
       id: true, inventoryItemId: true, prepRecipeId: true, quantity: true, yieldPct: true, section: true,
@@ -436,8 +497,9 @@ const COST_RECIPE_SELECT = {
 type LoadedRecipe = Prisma.RecipeGetPayload<{ select: typeof COST_RECIPE_SELECT }>
 
 function toCostRecipe(r: LoadedRecipe): CostRecipe {
-  const { menuItem, ...rest } = r
-  return { ...rest, serviceVessel: menuItem?.concept.serviceVessel ?? null }
+  const { menuItem, prepItem, ...rest } = r
+  const live = prepItem && !prepItem.deletedAt && prepItem.lots.length > 0 ? { id: prepItem.id, unit: prepItem.unit, unitCostCents: prepItem.unitCostCents, tenantId: prepItem.tenantId, category: prepItem.category } : null
+  return { ...rest, serviceVessel: menuItem?.concept.serviceVessel ?? null, prepItem: live }
 }
 
 /**
@@ -548,6 +610,11 @@ export interface ConsumptionOpts {
   fulfilmentType: string
   /** The brand's current vessel, read by legacy lines with no snapshot. */
   serviceVessel?: string | null
+  /**
+   * Prep as stock: the site that cooks the order (lib/stockSite.ts stockSiteOf) — its live prep items are drawn,
+   * other sub-recipes explode raw. 'any' = live at any site (company readers). Absent = raw (pre-cut-over paths).
+   */
+  prepStockAt?: 'any' | { siteId: string | null }
 }
 
 /**
@@ -573,8 +640,12 @@ export async function consumptionPerLine(lines: SoldLine[], db: Db, o: Consumpti
   }, db)
   const byMenuItem = new Map(roots.filter((r) => r.menuItemId && r.kind !== 'modifier').map((r) => [r.menuItemId!, r]))
   const byModifier = new Map(roots.filter((r) => r.modifierId && r.kind === 'modifier').map((r) => [r.modifierId!, r]))
+  const prep: PrepStock | false = o.prepStockAt ? { tenantId: o.tenantId, live: await livePrepItems(db, graph, o.prepStockAt) } : false
   const items = new Map<string, CostItem>()
-  for (const r of graph.values()) for (const l of r.ingredients) if (l.inventoryItem) items.set(l.inventoryItem.id, l.inventoryItem)
+  for (const r of graph.values()) {
+    for (const l of r.ingredients) if (l.inventoryItem) items.set(l.inventoryItem.id, l.inventoryItem)
+    if (r.prepItem) items.set(r.prepItem.id, r.prepItem)
+  }
 
   return lines.map((line) => {
     if (!live(line)) return empty(line)
@@ -583,13 +654,13 @@ export async function consumptionPerLine(lines: SoldLine[], db: Db, o: Consumpti
     const pack = new Map<string, number>()
     if (dish) {
       const batches = batchesOf(dish, line.quantity, 'portion')
-      explodeBatches(graph, dish.id, batches, base, new Set(), { sections: 'ingredients', allowNegative: false })
-      explodeBatches(graph, dish.id, batches, pack, new Set(), { sections: 'packaging', allowNegative: false })
+      explodeBatches(graph, dish.id, batches, base, new Set(), { sections: 'ingredients', allowNegative: false }, prep)
+      explodeBatches(graph, dish.id, batches, pack, new Set(), { sections: 'packaging', allowNegative: false }, prep)
     }
     for (const mid of line.modifierIds ?? []) {
       const mod = mid ? byModifier.get(mid) : undefined
       if (!mod) continue
-      explodeBatches(graph, mod.id, batchesOf(mod, line.quantity, 'portion'), base, new Set(), { sections: 'all', allowNegative: true })
+      explodeBatches(graph, mod.id, batchesOf(mod, line.quantity, 'portion'), base, new Set(), { sections: 'all', allowNegative: true }, prep)
     }
     const applies = packagingApplies(
       { fulfilmentType: o.fulfilmentType },

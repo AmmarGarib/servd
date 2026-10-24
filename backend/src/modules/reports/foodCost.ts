@@ -748,7 +748,7 @@ async function buildWarnings(db: Db, tenantId: string, c: {
     w.push({ code: 'pre_cutover', severity: 'incomplete', count: 1, message: `No FIFO data before ${fmtPktDate(c.cutoverAt)} — sales before the cut-over were costed at the old plate cost.` })
   }
   if (c.locationId) {
-    w.push({ code: 'by_outlet', severity: 'warn', count: 1, message: 'By outlet: theoretical, waste and counts are this outlet\'s; the ledger (actual) is per company until per-outlet stock (the next build).' })
+    w.push({ code: 'by_outlet', severity: 'warn', count: 1, message: 'By outlet: theoretical, waste, counts and stock are this outlet\'s; the ledger (actual) is per company — the weekly variance shows an outlet\'s actual usage from its own stock.' })
   }
   const sold = c.orders.flatMap((o) => o.items.filter((i) => i.status !== 'voided'))
   const withRecipe = new Set(c.recipeRows.map((r) => r.menuItemId))
@@ -858,12 +858,19 @@ export interface IngredientVarianceRow {
   classLabel: string
   opening: QtyCents
   received: QtyCents
+  /** Prep items: made by prep batches ('prep_make' — owner 2026-10-24, D3). */
+  made: QtyCents
+  /** Transfers between sites (per-site stock, 2026-10-24): arrived here / shipped from here. */
+  transfersIn: QtyCents
+  transfersOut: QtyCents
   theoretical: QtyCents
   comps: QtyCents
   staffMeals: QtyCents
   waste: QtyCents
   wasteByReason: Partial<Record<WasteReason, QtyCents>>
   prep: QtyCents
+  /** Of `prep`: drawn by RECIPE batches into a prep item (12x0 → 12x0, not cost — prep as stock, 2026-10-24). */
+  prepToStock: QtyCents
   issueOnReceipt: QtyCents
   count: QtyCents
   shortfall: QtyCents
@@ -946,8 +953,9 @@ export async function ingredientVariance(db: Db, a: {
     let r = rows.get(id)
     if (!r) {
       r = {
-        opening: opening.get(id) ?? zq(), received: zq(), theoretical: zq(), comps: zq(), staffMeals: zq(), waste: zq(), wasteByReason: {},
-        prep: zq(), issueOnReceipt: zq(), count: zq(), shortfall: zq(), settled: zq(), other: zq(),
+        opening: opening.get(id) ?? zq(), received: zq(), made: zq(), transfersIn: zq(), transfersOut: zq(),
+        theoretical: zq(), comps: zq(), staffMeals: zq(), waste: zq(), wasteByReason: {},
+        prep: zq(), prepToStock: zq(), issueOnReceipt: zq(), count: zq(), shortfall: zq(), settled: zq(), other: zq(),
       }
       rows.set(id, r)
     }
@@ -966,7 +974,7 @@ export async function ingredientVariance(db: Db, a: {
   for (const m of moves) {
     if (!itemSet.has(m.inventoryItemId)) continue
     const wgt = weightFor(m)
-    if (wgt === 0 && a.conceptId && !['receipt', 'opening', 'fifo_cutover', 'legacy_return', 'cost_adjust', 'class_reclass', 'supplier_return'].includes(m.kind)) continue
+    if (wgt === 0 && a.conceptId && !['receipt', 'opening', 'fifo_cutover', 'legacy_return', 'cost_adjust', 'class_reclass', 'supplier_return', 'prep_make', 'transfer_in', 'transfer_out'].includes(m.kind)) continue
     const r = row(m.inventoryItemId)
     const qty = m.qty
     const v = toCents(m.valueCents)
@@ -975,6 +983,10 @@ export async function ingredientVariance(db: Db, a: {
     switch (m.kind) {
       case 'receipt': case 'opening': case 'fifo_cutover': case 'legacy_return':
         addQ(r.received, qty, v); break
+      case 'prep_make': addQ(r.made, qty, v); break
+      // A cancelled transfer's give-back ('transfer_in' into the source lots) nets its own 'transfer_out'.
+      case 'transfer_in': addQ(r.transfersIn, qty, v); break
+      case 'transfer_out': addQ(r.transfersOut, -qty, -v); break
       case 'sale': case 'sale_return': case 'sale_void': {
         const memoQ = (m.shortfallQty ?? 0) * wgt
         const memoC = Math.round(toCents(m.shortfallValueCents ?? 0) * wgt)
@@ -997,7 +1009,10 @@ export async function ingredientVariance(db: Db, a: {
         r.wasteByReason[reason] = slot
         break
       }
-      case 'prep_draw': addQ(r.prep, outQ, outC); break
+      case 'prep_draw':
+        addQ(r.prep, outQ, outC)
+        if (m.sourceType === STOCK_SOURCE.prepInput) addQ(r.prepToStock, outQ, outC)
+        break
       case 'issue_on_receipt': addQ(r.issueOnReceipt, outQ, outC); break
       case 'count_loss': case 'count_gain': addQ(r.count, outQ, outC); break
       case 'shortfall_settle': addQ(r.settled, outQ, outC); break
@@ -1008,7 +1023,8 @@ export async function ingredientVariance(db: Db, a: {
   // Flags.
   const onRecipe = new Set((await db.recipeIngredient.findMany({ where: { inventoryItemId: { in: itemIds } }, select: { inventoryItemId: true }, distinct: ['inventoryItemId'] })).map((x) => x.inventoryItemId))
   const counted = new Set((await db.physicalCountLine.findMany({
-    where: { inventoryItemId: { in: itemIds }, count: { tenantId, countedAt: { gte: from, lte: to } } },
+    // Per site when an outlet is asked for: counted AT that outlet (stock by site, 2026-10-24).
+    where: { inventoryItemId: { in: itemIds }, count: { tenantId, countedAt: { gte: from, lte: to }, ...(a.locationId ? { locationId: a.locationId } : {}) } },
     select: { inventoryItemId: true }, distinct: ['inventoryItemId'],
   })).map((x) => x.inventoryItemId))
   const zeroLots = new Set((await db.stockLot.findMany({
@@ -1023,10 +1039,10 @@ export async function ingredientVariance(db: Db, a: {
     if (!r && op && Math.abs(op.qty) < 1e-9 && op.cents === 0) continue
     const x = r ?? row(it.id)
     const cls = costClassOf(it.category)
-    const closingQ = x.opening.qty + x.received.qty
+    const closingQ = x.opening.qty + x.received.qty + x.made.qty + x.transfersIn.qty - x.transfersOut.qty
       - x.theoretical.qty - x.comps.qty - x.staffMeals.qty + x.shortfall.qty
       - x.waste.qty - x.prep.qty - x.issueOnReceipt.qty - x.count.qty - x.settled.qty - x.other.qty
-    const closingC = x.opening.cents + x.received.cents
+    const closingC = x.opening.cents + x.received.cents + x.made.cents + x.transfersIn.cents - x.transfersOut.cents
       - x.theoretical.cents - x.comps.cents - x.staffMeals.cents + x.shortfall.cents
       - x.waste.cents - x.prep.cents - x.issueOnReceipt.cents - x.count.cents - x.settled.cents - x.other.cents
     const unexplained = { qty: x.count.qty + x.shortfall.qty, cents: x.count.cents + x.shortfall.cents }
@@ -1034,8 +1050,9 @@ export async function ingredientVariance(db: Db, a: {
     for (const [k, v] of Object.entries(x.wasteByReason)) wasteByReason[k as WasteReason] = roundQ(v!)
     out.push({
       inventoryItemId: it.id, name: it.name, unit: it.unit, costClass: cls, classLabel: CLASS_LABEL[cls],
-      opening: roundQ(x.opening), received: roundQ(x.received), theoretical: roundQ(x.theoretical), comps: roundQ(x.comps),
-      staffMeals: roundQ(x.staffMeals), waste: roundQ(x.waste), wasteByReason, prep: roundQ(x.prep), issueOnReceipt: roundQ(x.issueOnReceipt),
+      opening: roundQ(x.opening), received: roundQ(x.received), made: roundQ(x.made), transfersIn: roundQ(x.transfersIn), transfersOut: roundQ(x.transfersOut),
+      theoretical: roundQ(x.theoretical), comps: roundQ(x.comps),
+      staffMeals: roundQ(x.staffMeals), waste: roundQ(x.waste), wasteByReason, prep: roundQ(x.prep), prepToStock: roundQ(x.prepToStock), issueOnReceipt: roundQ(x.issueOnReceipt),
       count: roundQ(x.count), shortfall: roundQ(x.shortfall), settled: roundQ(x.settled), other: roundQ(x.other),
       closing: roundQ({ qty: closingQ, cents: closingC }), unexplained: roundQ(unexplained),
       flags: {
@@ -1054,6 +1071,96 @@ export async function ingredientVariance(db: Db, a: {
     return Math.abs(q.unexplained.cents) - Math.abs(p.unexplained.cents) || p.name.localeCompare(q.name)
   })
   return out
+}
+
+// ─── Weekly variance (owner, 2026-10-24) ─────────────────────────────────────
+
+export interface WeeklyVarianceRow {
+  inventoryItemId: string
+  name: string
+  unit: string
+  kind: string
+  costClass: CostClass
+  classLabel: string
+  opening: QtyCents
+  /** Deliveries (and opening / count-in lots) + prep made. */
+  received: QtyCents
+  transfersIn: QtyCents
+  transfersOut: QtyCents
+  closing: QtyCents
+  /** opening + received + transfers in − transfers out − closing. */
+  actual: QtyCents
+  /** What the recipes of the dishes sold (paid) say was used. */
+  recipe: QtyCents
+  /** Waste, staff meals, comps, drawn into prep batches, sent back to suppliers. */
+  explained: { waste: QtyCents; staffMeals: QtyCents; comps: QtyCents; prep: QtyCents; other: QtyCents; total: QtyCents }
+  /** Of explained.prep: drawn into prep items by recipe batches (that value is used again as the prep item). */
+  prepToStock: QtyCents
+  /** actual − recipe − explained: + = more went than the recipes and the explained events say (a loss). */
+  gap: QtyCents
+  counted: boolean
+}
+
+/** Monday 00:00 → Sunday 23:59:59.999 PKT of the week holding `weekOf` (YYYY-MM-DD). */
+export function pktWeekOf(weekOf: string): { start: Date; end: Date; startDate: string; endDate: string } {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekOf)) throw new AppError('BAD_DATE', 'weekOf must be a date (YYYY-MM-DD)', 400)
+  const d = new Date(`${weekOf}T00:00:00Z`)
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== weekOf) throw new AppError('BAD_DATE', 'weekOf must be a date (YYYY-MM-DD)', 400)
+  const back = (d.getUTCDay() + 6) % 7
+  const mon = new Date(d.getTime() - back * 86_400_000).toISOString().slice(0, 10)
+  const sun = new Date(d.getTime() + (6 - back) * 86_400_000).toISOString().slice(0, 10)
+  return { start: parsePktStartOfDay(mon), end: parsePktEndOfDay(sun), startDate: mon, endDate: sun }
+}
+
+/**
+ * THE weekly variance (owner card, 2026-10-24: "weekly variance of recipe
+ * against actual usage"), built on ingredientVariance — never a second
+ * engine. Per tracked item (issue-on-receipt consumables left out) of ONE
+ * company over a Monday–Sunday PKT week, at one site (`locationId`) or the
+ * whole company: opening (lots at the start) + received (+ prep made) +
+ * transfers in − transfers out − closing = ACTUAL usage; RECIPE usage (the
+ * dishes sold); waste, staff meals, comps, prep draws and supplier returns as
+ * EXPLAINED; the GAP (actual − recipe − explained) in quantity and PKR at lot
+ * cost — what counts found missing, and sales from stock never on the books.
+ * Sorted worst rupee gap first.
+ */
+export async function weeklyVariance(db: Db, a: { tenantId: string; weekOf: string; locationId?: string }) {
+  const wk = pktWeekOf(a.weekOf)
+  const rows = await ingredientVariance(db, {
+    tenantId: a.tenantId, from: wk.start, to: wk.end, ...(a.locationId ? { locationId: a.locationId } : {}), sort: 'name',
+  })
+  const meta = new Map((await db.inventoryItem.findMany({
+    where: { id: { in: rows.map((r) => r.inventoryItemId) } }, select: { id: true, issueOnReceipt: true, kind: true },
+  })).map((i) => [i.id, i]))
+  const sum = (...xs: QtyCents[]): QtyCents => roundQ(xs.reduce((t, x) => ({ qty: t.qty + x.qty, cents: t.cents + x.cents }), zq()))
+  const minus = (x: QtyCents, y: QtyCents): QtyCents => roundQ({ qty: x.qty - y.qty, cents: x.cents - y.cents })
+  const out: WeeklyVarianceRow[] = []
+  for (const r of rows) {
+    const m = meta.get(r.inventoryItemId)
+    if (!m || m.issueOnReceipt) continue
+    const received = sum(r.received, r.made)
+    const actual = minus(sum(r.opening, received, r.transfersIn), sum(r.transfersOut, r.closing))
+    const explainedTotal = sum(r.waste, r.staffMeals, r.comps, r.prep, r.other)
+    const recipe = r.theoretical
+    const gap = minus(actual, sum(recipe, explainedTotal))
+    if ([actual, recipe, gap, r.opening, r.closing].every((x) => Math.abs(x.qty) < 1e-9 && x.cents === 0)) continue
+    out.push({
+      inventoryItemId: r.inventoryItemId, name: r.name, unit: r.unit, kind: m.kind, costClass: r.costClass, classLabel: r.classLabel,
+      opening: r.opening, received, transfersIn: r.transfersIn, transfersOut: r.transfersOut, closing: r.closing,
+      actual, recipe,
+      explained: { waste: r.waste, staffMeals: r.staffMeals, comps: r.comps, prep: r.prep, other: r.other, total: explainedTotal },
+      prepToStock: r.prepToStock, gap, counted: !r.flags.notCountedInPeriod,
+    })
+  }
+  out.sort((p, q) => q.gap.cents - p.gap.cents || Math.abs(q.gap.qty) - Math.abs(p.gap.qty) || p.name.localeCompare(q.name))
+  // Raw drawn into a prep item by a recipe batch is used again as the prep item: counted once (as the prep item).
+  const totals = {
+    actualCents: out.reduce((t, r) => t + r.actual.cents - r.prepToStock.cents, 0),
+    recipeCents: out.reduce((t, r) => t + r.recipe.cents, 0),
+    explainedCents: out.reduce((t, r) => t + r.explained.total.cents - r.prepToStock.cents, 0),
+    gapCents: out.reduce((t, r) => t + r.gap.cents, 0),
+  }
+  return { tenantId: a.tenantId, locationId: a.locationId ?? null, week: { start: wk.start.toISOString(), end: wk.end.toISOString(), startDate: wk.startDate, endDate: wk.endDate }, rows: out, totals }
 }
 
 /** One item's lots and its lot-level movements in the period (the drill-down). */

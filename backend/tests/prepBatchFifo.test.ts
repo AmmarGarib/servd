@@ -4,8 +4,8 @@
 //   - An AD-HOC batch (no recipe) draws its inputs FIFO ('prep_draw'),
 //     stores PrepBatch.drawValueCents and posts 'inventory.prep_draw:<id>'
 //     Dr 50x0 / Cr 12x0 by class, in the batch's company.
-//   - A SUB-RECIPE batch is a yield record only: it draws nothing and posts
-//     nothing (the sale explosion consumes its inputs).
+//   - A SUB-RECIPE batch (prep as stock, owner 2026-10-24) draws its recipe
+//     and adds its prep item at the actual yield — no posting (12x0 → 12x0).
 //   - Not enough on the lots → 409 INSUFFICIENT_STOCK and the whole batch rolls back.
 //   - Two companies: inputs must be the active company's (404); another
 //     company's sub-recipe is 422 RECIPE_NOT_IN_COMPANY; another company's
@@ -156,12 +156,15 @@ describe('a sub-recipe batch and two companies', () => {
     await prisma.recipe.create({ data: { kind: 'plate', menuItemId: plateB.id, ingredients: { create: [{ prepRecipeId: doughB, quantity: 50, unit: 'g' }] } } })
   })
 
-  it('a sub-recipe batch is a yield record: no draw, no posting', async () => {
+  it('a sub-recipe batch draws its recipe and makes the prep item (owner 2026-10-24, D3) — no posting', async () => {
     const res = await call(u.chefA!, 'POST', '/crosschecks/prep-batches', { recipeId: sauceA, itemName: 'Prep sauce', actualYieldQty: 1, unit: 'kg', inputs: [{ inventoryItemId: flourA, qtyDrawn: 1, unit: 'kg' }] })
     expect(res.statusCode, res.body).toBe(201)
-    expect(res.json()).toMatchObject({ recipeId: sauceA, drawValueCents: null, ledger: null })
-    expect(await stockOf(flourA)).toBe(5)
-    expect(await prisma.stockMovement.count({ where: { sourceType: 'prep_batch', sourceId: res.json().id } })).toBe(0)
+    // One batch of the recipe (100 g flour = 0.1 kg at PKR 20/kg), whatever was typed; the prep item at the actual yield.
+    expect(res.json()).toMatchObject({ recipeId: sauceA, drawValueCents: 200, ledger: null, made: { qty: 1000, unit: 'g', valueCents: 200 } })
+    expect(await stockOf(flourA)).toBeCloseTo(4.9)
+    expect(await prisma.stockMovement.count({ where: { sourceType: 'prep_batch.input', sourceId: res.json().id, kind: 'prep_draw' } })).toBe(1)
+    const sauce = await prisma.inventoryItem.findUniqueOrThrow({ where: { prepRecipeId: sauceA } })
+    expect(sauce).toMatchObject({ kind: 'prep', tenantId: A.tenantId, currentStock: 1000 })
     expect(await prisma.journalEntry.count({ where: { reference: `inventory.prep_draw:${res.json().id}` } })).toBe(0)
   })
 
@@ -176,7 +179,7 @@ describe('a sub-recipe batch and two companies', () => {
     const r3 = await call(u.chefB!, 'POST', '/crosschecks/prep-batches', { itemName: 'x', actualYieldQty: 1, unit: 'kg', locationId: A.locationId, inputs: [{ inventoryItemId: flourB.id, qtyDrawn: 1, unit: 'kg' }] })
     expect(r3.statusCode).toBe(422)
     expect(r3.json().error.code).toBe('LOCATION_NOT_IN_COMPANY')
-    expect(await stockOf(flourA)).toBe(5)
+    expect(await stockOf(flourA)).toBeCloseTo(4.9)
     expect(await stockOf(flourB.id)).toBe(5)
 
     const own = await call(u.chefB!, 'POST', '/crosschecks/prep-batches', { recipeId: doughB, itemName: 'Dough', actualYieldQty: 1, unit: 'kg', inputs: [{ inventoryItemId: flourB.id, qtyDrawn: 1, unit: 'kg' }] })

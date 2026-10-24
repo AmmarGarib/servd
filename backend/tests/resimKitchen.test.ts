@@ -371,15 +371,16 @@ describe('BOH-R2-04 — a prep batch cites only the active company\'s sub-recipe
     expect(await stock()).toBe(70)
   })
 
-  it('the company\'s own sub-recipe records yield without drawing stock; ad hoc draws', async () => {
+  it('the company\'s own sub-recipe draws its recipe and makes its prep item (prep as stock, 2026-10-24); ad hoc draws', async () => {
     const own = await call('cookB', 'POST', '/crosschecks/prep-batches', batch(doughB))
-    expect(own.statusCode).toBe(201)
+    expect(own.statusCode, own.body).toBe(201)
     expect(own.json()).toMatchObject({ recipeId: doughB, tenantId: tenantB })
-    expect(await stock()).toBe(70)
+    expect(await stock()).toBe(69)                    // one recipe batch: 1000 g of atta, whatever was typed
+    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { prepRecipeId: doughB } })).currentStock).toBe(3000)
 
     const adHoc = await call('cookB', 'POST', '/crosschecks/prep-batches', batch(null))
     expect(adHoc.statusCode, adHoc.body).toBe(201)
-    expect(await stock()).toBe(68)
+    expect(await stock()).toBe(67)
     // Drawn FIFO at the lot's cost (2 kg × PKR 90); a line cook sees no cost, only the ledger result.
     expect(adHoc.json()).toMatchObject({ drawValueCents: null, costsHidden: true, ledger: expect.objectContaining({ posted: expect.any(Boolean) }) })
     expect(Number((await prisma.prepBatch.findUniqueOrThrow({ where: { id: adHoc.json().id } })).drawValueCents)).toBe(18_000)

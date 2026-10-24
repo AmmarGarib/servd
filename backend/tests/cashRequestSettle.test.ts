@@ -92,7 +92,7 @@ async function legacyPay(id: string, boxId: string): Promise<void> {
 
 /** Raised by finA for `holder`, approved by finance and the CEO, paid (H3) by cashA from box A. */
 async function paid(amountCents: number, holder = 'cookA', categoryKey = 'transport'): Promise<Req> {
-  const r = await call('finA', 'POST', V, { purpose: `Market run ${amountCents}`, categoryKey, amountCents, holderUserId: U[holder]!.id })
+  const r = await call('finA', 'POST', V, { purpose: `Market run ${amountCents}`, categoryKey, amountCents, holderUserId: U[holder]!.id, sendTo: 'finance' })
   expect(r.statusCode, r.body).toBe(201)
   const id = (r.json() as Req).id
   await legacyPay(id, box['A']!)
@@ -337,7 +337,7 @@ describe('a settlement reclasses out of the account the pay booked', () => {
 
   it('a capex line out of a brand-tagged request credits the paid 6xxx with that brand (the brand\'s expense nets to zero)', async () => {
     const conceptA = (await prisma.concept.create({ data: { name: `${P} brand A`, slug: `${P}-brand-a`, type: 'restaurant', tenantId: T.A } })).id
-    const r = await call('finA', 'POST', V, { purpose: 'Blender for brand A', categoryKey: 'transport', amountCents: 4_000, holderUserId: U['cookA']!.id, conceptId: conceptA })
+    const r = await call('finA', 'POST', V, { purpose: 'Blender for brand A', categoryKey: 'transport', amountCents: 4_000, holderUserId: U['cookA']!.id, conceptId: conceptA, sendTo: 'finance' })
     expect(r.statusCode, r.body).toBe(201)
     const id = (r.json() as Req).id
     await legacyPay(id, box['A']!)
@@ -363,7 +363,7 @@ describe('a settlement reclasses out of the account the pay booked', () => {
     const conceptK = (await prisma.concept.create({ data: { name: `${P} brand K`, slug: `${P}-brand-k`, type: 'restaurant', tenantId: T.A } })).id
     const boxK = (await prisma.pettyCashBox.create({ data: { tenantId: T.A, name: 'Brand K box', custodianId: U['cashA']!.id, floatCents: 0, conceptId: conceptK, topUpLimitCents: 100_000_000 } })).id
     expect((await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId: boxK, type: 'topup', amountCents: 50_000, reason: 'Float', source: 'garibsons' })).statusCode).toBe(201)
-    const r = await call('finA', 'POST', V, { purpose: 'Market run for K', categoryKey: 'transport', amountCents: 5_000, holderUserId: U['cookA']!.id })
+    const r = await call('finA', 'POST', V, { purpose: 'Market run for K', categoryKey: 'transport', amountCents: 5_000, holderUserId: U['cookA']!.id, sendTo: 'finance' })
     expect(r.statusCode, r.body).toBe(201)
     const id = (r.json() as Req).id
     await legacyPay(id, boxK)

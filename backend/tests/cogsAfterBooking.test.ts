@@ -283,6 +283,7 @@ describe('a shortfall settled by a late receipt, then the order is cancelled (ne
     await lot(pepper, 1, 10_000)
     await prisma.stockLot.updateMany({ where: { inventoryItemId: pepper }, data: { remainingQty: 0, remainingValueCents: 0 } })
     await prisma.inventoryItem.update({ where: { id: pepper }, data: { currentStock: 0 } })
+    await prisma.stockBalance.updateMany({ where: { inventoryItemId: pepper }, data: { qty: 0 } })   // the per-site cache too (stock by site, 2026-10-24)
     const o = await ring([{ menuItemId: dish, name: 'Pepper steak', quantity: 2 }])
     const line = o.items[0]!
     await prisma.orderItem.update({ where: { id: line.id }, data: { status: 'voided', voidedAt: new Date() } })

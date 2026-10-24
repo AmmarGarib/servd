@@ -28,6 +28,14 @@ interface InventoryItem {
   /** 'deliveries' = the cost is the price paid (lots / deliveries); 'opening' = a typed estimate. */
   costSource?: 'deliveries' | 'opening' | null
   onHandValueCents?: number
+  /** On hand per outlet (stock by site, 2026-10-24); currentStock is the company total. */
+  bySite?: Array<{ locationId: string; qty: number }>
+  /** 'prep' = made in house by prep batches. */
+  kind?: string
+  /** The unit it is bought in and how many stock units one holds (a delivery typed in it converts at the dock). */
+  purchaseUnit?: string | null
+  purchaseUnitFactor?: number
+  countFrequency?: 'daily' | 'weekly'
   /** Kitchen floor view: the API took cost and supplier out (wave 3). */
   costsHidden?: boolean
   // Tenant scoping added 2026-05-13. Backfilled via supplier where one
@@ -158,7 +166,7 @@ export default function InventoryPage() {
   // Edit panel (category, opening cost, par, issue on receipt) and the
   // "assign a company" panel for a company-less item.
   const [editItemId, setEditItemId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState({ category: '', costPkr: '', parLevel: '', issueOnReceipt: false })
+  const [editForm, setEditForm] = useState({ category: '', costPkr: '', parLevel: '', issueOnReceipt: false, purchaseUnit: '', purchaseUnitFactor: '', countFrequency: 'weekly' })
   const [assignItemId, setAssignItemId] = useState<string | null>(null)
   const [assignForm, setAssignForm] = useState({ tenantId: '', costPkr: '' })
   const me = useAuthStore((s) => s.user)
@@ -211,9 +219,15 @@ export default function InventoryPage() {
   const { data: outlets = [] } = useQuery<OutletLite[]>({
     queryKey: ['locations'],
     queryFn: () => api.get('/locations'),
-    enabled: !!wasteItemId || tab === 'waste',
     retry: false, meta: { background: true }, staleTime: 300_000,
   })
+  // Sold with nothing on the books at an outlet, not yet settled by a delivery (stock by site, 2026-10-24).
+  const { data: negative } = useQuery<{ items: Array<{ inventoryItemId: string; name: string | null; unit: string | null; locationName: string | null; shortQty: number; saleLines: number }> }>({
+    queryKey: ['inventory-negative'],
+    queryFn: () => api.get('/inventory/negative'),
+    retry: false, meta: { background: true },
+  })
+  const siteName = (id: string) => outlets.find((o) => o.id === id)?.name ?? 'Outlet'
 
   const addMutation = useMutation({
     mutationFn: () => api.post('/inventory', {
@@ -246,6 +260,11 @@ export default function InventoryPage() {
       }
       if (editForm.parLevel.trim() !== '' && Number(editForm.parLevel) !== item.parLevel) body['parLevel'] = Number(editForm.parLevel)
       if (editForm.issueOnReceipt !== !!item.issueOnReceipt) body['issueOnReceipt'] = editForm.issueOnReceipt
+      const pu = editForm.purchaseUnit.trim()
+      if (pu !== (item.purchaseUnit ?? '')) body['purchaseUnit'] = pu || null
+      const pf = Number(editForm.purchaseUnitFactor)
+      if (editForm.purchaseUnitFactor.trim() !== '' && pf > 0 && pf !== (item.purchaseUnitFactor ?? 1)) body['purchaseUnitFactor'] = pf
+      if (editForm.countFrequency !== (item.countFrequency ?? 'weekly')) body['countFrequency'] = editForm.countFrequency
       return Object.keys(body).length === 0 ? Promise.resolve(null) : api.patch(`/inventory/${item.id}`, body)
     },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['inventory'] }); setEditItemId(null) },
@@ -313,6 +332,9 @@ export default function InventoryPage() {
       costPkr: item.unitCostCents != null ? String(item.unitCostCents / 100) : '',
       parLevel: String(item.parLevel),
       issueOnReceipt: !!item.issueOnReceipt,
+      purchaseUnit: item.purchaseUnit ?? '',
+      purchaseUnitFactor: String(item.purchaseUnitFactor ?? 1),
+      countFrequency: item.countFrequency ?? 'weekly',
     })
   }
   function openAssign(item: InventoryItem) {
@@ -542,6 +564,20 @@ export default function InventoryPage() {
                   <NumberField decimals={3} min={0} value={numOf(editForm.parLevel)}
                     onValueChange={(v) => setEditForm({ ...editForm, parLevel: textOf(v) })} className={fi} />
                 </F>
+                <F label="Bought in (purchase unit)">
+                  <input value={editForm.purchaseUnit} onChange={(e) => setEditForm({ ...editForm, purchaseUnit: e.target.value })}
+                    placeholder="case" maxLength={30} className={fi} />
+                </F>
+                <F label={`${editItem.unit} per ${editForm.purchaseUnit.trim() || 'purchase unit'}`}>
+                  <NumberField decimals={3} min={0} value={numOf(editForm.purchaseUnitFactor)}
+                    onValueChange={(v) => setEditForm({ ...editForm, purchaseUnitFactor: textOf(v) })} className={fi} />
+                </F>
+                <F label="Count">
+                  <Select value={editForm.countFrequency} onChange={(e) => setEditForm({ ...editForm, countFrequency: e.target.value })} className={fi}>
+                    <option value="weekly">Weekly (Mondays)</option>
+                    <option value="daily">Daily</option>
+                  </Select>
+                </F>
               </div>
               <p className="text-xs text-s-muted">
                 {editItem.costSource === 'deliveries'
@@ -743,6 +779,21 @@ export default function InventoryPage() {
                   <span className="text-xs text-s-muted">Stock changes come from counts, waste logs and deliveries.</span>
                 </div>
 
+                {negative && negative.items.length > 0 && (
+                  <div className="rounded-xl px-4 py-3 text-sm"
+                    style={{ color: 'var(--erp-danger)', background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-danger) 25%, transparent)' }}>
+                    <p className="font-semibold">Sold with nothing on hand — not yet covered by a delivery</p>
+                    <ul className="mt-1 space-y-0.5 text-xs">
+                      {negative.items.map((n) => (
+                        <li key={`${n.inventoryItemId}|${n.locationName ?? ''}`}>
+                          {n.name ?? 'An item'}{n.locationName ? ` at ${n.locationName}` : ''}: short {n.shortQty} {n.unit ?? ''} ({n.saleLines} sale line{n.saleLines === 1 ? '' : 's'})
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs opacity-80">Receive the delivery, move stock from another outlet, or count it in.</p>
+                  </div>
+                )}
+
                 {Object.entries(grouped).map(([cat, catItems]) => (
                   <div key={cat}>
                     <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">{cat}</p>
@@ -763,6 +814,12 @@ export default function InventoryPage() {
                                     show "⚠ No company". */}
                                 <TenantChip tenant={item.tenant} tenantId={item.tenantId} tenants={tenants} />
                                 {item.issueOnReceipt && <span className="s-badge-muted" title="Each delivery goes straight to cost of sales">Issued on receipt</span>}
+                                {item.kind === 'prep' && <span className="s-badge-purple" title="Made in house by prep batches">Prep</span>}
+                                {(item.bySite ?? []).filter((b) => b.qty !== 0).length > 1 && (
+                                  <span className="text-xs text-s-muted">
+                                    {(item.bySite ?? []).filter((b) => b.qty !== 0).map((b) => `${siteName(b.locationId)} ${b.qty}`).join(' · ')}
+                                  </span>
+                                )}
                                 {item.onHandValueCents != null && item.onHandValueCents > 0 && (
                                   <span className="text-xs text-s-muted">worth PKR {Math.round(item.onHandValueCents / 100).toLocaleString('en-PK')}</span>
                                 )}

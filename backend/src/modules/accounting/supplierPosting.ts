@@ -1003,9 +1003,13 @@ export async function postSupplierCreditNote(
     // Goods sent back: out of the lots, the bill's own first.
     for (const [itemId, g] of returns) {
       const preferLotIds = legacyBill ? [] : (await billLotsForItem(tx, tenantId, original.id, itemId)).map((x) => x.lot.id)
+      // Per-site stock (2026-10-24): the goods go back from the site the bill's own lots sit at (else the stock home).
+      const site = preferLotIds.length === 0 ? null : (await tx.stockLot.findFirst({
+        where: { id: { in: preferLotIds }, remainingQty: { gt: 0.000001 } }, orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }], select: { locationId: true },
+      }))?.locationId ?? null
       const r = await consumeFifoTx(tx, {
         tenantId, inventoryItemId: itemId, qty: g.qty, kind: 'supplier_return', sourceType: 'supplier.credit_note', sourceId: cn.id,
-        clamp: false, occurredAt: at, createdById: opts.postedBy ?? null, preferLotIds,
+        clamp: false, locationId: site, occurredAt: at, createdById: opts.postedBy ?? null, preferLotIds,
       })
       let valueOut = 0
       for (const row of r.rows) {
@@ -1228,7 +1232,7 @@ export async function postSupplierCreditNoteVoid(
         await addLotTx(tx, {
           tenantId, inventoryItemId: itemId, qty: g.qty, unitCostCents: Math.max(0, Math.round(value / g.qty)), valueCents: value,
           kind: 'legacy_return', lotSourceType: 'legacy_return', lotSourceId: `credit_note:${cn.id}`,
-          movementSourceType: 'supplier.credit_note.void', movementSourceId: cn.id, receivedAt: at,
+          movementSourceType: 'supplier.credit_note.void', movementSourceId: cn.id, receivedAt: at, locationId: null,
           createdById: postedBy === 'system' ? null : postedBy,
         })
         trueByClass[costClassOf(item.category)] += value

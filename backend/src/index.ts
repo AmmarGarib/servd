@@ -1232,12 +1232,25 @@ async function build() {
       try {
         const r = await ensureFifoCutover(t.id)
         if (r.ran) fastify.log.info(`[fifo] "${t.slug}" cut over to FIFO lots at ${r.at.toISOString()}`)
+        // Per-site stock (2026-10-24): lots with no site go to the company's stock home, once.
+        const { ensureSiteCutover } = await import('./lib/stockSite.js')
+        await ensureSiteCutover(t.id)
       } catch (err) {
         fastify.log.error({ err, tenantId: t.id }, 'FIFO cut-over failed')
       }
     }
   } catch (err) {
     fastify.log.warn(`[fifo] cut-over skipped: ${(err as Error).message}`)
+  }
+
+  // Prep as stock (owner, 2026-10-24, D3) — the go-live: every production prep
+  // recipe of every company gets its prep stock item (idempotent; a sale then
+  // draws the prep item, never its raw ingredients again). After the FIFO cut-over.
+  try {
+    const { ensureAllPrepItems } = await import('./modules/inventory/prepItems.js')
+    for (const r of await ensureAllPrepItems()) if (r.created) fastify.log.info(`[prep] ${r.tenantId}: ${r.created} prep item(s) created`)
+  } catch (err) {
+    fastify.log.warn(`[prep] prep items skipped: ${(err as Error).message}`)
   }
 
   // Cash vouchers still held on 1357 (the 2026-10-15 hold flow) become ONE

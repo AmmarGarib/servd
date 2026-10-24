@@ -108,7 +108,7 @@ export async function listAutoEightySixedBackInStock(conceptIds: string[]): Prom
     // One plated portion (dine-in, never boxed): what cooking it again needs, in the dish's own company.
     const { need } = await consumptionForSoldLines(
       [{ menuItemId: m.id, quantity: 1, status: 'pending', serviceVessel: 'plate', boxGiven: false }],
-      prisma, { tenantId: m.concept.tenantId, fulfilmentType: 'dine_in', serviceVessel: 'plate' },
+      prisma, { tenantId: m.concept.tenantId, fulfilmentType: 'dine_in', serviceVessel: 'plate', prepStockAt: 'any' },
     )
     if (need.size === 0) continue
     const stock = await prisma.inventoryItem.findMany({

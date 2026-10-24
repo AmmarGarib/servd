@@ -1787,6 +1787,101 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   history backfill expenses an old-flow voucher's spend in its category (H3);
   only rows already booked as advances use 1355.
 
+### Stock by site, prep as stock (owner, 2026-10-24)
+
+Owner card: "Each fired dish deducts its recipe from stock, with units, yields
+and prep items; weekly variance of recipe against actual usage." Binding: FIFO
+lots stay (D1), the draw stays at ring-up (D2), prep items become stock (D3),
+per-site stock now (D4).
+
+- **Every lot sits at ONE outlet** (`StockLot.locationId`); a draw takes only
+  that site's lots. `lib/stockSite.ts` is THE rule for which site:
+  `stockSiteOf` (the order's outlet → the brand's primary outlet → the
+  company's STOCK HOME) for sales, returns, void waste, remakes, "Box given";
+  `stockSiteForDocument` for waste / counts / prep batches (422
+  `LOCATION_REQUIRED` when the company has 2+ active outlets and none is named,
+  422 `LOCATION_NOT_IN_COMPANY` for another company's); receipts land at the
+  dock's outlet, else the home. The stock home is picked once (single active
+  outlet, else most sales in 30 days; never a head office or "General — to be
+  assigned"), Setting `stock.homeLocationId:<t>`. A company with NO location
+  keeps one pool (lots with no site) until it gets one.
+- `lib/stockLedger.ts` stays the only writer: `consumeFifoTx` / `addLotTx`
+  take `locationId` (required; null = the home), shortfalls are recorded and
+  settled per site, `stock_balances` (per item per site, tenantId, RLS, merge
+  repoint) is kept with every lot change and self-checked (500
+  `STOCK_SITE_NOT_ON_LOTS`); `currentStock` stays the company total.
+  `siteOnHand` / `siteOnHandMany` are a site's view. The site cut-over
+  (`ensureSiteCutover`, from `ensureFifoReady` and at boot; marker
+  `stock.siteCutoverAt:<t>` = {at, homeLocationId}; audit `stock.site_cutover`)
+  moves lots with no site — and, then and whenever the home changes, lots at a
+  deleted outlet or the "General" holding place (audit `stock.site_relocate`)
+  — to the home and retags EVERY lot-carrying movement to its lot's site, so
+  Σ movements per site = that site's lots; a write at such a site lands at the
+  home, and a stranded lot met by a write is moved the same way.
+- **Transfers between outlets of ONE company** (`modules/stockTransfers`):
+  ship = `transfer_out` FIFO at lot cost, never clamped (409
+  `INSUFFICIENT_STOCK`); receive = `transferInTx` new lots at the destination
+  at the shipped cost and age, in the item's CURRENT class (a class change on
+  the way posts `postItemReclassTx`); a shortfall is waste `transfer_shortfall`
+  at the destination, booked BEFORE the arrived lots settle the site's sale
+  shortfalls (`settle: false` + `settleTransferLotsTx`); cancel after ship
+  returns to the very lots. `repriceLotTx` counts units in transit and in the
+  lots they arrived in as on hand: the price difference follows them (a
+  lot-less `transfer_out` row 'reprice:<lotId>:…' while travelling).
+  No posting otherwise (same 12x0). In transit is off the lots but in the
+  company valuation (`lotValuation` adds `inTransitByClass`). Two companies:
+  422 `TRANSFER_CROSS_COMPANY`. Inter-company supply is a later build.
+- **Prep as stock** (`modules/inventory/prepItems.ts`): a prep (component)
+  recipe gets ONE stock item (`InventoryItem.kind 'prep'`, `prepRecipeId`
+  @unique, unit = `Recipe.yieldUnit` g / ml / pcs — locked once the item exists,
+  409 `PREP_UNIT_LOCKED`), created on approval, on its first batch and at boot
+  for every production prep. A recipe batch (`POST /prep-batches` with
+  `recipeId`, `batches`) draws its recipe × batches FIFO at the site
+  (`prep_draw`, source `prep_batch.input` — never cost of sales; 409
+  `INSUFFICIENT_STOCK` lists every short item in `details.short`) and adds ONE
+  lot of the prep item at the ACTUAL yield valued at exactly the value drawn
+  (`prep_make`, lot source `prep_batch`); inputs of another cost class move by
+  `postItemReclassTx`. Ad-hoc batches are unchanged (`inventory.prep_draw`).
+  The sale explosion (`recipeCost.ts consumptionPerLine`, `prepStockAt` = the
+  cooking site from `stockSiteOf`) draws the prep item in its own unit (no
+  yield gross-up), never its raw ingredients — PER SITE: only where that site
+  has ever held a lot of it (`livePrepItems`); any other site, another
+  company's prep, or a prep with no item still explodes raw (pre-cut-over paths
+  pass nothing = raw; company readers 'any'). Issued-on-receipt items are never
+  drawn by a batch. Prep items never appear in the unused-ingredient clean-up.
+  Costing and `explodeRecipe` (par sheet, prep list) stay raw.
+- **Units:** `InventoryItem.purchaseUnit` + `purchaseUnitFactor`: a no-PO dock
+  line typed in the purchase unit lands as qty × factor, valued exactly at the
+  typed cost × purchase units (`receiveGoodsTx`). PO and bill lines stay in stock units (not built).
+- **Counts:** `InventoryItem.countFrequency` daily | weekly;
+  `GET /physical-counts/due?locationId=` (daily not counted today, weekly not
+  counted since Monday PKT, at that site); a count's book is the SITE's. Whoever
+  raised or approved a PO of the item in the last 14 days cannot count it at
+  that site (403 `COUNTER_ORDERS_ITEM`; a PO's site = where it was received,
+  every site until then; the CEO is exempt).
+- **Weekly variance** = `reports/foodCost.ts weeklyVariance` on
+  `ingredientVariance` (now with made / transfers in / out):
+  `GET /reports/food-cost/variance?weekOf&locationId|tenantId&format=` — per
+  tracked item (issue-on-receipt left out), actual (opening + received + made +
+  transfers in − out − closing) vs recipe, explained (waste, staff meals,
+  comps, prep, supplier returns), gap qty + PKR, worst first; the company view
+  adds each site's totals; its totals count raw drawn into prep items once
+  (`prepToStock`), and `counted` is per site. Admin: food cost page → "Weekly
+  variance".
+- `GET /inventory/negative?locationId=` (open sale shortfalls per site, by the
+  settle's own rule `deadShortfallSaleIdsTx`; the nightly flag stays) and `GET /inventory/by-site`; the inventory list carries
+  `bySite`.
+- **Recipe gate:** a dish is switched ON only with a production recipe — 422
+  `RECIPE_NOT_APPROVED` on `PATCH /menu/items/:id(/availability)` false → true;
+  `POST /menu/items` and the brand template always create it off (asking for
+  live is 422). Only dishes LIVE at go-live without an approved recipe
+  (`MenuItem.liveAtRecipeGate`, set once by the migration) may come back on
+  after an 86; dishes on sale with no approved recipe are listed by
+  `GET /menu/items/live-without-recipe` (recipes page). The auto-86 still reads the COMPANY total (the menu switch is
+  one for every outlet).
+- Migration `20261024140000_stock_by_site`; tests `tests/stockBySite.test.ts`,
+  `tests/prepAsStock.test.ts`.
+
 ### Practice copy (owner, 2026-10-14)
 
 - A separate servd where staff try anything, on a COPY of real data: admin

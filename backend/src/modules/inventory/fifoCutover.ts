@@ -198,7 +198,7 @@ export async function ensureFifoCutover(tenantId: string): Promise<{ ran: boolea
       await addLotTx(tx, {
         tenantId, inventoryItemId: it.id, qty: stock, unitCostCents: cost,
         kind: 'fifo_cutover', lotSourceType: 'fifo_cutover', lotSourceId: tenantId,
-        movementSourceType: 'fifo_cutover', movementSourceId: tenantId, receivedAt: at,
+        movementSourceType: 'fifo_cutover', movementSourceId: tenantId, receivedAt: at, locationId: null,
       })
       lotByClass[costClassOf(it.category)] += Math.round(stock * cost)
     }

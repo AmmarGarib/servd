@@ -164,7 +164,8 @@ beforeAll(async () => {
     const id = (await prisma.menuItem.create({ data: { conceptId: conceptA, categoryId: cat, name, priceCents: 50_000, stationId } })).id
     await prisma.recipe.create({
       data: {
-        kind: 'plate', menuItemId: id, laborMinutes: labor, servings: 1,
+        // Approved (production): a live dish is switched back on only with an approved recipe (recipe gate, 2026-10-24).
+        kind: 'plate', menuItemId: id, laborMinutes: labor, servings: 1, status: 'production',
         ingredients: { create: ingredients.map((inventoryItemId) => ({ inventoryItemId, quantity: 1, yieldPct: 1, unit: 'pcs' })) },
       },
     })

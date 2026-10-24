@@ -4,7 +4,8 @@
 //
 // This is the ONE place prep is recorded (owner decision 29): the batch
 // deducts its ingredients, records the yield and feeds "made today" on the par
-// sheet. Pick the sub-recipe from the recipe library (the par sheet's list for
+// sheet. A library sub-recipe's batch also puts the prep into stock (prep as
+// stock, owner 2026-10-24): one lot at the actual yield, at what was drawn. Pick the sub-recipe from the recipe library (the par sheet's list for
 // your company); its ingredients and expected yield are filled in for you, in
 // each ingredient's own stock unit, so a 200 g draw from a kg item deducts
 // 0.2 kg — not 200 kg.
@@ -34,6 +35,8 @@ interface OutletLite { id: string; name: string; isActive?: boolean }
 interface BatchResult { id: string; uploadError?: string | null; ledger?: { posted: boolean; reason?: string; error?: string } | null }
 interface PrepOption {
   id: string; name: string; yieldGrams: number | null
+  /** The unit the yield is counted in (g / ml / pcs) — the prep stock item's unit. */
+  yieldUnit?: string
   inputs: Array<{ inventoryItemId: string | null; name: string; unit: string; qtyDrawn: number; missing: boolean }>
   subPreps: Array<{ id: string; name: string | null; grams: number }>
 }
@@ -126,9 +129,11 @@ export default function PrepBatchPage() {
       recipeId: adHoc || !recipeId ? null : recipeId,
       locationId: locationId || null,
       itemName, inputs,
+      // A recipe batch (prep as stock, 2026-10-24) draws its recipe × batches and adds the prep item at the actual yield.
+      ...(!adHoc && recipeId ? { batches: multiplier } : {}),
       expectedYieldQty: expectedYieldQty === '' ? null : expectedYieldQty,
       actualYieldQty: actualYieldQty === '' ? 0 : actualYieldQty,
-      unit: 'g',
+      unit: !adHoc && prep?.yieldUnit ? prep.yieldUnit : 'g',
       notes: notes || null,
       })
       // The batch is saved; a failed upload never undoes it.
@@ -152,7 +157,7 @@ export default function PrepBatchPage() {
         ? { tone: 'bad', text: `Batch saved and stock drawn, but its books entry did not post: ${ledger.reason ?? ledger.error ?? 'the ledger refused it'}. Finance can re-post it from Reconciliation → Backfill unposted.` }
         : yieldPct != null && yieldPct < 0.85
           ? { tone: 'warn', text: 'Batch saved — low yield flagged.' }
-          : { tone: 'ok', text: adHoc ? 'Batch logged. The ingredients were drawn from stock at the price paid.' : 'Batch logged.' })
+          : { tone: 'ok', text: adHoc ? 'Batch logged. The ingredients were drawn from stock at the price paid.' : 'Batch logged. Its ingredients left stock and the prep is now in stock at what they cost.' })
       setRecipeId(''); setMultiplier(1); setTried(false)
       setItemName(''); setInputs([]); setExpectedYieldQty(''); setActualYieldQty(''); setPhotos([]); setNotes('')
       if ((!ledger || ledger.posted) && !res?.uploadError) setTimeout(() => setFeedback(null), 6000)
@@ -236,7 +241,7 @@ export default function PrepBatchPage() {
               </Field>
               <p className="text-xs text-s-muted">
                 A batch that is not in the recipe library draws its ingredients from stock at the price paid (oldest stock first), and books that cost to cost of sales.
-                A batch of a library sub-recipe only records the yield — the ingredients come off stock when the dishes using it sell.
+                A batch of a library sub-recipe takes its recipe's ingredients off stock and puts the prep itself into stock at the yield you weigh — dishes then draw the prep, never its ingredients again.
               </p>
             </div>
           )}

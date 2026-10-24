@@ -108,6 +108,8 @@ const recipeShape = {
   modifierId:   z.string().uuid().optional(),
   name:         z.string().min(1).optional(),
   yieldGrams:   z.number().positive().nullable().optional(),  // component batch yield OR plate total yield (g)
+  // A prep recipe's yield unit (owner 2026-10-24, D3): grams (default), millilitres or pieces — its prep item's unit.
+  yieldUnit:    z.enum(['g', 'ml', 'pcs']).optional(),
   servings:     z.number().int().min(1).default(1),
   portionSizeG: z.number().positive().optional(),
   laborMinutes: z.number().int().min(0).default(0),
@@ -1808,6 +1810,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
               : body.kind === 'modifier' ? (body.name?.trim() || modifierName)
               : body.name,
             yieldGrams:   body.yieldGrams ?? null,  // total recipe yield (g) — batch yield for components, cooked total for plates
+            ...(body.yieldUnit !== undefined && { yieldUnit: body.yieldUnit }),
             servings:     body.servings,
             portionSizeG: body.portionSizeG,
             laborMinutes: body.laborMinutes,
@@ -1859,6 +1862,13 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = recipeUpdateSchema.parse(req.body)
       const owned = await assertRecipeInScope(req, req.params.id)
+      // Prep as stock (2026-10-24): once a prep recipe has its stock item, its yield unit is that item's unit — fixed.
+      if (body.yieldUnit !== undefined) {
+        const cur = await prisma.recipe.findUnique({ where: { id: req.params.id }, select: { yieldUnit: true, prepItem: { select: { id: true } } } })
+        if (cur?.prepItem && cur.yieldUnit !== body.yieldUnit) {
+          throw new AppError('PREP_UNIT_LOCKED', 'This prep is already kept in stock in its yield unit — its unit can no longer change', 409)
+        }
+      }
       // Through a head-office lens (A6): only a recipe you created, while it
       // is in iteration, and never the live menu price of a linked dish.
       const lens = await lensCompanyOf(req, owned)
@@ -1887,6 +1897,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           data: {
             ...(body.name         !== undefined && { name: body.name }),
             ...(body.yieldGrams   !== undefined && { yieldGrams: body.yieldGrams }),
+            ...(body.yieldUnit    !== undefined && { yieldUnit: body.yieldUnit }),
             ...(body.servings     != null && { servings: body.servings }),
             ...(body.portionSizeG != null && { portionSizeG: body.portionSizeG }),
             ...(body.laborMinutes != null && { laborMinutes: body.laborMinutes }),
@@ -2102,6 +2113,11 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         return tx.recipe.findUniqueOrThrow({ where: { id: req.params.id } })
       })
       await auditApproval(req, { type: RECIPE_TYPE, id: req.params.id, tenantId: subj.ownerTenantId, decision: 'approve', grant, entity: 'Recipe', metadata: { companies: subj.companyIds } })
+      // Prep as stock (owner, 2026-10-24, D3): an approved prep recipe gets its prep stock item (never fails the approval).
+      if (recipe.kind === 'component') {
+        const { prepItemOnApproval } = await import('../inventory/prepItems.js')
+        await prepItemOnApproval(req.params.id, subj.companyIds)
+      }
       return { ...approved, warnings: saveWarnings([], owned.kind, owned.serviceVessel, owned.lines) }
     },
   )

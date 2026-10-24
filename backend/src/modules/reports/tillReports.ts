@@ -839,7 +839,7 @@ async function stockItems(input: TillReportInput) {
     orderBy: { name: 'asc' },
   })
 }
-const STOCK_NOTE = 'Stock is the company pool of the selected brands’ companies: FIFO lots are company-wide today (per-outlet pools are the next build), so a per-outlet cut would not add up.'
+const STOCK_NOTE = 'Stock is the company total of the selected brands’ companies (every outlet’s lots together; the food-cost report’s weekly variance shows one outlet).'
 
 async function stockLedger(input: TillReportInput, notes: string[]): Promise<TillSection[]> {
   const items = await stockItems(input)

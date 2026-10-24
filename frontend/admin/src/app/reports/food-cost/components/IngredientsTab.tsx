@@ -19,7 +19,7 @@ const KIND_LABEL: Record<string, string> = {
   receipt: 'Received', opening: 'Opening', fifo_cutover: 'Cut-over lot', count_gain: 'Count over', count_loss: 'Count short', sale: 'Sold',
   sale_return: 'Given back', sale_void: 'Voided (to waste)', waste: 'Waste', prep_draw: 'Prep', supplier_return: 'Returned to supplier',
   cost_adjust: 'Price adjustment', class_reclass: 'Class change', legacy_return: 'Given back (pre-FIFO)', issue_on_receipt: 'Issued on receipt',
-  shortfall_settle: 'Late delivery settled',
+  shortfall_settle: 'Late delivery settled', transfer_out: 'Sent to another outlet', transfer_in: 'Arrived from another outlet', prep_make: 'Prep made',
 }
 
 function Cell({ v, unit }: { v: { qty: number; cents: number }; unit: string }) {

@@ -119,6 +119,8 @@ export interface RecipeFormInitial {
   menuItemId: string | null
   servings: number
   yieldGrams: number | null
+  /** A prep's yield unit (g / ml / pcs) — its prep stock item's unit (2026-10-24). */
+  yieldUnit?: 'g' | 'ml' | 'pcs'
   category: Category | null
   photoUrl: string | null
   steps: string | null
@@ -238,6 +240,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
   const [newItemCategoryId, setNewItemCategoryId]     = useState(initial?.pendingMenuItem?.categoryId ?? prefillCategoryId ?? '')
   const [portions, setPortions]         = useState<number | null>(initial?.servings ?? 1)
   const [yieldGrams, setYieldGrams]     = useState<number | null>(initial?.yieldGrams ?? null)
+  const [yieldUnit, setYieldUnit]       = useState<'g' | 'ml' | 'pcs'>(initial?.yieldUnit ?? 'g')
   // Sub-recipe MOP (free text). Plates use `methodSteps` instead.
   const [method, setMethod]             = useState(initial?.steps ?? '')
   // Finished-plate station-tagged method steps.
@@ -457,6 +460,8 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
         // weight for plates. Optional for plates, required (>0) for components,
         // none for an add-on (costed per unit).
         yieldGrams: kind === 'modifier' ? null : (yieldGrams ?? (kind === 'component' ? 0 : null)),
+        // A prep counts its yield in grams, millilitres or pieces (a bun batch makes 24 pcs) — its stock item's unit.
+        ...(kind === 'component' ? { yieldUnit } : {}),
         servings: kind === 'modifier' ? 1 : (portions ?? 1),
         // Recipe-type tag is derived from the picker (no duplicate field): a
         // finished plate is a "main"; a sub-recipe is a "sub_recipe".
@@ -799,9 +804,18 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                   </Field>
                 </>
               ) : kind === 'component' ? (
-                <Field label="Batch yield (grams)">
-                  <NumInput value={yieldGrams} onChange={setYieldGrams} placeholder="e.g. 500" className={inputCls}/>
-                </Field>
+                <>
+                  <Field label={`Batch yield (${yieldUnit === 'pcs' ? 'pieces' : yieldUnit === 'ml' ? 'millilitres' : 'grams'})`}>
+                    <NumInput value={yieldGrams} onChange={setYieldGrams} placeholder="e.g. 500" className={inputCls}/>
+                  </Field>
+                  <Field label="Yield counted in" hint="The prep is kept in stock in this unit; it cannot change once the prep is in stock">
+                    <Select value={yieldUnit} onChange={(e) => setYieldUnit(e.target.value as 'g' | 'ml' | 'pcs')} className={inputCls}>
+                      <option value="g">Grams</option>
+                      <option value="ml">Millilitres</option>
+                      <option value="pcs">Pieces</option>
+                    </Select>
+                  </Field>
+                </>
               ) : null}
             </div>
           </Section>

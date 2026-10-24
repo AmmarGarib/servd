@@ -70,8 +70,9 @@ import { withSavepoint } from '../../lib/savepoint.js'
 import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
 import { consumptionPerLine, type ExcludedItem, type NeedRow, type SoldLine } from '../../lib/recipeCost.js'
 import {
-  addLotTx, consumeFifoTx, ensureFifoReady, lockItemsTx, readFifoCutoverAt, returnToLotsTx, STOCK_EPS, STOCK_SOURCE,
+  addLotTx, consumeFifoTx, ensureFifoReady, lockItemsTx, readFifoCutoverAt, returnToLotsTx, siteOnHandMany, STOCK_EPS, STOCK_SOURCE,
 } from '../../lib/stockLedger.js'
+import { stockSiteOf } from '../../lib/stockSite.js'
 import { lineNetOutRowsTx, wasteSoldLineTx, VOID_WASTE_SOURCE, type SoldLineWasteResult } from '../inventory/voidWaste.js'
 import { orderCostBookedAt } from '../accounting/cogs.js'
 import { postJournalEntry, withLateNote, type JournalLineInput, type RepostOptions } from '../accounting/journal.js'
@@ -327,7 +328,10 @@ async function depleteLinesTx(tx: Tx, tenantId: string, orderId: string, onlyLin
         items: { select: ORDER_LINE_SELECT, orderBy: { id: 'asc' }, ...(onlyLineIds && { where: { id: { in: onlyLineIds } } }) },
       },
     })
-    const opts = { tenantId, fulfilmentType: order.fulfilmentType, serviceVessel: order.concept.serviceVessel }
+    // Per-site stock (2026-10-24): the site that cooks the order (lib/stockSite.ts — the one rule); its live prep items
+    // are drawn as stock, every other sub-recipe explodes raw.
+    const site = await stockSiteOf(tx, { orderLocationId: order.locationId, conceptId: order.conceptId, tenantId })
+    const opts = { tenantId, fulfilmentType: order.fulfilmentType, serviceVessel: order.concept.serviceVessel, prepStockAt: { siteId: site } }
     // Box-given packaging is drawn under its own key (so an undo can give it back): the sale itself is costed as if not boxed.
     const per = await consumptionPerLine(order.items.map((l) => soldLine(l, { boxGiven: false })), tx, opts)
     const plans: Array<{ line: OrderLine; sale: Map<string, NeedRow>; box: Map<string, NeedRow> }> = []
@@ -353,7 +357,7 @@ async function depleteLinesTx(tx: Tx, tenantId: string, orderId: string, onlyLin
       for (const [itemId, need, sourceType, sourceId] of draws) {
         const r = await consumeFifoTx(tx, {
           tenantId, inventoryItemId: itemId, qty: need.qty, kind: 'sale', sourceType, sourceId, clamp: true,
-          orderId, orderItemId: p.line.id, conceptId: order.conceptId, locationId: order.locationId,
+          orderId, orderItemId: p.line.id, conceptId: order.conceptId, locationId: site,
           theoreticalQty: need.qty, occurredAt,
         })
         if (r.takenQty > 0) {
@@ -370,7 +374,9 @@ async function depleteLinesTx(tx: Tx, tenantId: string, orderId: string, onlyLin
     }
     // Ingredients THIS sale ran out: it took stock and left none. Only these
     // may auto-86 (R2) — an item already at zero (never counted in) is not
-    // "this sale ran out".
+    // "this sale ran out". The menu's availability is one switch for every
+    // outlet, so an item is "out" only when the COMPANY has none left (a
+    // site running dry while another holds stock is a transfer, not an 86).
     const after = touched.size === 0 ? [] : await tx.inventoryItem.findMany({ where: { id: { in: [...touched] } }, select: { id: true, currentStock: true } })
     const ranOut = after.filter((i) => i.currentStock <= STOCK_EPS).map((i) => i.id)
     // A depletion that runs AFTER the order's cost was booked (a failed one
@@ -910,7 +916,7 @@ async function legacyGiveBackTx(tx: Tx, tenantId: string, cutOver: boolean, item
   if (!item || item.tenantId !== tenantId) return   // never return into another company's (or a company-less) item
   await addLotTx(tx, {
     tenantId, inventoryItemId: itemId, qty, unitCostCents: Math.max(0, Math.round(item.unitCostCents ?? 0)),
-    kind: 'legacy_return', lotSourceType: 'legacy_return', lotSourceId: key,
+    kind: 'legacy_return', lotSourceType: 'legacy_return', lotSourceId: key, locationId: null,   // pre-cut-over stock: the stock home
     movementSourceType: ORDER_STOCK_SOURCE.legacy, movementSourceId: key, receivedAt: new Date(), createdById: actorId,
   })
 }
@@ -1080,8 +1086,9 @@ export async function markBoxGiven(
       where: { id: line.orderId },
       select: { conceptId: true, locationId: true, fulfilmentType: true, concept: { select: { serviceVessel: true } } },
     })
+    const site = await stockSiteOf(tx, { orderLocationId: order.locationId, conceptId: order.conceptId, tenantId })
     const [per] = await consumptionPerLine([soldLine(cur, { boxGiven: false })], tx, {
-      tenantId, fulfilmentType: order.fulfilmentType, serviceVessel: order.concept.serviceVessel,
+      tenantId, fulfilmentType: order.fulfilmentType, serviceVessel: order.concept.serviceVessel, prepStockAt: { siteId: site },
     })
     const pack = per?.packaging ?? new Map<string, NeedRow>()
     await lockItemsTx(tx, [...pack.keys()])
@@ -1089,7 +1096,7 @@ export async function markBoxGiven(
     for (const [itemId, need] of [...pack].sort(([x], [y]) => x.localeCompare(y))) {
       const r = await consumeFifoTx(tx, {
         tenantId, inventoryItemId: itemId, qty: need.qty, kind: 'sale', sourceType: ORDER_STOCK_SOURCE.boxGiven, sourceId: boxKey(cur.id, at),
-        clamp: true, orderId: line.orderId, orderItemId, conceptId: order.conceptId, locationId: order.locationId,
+        clamp: true, orderId: line.orderId, orderItemId, conceptId: order.conceptId, locationId: site,
         theoreticalQty: need.qty, occurredAt: at, createdById: actor.id,
       })
       if (r.rows.length > 0) took = true
@@ -1145,14 +1152,16 @@ export async function bookRemakeWaste(orderItemId: string, actorId: string | nul
   const { postInventoryDocInSavepoint } = await import('../accounting/inventoryPosting.js')
   const res = await prisma.$transaction(async (tx) => {
     // The cooked food only: as a dine-in plate, never boxed.
+    const site = await stockSiteOf(tx, { orderLocationId: line.order.locationId, conceptId: line.order.conceptId, tenantId })
     const [per] = await consumptionPerLine([{ ...soldLine(line, { boxGiven: false }), status: 'pending', serviceVessel: 'plate' }], tx, {
-      tenantId, fulfilmentType: 'dine_in', serviceVessel: 'plate',
+      tenantId, fulfilmentType: 'dine_in', serviceVessel: 'plate', prepStockAt: { siteId: site },
     })
     const need = per?.need ?? new Map<string, NeedRow>()
     const ids = [...need.keys()].sort()
     await lockItemsTx(tx, ids)
     const items = await tx.inventoryItem.findMany({ where: { id: { in: ids } }, select: { id: true, unit: true, currentStock: true } })
-    const byId = new Map(items.map((i) => [i.id, i]))
+    const onHere = await siteOnHandMany(tx, ids, site)
+    const byId = new Map(items.map((i) => [i.id, { ...i, currentStock: onHere.get(i.id) ?? 0 }]))
     const at = new Date()
     const wasteLogIds: string[] = []
     const failures: Array<Awaited<ReturnType<typeof postInventoryDocInSavepoint>>['failure']> = []
@@ -1166,7 +1175,7 @@ export async function bookRemakeWaste(orderItemId: string, actorId: string | nul
       const short = want - qty > STOCK_EPS ? ` — ${String(Math.round((want - qty) * 1000) / 1000)} ${item.unit} more was needed than the lots hold` : ''
       const log = await tx.wasteLog.create({
         data: {
-          tenantId, conceptId: line.order.conceptId, locationId: line.order.locationId, orderItemId,
+          tenantId, conceptId: line.order.conceptId, locationId: site, orderItemId,
           inventoryItemId: id, quantity: qty, unit: item.unit, reason: 'remake', recordedById: actorId,
           notes: `KDS remake: ${line.quantity} × ${line.name} cooked again (order ${line.orderId}, line ${orderItemId})${short}`.slice(0, 1000),
         },
@@ -1174,7 +1183,7 @@ export async function bookRemakeWaste(orderItemId: string, actorId: string | nul
       })
       const r = await consumeFifoTx(tx, {
         tenantId, inventoryItemId: id, qty, kind: 'waste', sourceType: STOCK_SOURCE.wasteLog, sourceId: log.id, clamp: false,
-        orderId: line.orderId, orderItemId, conceptId: line.order.conceptId, locationId: line.order.locationId, occurredAt: at, createdById: actorId,
+        orderId: line.orderId, orderItemId, conceptId: line.order.conceptId, locationId: site, occurredAt: at, createdById: actorId,
       })
       await tx.wasteLog.update({ where: { id: log.id }, data: { estimatedCostCents: r.valueCents } })
       const post = await postInventoryDocInSavepoint(tx, 'inventory.waste', log.id, { tenantId, actorId, conceptId: line.order.conceptId, amountCents: r.valueCents })

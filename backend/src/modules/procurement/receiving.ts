@@ -17,6 +17,8 @@
 //     line's still-unbilled quantity. addLotTx records the purchase price
 //     (ItemPriceHistory), settles recent sale shortfalls and issues
 //     issue-on-receipt items;
+//   - a line without a PO typed in the item's purchase unit (InventoryItem.purchaseUnit, e.g. "case") becomes
+//     quantity × purchaseUnitFactor stock units at unit cost ÷ factor (owner 2026-10-24); PO lines stay in stock units;
 //   - against a PO: raises PurchaseOrderLine.quantityReceived;
 //   - posts 'procurement.receipt:<receiptId>' Dr 12x0 per class / Cr 2015
 //     (accounting/inventoryPosting.ts postGoodsReceiptTx) — a pending-bill
@@ -192,7 +194,7 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
   const itemIds = [...new Set(input.lines.map((l) => l.inventoryItemId))]
   const items = await tx.inventoryItem.findMany({
     where: { id: { in: itemIds } },
-    select: { id: true, name: true, unit: true, tenantId: true, category: true },
+    select: { id: true, name: true, unit: true, tenantId: true, category: true, purchaseUnit: true, purchaseUnitFactor: true },
   })
   const itemById = new Map(items.map((i) => [i.id, i]))
   for (const id of itemIds) {
@@ -222,8 +224,17 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
     }
     // Quantities are held in the item's purchase unit.
     let qty = l.receivedQty
+    let exactValue: number | null = null
     let unitCost: number | null = poLine ? poLine.unitCostCents : (l.unitCostCents ?? null)
-    if (!poLine && l.unit && l.unit !== item.unit) {
+    const norm = (u: string | null | undefined) => (u ?? '').trim().toLowerCase()
+    if (!poLine && l.unit && item.purchaseUnit && norm(l.unit) === norm(item.purchaseUnit) && norm(l.unit) !== norm(item.unit)) {
+      // Typed in the item's PURCHASE unit (owner 2026-10-24: "units"): qty × factor stock units, cost ÷ factor.
+      const f = item.purchaseUnitFactor > 0 ? item.purchaseUnitFactor : 1
+      qty = l.receivedQty * f
+      // The lot is worth exactly what was typed (cost per purchase unit × purchase units), never the rounded unit cost × qty.
+      if (unitCost != null && l.valueCents == null) exactValue = Math.round(unitCost * l.receivedQty)
+      if (unitCost != null) unitCost = Math.round(unitCost / f)
+    } else if (!poLine && l.unit && l.unit !== item.unit) {
       const pu = toPurchaseUnits(l.receivedQty, l.unit, item.unit)
       if (pu == null) throw new AppError('UNIT_MISMATCH', `${item.name} is counted in ${item.unit} — ${l.unit} cannot be converted to it`, 422)
       if (unitCost != null && pu > EPS) unitCost = Math.round((unitCost * l.receivedQty) / pu)
@@ -241,7 +252,8 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
       assertInt4Fits(unitCost, `${item.name}'s unit cost`)
       assertMoneyFits(Math.round(unitCost * qty), `${item.name} (quantity × unit cost)`)
     }
-    return { line: l, item, qty, unitCost, poLine }
+    if (exactValue != null) assertMoneyFits(exactValue, `${item.name}'s value`)
+    return { line: exactValue != null ? { ...l, valueCents: exactValue } : l, item, qty, unitCost, poLine }
   })
 
   // Every item's row, locked in id order, before the first lot is written.
@@ -381,6 +393,8 @@ export interface ReceiveGoodsLine {
   unitCostCents?:     number | null
   discrepancyReason?: DiscrepancyReason | null
   notes?:             string | null
+  /** No-PO lines: the unit typed — the item's purchase unit (e.g. "case") converts at the dock (quantity × factor). */
+  unit?:              string | null
 }
 
 export interface ReceiveGoodsRequest {
@@ -501,7 +515,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
     if (ids.length !== input.lines.length) throw new AppError('ITEM_REQUIRED', 'Every line needs an inventory item', 400)
     const items = await prisma.inventoryItem.findMany({
       where:  { id: { in: ids }, deletedAt: null },
-      select: { id: true, name: true, unit: true, tenantId: true },
+      select: { id: true, name: true, unit: true, tenantId: true, purchaseUnit: true },
     })
     for (const l of input.lines) {
       const it = items.find((x) => x.id === l.inventoryItemId)
@@ -520,7 +534,9 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
       assertInt4Fits(l.unitCostCents, `${it.name}'s unit cost`)
       assertMoneyFits(Math.round(l.unitCostCents * l.quantityReceived), `${it.name} (quantity × unit cost)`)
       prepared.push({
-        poLineId: null, inventoryItemId: it.id, description: it.name, unit: it.unit,
+        poLineId: null, inventoryItemId: it.id, description: it.name,
+        // Typed in the item's purchase unit (owner 2026-10-24): receiveGoodsTx converts it to stock units.
+        unit: l.unit && it.purchaseUnit && l.unit.trim().toLowerCase() === it.purchaseUnit.trim().toLowerCase() ? it.purchaseUnit : it.unit,
         expectedQty: null, orderedQty: null, alreadyReceived: 0,
         quantityReceived: l.quantityReceived, unitCostCents: l.unitCostCents,
         discrepancyReason: l.discrepancyReason ?? null, notes: l.notes ?? null, variancePct: null,

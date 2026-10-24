@@ -9,13 +9,14 @@ import { belowParWhere, isBelowPar } from '../../lib/recipeCost.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { INVENTORY_CATEGORIES, costClassOf, COST_CLASSES } from '../../lib/inventoryClass.js'
 import { assertInt4Fits, sumCents, zInt4Cents } from '../../lib/money.js'
+import { stockSiteForDocument } from '../../lib/stockSite.js'
 import { consumeFifoTx, ensureFifoReady, lockItemsTx, reclassItemLotsTx, STOCK_SOURCE } from '../../lib/stockLedger.js'
 import { postInventoryDocInSavepoint, postItemReclassTx, WASTE_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
 import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js'
-import { assertLocationOfCompany } from '../financePlanning/companyRefs.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { audit } from '../../lib/audit.js'
 import { unusedCleanupRoutes } from './unusedCleanup.js'
+import { siteStockRoutes } from './siteStock.js'
 
 // ─── One ingredient master, per company (owner decision 30, 2026-09-27) ──────
 //
@@ -216,7 +217,7 @@ const wasteSchema = z.object({
   // The brand charged (one of the item's company's, through the active
   // company). Without it the cost is split by each brand's recipe use (H20).
   conceptId: z.string().uuid().nullable().optional(),
-  // The outlet (one of the item's company's). Per-outlet stock is the next build.
+  // The outlet whose stock is wasted (one of the item's company's; required when it has 2+ outlets — stock by site, 2026-10-24).
   locationId: z.string().uuid().nullable().optional(),
 })
 
@@ -233,6 +234,11 @@ const createItemSchema = z.object({
   yieldPct: z.number().min(0).max(100).optional(),
   supplierId: z.string().uuid().nullable().optional(),
   notes: z.string().nullable().optional(),
+  // Units (2026-10-24): the unit it is bought in and how many stock units one holds (the dock converts).
+  purchaseUnit: z.string().trim().max(30).nullable().optional(),
+  purchaseUnitFactor: z.number().positive().max(1_000_000).optional(),
+  // Count schedule (2026-10-24): daily items appear on the count list every day, weekly ones on Mondays.
+  countFrequency: z.enum(['daily', 'weekly']).optional(),
   // Company the item belongs to. Optional — falls back to the operator's
   // active company. In portfolio view the frontend renders a Company picker
   // and posts the choice; it must be a company the operator belongs to.
@@ -256,6 +262,11 @@ const updateItemSchema = z.object({
   parLevel: z.number().min(0).optional(),
   yieldPct: z.number().min(0).max(100).optional(),
   supplierId: z.string().uuid().nullable().optional(),
+  // Units (2026-10-24): the unit it is bought in and how many stock units one holds (the dock converts).
+  purchaseUnit: z.string().trim().max(30).nullable().optional(),
+  purchaseUnitFactor: z.number().positive().max(1_000_000).optional(),
+  // Count schedule (2026-10-24): daily items appear on the count list every day, weekly ones on Mondays.
+  countFrequency: z.enum(['daily', 'weekly']).optional(),
   tenantId: z.string().min(1).optional(),
 })
 
@@ -287,9 +298,14 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
           VALUE_VIEWERS.has(req.staffUser!.role) ? onHandValueByItem(ids) : Promise.resolve(new Map<string, number>()),
         ])
     const showValue = !hide && VALUE_VIEWERS.has(req.staffUser!.role)
+    // Per-site stock (2026-10-24): on hand at each outlet (currentStock stays the company total).
+    const balances = ids.length === 0 ? [] : await prisma.stockBalance.findMany({ where: { inventoryItemId: { in: ids } }, select: { inventoryItemId: true, locationId: true, qty: true } })
+    const bySite = new Map<string, Array<{ locationId: string; qty: number }>>()
+    for (const b of balances) bySite.set(b.inventoryItemId, [...(bySite.get(b.inventoryItemId) ?? []), { locationId: b.locationId, qty: Math.round(b.qty * 1000) / 1000 }])
     return items.map((item) => {
       const row = {
         ...item,
+        bySite: bySite.get(item.id) ?? [],
         // 'deliveries' = the cost comes from FIFO lots / what deliveries cost;
         // 'opening' = a typed estimate for an item with neither.
         costSource: delivered.has(item.id) || withLots.has(item.id) ? 'deliveries' as const : 'opening' as const,
@@ -792,8 +808,9 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         }
         conceptId = c.id
       }
-      const locationId = body.locationId ?? null
-      if (locationId) await assertLocationOfCompany(tenantId, locationId)
+      // Per-site stock (2026-10-24): the waste leaves ONE site's lots (422 LOCATION_REQUIRED when the company has
+      // two or more outlets and none is named).
+      const locationId = await stockSiteForDocument(prisma, tenantId, body.locationId)
 
       // Photo enforcement — above the threshold a photo is REQUIRED. Inflated
       // waste logs are a classic theft cover-up; making the photo mandatory
@@ -858,4 +875,6 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
 
   // CEO: move every ingredient that is in no recipe to the Trash (unusedCleanup.ts).
   await fastify.register(unusedCleanupRoutes)
+  // Stock by site (2026-10-24): the open sale shortfalls per site and on hand per site (siteStock.ts).
+  await fastify.register(siteStockRoutes, { readers: STOCK_READERS, hideCosts: costsHiddenFor })
 }

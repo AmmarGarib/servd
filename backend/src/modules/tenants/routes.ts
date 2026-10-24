@@ -414,6 +414,8 @@ async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug
     // Food cost on FIFO lots: the lots and their movements, GRNI matches, and
     // the stock documents' own company columns.
     tx.stockLot, tx.stockMovement, tx.grniMatch, tx.goodsReceipt, tx.wasteLog, tx.physicalCount, tx.prepBatch,
+    // Stock by site (2026-10-24): the per-site on-hand cache follows its items (unique per item + site, no company).
+    tx.stockBalance,
     // Card payouts (H12).
     tx.cardSettlement, tx.cardSettlementDay,
     // Receivables (the invoices the bad-debt write-offs belong to) and G12 write-offs + evidence.
@@ -1459,7 +1461,9 @@ export async function tenantRoutes(fastify: FastifyInstance) {
           const m = await tx.menuItem.create({
             data: {
               conceptId: c.id, categoryId: cat.id, name: it.name, nameUrdu: it.nameUrdu ?? null,
-              description: it.description ?? null, priceCents: it.priceCents, stationId: sid, isAvailable: true,
+              description: it.description ?? null, priceCents: it.priceCents, stationId: sid,
+              // The recipe gate (2026-10-24): a template dish is off until its recipe is approved.
+              isAvailable: false,
             },
           })
           if (it.recipe) {

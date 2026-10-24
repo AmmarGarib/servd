@@ -19,6 +19,7 @@ interface ExistingRecipe {
   modifierId: string | null
   servings: number
   yieldGrams: number | null
+  yieldUnit?: 'g' | 'ml' | 'pcs'
   portionSizeG: number | null
   category: string | null
   photoUrl: string | null
@@ -96,6 +97,7 @@ export default function EditRecipePage() {
     menuItemId: data.menuItemId,
     servings: data.servings,
     yieldGrams: data.yieldGrams,
+    yieldUnit: data.yieldUnit,
     category: (data.category as RecipeFormInitial['category']) ?? null,
     photoUrl: data.photoUrl,
     steps: data.steps,

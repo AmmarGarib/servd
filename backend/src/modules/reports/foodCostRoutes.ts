@@ -9,6 +9,9 @@
 //   GET  /ingredients/:inventoryItemId/movements?from&to
 //   GET  /valuation?tenantId&asOf                   lots vs 1210/1220/1230, reconciling items, 2015
 //   GET  /flags?tenantId                            read-only stock flags (acknowledge in /exceptions)
+//   GET  /variance?weekOf&tenantId&locationId&format   the WEEKLY variance (owner 2026-10-24): per tracked item, actual
+//                                                    usage vs recipe usage, the explained and the PKR gap — one site
+//                                                    or the company (+ each site's totals); ?format=csv|xlsx|pdf
 //   GET  /export.csv?view=summary|ingredients|valuation&…
 //   POST /align-inventory { tenantId, dryRun = true }   the CEO only (postFifoAlign)
 //
@@ -31,7 +34,7 @@ import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from '../accounting/
 import { exportFormatOf, fromMatrix, sendReportFor, type ReportColumnType } from '../../lib/reportExport.js'
 import { postFifoAlign } from '../accounting/inventoryPosting.js'
 import {
-  foodCostSummary, ingredientVariance, itemMovements, inventoryValuation, foodCostFlags,
+  foodCostSummary, ingredientVariance, itemMovements, inventoryValuation, foodCostFlags, weeklyVariance,
   WASTE_REASONS, WASTE_REASON_LABEL, type IngredientSort,
 } from './foodCost.js'
 
@@ -177,6 +180,31 @@ export default async function foodCostRoutes(fastify: FastifyInstance): Promise<
       return itemMovements(prisma, { tenantId: item.tenantId, inventoryItemId: req.params.inventoryItemId, from, to })
     },
   )
+
+  fastify.get<{ Querystring: { weekOf?: string; tenantId?: string; locationId?: string; format?: string } }>('/variance', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req, reply) => {
+    const weekOf = req.query.weekOf ?? fmtPktDate(new Date())
+    const tenantId = req.query.locationId ? await locationCompany(req, req.query.locationId) : await companyOf(req, req.query.tenantId)
+    if (req.query.tenantId && req.query.tenantId !== tenantId) throw new NotFoundError('Location', req.query.locationId ?? '')
+    const v = await weeklyVariance(prisma, { tenantId, weekOf, ...(req.query.locationId ? { locationId: req.query.locationId } : {}) })
+    // The company view also lists each site's totals ("per site and per company").
+    const sites = req.query.locationId ? [] : await Promise.all((await prisma.location.findMany({
+      where: { tenantId, deletedAt: null, slug: { not: `general-${tenantId}` } }, select: { id: true, name: true }, orderBy: { name: 'asc' },
+    })).map(async (l) => ({ locationId: l.id, name: l.name, totals: (await weeklyVariance(prisma, { tenantId, weekOf, locationId: l.id })).totals })))
+    const format = exportFormatOf(req.query.format)
+    if (!format) return { ...v, sites }
+    const loc = req.query.locationId ? await prisma.location.findUnique({ where: { id: req.query.locationId }, select: { name: true } }) : null
+    const head = ['Item', 'Class', 'Unit', 'Opening qty', 'Received qty', 'Transfers in qty', 'Transfers out qty', 'Closing qty', 'Actual qty',
+      'Recipe qty', 'Waste qty', 'Staff meals qty', 'Comps qty', 'Prep qty', 'Gap qty', 'Actual PKR', 'Recipe PKR', 'Explained PKR', 'Gap PKR', 'Counted']
+    const matrix = v.rows.map((r) => [r.name, r.classLabel, r.unit, r.opening.qty, r.received.qty, r.transfersIn.qty, r.transfersOut.qty, r.closing.qty,
+      r.actual.qty, r.recipe.qty, r.explained.waste.qty, r.explained.staffMeals.qty, r.explained.comps.qty, r.explained.prep.qty, r.gap.qty,
+      rs(r.actual.cents), rs(r.recipe.cents), rs(r.explained.total.cents), rs(r.gap.cents), r.counted ? 'yes' : 'no'])
+    const types: Array<ReportColumnType | undefined> = head.map((h, i) => (i < 3 || h === 'Counted' ? 'text' : /PKR/.test(h) ? 'pkr' : 'number'))
+    const m = fromMatrix(head, matrix, types)
+    return sendReportFor(req, reply, format, `food-cost-weekly-variance-${v.week.startDate}${loc ? `-${loc.name}` : ''}`, {
+      title: `Weekly variance${loc ? ` — ${loc.name}` : ''}`, period: `${v.week.startDate} to ${v.week.endDate}`, ...m,
+      csv: csv([head, ...matrix]),
+    })
+  })
 
   fastify.get<{ Querystring: { tenantId?: string; asOf?: string } }>('/valuation', { preHandler: requireAuth(...FINANCE_TEAM) }, async (req) => {
     const tenantId = await companyOf(req, req.query.tenantId)
