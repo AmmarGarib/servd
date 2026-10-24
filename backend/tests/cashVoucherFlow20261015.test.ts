@@ -88,7 +88,8 @@ type Row = {
 }
 
 async function raise(key: string, body: Record<string, unknown> = {}): Promise<Row> {
-  const r = await call(key, 'POST', V, { purpose: `Market run ${Math.random().toString(36).slice(2, 7)}`, categoryKey: 'transport', amountCents: 10_000, ...body })
+  // sendTo 'finance': these flows exercise the finance step (a finance raise otherwise goes straight to the CEO).
+  const r = await call(key, 'POST', V, { purpose: `Market run ${Math.random().toString(36).slice(2, 7)}`, categoryKey: 'transport', amountCents: 10_000, ...(body['kind'] === 'expense' ? {} : { sendTo: 'finance' }), ...body })
   expect(r.statusCode, r.body).toBe(201)
   return r.json() as Row
 }

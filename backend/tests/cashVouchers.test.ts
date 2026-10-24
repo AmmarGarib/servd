@@ -71,7 +71,8 @@ type Req = {
 }
 
 let n = 0
-const draft = (overrides: Record<string, unknown> = {}) => ({ purpose: `Site visit cash ${++n}`, categoryKey: 'transport', amountCents: 10_000, ...overrides })
+// sendTo 'finance': these flows exercise the finance step (a finance raise otherwise goes straight to the CEO, 2026-10-24).
+const draft = (overrides: Record<string, unknown> = {}) => ({ purpose: `Site visit cash ${++n}`, categoryKey: 'transport', amountCents: 10_000, sendTo: 'finance', ...overrides })
 async function raise(key: string, overrides: Record<string, unknown> = {}): Promise<Req> {
   const r = await call(key, 'POST', V, draft(overrides))
   expect(r.statusCode, r.body).toBe(201)

@@ -175,7 +175,7 @@ describe('#20 finance records cash received on the holder\'s behalf', () => {
 
   it('the raiser / holder can never record it for themselves', async () => {
     // finA raises a request for themselves: finA is raiser and holder.
-    const r = await call('finA', 'POST', V, { purpose: 'Own market run', categoryKey: 'transport', amountCents: 5_000 })
+    const r = await call('finA', 'POST', V, { purpose: 'Own market run', categoryKey: 'transport', amountCents: 5_000, sendTo: 'finance' })
     expect(r.statusCode, r.body).toBe(201)
     const v = r.json() as Row
     await ok('finA2', 'POST', `${V}/${v.id}/finance-approve`)
