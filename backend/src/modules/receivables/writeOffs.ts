@@ -71,7 +71,8 @@ import { decodeEvidenceFile, sendEvidence, EVIDENCE_MAX_BYTES } from '../../lib/
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { findInScope, lockInvoice, restatus, assertLiveInvoice, balanceOf, totalOf, receiptMethodIn, receiptMemo } from './routes.js'
 import { STATEMENT } from './ledger.js'
-import { chargeNetCents, lockAccountTx } from './onAccount.js'
+import { lockAccountTx } from './onAccount.js'
+import { chargeOwedCents } from './cityLedger.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -244,11 +245,11 @@ async function badDebtLines(tx: Tx, inv: ReceivableInvoice, amountCents: number)
   if (inv.kind !== STATEMENT) return [{ conceptId: inv.conceptId, amountCents }]
   const charges = await tx.customerAccountCharge.findMany({
     where: { tenantId: inv.tenantId, statementInvoiceId: inv.id },
-    select: { conceptId: true, amountCents: true, refundedCents: true },
+    select: { conceptId: true, amountCents: true, refundedCents: true, settledCents: true },
     orderBy: [{ chargedAt: 'asc' }, { id: 'asc' }],
   })
   const byBrand = new Map<string, number>()
-  for (const c of charges) byBrand.set(c.conceptId, (byBrand.get(c.conceptId) ?? 0) + chargeNetCents(c))
+  for (const c of charges) byBrand.set(c.conceptId, (byBrand.get(c.conceptId) ?? 0) + chargeOwedCents(c))
   return splitProRata(amountCents, [...byBrand].map(([conceptId, weightCents]) => ({ conceptId, weightCents })), inv.conceptId)
 }
 

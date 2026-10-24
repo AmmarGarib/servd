@@ -385,7 +385,7 @@ model Concept {
   // every other brand gets "Sales — <brand>" at the first free code in 4010–4089 at
   // create / boot (accounting/brandRevenueAccount.ts). NULL = posts to the 4090 fallback.
   // Read through accounting/journal.ts revenueCodeForConcept, never directly.
-  revenueAccountCode String?
+  revenueAccountCode      String?
   // The brand's servd SUB-ACCOUNT (owner 2026-10-20, till flow: "two accounts per brand"):
   // "Sales — <brand> (servd)", the first free 40xx code in 4010–4089 of the brand's company,
   // assigned with the main one (brandRevenueAccount.ts). Sales CLOSED IN SERVD
@@ -396,10 +396,10 @@ model Concept {
   // Fixed assets v2 (2026-10-14)
   fixedAssets     FixedAsset[]     @relation("FixedAssetConcept")
   fixedAssetPools FixedAssetPool[] @relation("FixedAssetPoolConcept")
+  menuSessions    MenuSession[]
 
   @@index([tenantId])
   @@map("concepts")
-  menuSessions MenuSession[]
 }
 
 // ─── Station ──────────────────────────────────────────────────────────────────
@@ -1047,11 +1047,11 @@ model Shift {
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
 
-  user          User           @relation(fields: [userId], references: [id])
-  location      Location?      @relation(fields: [locationId], references: [id])
+  user          User              @relation(fields: [userId], references: [id])
+  location      Location?         @relation(fields: [locationId], references: [id])
   payments      Payment[]
   cashMovements CashMovement[]
-  tenant        Tenant?        @relation("TenantShifts", fields: [tenantId], references: [id])
+  tenant        Tenant?           @relation("TenantShifts", fields: [tenantId], references: [id])
   corrections   ShiftCorrection[]
 
   @@index([locationId, openedAt(sort: Desc)])
@@ -1893,14 +1893,14 @@ model Order {
   // files; revenue → the brand's main sales account), 'servd' = closed in servd (cash /
   // card / Raast / on account; revenue → the brand's servd sub-account; its fiscal
   // document waits for a MANUAL filing on the SRB / FBR portal). Null = legacy / non-till.
-  settlementChannel SettlementChannel?
+  settlementChannel   SettlementChannel?
   // Keenu push state (pos/keenuPush.ts): { keenu: { pushId, state, method, tipCents, shiftId, providerRef, at } }.
-  settlementMeta    Json?
+  settlementMeta      Json?
   // Waiter on the ticket: an HR employee of the ORDER's company (login or not — the
   // tip-pool member rule); typed at the till as their employee code.
-  waiterEmployeeId  String?
+  waiterEmployeeId    String?
   // Pax: the number of guests at the table.
-  partySize         Int?
+  partySize           Int?
   // The guest's registration number with this company, as typed at the till (free text).
   guestRegistrationNo String?
 
@@ -2896,23 +2896,23 @@ model SupplierPaymentApplication {
 // ─── Financial / Accounting ───────────────────────────────────────────────────
 
 model Account {
-  id          String      @id @default(uuid())
+  id                 String      @id @default(uuid())
   // Owning company. Each company keeps its own chart of accounts — GS Foods'
   // "4001 Simmer Revenue" and GSX Viva's chart are separate ledgers, so the
   // code is unique PER COMPANY, not globally.
-  tenantId    String?
-  code        String // e.g. "4001"
-  name        String // e.g. "Restaurant Revenue"
-  type        AccountType
-  description String?
-  isActive    Boolean     @default(true)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  tenantId           String?
+  code               String // e.g. "4001"
+  name               String // e.g. "Restaurant Revenue"
+  type               AccountType
+  description        String?
+  isActive           Boolean     @default(true)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
   /// Sub-accounts switched on for this account (owner, 2026-10-23: "limited to Wages Expense (HO) account only,
   /// and add an option to switch on sub accounts for other head accounts … only in those for which I open
   /// subaccount"). Off = payroll never tags it, the journal picker and statements show no sub-accounts and no new
   /// tag is accepted; existing tags stay as history. Opening a sub-account switches it on. lib/subAccounts.ts.
-  subAccountsEnabled Boolean @default(false)
+  subAccountsEnabled Boolean     @default(false)
 
   /// Who controls postings to this account (journal.ts postJournalEntry) — ONE controlled-account mechanism (wave B):
   ///   'intercompany' — "Due from/to <company>" of ONE company pair: only sourceType 'ic.*'
@@ -2953,16 +2953,16 @@ model JournalEntry {
   postedBy    String? // user ID or "system"
   createdAt   DateTime @default(now())
 
-  tenant Tenant?       @relation("TenantJournalEntries", fields: [tenantId], references: [id])
-  lines  JournalLine[]
+  tenant                Tenant?                @relation("TenantJournalEntries", fields: [tenantId], references: [id])
+  lines                 JournalLine[]
   // Internal payment classification (owner, 2026-10-20) — a reporting label
   // only; never read by any posting, ledger report or tax return.
   paymentClassification PaymentClassification?
   // Automatic voucher number (owner, 2026-10-20; accounting/voucherNumbers.ts): JV- manual / reversal, PV- payment,
   // RV- receipt — per company, ascending, stamped by postJournalEntry. null = sales / till / non-cash entries.
-  voucherKind String?
-  voucherSeq  Int?
-  voucherNo   String?
+  voucherKind           String?
+  voucherSeq            Int?
+  voucherNo             String?
 
   @@unique([tenantId, voucherNo])
   @@unique([tenantId, voucherKind, voucherSeq])
@@ -3008,8 +3008,8 @@ model JournalLine {
   amountCents    BigInt
   memo           String?
 
-  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id])
-  account      Account      @relation(fields: [accountId], references: [id])
+  journalEntry          JournalEntry            @relation(fields: [journalEntryId], references: [id])
+  account               Account                 @relation(fields: [accountId], references: [id])
   subAccountAllocations JournalLineSubAccount[]
 
   @@index([conceptId])
@@ -3023,17 +3023,17 @@ model JournalLine {
 // kind 'employee' is payroll's per-employee wages bucket (one per account and employee). Never deleted once
 // used — switched off (isActive). lib/subAccounts.ts is the one writer. Migration 20261023110000.
 model SubAccount {
-  id          String    @id @default(uuid())
+  id          String   @id @default(uuid())
   tenantId    String
   accountId   String
   name        String
   code        String?
-  kind        String    @default("manual") // manual | employee (CHECK sub_accounts_kind_chk)
+  kind        String   @default("manual") // manual | employee (CHECK sub_accounts_kind_chk)
   employeeId  String?
-  isActive    Boolean   @default(true)
+  isActive    Boolean  @default(true)
   createdById String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   account     Account                 @relation(fields: [accountId], references: [id])
   allocations JournalLineSubAccount[]
@@ -6581,28 +6581,28 @@ model FixedAsset {
   // ── Fixed assets v2 (wave B, 2026-10-14; owner: depreciation automatic, no threshold, smallwares pooled) ──
   // CHECKs fixed_assets_quantity_chk / fixed_assets_kind_chk and the partial unique fixed_assets_capex_unit_live
   // (one live asset per CapEx line unit) are SQL only (migration 20261014090000; not declared here).
-  kind                    String    @default("individual") // individual | pool_layer
-  poolId                  String?
-  quantity                Int       @default(1) // units still on the books (pool layer: units left)
-  originalQuantity        Int       @default(1)
-  originalCostCents       BigInt    @default(0) // cost when capitalised; costCents = cost still on the books
-  inServiceAt             DateTime? // depreciation starts this PKT month (legacy null = acquiredAt)
-  method                  String    @default("straight_line") // straight_line | none (land)
-  capexLineId             String? // THE link to CapEx (the 'capex-line:' notes prefix is never read again)
-  capexLineUnit           Int       @default(0) // 0 = a single-unit line or a pool layer; 1..N = unit n of a line split into N ≥ 2 assets
-  supplierId              String?
-  warrantyUntil           DateTime?
-  documentUrls            Json?
-  photoUrls               Json?
-  leaseEndsAt             DateTime?
-  inputTaxCents           BigInt    @default(0)
-  inputTaxCode            String? // snapshot of the 132x code debited (from taxAuthorities.inputTaxCodeFor)
-  carriedAccumulatedCents BigInt    @default(0) // accumulated brought in by a pool-unit transfer
-  splitFromAssetId        String?
-  disposalKind            String? // sale | scrap | lost | stolen
-  disposalReason          String?
-  voidedAt                DateTime?
-  voidReason              String?
+  kind                     String    @default("individual") // individual | pool_layer
+  poolId                   String?
+  quantity                 Int       @default(1) // units still on the books (pool layer: units left)
+  originalQuantity         Int       @default(1)
+  originalCostCents        BigInt    @default(0) // cost when capitalised; costCents = cost still on the books
+  inServiceAt              DateTime? // depreciation starts this PKT month (legacy null = acquiredAt)
+  method                   String    @default("straight_line") // straight_line | none (land)
+  capexLineId              String? // THE link to CapEx (the 'capex-line:' notes prefix is never read again)
+  capexLineUnit            Int       @default(0) // 0 = a single-unit line or a pool layer; 1..N = unit n of a line split into N ≥ 2 assets
+  supplierId               String?
+  warrantyUntil            DateTime?
+  documentUrls             Json?
+  photoUrls                Json?
+  leaseEndsAt              DateTime?
+  inputTaxCents            BigInt    @default(0)
+  inputTaxCode             String? // snapshot of the 132x code debited (from taxAuthorities.inputTaxCodeFor)
+  carriedAccumulatedCents  BigInt    @default(0) // accumulated brought in by a pool-unit transfer
+  splitFromAssetId         String?
+  disposalKind             String? // sale | scrap | lost | stolen
+  disposalReason           String?
+  voidedAt                 DateTime?
+  voidReason               String?
   // H42 (Hasnain, 2026-10-16): finance ticks "eligible for the 25% initial allowance" per asset (tax view only —
   // never the books). Set at capitalisation by the class rule (kitchen + power true, every other class false);
   // existing rows backfilled the same way (migration 20261017090000). NULL (a row inserted without it) = that rule.
@@ -7011,11 +7011,14 @@ model CustomerAccount {
   createdById               String
   notes                     String?
   lastRemindedAt            DateTime? // last statement / overdue reminder sent (on-account resume, migration 20261015120100)
+  // City Ledger (owner, 2026-10-24): company | corporate | travel_agent | guest | other (CHECK in SQL).
+  accountType               String    @default("company")
   createdAt                 DateTime  @default(now())
   updatedAt                 DateTime  @updatedAt
 
-  cards   CustomerAccountCard[]
-  charges CustomerAccountCharge[]
+  cards       CustomerAccountCard[]
+  charges     CustomerAccountCharge[]
+  settlements CityLedgerSettlement[]
 
   @@unique([tenantId, number])
   @@unique([tenantId, legalName])
@@ -7061,8 +7064,12 @@ model CustomerAccountCharge {
   chargedById        String
   chargedAt          DateTime @default(now())
   statementInvoiceId String? // ReceivableInvoice kind 'statement' (claimed only once the sale is BOOKED)
+  // City Ledger (2026-10-24): paid on this bill directly (Σ live CityLedgerAllocation) — a bill not yet on a
+  // statement. Still owed on the bill = amount − refunded − settled; a statement bills only that remainder.
+  settledCents       Int      @default(0)
 
-  account CustomerAccount @relation(fields: [accountId], references: [id])
+  account     CustomerAccount        @relation(fields: [accountId], references: [id])
+  allocations CityLedgerAllocation[]
 
   @@unique([tenantId, orderId])
   @@unique([tenantId, paymentId])
@@ -7426,20 +7433,20 @@ model HrPayslip {
 // HR letters — HTML with {{placeholders}}, filled from the employee and the
 // record the letter is about. The HR team's letter formats go in here.
 model HrLetterTemplate {
-  id          String   @id @default(uuid())
-  tenantId    String
-  key         String // offer_letter | confirmation_letter | … | custom_<hex> (HR's own letter)
-  title       String
-  body        String // '' while a Word file is the letter
+  id           String   @id @default(uuid())
+  tenantId     String
+  key          String // offer_letter | confirmation_letter | … | custom_<hex> (HR's own letter)
+  title        String
+  body         String // '' while a Word file is the letter
   // HR's own Word file (owner, 2026-10-22): when set it IS the letter — its
   // {{placeholders}} are filled for the chosen employee; print copy derived.
   wordFile     Bytes?
   wordFileName String?
-  custom       Boolean @default(false) // a letter HR added (not a built-in one)
-  version     Int      @default(1)
-  updatedById String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  custom       Boolean  @default(false) // a letter HR added (not a built-in one)
+  version      Int      @default(1)
+  updatedById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@unique([tenantId, key])
   @@map("hr_letter_templates")
@@ -8037,46 +8044,46 @@ model CashVoucher {
   // ── Petty-cash expense vouchers (2026-10-15, owner) ──
   // amountCents stays the amount PAID (the total). grossCents = the amount before discount; amountCents = gross −
   // discount (CHECK cash_vouchers_discount_chk, SQL only). A request carries discount 0 and no gross.
-  kind                 CashVoucherKind @default(request)
-  grossCents           Int?
-  discountCents        Int             @default(0)
-  submittedById        String?
-  submittedAt          DateTime?
-  financeApprovedById  String?
-  financeApprovedAt    DateTime?
+  kind                      CashVoucherKind @default(request)
+  grossCents                Int?
+  discountCents             Int             @default(0)
+  submittedById             String?
+  submittedAt               DateTime?
+  financeApprovedById       String?
+  financeApprovedAt         DateTime?
   // true = paid under the 2026-10-15 documents flow (pay held on 1357, expense booked when finance verifies the
   // documents — unless bookedAtPay, below);
   // false = a legacy request paid under H3 (expensed at pay; its old settlement rules still apply).
-  expenseOnVerify      Boolean         @default(false)
-  returnedById         String?
-  returnedAt           DateTime?
-  returnNote           String?
-  returnCount          Int             @default(0)
-  docsVerifiedById     String?
-  docsVerifiedAt       DateTime?
-  postedAt             DateTime?
-  postedById           String?
-  postedJournalEntryId String?         @unique // the Dr 6xxx / Cr 1357 entry (reference cashvoucher.post:<id>) — posts once
+  expenseOnVerify           Boolean         @default(false)
+  returnedById              String?
+  returnedAt                DateTime?
+  returnNote                String?
+  returnCount               Int             @default(0)
+  docsVerifiedById          String?
+  docsVerifiedAt            DateTime?
+  postedAt                  DateTime?
+  postedById                String?
+  postedJournalEntryId      String?         @unique // the Dr 6xxx / Cr 1357 entry (reference cashvoucher.post:<id>) — posts once
   // Digital receipt (owner, 2026-10-15: "no physical signatures"): the holder confirms "Cash received" (a request), or
   // the payer's pay records it for an outside payee (kind expense). Required before finance verifies a request.
-  cashReceivedById     String?
-  cashReceivedAt       DateTime?
+  cashReceivedById          String?
+  cashReceivedAt            DateTime?
   // Where the cash came from (owner, 2026-10-16: "pay from petty cash / cash on hand and bank accounts"):
   // 'box' (default, every row before: a petty-cash box, Dr 1357 / Cr 1011 via its movement) | 'cash_on_hand'
   // (Dr 1357 / Cr 1010) | 'bank' (Dr 1357 / Cr the named bank's code). The last two post ONE entry
   // 'cashvoucher.pay:<id>' (payJournalEntryId), no box movement; change / an overspend at verification go back to
   // / come from the SAME account (payAccountCode). CHECK cash_vouchers_pay_source_chk is SQL only.
-  paySource            String          @default("box")
-  payAccountCode       String?
-  payBankAccountId     String?
-  payJournalEntryId    String?         @unique
+  paySource                 String          @default("box")
+  payAccountCode            String?
+  payBankAccountId          String?
+  payJournalEntryId         String?         @unique
   // ONE entry at pay (owner, 2026-10-16: "It should pass only one entry when booked by finance, either docs are
   // attached or not"): true = finance's pay booked the expense — Dr the voucher's account / Cr 1011 (the box's spend,
   // one expense line) | 1010 | the bank ('cashvoucher.pay:<id>'). Nothing is held on 1357; supporting documents and
   // finance's check (POST /:id/verify-docs → posted) book NOTHING; change / an overspend is a manual journal.
   // expenseOnVerify stays true on these rows (the documents flow and its CLOSED state). false = every row paid
   // before this (a 1357 hold still clears at verification; legacy H3 unchanged).
-  bookedAtPay          Boolean         @default(false)
+  bookedAtPay               Boolean         @default(false)
   // Equipment on a finance payee voucher (owner, 2026-10-19; kind 'expense' only): the fixed-asset class (a
   // FixedAssetClass of the voucher's company) instead of an expense account (`category` null). Finance's pay books
   // it through the CapEx Quick-buy engine (financePlanning/capexPosting.ts recordEquipmentPurchaseTx): a capital line
@@ -8084,20 +8091,20 @@ model CashVoucher {
   // approves (Dr class cost / Cr 1340 → register → depreciation). assetLocationId = the outlet (required when the
   // voucher has no brand: shared equipment). capexLineId / capitaliseEventId are stamped at pay. Plain ids, no
   // relations (like pettyCashMovementId).
-  assetClassId         String?
-  assetLocationId      String?
-  capexLineId          String?         @unique
-  capitaliseEventId    String?
+  assetClassId              String?
+  assetLocationId           String?
+  capexLineId               String?         @unique
+  capitaliseEventId         String?
   // "To pay from" on a finance payee voucher (owner, 2026-10-19): chosen at raise — 'cash' | 'bank' (+
   // plannedBankAccountId) | 'credit' (+ supplierId, a supplier of the voucher's company). Cash / bank prefill finance's
   // pay; credit = no cash leaves: finance's pay books a SUPPLIER BILL (procurement createBill's engine, bill number =
   // the voucher number) — or, for equipment, the CapEx line on that supplier with its capitalisation request
   // (Dr class cost / Cr 2012 on the CEO's approval) — and paySource becomes 'credit'. supplierBillId = the bill.
   // CHECK cash_vouchers_planned_pay_chk (SQL only, migration 20261019110000).
-  plannedPaySource     String?
-  plannedBankAccountId String?
-  supplierId           String?
-  supplierBillId       String?         @unique
+  plannedPaySource          String?
+  plannedBankAccountId      String?
+  supplierId                String?
+  supplierBillId            String?         @unique
   // Internal payment classification chosen when the voucher is raised (owner, 2026-10-20): finance / the CEO only;
   // prefills the pay step, where it is stamped on the payment entry (accounting/paymentsRegister.ts). A label only.
   // CHECK cash_vouchers_planned_classification_chk (SQL only, migration 20261020130000).
@@ -8696,4 +8703,58 @@ model ShiftCorrectionItem {
   @@index([tenantId])
   @@index([orderId])
   @@map("shift_correction_items")
+}
+
+/// City Ledger settlement (owner, 2026-10-24): money a City Ledger (on-account) client paid against chosen
+/// till bills that are not on a statement yet — at the till (cash into the drawer) or by finance (cash on hand,
+/// bank). ONE journal entry 'cityledger.settlement:<id>' Dr the money account / Cr 1110. receivables/cityLedger.ts.
+model CityLedgerSettlement {
+  id                     String    @id @default(uuid())
+  tenantId               String
+  accountId              String
+  number                 String // CLS-00001 per company (advisory lock)
+  amountCents            BigInt
+  method                 String // cash | bank_transfer | bank_deposit | cheque
+  reference              String?
+  bankAccountId          String?
+  receivedAt             DateTime
+  channel                String // till | back_office
+  shiftId                String? // the drawer (till only)
+  cashMovementId         String?   @unique // the drawer pay-in (till cash)
+  /// Till cash reversed while its drawer was still open: the drawer pay-out that handed it back.
+  reversalCashMovementId String?   @unique
+  moneyAccountCode       String // the account the entry debited
+  idempotencyKey         String?
+  note                   String?
+  createdById            String
+  createdAt              DateTime  @default(now())
+  reversedAt             DateTime?
+  reversedById           String?
+  reversedReason         String?
+
+  account     CustomerAccount        @relation(fields: [accountId], references: [id])
+  allocations CityLedgerAllocation[]
+
+  @@unique([tenantId, number])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, accountId, receivedAt])
+  @@index([shiftId])
+  @@map("city_ledger_settlements")
+}
+
+/// How a City Ledger settlement is split across the client's bills — chosen explicitly by the person settling.
+model CityLedgerAllocation {
+  id           String @id @default(uuid())
+  tenantId     String
+  settlementId String
+  chargeId     String
+  amountCents  Int
+
+  settlement CityLedgerSettlement  @relation(fields: [settlementId], references: [id])
+  charge     CustomerAccountCharge @relation(fields: [chargeId], references: [id])
+
+  @@unique([settlementId, chargeId])
+  @@index([chargeId])
+  @@index([tenantId])
+  @@map("city_ledger_allocations")
 }

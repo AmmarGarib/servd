@@ -300,8 +300,10 @@ describe('run', () => {
     const led = sectionsOf(await run('finA', 'stock_ledger'))[0]!
     expect(led.rows).toEqual([expect.objectContaining({ item: `${P} Flour`, openingQty: 0, inQty: 10, outQty: 0, closingQty: 10 })])
     for (const id of ['stock_transfer_summary', 'city_ledger_detail', 'city_ledger_summary', 'fiscal', 'driver_efficiency', 'driver_deliveries', 'discount_detail', 'payment_detail']) {
-      expect((await run('finA', id)).statusCode, id).toBe(200)
+      // City Ledger reports need the account field (2026-10-24): 'all' = every account.
+      expect((await run('finA', id, id.startsWith('city_ledger') ? '&clAccounts=all' : '')).statusCode, id).toBe(200)
     }
+    expect((await run('finA', 'city_ledger_summary')).json().error.code).toBe('ACCOUNT_REQUIRED')
     const disc = sectionsOf(await run('finA', 'discount_detail'))[0]!
     expect(disc.rows.map((r) => r.orderNo)).toEqual([orderRefOf(O.o1!)])
   })

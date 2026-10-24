@@ -498,8 +498,20 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
   const cardRefundsToBook = refundsToBook
     .filter((p) => p.method !== 'cash' && p.method !== 'comp' && p.method !== 'raast' && p.method !== 'on_account')
     .reduce((t, p) => t + Math.abs(p.amountCents), 0)
+  // City Ledger (2026-10-24): a client's cash settlement taken in this drawer is a pay-in that already posted
+  // its own entry (Dr 1015 / Cr 1110, receivables/cityLedger.ts), and a settlement reversed while the drawer was
+  // open is a pay-out that did too (Cr 1015) — neither is booked again here.
+  const movementIds = shift.cashMovements.map((m) => m.id)
+  const cityLedgerMoves = movementIds.length
+    ? await prisma.cityLedgerSettlement.findMany({
+        where: { tenantId, OR: [{ cashMovementId: { in: movementIds } }, { reversalCashMovementId: { in: movementIds } }] },
+        select: { cashMovementId: true, reversalCashMovementId: true },
+      })
+    : []
+  const cityLedgerIds = new Set(cityLedgerMoves.flatMap((x) => [x.cashMovementId, x.reversalCashMovementId]).filter((x): x is string => !!x))
+  const cityLedgerPayinCents = shift.cashMovements.filter((m) => m.type === 'payin' && cityLedgerIds.has(m.id)).reduce((t, m) => t + m.amountCents, 0)
   const payoutsToBook = payoutRows
-    .filter((m) => !ownPosted.has(m.id))
+    .filter((m) => !ownPosted.has(m.id) && !cityLedgerIds.has(m.id))
     .reduce((t, m) => t + m.amountCents, 0)
 
   const lines: JournalLineInput[] = []
@@ -607,7 +619,7 @@ export async function buildShiftCloseEntry(shiftId: string): Promise<ShiftCloseE
     lines.push({ accountCode: ACCT.CASH_ON_HAND, type: 'debit',  amountCents: drawer.dropsCents, memo: `Cash dropped to safe ${tag}` })
     lines.push({ accountCode: ACCT.CASH_DRAWER,  type: 'credit', amountCents: drawer.dropsCents, memo: `Cash dropped to safe ${tag}` })
   }
-  const cashIn = drawer.addsCents + drawer.payinsCents
+  const cashIn = drawer.addsCents + drawer.payinsCents - cityLedgerPayinCents
   if (cashIn > 0) {
     lines.push({ accountCode: ACCT.CASH_DRAWER,  type: 'debit',  amountCents: cashIn, memo: `Cash added / paid in to drawer ${tag}` })
     lines.push({ accountCode: ACCT.CASH_ON_HAND, type: 'credit', amountCents: cashIn, memo: `Cash added / paid in to drawer ${tag}` })

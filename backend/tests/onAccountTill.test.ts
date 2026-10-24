@@ -28,6 +28,7 @@ import posOnAccountRoutes from '../src/modules/pos/onAccountRoutes.js'
 import { registerConnectorPlugins } from '../src/modules/connectors/index.js'
 import { setFiscalKicker } from '../src/connectors/fiscal/outbox.js'
 import { newCardCode, normalizeCardCode } from '../src/lib/onAccountCard.js'
+import { setManagerPin } from '../src/modules/auth/managerPin.js'
 import { tillClearingCutoverKey } from '../src/modules/accounting/tillClearingCode.js'
 import {
   prisma, mkCompany, mkUser, caller, setConnector, resetConnectorCache, openDrawer, ringKheer, containsDeep,
@@ -252,6 +253,27 @@ describe('the charge', () => {
     expect(reused.json().error.code).toBe('IDEMPOTENCY_KEY_REUSED')
     // A new key on a completed order: not open.
     expect((await charge(cashierA, o.id, { shiftId: drawerA, code })).json().error.code).toBe('ORDER_NOT_OPEN')
+  })
+
+  it('City Ledger: a picked account (no card) needs a manager — PIN or signed in; another company\'s account is 404', async () => {
+    const { account } = await mkClient(A)
+    const mgrA = await mkUser('oat-mgr-a', 'foh_management', A.tenantId)
+    await setManagerPin(mgrA.id, '7362')
+    const o = await ringKheer(app, cashierA, A)
+    const none = await charge(cashierA, o.id, { shiftId: drawerA, accountId: account.id })
+    expect(none.statusCode).toBe(403)
+    expect(none.json().error.code).toBe('MANAGER_OVERRIDE_REQUIRED')
+    await nothingWritten(o.id)
+    expect((await charge(cashierA, o.id, { shiftId: drawerA })).json().error.code).toBe('ON_ACCOUNT_CARD_OR_MANAGER')
+    const { account: bAcc } = await mkClient(B)
+    expect((await charge(cashierA, o.id, { shiftId: drawerA, accountId: bAcc.id, managerOverridePin: '7362' })).statusCode).toBe(404)
+    await nothingWritten(o.id)
+    const r = await charge(cashierA, o.id, { shiftId: drawerA, accountId: account.id, managerOverridePin: '7362' })
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().payment.gatewayMeta.onAccount).toMatchObject({ accountId: account.id, cardId: null, approverId: mgrA.id })
+    expect(r.json().charge).toMatchObject({ accountId: account.id, cardId: null })
+    const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order.on_account_charge', entityId: o.id } })
+    expect((log.metadata as { approverId?: string }).approverId).toBe(mgrA.id)
   })
 
   it("another cashier's drawer is refused (FOH-15)", async () => {

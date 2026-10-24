@@ -132,9 +132,11 @@ export async function exposureOfTx(db: Db, accountId: string, now: Date = new Da
     select: { tenantId: true, overdueGraceDays: true },
   })
   const [unbilled, bills, settled] = await Promise.all([
-    db.customerAccountCharge.aggregate({
+    // City Ledger (2026-10-24): each bill not on a statement owes amount − refunded − settled; a bill refunded
+    // after it was paid on the bill owes BACK (negative) — money owed to the client, never netted.
+    db.customerAccountCharge.findMany({
       where: { tenantId: account.tenantId, accountId, statementInvoiceId: null },
-      _sum: { amountCents: true, refundedCents: true },
+      select: { amountCents: true, refundedCents: true, settledCents: true },
     }),
     db.receivableInvoice.findMany({
       where: { tenantId: account.tenantId, customerAccountId: accountId, kind: { in: [...LIVE_KINDS] }, status: { in: ['open', 'partial'] } },
@@ -146,8 +148,13 @@ export async function exposureOfTx(db: Db, accountId: string, now: Date = new Da
       where: { tenantId: account.tenantId, customerAccountId: accountId, kind: { in: [...LIVE_KINDS] }, status: { notIn: ['open', 'partial', 'void'] } },
     }),
   ])
-  const unbilledCents = (unbilled._sum.amountCents ?? 0) - (unbilled._sum.refundedCents ?? 0)
-  let creditCents = Math.max(0, -unbilledCents)
+  let unbilledCents = 0
+  let creditCents = 0
+  for (const c of unbilled) {
+    const owed = c.amountCents - c.refundedCents - c.settledCents
+    if (owed > 0) unbilledCents += owed
+    else creditCents += -owed
+  }
   for (const b of settled) creditCents += Math.max(0, -balanceOf(b))
   const today = karachiDay(now)
   let invoicesDueCents = 0

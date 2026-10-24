@@ -23,6 +23,7 @@ import {
   TILL_REPORTS, TILL_REPORT_IDS, OPTION_KEYS, GROUP_BY_KEYS, ORDER_TYPES, SOURCES, PAYMENT_METHODS, PAYMENT_TYPES,
   type TillReportId, type TillFilters, type OptionKey, type GroupByKey, type OrderTypeKey,
 } from './tillReports.js'
+import { ACCOUNT_TYPES } from '../receivables/cityLedger.js'
 
 const MAX_DAYS = 92
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -79,7 +80,7 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
     const company = await scopeTenantWhere(req, 'read')
     const outlets = await prisma.concept.findMany({ where: { deletedAt: null, ...company }, select: { id: true, name: true }, orderBy: { name: 'asc' } })
     const { conceptIds, tenantIds } = await ownedBrands(req, q['conceptIds'], false)
-    const empty = { users: [], waiters: [], categories: [], subCategories: [], sessions: [], menuItems: [], terminals: [], items: [] }
+    const empty = { users: [], waiters: [], categories: [], subCategories: [], sessions: [], menuItems: [], terminals: [], items: [], clAccounts: [] }
     if (conceptIds.length === 0) return { outlets, ...empty, ...STATIC_LOOKUPS }
     // Users / waiters / drawers are read from the brands' orders in the window (default: the last 31 days).
     const { from, to } = reportDateRange(q['dateFrom'], q['dateTo'], 31)
@@ -117,6 +118,12 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
       categories, subCategories, sessions, menuItems,
       terminals: shifts.map((s) => ({ id: s.id, label: terminalLabel(s) })),
       items,
+      // City Ledger accounts of the brands' companies (registered, approved — active first).
+      clAccounts: (await prisma.customerAccount.findMany({
+        where: { tenantId: { in: tenantIds }, status: { not: 'pending' } },
+        select: { id: true, number: true, legalName: true, accountType: true, status: true },
+        orderBy: [{ status: 'asc' }, { legalName: 'asc' }], take: 1000,
+      })).map((a) => ({ id: a.id, label: `${a.number} · ${a.legalName}${a.status === 'active' ? '' : ` (${a.status})`}`, accountType: a.accountType })),
       ...STATIC_LOOKUPS,
     }
   })
@@ -134,6 +141,13 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
       terminals: ids(q, 'terminals'), orderBy: ids(q, 'orderBy'), settleBy: ids(q, 'settleBy'), items: ids(q, 'items'),
       orderTypes: oneOf<OrderTypeKey>(q, 'orderTypes', ORDER_TYPES), sources: oneOf(q, 'sources', SOURCES),
       paymentMethods: oneOf(q, 'paymentMethods', PAYMENT_METHODS), paymentType: oneOf(q, 'paymentType', PAYMENT_TYPES),
+    }
+    // City Ledger reports: the account field is required — ids, or 'all' (every account of the companies).
+    if (def.filters.includes('clAccounts')) {
+      const raw = list(q['clAccounts'])
+      if (raw.length === 0) bad('ACCOUNT_REQUIRED', 'Pick a City Ledger account (or All accounts)')
+      filters.clAccounts = raw.length === 1 && raw[0] === 'all' ? null : ids(q, 'clAccounts')!
+      filters.clAccountTypes = oneOf(q, 'clAccountTypes', ACCOUNT_TYPES)
     }
     const search = q['q']?.trim()
     if (search && search.length > 80) bad('INVALID_FILTER', 'q: at most 80 characters')

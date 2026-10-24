@@ -2020,6 +2020,39 @@ till door `/pos/on-account/*`. Docs in the files' headers
   (on-account tax invoice) — built on the defaults above; per H51 (2026-10-16)
   on-account stays OFF for the 25 Oct sign-off.
 
+### City Ledger = the on-account clients (owner, 2026-10-24)
+
+"Extend on-account" (owner's pick when the City Ledger brief overlapped the on-account clients): ONE store —
+`CustomerAccount` / `CustomerAccountCharge` are the City Ledger accounts and their POS bills; never a second
+ledger. Contract: header of `backend/src/modules/receivables/cityLedger.ts`.
+
+- **Accounts:** `accountType` (company | corporate | travel_agent | guest | other), a typed account code or
+  OA-0001… (409 `ACCOUNT_CODE_TAKEN`, per company), payment terms 0 ("immediate") – 180 days; the receivable
+  account is 1110 (the one AR control account). Approval, limits and cards as before.
+- **Closing a bill on City Ledger at the till:** the card as before, OR an account picked from
+  `GET /pos/city-ledger/accounts` with a manager's approval (`requireManagerApproval`; `accountId` +
+  `managerOverridePin` on `POST /pos/orders/:id/on-account`; 422 `ON_ACCOUNT_CARD_OR_MANAGER` with neither).
+- **Paying bills one by one:** `CityLedgerSettlement` + `CityLedgerAllocation` (tenantId, RLS, merge
+  repoint); an explicit split across chosen bills; `CustomerAccountCharge.settledCents`; still owed =
+  amount − refunded − settled (`chargeOwedCents`). Only bills that are BOOKED and NOT on a statement (409
+  `BILL_NOT_BOOKED` / `BILL_ON_STATEMENT` — a statement is paid in Receivables). ONE entry
+  `cityledger.settlement:<id>` Dr money / Cr 1110 (memo `ON ACCOUNT`). Till: cash into the drawer (Dr 1015 + a
+  `payin` CashMovement the shift close SKIPS — `shiftPosting.ts` cityLedgerIds) or bank transfer with its
+  reference; back office (`/accounting/customer-accounts/:id/settlements`): RECEIPT_METHODS with a reference.
+  Never card or Raast (their matching reads till sale payments only). Idempotent per (tenantId,
+  idempotencyKey). Reversal (`/settlements/:sid/reverse`, reason ≥10): mirrored entry, bills owe again; till
+  cash only while its drawer is open (a pay-out the close also skips); refused while a bill is on a statement
+  (409 `SETTLED_BILL_ON_STATEMENT` — void the statement first).
+- **Net of settled everywhere:** exposure (`exposureOfTx`, a bill refunded after payment owes BACK), the
+  statement (bills only what each bill still owes; a fully paid bill is never billed), its write-off brand
+  split and the 1110 tie-out.
+- **Reports:** City Ledger Summary / Detail in the till Reports read ONLY `receivables/cityLedgerReport.ts`
+  (account figures from `clientHistory`, the one running balance; bills as at the period end; a statement's
+  money shown against its bills oldest first). The account field is required (`clAccounts=all` or ids; 400
+  `ACCOUNT_REQUIRED`), plus `clAccountTypes` and option `ignoreZero`. Account-wide (all brands of the client's
+  company). Back-office reads: `/:id/bills`, `/:id/history`, `/:id/settlements`, receipt HTML.
+- Tests: `tests/cityLedger.test.ts`, `tests/onAccountTill.test.ts`.
+
 ### Trash bin (owner, 2026-10-15)
 
 "Park delete / void / cancelled entries and recover them until deleted from

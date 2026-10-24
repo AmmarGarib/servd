@@ -157,6 +157,11 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   await prisma.$executeRawUnsafe('ALTER TABLE "journal_requests" DROP CONSTRAINT IF EXISTS "journal_requests_reverse_chk"')
   for (const statement of migrationSection('20261023100000_journal_change_requests',
     '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
+  // City Ledger (2026-10-24): immediate payment terms (customer_accounts_chk re-made), the account type and the
+  // settlement / allocation CHECKs (RLS out).
+  await prisma.$executeRawUnsafe('ALTER TABLE "customer_accounts" DROP CONSTRAINT IF EXISTS "customer_accounts_chk"')
+  for (const statement of migrationSection('20261024120000_city_ledger',
+    '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
   // Sub-accounts (2026-10-23): the kind / employee and positive-amount CHECKs (RLS out).
   for (const statement of migrationSection('20261023110000_sub_accounts',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)

@@ -283,7 +283,11 @@ export async function onAccountEnabledFor(tenantId: string): Promise<boolean> {
 export interface ChargeInput {
   orderId: string
   shiftId: string
-  code: string
+  /** The client's card code — or, with no card, `accountId` picked from the City Ledger list plus the manager who approved it. */
+  code?: string | null
+  accountId?: string | null
+  /** The manager (requireManagerApproval) who let the cashier charge a picked account without its card. */
+  approverId?: string | null
   reference?: string | null
   idempotencyKey: string
   actor: { id: string; email?: string | null }
@@ -310,7 +314,7 @@ export async function chargeOrderToAccount(input: ChargeInput): Promise<ChargeRe
 
   type TxResult =
     | { replay: true; payment: Payment; charge: CustomerAccountCharge | null; completed: boolean }
-    | { replay: false; payment: Payment; charge: CustomerAccountCharge; account: CustomerAccount; card: CustomerAccountCard; tenantId: string; conceptId: string; customerId: string | null; source: string }
+    | { replay: false; payment: Payment; charge: CustomerAccountCharge; account: CustomerAccount; card: CustomerAccountCard | null; tenantId: string; conceptId: string; customerId: string | null; source: string }
 
   let result: TxResult
   try {
@@ -323,7 +327,10 @@ export async function chargeOrderToAccount(input: ChargeInput): Promise<ChargeRe
       })
       if (!order || !order.concept.tenantId) throw new NotFoundError('Order', input.orderId)
       const tenantId = order.concept.tenantId
-      const card = await cardByCode(tx, tenantId, input.code)
+      // City Ledger (2026-10-24): a card, or an account picked from the list with a manager's approval — never neither.
+      const byCard = !!input.code?.trim()
+      if (!byCard && !(input.accountId && input.approverId)) throw new AppError('ON_ACCOUNT_CARD_OR_MANAGER', 'Scan the client card, or pick the account and have a manager approve', 422)
+      const card = byCard ? await cardByCode(tx, tenantId, input.code!) : null
 
       // 2. A retry of a charge that went through returns it.
       const prior = order.payments.filter((p) => paymentKeyOf(p) === input.idempotencyKey)
@@ -332,7 +339,8 @@ export async function chargeOrderToAccount(input: ChargeInput): Promise<ChargeRe
         const meta = p.gatewayMeta && typeof p.gatewayMeta === 'object' && !Array.isArray(p.gatewayMeta)
           ? ((p.gatewayMeta as Record<string, unknown>)['onAccount'] as Record<string, unknown> | undefined)
           : undefined
-        if (prior.length !== 1 || p.method !== 'on_account' || !card || meta?.['cardId'] !== card.id) throw idempotencyKeyReused()
+        const same = byCard ? !!card && meta?.['cardId'] === card.id : meta?.['accountId'] === input.accountId
+        if (prior.length !== 1 || p.method !== 'on_account' || !same) throw idempotencyKeyReused()
         const charge = await tx.customerAccountCharge.findFirst({ where: { tenantId, paymentId: p.id } })
         return { replay: true, payment: p, charge, completed: order.status === 'completed' }
       }
@@ -353,20 +361,28 @@ export async function chargeOrderToAccount(input: ChargeInput): Promise<ChargeRe
       }
       assertAmountsFit(priced.totalCents)
 
-      // 8. The card, in this company only, then the client's lock.
-      try {
-        assertCardUsable(card)
-      } catch (err) {
-        if (card && err instanceof AppError && err.code === 'ON_ACCOUNT_CARD_REVOKED') revoked = { tenantId, card, conceptId: order.conceptId }
-        throw err
-      }
-      const account = await lockAccountTx(tx, card.accountId)
-      if (account.tenantId !== tenantId) throw refuse('ON_ACCOUNT_CARD_UNKNOWN', 404)
-      // The card may have been cancelled while we waited for the client's lock.
-      const fresh = await tx.customerAccountCard.findUniqueOrThrow({ where: { id: card.id } })
-      if (fresh.revokedAt || fresh.accountId !== account.id) {
-        revoked = { tenantId, card: fresh, conceptId: order.conceptId }
-        throw refuse('ON_ACCOUNT_CARD_REVOKED', 409, { cardId: fresh.id, hint: fresh.tokenHint })
+      // 8. The card (or the picked account), in this company only, then the client's lock.
+      let account: CustomerAccount
+      if (byCard) {
+        try {
+          assertCardUsable(card)
+        } catch (err) {
+          if (card && err instanceof AppError && err.code === 'ON_ACCOUNT_CARD_REVOKED') revoked = { tenantId, card, conceptId: order.conceptId }
+          throw err
+        }
+        account = await lockAccountTx(tx, card.accountId)
+        if (account.tenantId !== tenantId) throw refuse('ON_ACCOUNT_CARD_UNKNOWN', 404)
+        // The card may have been cancelled while we waited for the client's lock.
+        const fresh = await tx.customerAccountCard.findUniqueOrThrow({ where: { id: card.id } })
+        if (fresh.revokedAt || fresh.accountId !== account.id) {
+          revoked = { tenantId, card: fresh, conceptId: order.conceptId }
+          throw refuse('ON_ACCOUNT_CARD_REVOKED', 409, { cardId: fresh.id, hint: fresh.tokenHint })
+        }
+      } else {
+        // Another company's account is the same 404 as an unknown one.
+        const found = await tx.customerAccount.findFirst({ where: { id: input.accountId!, tenantId }, select: { id: true } })
+        if (!found) throw new NotFoundError('CustomerAccount', input.accountId!)
+        account = await lockAccountTx(tx, found.id)
       }
 
       // 9. Active, this brand, nothing overdue, within the limit, reference.
@@ -384,7 +400,7 @@ export async function chargeOrderToAccount(input: ChargeInput): Promise<ChargeRe
           gatewayRef: account.number,
           gatewayMeta: {
             idempotencyKey: input.idempotencyKey,
-            onAccount: { accountId: account.id, cardId: card.id, number: account.number, name: account.legalName, reference },
+            onAccount: { accountId: account.id, cardId: card?.id ?? null, approverId: byCard ? null : input.approverId ?? null, number: account.number, name: account.legalName, reference },
           },
           processedAt: new Date(),
         },
@@ -393,7 +409,7 @@ export async function chargeOrderToAccount(input: ChargeInput): Promise<ChargeRe
       // 11. The client's charge, in the client's company.
       const charge = await recordChargeTx(tx, {
         account,
-        cardId: card.id,
+        cardId: card?.id ?? null,
         orderId: order.id,
         paymentId: payment.id,
         conceptId: priced.conceptId,
@@ -441,8 +457,9 @@ export async function chargeOrderToAccount(input: ChargeInput): Promise<ChargeRe
       chargeId: result.charge.id,
       accountId: result.account.id,
       accountNumber: result.account.number,
-      cardId: result.card.id,
-      cardHint: result.card.tokenHint,
+      cardId: result.card?.id ?? null,
+      cardHint: result.card?.tokenHint ?? null,
+      approverId: result.card ? null : input.approverId ?? null,
       amountCents: result.payment.amountCents,
       reference,
       shiftId: input.shiftId,

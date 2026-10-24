@@ -83,6 +83,7 @@ import emergencyOverridesRoutes from './modules/emergencyOverrides/routes.js'
 import banAppealRoutes from './modules/storefront/banAppealRoutes.js'
 import { customerAccountRoutes } from './modules/receivables/customerAccounts.js'
 import posOnAccountRoutes from './modules/pos/onAccountRoutes.js'
+import posCityLedgerRoutes from './modules/receivables/cityLedgerRoutes.js'
 import { tillClearingRoutes } from './modules/accounting/tillClearingRoutes.js'
 import { startHeadOfficeRechargeWorker } from './workers/headOfficeRecharge.js'
 import { startCodCustodyWorker } from './workers/codCustody.js'
@@ -411,6 +412,7 @@ async function build() {
       await api.register(posBoxGivenRoutes, { prefix: '/pos' })
       // On account (resumed 2026-10-15): a named client's QR card charges the whole bill at the till.
       await api.register(posOnAccountRoutes, { prefix: '/pos' })
+      await api.register(posCityLedgerRoutes, { prefix: '/pos' })
       // Till flow (owner, 2026-10-20; modules/pos/TILL_FLOW.md)
       await api.register(posTillFlowRoutes, { prefix: '/pos' })
       await api.register(orderSummaryRoutes, { prefix: '/pos' })

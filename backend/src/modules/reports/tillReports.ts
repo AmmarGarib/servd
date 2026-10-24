@@ -21,16 +21,17 @@ import { orderRefOf } from '../../lib/orderRef.js'
 import { tenderLabel } from '../../lib/tenders.js'
 import { sumCents } from '../../lib/money.js'
 import { fmtPktDate } from '../accounting/dates.js'
-import { exposureOfTx } from '../receivables/onAccount.js'
+import { cityLedgerReport } from '../receivables/cityLedgerReport.js'
+import { ACCOUNT_TYPES, ACCOUNT_TYPE_LABEL } from '../receivables/cityLedger.js'
 import { allocateTaxCents, tenderOfPayments } from '../../lib/pricing.js'
 import { salesTotals, salesByTender, salesBySettlement, soldOrderWhere, orderScope, SOLD_STATUSES, type SalesQuery } from './service.js'
 import type { ReportColumn, ReportRow, ReportTable } from '../../lib/reportExport.js'
 
 // ─── Catalog ─────────────────────────────────────────────────────────────────
 
-export const FILTER_KEYS = ['users', 'waiters', 'orderTypes', 'categories', 'subCategories', 'menuItems', 'sources', 'terminals', 'paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'q', 'items', 'sessions'] as const
+export const FILTER_KEYS = ['users', 'waiters', 'orderTypes', 'categories', 'subCategories', 'menuItems', 'sources', 'terminals', 'paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'q', 'items', 'sessions', 'clAccountTypes', 'clAccounts'] as const
 export type FilterKey = (typeof FILTER_KEYS)[number]
-export const OPTION_KEYS = ['orderType', 'session', 'category', 'subCategory', 'menuItem', 'tax', 'extraCharge', 'discount', 'payment', 'businessSource', 'waiterWise', 'userWise', 'taxableValue', 'includeNoCharge', 'vouchers', 'showCurrency', 'detail'] as const
+export const OPTION_KEYS = ['orderType', 'session', 'category', 'subCategory', 'menuItem', 'tax', 'extraCharge', 'discount', 'payment', 'businessSource', 'waiterWise', 'userWise', 'taxableValue', 'includeNoCharge', 'vouchers', 'showCurrency', 'detail', 'ignoreZero'] as const
 export type OptionKey = (typeof OPTION_KEYS)[number]
 export const GROUP_BY_KEYS = ['payment_method', 'payment_type', 'order_by', 'settle_by', 'terminal', 'order_type'] as const
 export type GroupByKey = (typeof GROUP_BY_KEYS)[number]
@@ -82,7 +83,7 @@ export const TILL_REPORTS: Record<TillReportId, TillReportDef> = {
     id: 'payment_summary', title: 'Payment Summary', filters: ['paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'terminals', 'orderTypes', 'sessions', 'sources'],
     options: ['showCurrency', 'detail'], groupBy: [...GROUP_BY_KEYS], printable: false,
   },
-  city_ledger_detail: { id: 'city_ledger_detail', title: 'City Ledger Detail', filters: ['q'], options: [], groupBy: null, printable: false },
+  city_ledger_detail: { id: 'city_ledger_detail', title: 'City Ledger Detail', filters: ['clAccountTypes', 'clAccounts', 'q'], options: ['ignoreZero'], groupBy: null, printable: false },
   stock_transfer_summary: { id: 'stock_transfer_summary', title: 'Stock Transfer Summary', filters: ['items'], options: [], groupBy: null, printable: false },
   stock_ledger: { id: 'stock_ledger', title: 'Stock Ledger', filters: ['items'], options: [], groupBy: null, printable: false },
   closing_stock: { id: 'closing_stock', title: 'Closing Stock', filters: ['items'], options: [], groupBy: null, printable: false },
@@ -92,7 +93,7 @@ export const TILL_REPORTS: Record<TillReportId, TillReportDef> = {
   discount_detail: { id: 'discount_detail', title: 'Discount Detail', filters: ['users', 'waiters', 'orderTypes', 'sessions', 'sources', 'terminals', 'q'], options: ['showCurrency'], groupBy: null, printable: false },
   tax_collection: { id: 'tax_collection', title: 'Tax Collection', filters: ['orderTypes', 'sessions', 'sources', 'terminals'], options: ['showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
   tax_analysis: { id: 'tax_analysis', title: 'Tax Analysis', filters: ['orderTypes', 'sessions', 'sources', 'terminals'], options: ['showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
-  city_ledger_summary: { id: 'city_ledger_summary', title: 'City Ledger Summary', filters: ['q'], options: ['showCurrency'], groupBy: null, printable: false },
+  city_ledger_summary: { id: 'city_ledger_summary', title: 'City Ledger Summary', filters: ['clAccountTypes', 'clAccounts', 'q'], options: ['ignoreZero', 'showCurrency'], groupBy: null, printable: false },
   fiscal: { id: 'fiscal', title: 'Fiscal', filters: ['q'], options: [], groupBy: null, printable: false },
   category_tax_collection: { id: 'category_tax_collection', title: 'Category Wise Tax Collection', filters: ['categories', 'subCategories', 'orderTypes', 'sessions', 'sources', 'terminals'], options: ['subCategory', 'showCurrency', 'includeNoCharge'], groupBy: null, printable: false },
   driver_efficiency: { id: 'driver_efficiency', title: 'Driver Efficiency', filters: [], options: [], groupBy: null, printable: false },
@@ -128,6 +129,8 @@ export interface TillFilters {
   users?: string[]; waiters?: string[]; orderTypes?: OrderTypeKey[]; categories?: string[]; subCategories?: string[]; menuItems?: string[]; sessions?: string[]
   sources?: string[]; terminals?: string[]; paymentMethods?: string[]; paymentType?: Array<'sale' | 'refund'>
   orderBy?: string[]; settleBy?: string[]; q?: string; items?: string[]
+  /** City Ledger: account types, and the accounts (null = all accounts — the report still needs the field sent). */
+  clAccountTypes?: string[]; clAccounts?: string[] | null
 }
 
 export interface TillReportInput {
@@ -702,79 +705,85 @@ async function paymentSummary(input: TillReportInput, def: TillReportDef, notes:
 }
 
 // ─── City ledger (on-account clients) ────────────────────────────────────────
+//
+// Owner, 2026-10-24 (the City Ledger Summary screenshot): POS bills closed on a
+// City Ledger account only — receivables/cityLedgerReport.ts is the ONE reader
+// (account figures from the client's history; bills as at the end of `to`).
+// Account-wide: a client's balance covers every brand of its company, so the
+// outlet picked only decides which companies' accounts are listed.
 
-async function ledgerClients(input: TillReportInput) {
-  const q = input.filters.q?.trim()
-  return prisma.customerAccount.findMany({
-    where: {
-      tenantId: { in: input.tenantIds },
-      OR: [{ conceptIds: { isEmpty: true } }, { conceptIds: { hasSome: input.conceptIds } }],
-      ...(q && { OR: [{ legalName: { contains: q, mode: 'insensitive' } }, { tradeName: { contains: q, mode: 'insensitive' } }, { number: { contains: q, mode: 'insensitive' } }] }),
-    },
-    select: { id: true, tenantId: true, number: true, legalName: true, status: true },
-    orderBy: { legalName: 'asc' },
+async function ledgerAccounts(input: TillReportInput) {
+  return cityLedgerReport({
+    tenantIds: input.tenantIds,
+    accountIds: input.filters.clAccounts ?? null,
+    accountTypes: has(input.filters.clAccountTypes) ? input.filters.clAccountTypes : null,
+    q: input.filters.q ?? null,
+    from: input.sq.from, to: input.sq.to,
+    ignoreZero: input.opts.has('ignoreZero'),
   })
 }
 
-/** City Ledger Detail: one section per client — every charge (and its refund) and every statement payment in the period. */
+const CL_NOTE = 'POS bills closed on a City Ledger account only. Opening / closing = what the account owed at the start / end of the period; '
+  + 'payments = City Ledger settlements and statement payments (net of reversals); adjustments = refunds and approved write-offs. '
+  + 'Bill figures are as at the end of the period; a statement’s payments are shown against its bills oldest first.'
+
+/** City Ledger Detail: one section per account — its transactions in the period with the running balance, opening and closing. */
 async function cityLedgerDetail(input: TillReportInput, notes: string[]): Promise<TillSection[]> {
-  const clients = await ledgerClients(input)
-  const columns = [col('date', 'Date'), col('type', 'Type'), col('reference', 'Reference'), col('amountCents', 'Amount', 'cents')]
+  const accounts = await ledgerAccounts(input)
+  const columns = [col('date', 'Date'), col('type', 'Type'), col('reference', 'Reference'), col('voucher', 'Voucher'), col('debitCents', 'Debit', 'cents'), col('creditCents', 'Credit', 'cents'), col('balanceCents', 'Balance', 'cents'), col('createdBy', 'By'), col('status', 'Status')]
+  const TYPE: Record<string, string> = { bill: 'Credit bill', refund: 'Refund', settlement: 'Settlement', settlement_reversed: 'Settlement reversed', statement_payment: 'Statement payment', statement_payment_reversed: 'Payment reversed', write_off: 'Write-off' }
   const sections: TillSection[] = []
-  for (const c of clients) {
-    const [charges, payments, exposure] = await Promise.all([
-      prisma.customerAccountCharge.findMany({
-        where: { tenantId: c.tenantId, accountId: c.id, conceptId: { in: input.conceptIds }, chargedAt: { gte: input.sq.from, lte: input.sq.to } },
-        select: { orderId: true, amountCents: true, refundedCents: true, reference: true, chargedAt: true }, orderBy: { chargedAt: 'asc' },
-      }),
-      prisma.receivablePayment.findMany({
-        where: { tenantId: c.tenantId, reversedAt: null, receivedAt: { gte: input.sq.from, lte: input.sq.to }, invoice: { tenantId: c.tenantId, customerAccountId: c.id } },
-        select: { amountCents: true, receivedAt: true, method: true, reference: true, invoice: { select: { number: true } } }, orderBy: { receivedAt: 'asc' },
-      }),
-      exposureOfTx(prisma, c.id),
-    ])
-    if (charges.length === 0 && payments.length === 0) continue
-    const rows: Array<Record<string, Cell>> = []
-    for (const ch of charges) {
-      rows.push({ date: pktStamp(ch.chargedAt), type: 'Charge', reference: `Order ${orderRefOf(ch.orderId)}${ch.reference ? ` · ${ch.reference}` : ''}`, amountCents: ch.amountCents })
-      if (ch.refundedCents > 0) rows.push({ date: pktStamp(ch.chargedAt), type: 'Refund', reference: `Order ${orderRefOf(ch.orderId)}`, amountCents: -ch.refundedCents })
+  for (const a of accounts) {
+    const rows: Array<Record<string, Cell>> = [{ date: '', type: 'Opening balance', reference: '', voucher: '', debitCents: null, creditCents: null, balanceCents: a.openingCents, createdBy: '', status: '' }]
+    for (const r of a.rows) {
+      rows.push({ date: pktStamp(r.at), type: TYPE[r.type] ?? r.type, reference: r.reference, voucher: r.voucher ?? '', debitCents: r.debitCents || null, creditCents: r.creditCents || null, balanceCents: r.balanceCents, createdBy: r.createdBy ?? '', status: r.status })
     }
-    for (const p of payments) rows.push({ date: pktStamp(p.receivedAt), type: 'Payment', reference: `${p.invoice.number} · ${p.method}${p.reference ? ` · ${p.reference}` : ''}`, amountCents: -sumCents(p.amountCents) })
-    rows.sort((a, b) => String(a.date).localeCompare(String(b.date)))
-    sections.push({ title: `${c.number} · ${c.legalName}`, columns, rows, totals: { date: 'TOTAL', type: 'Balance now', amountCents: exposure.exposureCents - exposure.creditCents } })
+    sections.push({
+      title: `${a.account.number} · ${a.account.legalName} (${a.accountTypeLabel})`, columns, rows,
+      totals: { date: 'TOTAL', type: 'Closing balance', debitCents: a.newBillsCents, creditCents: a.paymentsCents + a.adjustmentsCents, balanceCents: a.closingCents },
+    })
   }
-  notes.push('Charges are the selected brands’ bills; payments (negative) are statement payments, which cover all brands. The total line is what the client owes now.')
+  notes.push(CL_NOTE)
   return sections.length ? sections : [{ title: null, columns, rows: [], totals: null }]
 }
 
+/** City Ledger Summary: account-wise totals, then every bill grouped by account. */
 async function cityLedger(input: TillReportInput, notes: string[]): Promise<TillSection[]> {
-  const clients = await ledgerClients(input)
-  const rows: Array<Record<string, Cell>> = []
-  for (const c of clients) {
-    const [charges, payments, exposure] = await Promise.all([
-      prisma.customerAccountCharge.findMany({
-        where: { tenantId: c.tenantId, accountId: c.id, conceptId: { in: input.conceptIds }, chargedAt: { gte: input.sq.from, lte: input.sq.to } },
-        select: { amountCents: true, refundedCents: true },
-      }),
-      prisma.receivablePayment.findMany({
-        where: { tenantId: c.tenantId, reversedAt: null, receivedAt: { gte: input.sq.from, lte: input.sq.to }, invoice: { tenantId: c.tenantId, customerAccountId: c.id } },
-        select: { amountCents: true },
-      }),
-      exposureOfTx(prisma, c.id),
-    ])
-    rows.push({
-      client: `${c.number} · ${c.legalName}`, status: c.status, charges: charges.length,
-      chargesCents: charges.reduce((s, x) => s + x.amountCents - x.refundedCents, 0),
-      paymentsCents: payments.reduce((s, x) => s + sumCents(x.amountCents), 0),
-      balanceCents: exposure.exposureCents - exposure.creditCents,
-    })
+  const accounts = await ledgerAccounts(input)
+  const accRows: Array<Record<string, Cell>> = accounts.map((a) => ({
+    code: a.account.number, name: a.account.legalName, type: a.accountTypeLabel,
+    openingCents: a.openingCents, newBillsCents: a.newBillsCents, paymentsCents: a.paymentsCents, adjustmentsCents: a.adjustmentsCents,
+    closingCents: a.closingCents, limitCents: a.creditLimitCents, availableCents: a.availableCents,
+  }))
+  const billRows: Array<Record<string, Cell>> = []
+  for (const a of accounts) {
+    for (const b of a.bills) {
+      billRows.push({
+        code: a.account.number, name: a.account.legalName, billNo: b.billNo, outlet: b.outlet, terminal: b.terminal, billAt: pktStamp(b.billAt),
+        guest: b.guest, originalCents: b.originalCents, discountCents: b.discountCents, taxCents: b.taxCents, netCents: b.netCents,
+        settledCents: b.settledCents + b.refundedCents, outstandingCents: b.outstandingCents, status: b.status, dueDate: b.dueDate,
+        lastSettlement: b.lastSettlementAt ? pktStamp(b.lastSettlementAt) : '',
+      })
+    }
   }
-  notes.push('Charges = the selected brands’ bills charged to the client in the period, less refunds. Payments = statement payments received in the period (all brands). Balance = what the client owes now (negative = in credit).')
-  return [{
-    title: null,
-    columns: [col('client', 'Client'), col('status', 'Status'), col('charges', 'Bills', 'number'), col('chargesCents', 'Charges', 'cents'), col('paymentsCents', 'Payments', 'cents'), col('balanceCents', 'Balance now', 'cents')],
-    rows, totals: { client: 'TOTAL', charges: sumKey(rows, 'charges'), chargesCents: sumKey(rows, 'chargesCents'), paymentsCents: sumKey(rows, 'paymentsCents'), balanceCents: sumKey(rows, 'balanceCents') },
-  }]
+  notes.push(CL_NOTE, 'Settled on a bill includes its refunds.')
+  return [
+    {
+      title: 'Accounts',
+      columns: [col('code', 'Account code'), col('name', 'Account name'), col('type', 'Type'), col('openingCents', 'Opening outstanding', 'cents'), col('newBillsCents', 'New credit bills', 'cents'),
+        col('paymentsCents', 'Payments', 'cents'), col('adjustmentsCents', 'Adjustments', 'cents'), col('closingCents', 'Closing outstanding', 'cents'), col('limitCents', 'Credit limit', 'cents'), col('availableCents', 'Available credit', 'cents')],
+      rows: accRows,
+      totals: accRows.length ? { code: 'TOTAL', openingCents: sumKey(accRows, 'openingCents'), newBillsCents: sumKey(accRows, 'newBillsCents'), paymentsCents: sumKey(accRows, 'paymentsCents'), adjustmentsCents: sumKey(accRows, 'adjustmentsCents'), closingCents: sumKey(accRows, 'closingCents') } : null,
+    },
+    {
+      title: 'Bills',
+      columns: [col('code', 'Account code'), col('name', 'Account name'), col('billNo', 'POS bill no.'), col('outlet', 'Outlet'), col('terminal', 'Terminal'), col('billAt', 'Bill date & time'), col('guest', 'Guest / reference'),
+        col('originalCents', 'Original amount', 'cents'), col('discountCents', 'Discounts', 'cents'), col('taxCents', 'Taxes', 'cents'), col('netCents', 'Net bill', 'cents'),
+        col('settledCents', 'Settled', 'cents'), col('outstandingCents', 'Outstanding', 'cents'), col('status', 'Status'), col('dueDate', 'Due date'), col('lastSettlement', 'Last settlement')],
+      rows: billRows,
+      totals: billRows.length ? { code: 'TOTAL', netCents: sumKey(billRows, 'netCents'), settledCents: sumKey(billRows, 'settledCents'), outstandingCents: sumKey(billRows, 'outstandingCents') } : null,
+    },
+  ]
 }
 
 // ─── Stock ───────────────────────────────────────────────────────────────────
@@ -1169,6 +1178,7 @@ export function tillReportTable(r: TillReport): ReportTable {
 
 /** Shared by the route's lookups. */
 export const STATIC_LOOKUPS = {
+  clAccountTypes: ACCOUNT_TYPES.map((id) => ({ id, label: ACCOUNT_TYPE_LABEL[id] })),
   sources: SOURCES.map((id) => ({ id, label: SOURCE_LABEL[id]! })),
   paymentMethods: PAYMENT_METHODS.map((id) => ({ id, label: tenderLabel(id) })),
   orderTypes: ORDER_TYPES.map((id) => ({ id, label: ORDER_TYPE_LABEL[id] })),

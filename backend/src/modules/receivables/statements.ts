@@ -52,7 +52,8 @@ import { orderRefOf } from '../../lib/orderRef.js'
 import { karachiDay } from '../../connectors/util.js'
 import { parsePktEndOfDay } from '../accounting/dates.js'
 import { LIVE_KINDS, STATEMENT, balanceOf, nextNumber, totalOf, withNumberRetry } from './ledger.js'
-import { CLIENT_EDITORS, CLIENT_VIEWERS, chargeNetCents, isChargeBookedTx, lockAccountTx } from './onAccount.js'
+import { CLIENT_EDITORS, CLIENT_VIEWERS, isChargeBookedTx, lockAccountTx } from './onAccount.js'
+import { chargeOwedCents } from './cityLedger.js'
 import { companyReplyTo } from './customerAccounts.js'
 
 type Tx = Prisma.TransactionClient
@@ -121,9 +122,10 @@ export async function issueStatementTx(tx: Tx, accountId: string, input: IssueSt
     orderBy: [{ chargedAt: 'asc' }, { id: 'asc' }],
   })
   const booked: CustomerAccountCharge[] = []
-  for (const c of candidates) if (await isChargeBookedTx(tx, c)) booked.push(c)
+  // City Ledger (2026-10-24): a bill paid off one by one (owing nothing) is not billed again.
+  for (const c of candidates) if (chargeOwedCents(c) > 0 && await isChargeBookedTx(tx, c)) booked.push(c)
   const notBookedCount = candidates.length - booked.length
-  if (booked.length === 0 || booked.reduce((t, c) => t + chargeNetCents(c), 0) <= 0) {
+  if (booked.length === 0 || booked.reduce((t, c) => t + chargeOwedCents(c), 0) <= 0) {
     throw new AppError('NOTHING_TO_BILL', `Nothing to bill for this client up to ${input.periodTo}`, 409, { notBookedCount })
   }
 
@@ -141,7 +143,8 @@ export async function issueStatementTx(tx: Tx, accountId: string, input: IssueSt
   let totalCents = 0
   let taxCents = 0
   for (const c of rows) {
-    const net = chargeNetCents(c)
+    // What the bill still owes — net of refunds and of what was paid on the bill itself (City Ledger).
+    const net = chargeOwedCents(c)
     totalCents += net
     taxCents += c.amountCents > 0 ? Math.round((c.taxCents * net) / c.amountCents) : 0
   }
@@ -272,7 +275,7 @@ export async function statementReport(inv: ReceivableInvoice): Promise<ReportTab
     return {
       date: karachiDay(c.chargedAt), order: orderRefOf(c.orderId), brand: brandOf.get(c.conceptId) ?? '',
       card: card ? `${card.label} ··${card.tokenHint}` : '', reference: c.reference ?? '', fiscalNo: fiscalOf.get(c.orderId) ?? '',
-      amountCents: toCents(c.amountCents), refundedCents: toCents(c.refundedCents) || null, netCents: chargeNetCents(c),
+      amountCents: toCents(c.amountCents), refundedCents: toCents(c.refundedCents) + c.settledCents || null, netCents: chargeOwedCents(c),
     }
   })
   const sum = (label: string, cents: number) => ({ date: '', order: '', brand: label, card: '', reference: '', fiscalNo: '', amountCents: null, refundedCents: null, netCents: cents })
@@ -285,7 +288,7 @@ export async function statementReport(inv: ReceivableInvoice): Promise<ReportTab
     companies: company?.name ? [company.name] : [],
     period: `${inv.periodFrom ? dayOf(inv.periodFrom) : ''} to ${inv.periodTo ? dayOf(inv.periodTo) : ''} · issued ${dayOf(inv.issueDate)} · due ${dayOf(inv.dueDate)}`,
     rows,
-    labels: { fiscalNo: 'Fiscal no.', amountCents: 'Amount', refundedCents: 'Refunded', netCents: 'Net' },
+    labels: { fiscalNo: 'Fiscal no.', amountCents: 'Amount', refundedCents: 'Refunded / paid on bill', netCents: 'Net' },
     types: { amountCents: 'cents', refundedCents: 'cents', netCents: 'cents' },
     isTotal: (r) => r.brand === 'THIS STATEMENT' || r.brand === 'TOTAL DUE',
     notes: [
@@ -310,8 +313,8 @@ export async function renderStatementHtml(inv: ReceivableInvoice): Promise<strin
       td(escapeHtml(c.reference ?? '')),
       td(escapeHtml(fiscalOf.get(c.orderId) ?? '')),
       td(pkr(c.amountCents), true),
-      td(c.refundedCents ? `−${pkr(c.refundedCents)}` : '', true),
-      td(pkr(chargeNetCents(c)), true),
+      td(c.refundedCents + c.settledCents ? `−${pkr(c.refundedCents + c.settledCents)}` : '', true),
+      td(pkr(chargeOwedCents(c)), true),
     ].join('')}</tr>`
   })
   const bankLines = banks.map((b) => `<li>${escapeHtml([

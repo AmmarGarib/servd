@@ -58,7 +58,8 @@ import {
 } from './journal.js'
 import { TILL_CLEARING_CUTOVER_SETTING, tillClearingCutoverAt, tillClearingCutoverKey } from './tillClearingCode.js'
 import { LIVE_KINDS, STATEMENT, balanceOf } from '../receivables/ledger.js'
-import { chargeNetCents, isChargeBookedTx } from '../receivables/onAccount.js'
+import { isChargeBookedTx } from '../receivables/onAccount.js'
+import { chargeOwedCents } from '../receivables/cityLedger.js'
 import type { RefusedDoc } from '../reconciliation/backfillOrders.js'
 
 type Tx = Prisma.TransactionClient
@@ -482,12 +483,13 @@ export async function tieOutOf(tenantId: string, db: Db = prisma): Promise<TieOu
 
   const charges = await d.customerAccountCharge.findMany({
     where: { tenantId, statementInvoiceId: null },
-    select: { tenantId: true, orderId: true, paymentId: true, amountCents: true, refundedCents: true },
+    select: { tenantId: true, orderId: true, paymentId: true, amountCents: true, refundedCents: true, settledCents: true },
   })
   let unbilledBookedCents = 0
   let unbilledNotBookedCents = 0
   for (const c of charges) {
-    const net = chargeNetCents(c)
+    // Net of what was paid on the bill itself (City Ledger settlements credit 1110).
+    const net = chargeOwedCents(c)
     if (net === 0) continue
     if (await isChargeBookedTx(d, c)) unbilledBookedCents += net
     else unbilledNotBookedCents += net

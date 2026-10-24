@@ -27,9 +27,9 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { requireAuth, CASHIERS } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertShiftOf } from '../../lib/tenantScope.js'
-import { assertDrawerOperator, quoteOrderForTender } from './service.js'
+import { assertDrawerOperator, quoteOrderForTender, requireManagerApproval } from './service.js'
 import { chargeOrderToAccount, findTillOrderInScope, lookupCardForOrder, onAccountEnabledFor } from './onAccountTender.js'
 
 const uuid = z.string().uuid()
@@ -37,7 +37,10 @@ const enabledQuery = z.object({ orderId: uuid })
 const lookupBody = z.object({ orderId: uuid, code: z.string().min(1).max(40) })
 const chargeBody = z.object({
   shiftId: uuid,
-  code: z.string().min(1).max(40),
+  // The client card — or (City Ledger, 2026-10-24) an account picked from the list plus a manager's approval.
+  code: z.string().min(1).max(40).optional(),
+  accountId: uuid.optional(),
+  managerOverridePin: z.string().max(12).optional(),
   reference: z.string().max(80).nullish(),
   idempotencyKey: z.string().min(8).max(100),
 })
@@ -97,10 +100,21 @@ export default async function posOnAccountRoutes(fastify: FastifyInstance): Prom
       // The drawer: an OPEN shift of the order's own company, the caller's own unless a manager (FOH-15).
       await assertShiftOf(order.tenantId, body.shiftId, true)
       await assertDrawerOperator(body.shiftId, su)
+      // No card: the account is picked from the City Ledger list, and a manager approves (signed in, or by PIN).
+      let approverId: string | null = null
+      if (!body.code) {
+        if (!body.accountId) throw new AppError('ON_ACCOUNT_CARD_OR_MANAGER', 'Scan the client card, or pick the account and have a manager approve', 422)
+        approverId = (await requireManagerApproval({
+          actorId: su.id, actorRole: su.role, managerOverridePin: body.managerOverridePin ?? null,
+          tenantId: order.tenantId, action: 'Charging a City Ledger account without its card', orderId: order.id,
+        })).approverId
+      }
       const result = await chargeOrderToAccount({
         orderId: order.id,
         shiftId: body.shiftId,
-        code: body.code,
+        code: body.code ?? null,
+        accountId: body.code ? null : body.accountId ?? null,
+        approverId,
         reference: body.reference ?? null,
         idempotencyKey: body.idempotencyKey,
         actor: { id: su.id, email: su.email },

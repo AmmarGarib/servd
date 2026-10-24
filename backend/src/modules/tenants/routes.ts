@@ -393,6 +393,17 @@ async function mergeFinanceTables(tx: MergeTx, src: string, dst: string, srcSlug
   const onAccountClientsMoved = await moved(tx.customerAccount)
   const onAccountCardsMoved = await moved(tx.customerAccountCard)
   const onAccountChargesMoved = await moved(tx.customerAccountCharge)
+  // City Ledger settlements (2026-10-24): CLS numbers are per company — a clash takes the source's slug; their
+  // idempotency keys only guarded the original request, so they are cleared. The allocations follow.
+  const srcSettlements = await tx.cityLedgerSettlement.findMany({ where: { tenantId: src }, select: { id: true, number: true } })
+  if (srcSettlements.length > 0) {
+    const dstTaken = new Set((await tx.cityLedgerSettlement.findMany({ where: { tenantId: dst, number: { in: srcSettlements.map((x) => x.number) } }, select: { number: true } })).map((x) => x.number))
+    for (const x of srcSettlements) {
+      await tx.cityLedgerSettlement.update({ where: { id: x.id }, data: { idempotencyKey: null, ...(dstTaken.has(x.number) ? { number: `${x.number}-${srcSlug}` } : {}) } })
+    }
+  }
+  await moved(tx.cityLedgerSettlement)
+  await moved(tx.cityLedgerAllocation)
 
   const repoint: Array<{
     updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<unknown>

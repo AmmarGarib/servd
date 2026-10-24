@@ -75,6 +75,8 @@ import {
   type Exposure,
 } from './onAccount.js'
 import { statementRoutes } from './statements.js'
+import { cityLedgerBackOfficeRoutes } from './cityLedgerRoutes.js'
+import { ACCOUNT_TYPES, ACCOUNT_TYPE_LABEL, type AccountType } from './cityLedger.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -103,7 +105,9 @@ const ClientFields = {
     .transform((v) => (v === undefined ? undefined : v ? v : null))
     .refine((v) => v == null || z.string().email().safeParse(v).success, 'Not an email address'),
   creditLimitCents: zMoneyCents('Credit limit', { sign: 'positive' }),
-  termsDays: z.number().int().min(1).max(180),
+  // 0 = immediate (City Ledger payment terms, 2026-10-24); 7 / 15 / 30 or any number of days up to 180.
+  termsDays: z.number().int().min(0).max(180),
+  accountType: z.enum(ACCOUNT_TYPES),
   overdueGraceDays: z.number().int().min(0).max(90),
   requiresReference: z.boolean(),
   conceptIds: z.array(z.string().min(1).max(64)).max(100),
@@ -112,6 +116,9 @@ const ClientFields = {
 
 const CreateBody = z.object({
   ...ClientFields,
+  accountType: ClientFields.accountType.default('company'),
+  /** The account code — typed by the person (unique per company), or OA-0001… when left empty. */
+  number: z.string().trim().toUpperCase().regex(/^[A-Z0-9][A-Z0-9-]{1,19}$/, 'Use 2–20 letters, numbers or dashes').optional(),
   termsDays: ClientFields.termsDays.default(30),
   overdueGraceDays: ClientFields.overdueGraceDays.default(7),
   requiresReference: ClientFields.requiresReference.default(false),
@@ -130,6 +137,7 @@ const PatchBody = z.object({
   contactEmail: ClientFields.contactEmail,
   creditLimitCents: ClientFields.creditLimitCents.optional(),
   termsDays: ClientFields.termsDays.optional(),
+  accountType: ClientFields.accountType.optional(),
   overdueGraceDays: ClientFields.overdueGraceDays.optional(),
   requiresReference: ClientFields.requiresReference.optional(),
   conceptIds: ClientFields.conceptIds.optional(),
@@ -244,6 +252,10 @@ async function shapeRows(accounts: CustomerAccount[], me: Caller, now = new Date
       limitRequestedAt: a.limitRequestedAt,
       termsDays: a.termsDays,
       overdueGraceDays: a.overdueGraceDays,
+      accountType: a.accountType,
+      accountTypeLabel: ACCOUNT_TYPE_LABEL[a.accountType as AccountType] ?? a.accountType,
+      /** The receivable account the client's bills sit on: the company's 1110 Customer receivable (one AR control account). */
+      receivableAccountCode: '1110',
       requiresReference: a.requiresReference,
       conceptIds: a.conceptIds,
       brands: a.conceptIds.map((id) => ({ id, name: conceptOf.get(id)?.name ?? null })),
@@ -318,6 +330,8 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
 
   // Statements (statements.ts) live under the same prefix.
   await app.register(statementRoutes)
+  // City Ledger: per-bill settlement, bills, history (cityLedgerRoutes.ts).
+  await app.register(cityLedgerBackOfficeRoutes)
 
   // ── List ──
   app.get<{ Querystring: { status?: string; pending?: string; overdue?: string; q?: string } }>('/', viewers, async (req) => {
@@ -481,7 +495,7 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
         const [{ max }] = await tx.$queryRaw<Array<{ max: number | null }>>`
           SELECT MAX(CAST(SUBSTRING("number" FROM 4) AS INTEGER)) AS max
           FROM customer_accounts WHERE "tenantId" = ${tenantId} AND "number" ~ '^OA-[0-9]+$'`
-        const number = `OA-${String((max ?? 0) + 1).padStart(4, '0')}`
+        const number = body.number ?? `OA-${String((max ?? 0) + 1).padStart(4, '0')}`
         return tx.customerAccount.create({
           data: {
             tenantId, number,
@@ -489,7 +503,7 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
             cnic: body.cnic ?? null, address: body.address ?? null, contactName: body.contactName ?? null,
             contactPhone: body.contactPhone ?? null, contactEmail: body.contactEmail ?? null,
             creditLimitCents: body.creditLimitCents, termsDays: body.termsDays, overdueGraceDays: body.overdueGraceDays,
-            requiresReference: body.requiresReference, conceptIds, notes: body.notes ?? null,
+            requiresReference: body.requiresReference, conceptIds, notes: body.notes ?? null, accountType: body.accountType,
             // The CEO's own client is active at once — but never before the company's
             // till clearing is split off 1110 (until then it waits like any other).
             status: ceoNow ? 'active' : 'pending',
@@ -499,7 +513,11 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
         })
       })
     } catch (err) {
-      if (isP2002(err)) throw nameTaken()
+      if (isP2002(err)) {
+        const target = String((err as { meta?: { target?: unknown } }).meta?.target ?? '')
+        if (target.includes('number')) throw new AppError('ACCOUNT_CODE_TAKEN', 'This company already has a client with that account code', 409)
+        throw nameTaken()
+      }
       throw err
     }
     await audit({
@@ -533,6 +551,7 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
           if (body[k] !== undefined) (data as Record<string, unknown>)[k] = body[k]
         }
         if (body.termsDays !== undefined) data.termsDays = body.termsDays
+        if (body.accountType !== undefined) data.accountType = body.accountType
         if (body.overdueGraceDays !== undefined) data.overdueGraceDays = body.overdueGraceDays
         if (body.requiresReference !== undefined) data.requiresReference = body.requiresReference
         // Brands: each one a brand of the CLIENT's own company.
