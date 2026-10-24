@@ -329,7 +329,7 @@ describe('general ledger and the account statement', () => {
     expect(s.closingCents).toBe(1_170_050)
     const csv = await get('finA', `/accounting/ledger?accountId=${cash.id}&view=statement&dateFrom=${monthStart}&dateTo=${today}&format=csv`)
     expect(csv.statusCode).toBe(200)
-    expect(csv.body.split('\r\n')[0]).toBe('﻿date,entry,chequeReference,memo,debit,credit,balance')
+    expect(csv.body.split('\r\n')[0]).toBe('﻿date,particulars,chequeReference,memo,debit,credit,balance')
     // The cheque reference typed on the entry, never the system key "manual:<id>" (owner, 2026-10-23).
     expect(csv.body).toContain('Manual rent,CH# 77,')
     expect(csv.body).not.toContain('manual:')

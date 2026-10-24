@@ -1,3 +1,4 @@
+import { readableDescription } from './particulars.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { forgetReopened, rememberReopened, reopenedThrough } from './closedBooks.js'
 import { classificationOf, classifyingTx, classifyPaymentTx, type ClassificationInput } from './paymentsRegister.js'
@@ -77,9 +78,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       // ?cursor to page a large account (nextCursor / hasMore / pageOpeningCents),
       // and each line carries its entry's status and the caller's Edit / Cancel
       // rights (journalsRegister.ts annotateEntries). Exports ignore paging.
-      // "Reversal of manual:<uuid>" → "Reversal of the original entry" (owner, 2026-10-23) — the admin's
-      // JournalBits readableDescription, same rule.
-      const readableDescription = (d: string) => d.replace(/([a-z_]+(?:\.[a-z_]+)*):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(@\d+)?/gi, 'the original entry')
+      // "Reversal of manual:<uuid>" → "Reversal of the original entry" (owner, 2026-10-23) — particulars.ts
+      // readableDescription; the Particulars column is the document's own narration (owner, 2026-10-24).
       if (req.query.view === 'statement') {
         if (!accountId) throw new AppError('ACCOUNT_REQUIRED', 'Pick an account for its statement', 422)
         const range = req.query.from || req.query.to ? resolveDateRange(req.query.from ?? dateFrom, req.query.to ?? dateTo) : { from, to }
@@ -116,21 +116,21 @@ export async function accountingRoutes(fastify: FastifyInstance) {
             ...st.rows.map((r) => {
               const split = (r.reference ?? '').startsWith(MANUAL_PREFIX) ? splitDescription(r.description) : { description: r.description, reference: null }
               return {
-              date: r.date, entry: readableDescription(split.description), chequeReference: split.reference ?? '', memo: readableDescription(r.memo ?? ''),
+              date: r.date, particulars: r.particulars, chequeReference: split.reference ?? '', memo: readableDescription(r.memo ?? ''),
               debit: r.debitCents ? fmtPkr(r.debitCents) : '', credit: r.creditCents ? fmtPkr(r.creditCents) : '',
               balance: fmtPkr(r.balanceCents),
             } }),
             // The sub-ledger (2026-10-23): each sub-account's opening, movement and closing; Unassigned ties it out.
-            ...(st.subAccounts.length ? [{ date: '', entry: 'SUB-ACCOUNTS', chequeReference: '', memo: 'Opening', debit: 'Debits', credit: 'Credits', balance: 'Closing' }] : []),
+            ...(st.subAccounts.length ? [{ date: '', particulars: 'SUB-ACCOUNTS', chequeReference: '', memo: 'Opening', debit: 'Debits', credit: 'Credits', balance: 'Closing' }] : []),
             ...st.subAccounts.map((x) => ({
-              date: '', entry: x.name, chequeReference: x.code ?? '', memo: fmtPkr(x.openingCents),
+              date: '', particulars: x.name, chequeReference: x.code ?? '', memo: fmtPkr(x.openingCents),
               debit: fmtPkr(x.debitCents), credit: fmtPkr(x.creditCents), balance: fmtPkr(x.closingCents),
             })),
           ],
           types: { debit: 'pkr', credit: 'pkr', balance: 'pkr' },
-          labels: { chequeReference: 'Cheque reference' },
-          wrapKeys: ['entry', 'memo'],
-          isTotal: (r) => r.entry === 'OPENING BALANCE' || r.entry === 'CLOSING BALANCE' || r.entry === 'TOTAL MOVEMENT',
+          labels: { particulars: 'Particulars', chequeReference: 'Cheque reference' },
+          wrapKeys: ['particulars', 'memo'],
+          isTotal: (r) => r.particulars === 'OPENING BALANCE' || r.particulars === 'CLOSING BALANCE' || r.particulars === 'TOTAL MOVEMENT',
           ...(st.truncated && { notes: ['This statement stops at the line limit — narrow the dates for the rest.'] }),
         })
       }

@@ -1427,7 +1427,7 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   scope — export never widens access. A table's `wrapKeys` print those text
   columns in full over several lines in the PDF (never cut to "…"); the account statement
   wraps its entry and memo and shows the CHEQUE REFERENCE typed on a manual entry
-  (`chequeReference`), never the system key `manual:<id>` (owner, 2026-10-23). CSV stays byte-identical to what the
+  (`chequeReference`), never the system key `manual:<id>` (owner, 2026-10-23). The first column is **Particulars** (owner, 2026-10-24): the document's own narration (a cash voucher's purpose + payee, a petty-cash spend's reason, a manual entry's description) from `accounting/particulars.ts particularsOf` (company-scoped reads; the stored description never changes) — the statement, the Accounts view, the Journals list / export and the payments register's narration use it. The PDF header shows the company name large, the title under it (owner, 2026-10-24); a sectioned report whose sections have their own columns passes `columnsBySection` (till reports do): portrait, one grid so every section's values line up, data centred. CSV stays byte-identical to what the
   route sent before; Excel has money as numbers; PDF is A4 (landscape over 6
   columns), header repeated, "Page x of y". The GL account statement is
   `GET /accounting/ledger?accountId&view=statement` (`accountStatement.ts`).

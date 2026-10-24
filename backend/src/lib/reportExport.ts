@@ -76,6 +76,13 @@ export interface ReportTable {
   rows: ReportRow[]
   /** Excel / PDF: a new section (heading row) whenever this key's value changes; the column is not repeated. */
   sectionKey?: string
+  /**
+   * PDF: each section keeps its OWN columns (by section heading) instead of one shared header — a
+   * sectioned report whose sections differ (Receipt Summary label / value, Category Summary category /
+   * qty / amount…). Portrait; one grid across the page so every section's values line up (a section's
+   * value columns take the right-most slots), first column left, data centred (owner, 2026-10-24).
+   */
+  columnsBySection?: Record<string, ReportColumn[]>
   /** PDF: text columns shown in full over as many lines as they need, never cut to "…" (e.g. a statement's narration). */
   wrapKeys?: string[]
   /** Excel / PDF: which rows are totals (bold). Default: a text cell in CAPITALS such as "TOTAL ASSETS". */
@@ -320,6 +327,7 @@ function wrapLines(font: PDFFont, size: number, text: string, width: number): st
 }
 
 export async function reportPdf(t: ReportTable): Promise<Buffer> {
+  if (t.sectionKey && t.columnsBySection) return groupedPdf(t, t.columnsBySection)
   const cols = shownColumns(t)
   const isTotal = t.isTotal ?? ((r: ReportRow) => defaultIsTotal(r, cols))
   const at = t.generatedAt ?? new Date()
@@ -376,9 +384,11 @@ export async function reportPdf(t: ReportTable): Promise<Buffer> {
     page.drawRectangle({ x: MARGIN, y: y - 2, width: usable, height: 2, color: PRIMARY })
     y -= 16
     const co = safe(t.companies?.length ? t.companies.join(', ') : 'servd')
-    page.drawText(fit(font, 9, co, usable), { x: MARGIN, y, size: 9, font, color: MUTED })
-    y -= first ? 18 : 14
-    page.drawText(fit(bold, first ? 15 : 11, safe(t.title), usable), { x: MARGIN, y, size: first ? 15 : 11, font: bold, color: INK })
+    // The company name stands out at the top (owner, 2026-10-24: "make GS Foods font large on top").
+    y -= first ? 4 : 0
+    page.drawText(fit(bold, first ? 16 : 11, co, usable), { x: MARGIN, y, size: first ? 16 : 11, font: bold, color: INK })
+    y -= first ? 20 : 14
+    page.drawText(fit(bold, first ? 13 : 10, safe(t.title), usable), { x: MARGIN, y, size: first ? 13 : 10, font: bold, color: PRIMARY })
     if (t.period) {
       y -= 13
       page.drawText(fit(font, 9, safe(t.period), usable), { x: MARGIN, y, size: 9, font, color: MUTED })
@@ -446,6 +456,101 @@ export async function reportPdf(t: ReportTable): Promise<Buffer> {
     }
   }
 
+  const footer = safe(`Generated ${fmtPktStamp(at)} by servd`)
+  pages.forEach((p, i) => {
+    p.drawText(footer, { x: MARGIN, y: MARGIN - 14, size: 7.5, font, color: MUTED })
+    const label = `Page ${i + 1} of ${pages.length}`
+    p.drawText(label, { x: pw - MARGIN - font.widthOfTextAtSize(label, 7.5), y: MARGIN - 14, size: 7.5, font, color: MUTED })
+  })
+  return Buffer.from(await doc.save())
+}
+
+/** The sectioned layout (`columnsBySection`): portrait, one shared grid, data centred. */
+async function groupedPdf(t: ReportTable, bySection: Record<string, ReportColumn[]>): Promise<Buffer> {
+  const at = t.generatedAt ?? new Date()
+  const doc = await PDFDocument.create()
+  doc.setTitle(t.title)
+  doc.setProducer('servd')
+  doc.setCreator('servd')
+  const font = await doc.embedFont(StandardFonts.Helvetica)
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold)
+  const safe = safeTextFor(font)
+  const sections = sectionsOf(t).map((sec) => ({ ...sec, cols: bySection[sec.heading ?? ''] ?? shownColumns(t) }))
+  const slots = Math.max(1, ...sections.map((s) => s.cols.length - 1))
+  const landscape = slots + 1 > 8
+  const [pw, ph] = landscape ? [A4[1], A4[0]] : A4
+  const size = slots > 6 ? 7.5 : 8.5
+  const rowH = size + 6
+  const usable = pw - MARGIN * 2
+  // One grid: the label column, then `slots` equal value slots.
+  const labelW = slots === 1 ? usable * 0.6 : Math.max(usable * 0.34, usable - slots * 90)
+  const slotW = (usable - labelW) / slots
+  /** x and width of column i of a section with n columns (value columns take the right-most slots). */
+  const cell = (i: number, n: number) => (i === 0 ? { x: MARGIN, w: labelW } : { x: MARGIN + labelW + (slots - (n - 1) + (i - 1)) * slotW, w: slotW })
+  const isTotalOf = (cols: ReportColumn[]) => t.isTotal ?? ((r: ReportRow) => defaultIsTotal(r, cols))
+
+  const pages: PDFPage[] = []
+  let page!: PDFPage
+  let y = 0
+  const newPage = (first: boolean) => {
+    page = doc.addPage([pw, ph])
+    pages.push(page)
+    y = ph - MARGIN
+    page.drawRectangle({ x: MARGIN, y: y - 2, width: usable, height: 2, color: PRIMARY })
+    y -= 16
+    y -= first ? 4 : 0
+    page.drawText(fit(bold, first ? 16 : 11, safe(t.companies?.length ? t.companies.join(', ') : 'servd'), usable), { x: MARGIN, y, size: first ? 16 : 11, font: bold, color: INK })
+    y -= first ? 20 : 14
+    page.drawText(fit(bold, first ? 13 : 10, safe(t.title), usable), { x: MARGIN, y, size: first ? 13 : 10, font: bold, color: PRIMARY })
+    if (t.period) { y -= 13; page.drawText(fit(font, 9, safe(t.period), usable), { x: MARGIN, y, size: 9, font, color: MUTED }) }
+    y -= 20
+  }
+  const draw = (txt: string, i: number, n: number, f: PDFFont, color = INK) => {
+    if (!txt) return
+    const { x, w } = cell(i, n)
+    const fitted = fit(f, size, txt, w - 6)
+    const tw = f.widthOfTextAtSize(fitted, size)
+    page.drawText(fitted, { x: i === 0 ? x + 3 : x + (w - tw) / 2, y, size, font: f, color })
+  }
+  const columnHead = (cols: ReportColumn[]) => {
+    if (!cols.some((c) => c.label)) return
+    page.drawRectangle({ x: MARGIN, y: y - 4, width: usable, height: rowH, color: HEAD_FILL })
+    cols.forEach((c, i) => draw(safe(c.label ?? ''), i, cols.length, bold))
+    y -= rowH
+  }
+  newPage(true)
+  if (t.rows.length === 0) { page.drawText('Nothing to show for this period.', { x: MARGIN + 3, y, size, font, color: MUTED }); y -= rowH }
+  for (const sec of sections) {
+    const cols = sec.cols
+    const isT = isTotalOf(cols)
+    if (y - rowH * 3 < MARGIN + 20) newPage(false)
+    if (sec.heading) {
+      y -= 4
+      page.drawText(fit(bold, size + 1.5, safe(sec.heading), usable), { x: MARGIN, y, size: size + 1.5, font: bold, color: PRIMARY })
+      y -= rowH
+    }
+    columnHead(cols)
+    for (const r of sec.rows) {
+      if (y - rowH < MARGIN + 20) { newPage(false); columnHead(cols) }
+      const tot = isT(r)
+      const f = tot ? bold : font
+      if (tot) page.drawLine({ start: { x: MARGIN, y: y + size + 2 }, end: { x: MARGIN + usable, y: y + size + 2 }, thickness: 0.6, color: MUTED })
+      cols.forEach((c, i) => draw(safe(displayOf(r[c.key], c.type)), i, cols.length, f))
+      y -= rowH
+      if (!tot) page.drawLine({ start: { x: MARGIN, y: y + size + 2 }, end: { x: MARGIN + usable, y: y + size + 2 }, thickness: 0.2, color: RULE })
+    }
+    y -= 4
+  }
+  if (t.notes?.length) {
+    y -= 4
+    for (const n of t.notes) {
+      for (const line of wrapLines(font, size, safe(n), usable)) {
+        if (y - rowH < MARGIN + 20) newPage(false)
+        page.drawText(line, { x: MARGIN, y, size, font, color: MUTED })
+        y -= size + 3
+      }
+    }
+  }
   const footer = safe(`Generated ${fmtPktStamp(at)} by servd`)
   pages.forEach((p, i) => {
     p.drawText(footer, { x: MARGIN, y: MARGIN - 14, size: 7.5, font, color: MUTED })

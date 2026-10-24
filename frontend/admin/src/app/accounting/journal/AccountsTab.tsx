@@ -24,6 +24,8 @@ interface StLine extends Partial<EntryFlags> {
   voucherNo: string | null
   sourceType: string | null
   description: string
+  /** The document's own narration (owner, 2026-10-24) — shown instead of the system text. */
+  particulars?: string
   reference: string | null
   memo: string | null
   debitCents: number
@@ -179,7 +181,7 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
                 <thead className="text-s-muted">
                   <tr>
                     <th className="text-left font-medium py-1.5 px-3">Date</th>
-                    <th className="text-left font-medium py-1.5 px-3">Entry</th>
+                    <th className="text-left font-medium py-1.5 px-3">Particulars</th>
                     <th className="text-right font-medium py-1.5 px-3">Debit</th>
                     <th className="text-right font-medium py-1.5 px-3">Credit</th>
                     <th className="text-right font-medium py-1.5 px-3">Balance</th>
@@ -195,7 +197,7 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
                       <td className="py-1.5 px-3 font-mono text-s-muted whitespace-nowrap">{pktDate(l.date)}</td>
                       <td className="py-1.5 px-3 min-w-0">
                         <button type="button" onClick={(e) => { e.stopPropagation(); onOpen(l.entryId) }} className="text-left text-s-text hover:underline">
-                          {l.voucherNo && <span className="font-mono font-semibold mr-1">{l.voucherNo}</span>}{readableDescription(l.description)}
+                          {l.voucherNo && <span className="font-mono font-semibold mr-1">{l.voucherNo}</span>}{l.particulars ?? readableDescription(l.description)}
                         </button>
                         {l.memo && <span className="block text-s-muted">{l.memo}</span>}
                         {l.status && l.status !== 'live' && <span className="mt-0.5 inline-block"><StatusBadge status={l.status} /></span>}

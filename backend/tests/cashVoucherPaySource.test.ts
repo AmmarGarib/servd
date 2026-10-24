@@ -36,6 +36,7 @@ import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { trustopsRoutes } from '../src/modules/trustops/routes.js'
 import { pettyCashTieOut, postCashVoucherSourceTx } from '../src/modules/accounting/pettyCashPosting.js'
 import { postJournalEntry } from '../src/modules/accounting/journal.js'
+import { accountingRoutes } from '../src/modules/accounting/routes.js'
 import { moneyAccountCode } from '../src/lib/bankAccounts.js'
 
 const P = `cvps${Date.now()}`
@@ -156,7 +157,7 @@ beforeAll(async () => {
     const status = (err as { statusCode?: number }).statusCode ?? 500
     return reply.status(status).send({ error: { code: 'ERR', message: String((err as Error).message) } })
   })
-  await app.register(async (api) => { await api.register(trustopsRoutes, { prefix: '/trustops' }) }, { prefix: '/api/v1' })
+  await app.register(async (api) => { await api.register(trustopsRoutes, { prefix: '/trustops' }); await api.register(accountingRoutes, { prefix: '/accounting' }) }, { prefix: '/api/v1' })
   await app.ready()
 
   // Boxes start empty and are funded through the ledger, so the tie-out holds.
@@ -240,6 +241,18 @@ describe('pay from cash on hand / a bank', () => {
     // The export says where it came from.
     const x = await call('finA', 'GET', `${V}/${v.id}/export.xlsx`)
     expect(x.statusCode, x.body.slice(0, 200)).toBe(200)
+
+    // The 1010 statement shows the voucher's own narration as Particulars (owner, 2026-10-24), not the status text.
+    const full = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { purpose: true, payeeName: true } })
+    const cash = await prisma.account.findFirstOrThrow({ where: { tenantId: T.A, code: '1010' } })
+    const st = await call('finA', 'GET', `/accounting/ledger?accountId=${cash.id}&view=statement`)
+    expect(st.statusCode, st.body).toBe(200)
+    const line = (st.json().lines as Array<{ reference: string; particulars: string; description: string }>).find((l) => l.reference === `cashvoucher.pay:${v.id}`)!
+    expect(line.description).toContain('paid from cash on hand')
+    expect(line.particulars).toBe(full.payeeName && !full.purpose.includes(full.payeeName) ? `${full.purpose} — ${full.payeeName}` : full.purpose)
+    const csv = await call('finA', 'GET', `/accounting/ledger?accountId=${cash.id}&view=statement&format=csv`)
+    const row = csv.body.split('\r\n').find((r) => r.includes(full.purpose))!
+    expect(row.split(',')[1]).not.toMatch(/^"?Cash voucher/)
   })
 
   it('bank: the named bank of the voucher\'s company; ambiguous or foreign banks are 422', async () => {

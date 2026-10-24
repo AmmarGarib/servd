@@ -18,6 +18,7 @@
 // annotateEntries is also what the account statement (accountStatement.ts,
 // GET /accounting/ledger?view=statement) puts on each of its lines.
 
+import { particularsOf } from './particulars.js'
 import type { FastifyRequest } from 'fastify'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
@@ -252,6 +253,8 @@ export interface JournalRow extends EntryAnnotation {
   createdAt: string
   /** The description; for a manual entry without its " · ref …" suffix (that is operatorReference). */
   description: string
+  /** The document's own narration (particulars.ts, owner 2026-10-24) — the Particulars column. */
+  particulars: string
   operatorReference: string | null
   totalCents: number
   /** Money in (+) / out (−) of the company's money accounts by this entry. */
@@ -283,6 +286,7 @@ export async function journalRows(viewer: Viewer, ids: string[]): Promise<Journa
   ])
   const tenantName = new Map(tenants.map((t) => [t.id, t.name]))
   const brandName = new Map(concepts.map((c) => [c.id, c.name]))
+  const narrate = await particularsOf(tenantIds, entries)
   const rows: JournalRow[] = []
   for (const id of ids) {
     const e = byId.get(id)
@@ -320,6 +324,7 @@ export async function journalRows(viewer: Viewer, ids: string[]): Promise<Journa
       entryDate: e.entryDate.toISOString(),
       createdAt: e.createdAt.toISOString(),
       description: split.description,
+      particulars: narrate(e),
       operatorReference: split.reference,
       totalCents: lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0),
       moneyNetCents: [...moneyByCode.values()].reduce((s, m) => s + m.netCents, 0),

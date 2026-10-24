@@ -39,7 +39,9 @@ export async function journalsRoutes(fastify: FastifyInstance) {
       ...(multi && { company: x.companyName ?? '' }),
       date: fmtPktDate(new Date(x.entryDate)),
       voucher_no: x.voucherNo ?? '',
-      description: x.operatorReference ? `${x.description} (ref ${x.operatorReference})` : x.description,
+      // The document's own narration (owner, 2026-10-24) and the cheque reference typed on a manual entry.
+      particulars: x.particulars,
+      cheque_reference: x.operatorReference ?? '',
       source: x.sourceType,
       money_account: x.moneyAccounts.map((m) => `${m.code} ${m.name}`).join(', '),
       counter_account: x.counterSummary,
@@ -48,7 +50,7 @@ export async function journalsRoutes(fastify: FastifyInstance) {
     }))
     if (rows.length) {
       rows.push({
-        ...(multi && { company: '' }), date: '', voucher_no: '', description: 'TOTAL', source: '', money_account: '', counter_account: '',
+        ...(multi && { company: '' }), date: '', voucher_no: '', particulars: 'TOTAL', cheque_reference: '', source: '', money_account: '', counter_account: '',
         amount: fmtPkr(r.rows.reduce((s, x) => s + (money ? Math.abs(x.moneyNetCents) : x.totalCents), 0)), status: '',
       })
     }
@@ -57,8 +59,9 @@ export async function journalsRoutes(fastify: FastifyInstance) {
       period: `${q.from ?? 'From the first entry'} to ${q.to ?? fmtPktDate(new Date())}`,
       rows,
       types: { amount: 'pkr' },
-      labels: { voucher_no: 'Voucher no.', money_account: 'Money account', counter_account: 'Account' },
-      isTotal: (row) => row.description === 'TOTAL',
+      labels: { voucher_no: 'Voucher no.', particulars: 'Particulars', cheque_reference: 'Cheque reference', money_account: 'Money account', counter_account: 'Account' },
+      wrapKeys: ['particulars'],
+      isTotal: (row) => row.particulars === 'TOTAL',
       ...(r.hasMore && { notes: ['Only the newest 20,000 entries are included — narrow the dates for the rest.'] }),
     })
   })

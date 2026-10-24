@@ -35,6 +35,7 @@ import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { NOT_BANK_CODES } from '../../lib/bankAccounts.js'
 import { toCents } from '../../lib/money.js'
+import { particularsOf } from './particulars.js'
 
 type Db = Prisma.TransactionClient | typeof prisma
 
@@ -477,6 +478,8 @@ export async function paymentRows(db: Db, tenantIds: string[], from: Date, to: D
     .map((e) => [e.id, e.voucherNo]))
 
   const out: PaymentRow[] = []
+  // The narration is the document's own (particulars.ts, owner 2026-10-24), not the posting's status text.
+  const narrate = await particularsOf([...new Set(aggs.map((x) => x.tenantId))], aggs)
   for (const a of aggs) {
     const ls = linesOf.get(a.id) ?? []
     const isMoney = (code: string) => FIXED_MONEY_CODES.includes(code as never) || bankName.has(`${a.tenantId}|${code}`)
@@ -507,7 +510,7 @@ export async function paymentRows(db: Db, tenantIds: string[], from: Date, to: D
       payee: d.payee ?? a.description,
       category,
       categoryLabel: d.categoryOverride ? PAYMENT_CATEGORIES[d.categoryOverride] : PAYMENT_CATEGORIES[category],
-      narration: a.description,
+      narration: narrate(a),
       method,
       methodLabel,
       moneyAccountCode: moneyCode,

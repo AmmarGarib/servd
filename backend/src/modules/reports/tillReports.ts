@@ -1161,7 +1161,10 @@ export function tillReportTable(r: TillReport): ReportTable {
     const t = totalRow(s)
     if (t) rows.push({ _section: title, ...t })
   }
-  return { title: r.title, period, columns, rows, sectionKey: '_section', isTotal, notes }
+  // PDF: each section with its own columns, in line and centred (owner, 2026-10-24).
+  const columnsBySection: Record<string, ReportColumn[]> = {}
+  for (const s of r.sections) columnsBySection[s.title ?? r.title] = s.columns.map((c) => ({ key: c.key, label: c.label, type: typeOf(c) }))
+  return { title: r.title, period, columns, rows, sectionKey: '_section', columnsBySection, isTotal, notes }
 }
 
 /** Shared by the route's lookups. */

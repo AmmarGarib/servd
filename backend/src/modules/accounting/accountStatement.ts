@@ -21,6 +21,7 @@ import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { sumCents, toCents } from '../../lib/money.js'
 import { fmtPktDate } from './dates.js'
+import { particularsOf } from './particulars.js'
 
 /** Lines in one statement at most — beyond it the caller narrows the dates. */
 export const STATEMENT_MAX_LINES = 20_000
@@ -31,6 +32,8 @@ export interface AccountStatementLine {
   entryId: string
   conceptId: string | null
   description: string
+  /** The document's own narration (particulars.ts) — what the statement shows. */
+  particulars: string
   reference: string | null
   memo: string | null
   debitCents: number
@@ -70,7 +73,7 @@ export interface AccountStatement {
   nextCursor: string | null
   hasMore: boolean
   /** The flat rows the exports print: opening, every line, totals, closing. */
-  rows: Array<{ date: string; description: string; reference: string | null; memo: string | null; debitCents: number; creditCents: number; balanceCents: number }>
+  rows: Array<{ date: string; description: string; particulars: string; reference: string | null; memo: string | null; debitCents: number; creditCents: number; balanceCents: number }>
 }
 
 export interface StatementOptions {
@@ -207,6 +210,7 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
       entryId: l.journalEntry.id,
       conceptId: l.conceptId,
       description: l.journalEntry.description,
+      particulars: l.journalEntry.description,
       reference: l.journalEntry.reference,
       memo: l.memo,
       debitCents: l.type === 'debit' ? amt : 0,
@@ -214,15 +218,17 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
       balanceCents: bal,
     }
   })
+  const narrate = await particularsOf([account.tenantId], lines)
+  for (const l of lines) l.particulars = narrate(l)
   const dateFrom = fmtPktDate(from)
   const dateTo = fmtPktDate(to)
   // Unpaged and complete: the totals are the lines'. Paged or truncated: the window's (so closing is the real one).
   if (paged || truncated) { dr = win.dr; cr = win.cr; bal = openingCents + win.net }
   const rows = [
-    { date: dateFrom, description: 'OPENING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: openingCents },
-    ...lines.map((l) => ({ date: l.date, description: l.description, reference: l.reference, memo: l.memo, debitCents: l.debitCents, creditCents: l.creditCents, balanceCents: l.balanceCents })),
-    { date: '', description: 'TOTAL MOVEMENT', reference: null, memo: null, debitCents: dr, creditCents: cr, balanceCents: bal - openingCents },
-    { date: dateTo, description: 'CLOSING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: bal },
+    { date: dateFrom, description: 'OPENING BALANCE', particulars: 'OPENING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: openingCents },
+    ...lines.map((l) => ({ date: l.date, description: l.description, particulars: l.particulars, reference: l.reference, memo: l.memo, debitCents: l.debitCents, creditCents: l.creditCents, balanceCents: l.balanceCents })),
+    { date: '', description: 'TOTAL MOVEMENT', particulars: 'TOTAL MOVEMENT', reference: null, memo: null, debitCents: dr, creditCents: cr, balanceCents: bal - openingCents },
+    { date: dateTo, description: 'CLOSING BALANCE', particulars: 'CLOSING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: bal },
   ]
   return {
     account: { id: account.id, code: account.code, name: account.name, type: account.type, normal, companyName: account.tenant?.name ?? null },
@@ -238,7 +244,7 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
 
 /** ONE sub-account's statement: its tagged amounts (a line's tag, on the line's side), running balance. */
 async function subAccountStatement(
-  account: { id: string; code: string; name: string; type: string; tenant: { name: string } | null },
+  account: { id: string; code: string; name: string; type: string; tenantId: string | null; tenant: { name: string } | null },
   normal: 'debit' | 'credit', from: Date, to: Date, subAccountId: string, conceptId: string | null,
 ): Promise<AccountStatement> {
   const sa = await prisma.subAccount.findFirst({ where: { id: subAccountId, accountId: account.id } })
@@ -269,16 +275,18 @@ async function subAccountStatement(
     bal += sign(l.type) * amt
     return {
       date: fmtPktDate(l.journalEntry.entryDate), lineId: l.id, entryId: l.journalEntry.id, conceptId: l.conceptId,
-      description: l.journalEntry.description, reference: l.journalEntry.reference, memo: l.memo,
+      description: l.journalEntry.description, particulars: l.journalEntry.description, reference: l.journalEntry.reference, memo: l.memo,
       debitCents: l.type === 'debit' ? amt : 0, creditCents: l.type === 'credit' ? amt : 0, balanceCents: bal,
     }
   })
+  const narrate = await particularsOf([account.tenantId], lines)
+  for (const l of lines) l.particulars = narrate(l)
   const dateFrom = fmtPktDate(from), dateTo = fmtPktDate(to)
   const rows = [
-    { date: dateFrom, description: 'OPENING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: openingCents },
-    ...lines.map((l) => ({ date: l.date, description: l.description, reference: l.reference, memo: l.memo, debitCents: l.debitCents, creditCents: l.creditCents, balanceCents: l.balanceCents })),
-    { date: '', description: 'TOTAL MOVEMENT', reference: null, memo: null, debitCents: dr, creditCents: cr, balanceCents: bal - openingCents },
-    { date: dateTo, description: 'CLOSING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: bal },
+    { date: dateFrom, description: 'OPENING BALANCE', particulars: 'OPENING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: openingCents },
+    ...lines.map((l) => ({ date: l.date, description: l.description, particulars: l.particulars, reference: l.reference, memo: l.memo, debitCents: l.debitCents, creditCents: l.creditCents, balanceCents: l.balanceCents })),
+    { date: '', description: 'TOTAL MOVEMENT', particulars: 'TOTAL MOVEMENT', reference: null, memo: null, debitCents: dr, creditCents: cr, balanceCents: bal - openingCents },
+    { date: dateTo, description: 'CLOSING BALANCE', particulars: 'CLOSING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: bal },
   ]
   return {
     account: { id: account.id, code: account.code, name: account.name, type: account.type, normal, companyName: account.tenant?.name ?? null },
