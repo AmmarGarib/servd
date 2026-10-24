@@ -25,11 +25,11 @@ import { ensureOrderDepleted, returnVoidedLineStockTx, deductInventoryForAddedLi
 import { orderStockCostCents } from '../accounting/cogs.js'
 import { MANAGERS } from '../auth/middleware.js'
 import type { OrderDTO } from '@servd/types'
-import type { Order, Payment, PaymentGateway, PaymentMethod, Prisma, TerminalChargeStatus } from '@prisma/client'
+import type { Order, Payment, PaymentGateway, PaymentMethod, Prisma, TerminalChargeStatus, UserRole } from '@prisma/client'
 // Manager-override PIN: the ONE verifier (company-scoped, active accounts,
 // owner-decision-7 approvers) and the approver tier that rings at manager caps.
 import { verifyManagerPin } from '../auth/managerPin.js'
-import { isOverrideApprover } from '../../lib/roles.js'
+import { isOverrideApprover, OVERRIDE_APPROVERS } from '../../lib/roles.js'
 // POS connector (spec §6, §7): the fiscal outbox for refunds, the sale's
 // fiscal view for the till, and the card-machine active-charge guard.
 import { assertNoActiveTerminalChargeTx } from '../../connectors/terminal/guard.js'
@@ -2236,12 +2236,15 @@ export async function requireManagerApproval(input: {
   action: string
   /** The order being approved for — its own PIN-attempt bucket (FOH-R2-01). */
   orderId?: string | null
+  /** Who approves: default the override approvers; a whole-ticket cancel passes TICKET_CANCEL_APPROVERS. */
+  approvers?: readonly UserRole[]
 }): Promise<{ approverId: string; viaPin: boolean }> {
-  if (isOverrideApprover(input.actorRole)) return { approverId: input.actorId, viaPin: false }
+  const approvers = input.approvers ?? OVERRIDE_APPROVERS
+  if ((approvers as readonly string[]).includes(input.actorRole)) return { approverId: input.actorId, viaPin: false }
   if (!input.managerOverridePin?.trim()) {
     throw new AppError('MANAGER_OVERRIDE_REQUIRED', `${input.action} needs a manager — a manager signs in or enters their PIN`, 403)
   }
-  const approver = await verifyManagerPin(input.managerOverridePin, input.tenantId, undefined, {
+  const approver = await verifyManagerPin(input.managerOverridePin, input.tenantId, approvers, {
     actorId: input.actorId, orderId: input.orderId ?? null, action: input.action,
   })
   if (!approver) throw invalidManagerPin()

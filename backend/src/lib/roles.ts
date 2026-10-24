@@ -71,6 +71,18 @@ export const OVERRIDE_APPROVERS: readonly UserRole[] = [
   'admin', 'owner', 'management', 'fnb_manager', 'foh_management', 'boh_management',
 ] as UserRole[]
 
+/**
+ * Who may approve CANCELLING A WHOLE TICKET at the till (POST /orders/:id/cancel), by signing in or by PIN:
+ * the override approvers plus finance (owner, 2026-10-24: "Hasnain should also have manager pin to cancel
+ * ticket with reason"). Only that action — finance approves no void, refund, comp, discount or pay-out.
+ */
+export const TICKET_CANCEL_APPROVERS: readonly UserRole[] = [...OVERRIDE_APPROVERS, 'finance'] as UserRole[]
+
+/** May this role hold an override PIN at all (an override approver, or finance for ticket cancels)? */
+export function canHoldOverridePin(role: string | null | undefined): boolean {
+  return !!role && (TICKET_CANCEL_APPROVERS as readonly string[]).includes(role)
+}
+
 export function isOverrideApprover(role: string | null | undefined): boolean {
   return !!role && (OVERRIDE_APPROVERS as readonly string[]).includes(role)
 }

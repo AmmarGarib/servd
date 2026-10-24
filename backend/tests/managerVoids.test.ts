@@ -32,9 +32,10 @@ import { returnUndeliveredOrder } from '../src/modules/orders/returnedFood.js'
 
 let app: FastifyInstance
 let A: Company, B: Company
-let cashierA: Who, waiterA: Who, mgrA: Who, cashierB: Who, mgrB: Who
+let cashierA: Who, waiterA: Who, mgrA: Who, cashierB: Who, mgrB: Who, finA: Who
 const PIN_A = '5821'
 const PIN_B = '7394'
+const PIN_FIN = '6482'
 let beefA: string
 
 async function build(): Promise<FastifyInstance> {
@@ -78,6 +79,8 @@ beforeAll(async () => {
   mgrB = await mkUser('mvoid-mgr-b', 'foh_management', B.tenantId)
   await setManagerPin(mgrA.id, PIN_A)
   await setManagerPin(mgrB.id, PIN_B)
+  finA = await mkUser('mvoid-fin-a', 'finance', A.tenantId)
+  await setManagerPin(finA.id, PIN_FIN)
   // A's nihari takes 150 g of beef from its FIFO lot (finance wave B), so a fired void has food cost to waste.
   await prisma.setting.create({ data: { key: fifoCutoverKey(A.tenantId), value: new Date(Date.now() - 30 * 86_400_000).toISOString() } })
   beefA = (await prisma.inventoryItem.create({ data: { tenantId: A.tenantId, name: 'Beef', unit: 'kg' } })).id
@@ -207,6 +210,21 @@ describe('cancelling a whole rung-up order is manager-only', () => {
     expect((log.metadata as { approverId?: string }).approverId).toBe(mgrA.id)
     expect(await prisma.preBill.findFirstOrThrow({ where: { orderId: o.id } })).toMatchObject({ status: 'cancelled', cancelledById: mgrA.id })
     expect(await prisma.fiscalDocument.count({ where: { orderId: o.id } })).toBe(0)
+  })
+
+  it('finance PIN cancels a ticket (owner, 2026-10-24), recorded as approver — but approves no line void', async () => {
+    const o = await ticket(cashierA, A)
+    const r = await call(cashierA, 'POST', `/orders/${o.id}/cancel`, { reason: 'guest walked out', managerOverridePin: PIN_FIN })
+    expect(r.statusCode, r.body).toBe(200)
+    const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'order.cancel', entityId: o.id } })
+    expect((log.metadata as { approverId?: string }).approverId).toBe(finA.id)
+    const o2 = await ticket(cashierA, A)
+    // (sent by finance itself, so the wrong-PIN attempt never counts against the cashier used below)
+    const v = await call(finA, 'POST', `/pos/orders/${o2.id}/void`, { orderItemId: o2.items[0]!.id, reason: 'wrong item', managerOverridePin: PIN_FIN })
+    expect(v.json().error.code).toBe('INVALID_MANAGER_PIN')
+    // Signed in, finance cancels on its own login too.
+    const o3 = await ticket(cashierA, A)
+    expect((await call(finA, 'POST', `/orders/${o3.id}/cancel`, { reason: 'duplicate ticket' })).statusCode).toBe(200)
   })
 
   it('a manager signed in → 200 with their own id as approver', async () => {

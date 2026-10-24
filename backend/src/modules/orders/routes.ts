@@ -5,6 +5,7 @@ import { OrderStatus } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, CASHIERS, MANAGERS } from '../auth/middleware.js'
 import { requireManagerApproval } from '../pos/service.js'
+import { TICKET_CANCEL_APPROVERS } from '../../lib/roles.js'
 import { listOrders, getOrder, updateOrderStatus, updateItemStatus, cancelOrder, completionDoor, fireCourse, bumpPaidTillSale } from './service.js'
 import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
 import { conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
@@ -305,6 +306,8 @@ export async function orderRoutes(fastify: FastifyInstance) {
         tenantId: order.concept.tenantId,
         action: 'Cancelling an order',
         orderId: order.id,
+        // Finance approves a ticket cancel too (owner, 2026-10-24) — only this action.
+        approvers: TICKET_CANCEL_APPROVERS,
       })
       const updated = await cancelOrder(order.id, {
         reason,

@@ -841,7 +841,7 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   of a rung-up order needs a manager — the manager's own login or a valid
   same-company manager PIN (`MANAGER_OVERRIDE_REQUIRED` /
   `INVALID_MANAGER_PIN`, 403); `approverId` always recorded. A cashier or
-  server can never void alone.
+  server can never void alone. **Finance approves a whole-ticket cancel too** (owner, 2026-10-24: "Hasnain should also have manager pin to cancel ticket with reason"): `lib/roles.ts TICKET_CANCEL_APPROVERS` (override approvers + finance) on `POST /orders/:id/cancel` only — signed in or by PIN; finance approves no line void, refund, comp, discount or pay-out. Finance may set its own PIN (`canHoldOverridePin`).
 - **No skip of real sales.** There is no per-document Skip, no date-range
   skip and no "skip held" at go-live. `skipped` is automatic only
   (prefiled_direct, zero_value per setting, zero_value_unsupported,

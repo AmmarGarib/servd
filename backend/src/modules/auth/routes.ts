@@ -19,7 +19,7 @@ import {
 } from './staffAccounts.js'
 import { maskPhoneForLog } from '../../lib/notify.js'
 import { PRACTICE_NOTE, practiceCodeField, sandboxBlocks, refuseCodeRequestInPractice, isSandbox } from '../../lib/sandbox.js'
-import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt, isOverrideApprover, isDirectorRole } from '../../lib/roles.js'
+import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt, isOverrideApprover, canHoldOverridePin, isDirectorRole } from '../../lib/roles.js'
 import { validateDirectorBrands } from '../director/access.js'
 import type { UserRole } from '@prisma/client'
 import { sendText, whatsappSettingsView, saveWhatsappSettings } from '../../lib/whatsapp.js'
@@ -1513,7 +1513,7 @@ export async function authRoutes(fastify: FastifyInstance) {
     const limitKey = `user:${me.id}`
 
     const firstPin = !me.pin
-    if (firstPin && !isOverrideApprover(me.role)) {
+    if (firstPin && !canHoldOverridePin(me.role)) {
       throw new AppError('PIN_NOT_FOR_ROLE', 'Only managers approve with an override PIN, so your role does not have one.', 403)
     }
     if (firstPin && !body.password) {
@@ -2660,7 +2660,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       usesCodeLogin: codeLogin,
       mustChangePassword: !codeLogin && me.mustChangePassword,
       hasPin: !!me.pin,
-      canHoldPin: isOverrideApprover(me.role),
+      canHoldPin: canHoldOverridePin(me.role),
     }
   })
 
