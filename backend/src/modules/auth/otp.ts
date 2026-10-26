@@ -151,8 +151,13 @@ export function normalisePhone(raw: string): string {
   // the country code 92 so the same number entered three different ways still
   // resolves to one canonical key.
   let digits = raw.replace(/\D/g, '')
-  // '0092 300…' — the 00 international prefix.
-  if (digits.startsWith('0092')) digits = digits.slice(2)
+  // International numbers (owner, 2026-10-26: the sign-up phone picker sends
+  // '+<country code><number>'). A '+' or the 00 international prefix means the
+  // digits already start with a country code: a non-Pakistan number is kept as
+  // is (E.164 without the +); a Pakistan one falls through to the rules below.
+  const international = raw.trim().startsWith('+') || digits.startsWith('00')
+  if (digits.startsWith('00')) digits = digits.slice(2)
+  if (international && !digits.startsWith('92')) return digits
   // '+92 (0)300 1234567' / '0092 0300…' — the trunk 0 written after the
   // country code. A Pakistani number never has 0 straight after 92 (mobiles
   // are 92 3xx…, landlines 92 + area code), so this is always that spelling.

@@ -138,6 +138,11 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // and the migration's own DO block skips itself without them.)
   for (const statement of migrationSection('20261014090000_finance_wave_b',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
+  // Customer identity (owner, 2026-10-26): the member-code sequence, function and
+  // column DEFAULT, and the case-insensitive nickname index. Every statement in
+  // that section is idempotent itself (IF NOT EXISTS / OR REPLACE / SET DEFAULT).
+  for (const statement of migrationSection('20261027100000_customer_identity_invites',
+    '-- ─── SQL-only objects', '-- ─── end SQL-only objects')) await prisma.$executeRawUnsafe(statement)
   // Partial unique indexes that live only in later migrations (db push can't
   // express them). Keep in step with the migration that creates each one.
   // 20261010210100_pos_connector — at most one live card-machine charge per order.

@@ -70,6 +70,8 @@ const createCampaignSchema = z
 // replaces them with what the customer did at the brands in view (W3A-RV-02).
 const safeCustomerSelect = {
   id: true, name: true, email: true, phone: true,
+  // The servd name + the internal member barcode (owner, 2026-10-26).
+  nickname: true, memberCode: true,
   marketingOptIn: true, birthdayMmDd: true,
   preferredConceptId: true, createdAt: true, updatedAt: true,
   preferredConcept: { select: { name: true, slug: true, tenantId: true } },
@@ -304,6 +306,9 @@ export async function crmRoutes(fastify: FastifyInstance) {
             { name: { contains: search, mode: 'insensitive' } },
             { email: { contains: search, mode: 'insensitive' } },
             { phone: { contains: search } },
+            // A scanned / typed member code (owner, 2026-10-26), and the servd name.
+            { memberCode: { equals: search.trim().toUpperCase() } },
+            { nickname: { equals: search.trim(), mode: 'insensitive' } },
           ],
         }),
         ...(conceptId && { preferredConceptId: conceptId }),
@@ -423,6 +428,7 @@ export async function crmRoutes(fastify: FastifyInstance) {
         select: {
           id: true, name: true, email: true, phone: true, birthdayMmDd: true,
           staffNotes: true, preferredConceptId: true,
+          nickname: true, memberCode: true,
           // Naughty list — surfaced front-and-center so a host opening a
           // reservation immediately sees risk + recent strike history.
           // Strikes are servd-wide account standing (owner, 2026-10-15).

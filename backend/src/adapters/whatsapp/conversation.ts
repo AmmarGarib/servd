@@ -53,7 +53,7 @@ import { banAppealsEnabled, createBanAppeal } from '../../modules/complaints/app
 import { AppError } from '../../lib/errors.js'
 import { fmtPkr as fmtPkrShared } from '../../modules/accounting/csv.js'
 import { formatBrandName } from '../../lib/brandName.js'
-import { publicBrandWhere } from '../../lib/publicBrands.js'
+import { publicBrandWhere, listedBrandWhere } from '../../lib/publicBrands.js'
 
 // The one PKR formatter (modules/accounting/csv.ts), in the bot's "PKR 1234" form.
 const fmtPkr = (cents: number) => fmtPkrShared(cents, { symbol: true, decimals: 0, group: false })
@@ -77,7 +77,7 @@ const clip = (s: string, n: number) => (s.length <= n ? s : `${s.slice(0, n - 1)
  * needs one). The brand menu, every step of a session already on a brand, and
  * placeOrder all use this one rule.
  */
-const LIVE_BRAND = { isActive: true, deletedAt: null, storefrontVisible: true, tenantId: { not: null }, ...publicBrandWhere() }
+const LIVE_BRAND = { ...listedBrandWhere(), tenantId: { not: null } }
 /** A dish a customer can order: available, not deleted, priced. */
 const ORDERABLE_ITEM = { isAvailable: true, deletedAt: null, priceCents: { gt: 0 } }
 /** A menu section that is switched on (time-of-day is checked with sectionVisibleAt). */

@@ -93,7 +93,7 @@ export function LoginForm({
         <div>
           <label htmlFor={`${idPrefix}-email`} className="block text-xs font-bold mb-1.5 text-[color:var(--servd-ink)]">Email</label>
           <input id={`${idPrefix}-email`} type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)}
-            placeholder="you@example.com" autoFocus={autoFocus} required className={inputCls} />
+            placeholder="the.goat@servd.pk" autoFocus={autoFocus} required className={inputCls} />
         </div>
         <div>
           <label htmlFor={`${idPrefix}-password`} className="block text-xs font-bold mb-1.5 text-[color:var(--servd-ink)]">Password</label>

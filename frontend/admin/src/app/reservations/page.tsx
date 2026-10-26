@@ -72,6 +72,8 @@ interface Reservation {
   waitlist: boolean
   table?: { id: string; label: string; capacity: number } | null
   customer?: { id: string; name: string; totalSpentCents: number; lastOrderAt: string | null } | null
+  /** Members who joined by the booker's invite link (owner, 2026-10-26). */
+  _count?: { guests: number }
 }
 
 interface Floor { id: string; name: string; tables: Array<{ id: string; label: string; capacity: number }> }
@@ -331,6 +333,7 @@ function ReservationRow({
           {r.notes && <span className="italic"> · {r.notes}</span>}
           {r.customer && r.customer.totalSpentCents > 0 && <span> · returning · {fmtPkrShort(r.customer.totalSpentCents)} LTV</span>}
         </p>
+        {(r._count?.guests ?? 0) > 0 && <InvitedGuests reservationId={r.id} count={r._count!.guests} onViewCustomer={onViewCustomer} />}
       </div>
       <div className="flex gap-1.5 flex-wrap justify-end">
         {r.customer && (
@@ -597,5 +600,38 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="block text-xs text-s-muted mb-1">{label}</span>
       {children}
     </label>
+  )
+}
+
+// ─── Invited guests (owner, 2026-10-26: "invite your table") ──────────────
+// Members who joined this booking by the booker's link. Loaded on open
+// (GET /reservations/:id/guests — company-scoped), never one request per row.
+function InvitedGuests({ reservationId, count, onViewCustomer }: { reservationId: string; count: number; onViewCustomer: (id: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const { data, isLoading } = useQuery({
+    queryKey: ['reservation-guests', reservationId],
+    queryFn: () => api.get<{ data: Array<{ id: string; customerId: string; name: string; nickname: string | null; memberCode: string | null }> }>(`/reservations/${reservationId}/guests`),
+    enabled: open,
+  })
+  return (
+    <div className="mt-1">
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        className="text-xs font-bold text-primary-ink underline min-h-[32px]">
+        {count} invited {count === 1 ? 'guest' : 'guests'} joined
+      </button>
+      {open && (
+        <ul className="mt-1 space-y-1">
+          {isLoading && <li className="text-xs text-s-muted">Loading…</li>}
+          {data?.data.map((g) => (
+            <li key={g.id} className="text-xs text-s-text flex items-center gap-2 flex-wrap">
+              <span className="font-semibold">{g.name}</span>
+              {g.nickname && <span className="text-s-muted">@{g.nickname}</span>}
+              {g.memberCode && <span className="font-mono text-s-muted">{g.memberCode}</span>}
+              <button type="button" onClick={() => onViewCustomer(g.customerId)} className="text-primary-ink underline">Profile</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }

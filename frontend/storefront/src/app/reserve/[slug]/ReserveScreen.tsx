@@ -37,7 +37,7 @@ import { useCustomerAuth } from '../../../store/customerAuth'
 // GA4 events (no-op without GA4 / consent) — the shared contract in lib/analytics.
 import { track } from '../../../lib/analytics'
 import { PARTY_SIZES } from './partySizes'
-import { isPkMobile, normalisePhone } from '../../../lib/phone'
+import { InviteTable } from '../../../components/reserve/InviteTable'
 import { smoothScrollTo } from '../../../lib/scroll'
 import { Field } from '@/components/ui/Field'
 import { withReturnPath } from '@/components/auth/authFlow'
@@ -125,7 +125,6 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
   const [limitReached, setLimitReached] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [loadError, setLoadError] = useState(false)
-  const [phoneError, setPhoneError] = useState('')
   const formRef = useRef<HTMLFormElement | null>(null)
   const nameRef = useRef<HTMLInputElement | null>(null)
   const doneHeadingRef = useRef<HTMLHeadingElement | null>(null)
@@ -251,13 +250,11 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!selected || !name.trim() || !phone.trim()) return
+    if (!selected || !name.trim()) return
     if (!token) { setNeedsSignIn(true); return }
-    if (!isPkMobile(normalisePhone(phone))) {
-      setPhoneError('Use a Pakistani mobile like 0300 1234567')
-      document.getElementById('reserve-phone')?.focus()
-      return
-    }
+    // The phone and email on a booking are always the account's own (the API
+    // ignores typed ones, UX-5), so the number is not checked here — an
+    // international number on the account (2026-10-26) must not block a booking.
     setSubmitting(true)
     setError(null)
     setNeedsSignIn(false)
@@ -273,8 +270,6 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
           partySize,
           startTime: selected,
           guestName: name.trim(),
-          guestPhone: phone.trim(),
-          guestEmail: email.trim() || null,
           notes: notes.trim() || null,
         }),
       })
@@ -341,6 +336,11 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
               <p style={{ fontSize: '0.8rem', color: 'var(--servd-dim)', maxWidth: '26rem' }}>
                 WhatsApp confirmations and reminders go to the verified phone on your account. Verify your number in your account to get them next time.
               </p>
+            )}
+            {token && partySize > 1 && (
+              <div style={{ width: '100%', textAlign: 'left', marginTop: '0.5rem' }}>
+                <InviteTable token={token} reservationId={done.id} partySize={partySize} />
+              </div>
             )}
             <Link href="/account" style={{ color: 'var(--servd-green-ink)', fontWeight: 700, fontSize: '0.9rem' }}>See my bookings</Link>
             <Link href={backToBrandHref} style={{ color: 'var(--servd-mute)', fontSize: '0.85rem' }}>Back to {brand}</Link>
@@ -509,10 +509,8 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
                   <input ref={nameRef} required name="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className="sv-field-input servd-field" />
                 </Field>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-                  <Field label="Phone *" error={phoneError} errorId="reserve-phone-err">
-                    <input id="reserve-phone" required name="tel" autoComplete="tel" type="tel" inputMode="tel" placeholder="0300 1234567" value={phone}
-                      onChange={(e) => { setPhone(e.target.value); if (phoneError && isPkMobile(normalisePhone(e.target.value))) setPhoneError('') }}
-                      aria-invalid={!!phoneError} aria-describedby={phoneError ? 'reserve-phone-err' : undefined}
+                  <Field label="Phone (from your account)">
+                    <input id="reserve-phone" name="tel" type="tel" value={phone ? `+${phone.replace(/^\+/, '')}` : ''} readOnly
                       className="sv-field-input servd-field" />
                   </Field>
                   <Field label="Email">
@@ -540,7 +538,7 @@ export default function ReserveScreen({ brandName = null, intro = null }: {
                 </p>
               )}
 
-              <MagneticButton type="submit" disabled={submitting || !name.trim() || !phone.trim() || limitReached} className="servd-btn-primary" style={{ marginTop: '1rem', width: '100%', padding: '1rem' }}>
+              <MagneticButton type="submit" disabled={submitting || !name.trim() || limitReached} className="servd-btn-primary" style={{ marginTop: '1rem', width: '100%', padding: '1rem' }}>
                 {submitting ? 'Booking…' : 'Confirm booking'}
               </MagneticButton>
               <p style={{ fontSize: '0.7rem', color: 'var(--servd-dim)', textAlign: 'center', marginTop: '0.75rem' }}>

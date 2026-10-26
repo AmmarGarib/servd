@@ -159,12 +159,69 @@ export function Kitchens({ fields, ctx }: SectionProps) {
   )
 }
 
-function BrandCard({ concept, tile, index, onBrandHost, labels }: {
+/**
+ * The SAME trading cards as a "pick a kitchen" control (owner, 2026-10-26:
+ * "Pls use same style brand cards as on servd home" — the group-order picker).
+ * One radio per card (the card face is the hit area); no order / visit links.
+ * `tiles` are the home section's own tiles (the servd:home servd.kitchens
+ * fields), so a card looks exactly as it does on the home page.
+ */
+export function KitchenPicker({ concepts, tiles, selected, onPick, labelledBy }: {
+  concepts: Concept[]
+  tiles: Record<string, unknown>[]
+  selected: string
+  onPick: (slug: string) => void
+  labelledBy?: string
+}) {
+  const bySlug = new Map(tiles.map((t) => [str((t as TileFields).brand).trim(), t as TileFields]))
+  const labels = { backLabel: 'kitchen stats', hoursLabel: 'hours', backFoot: '', flipBackText: 'flip back' }
+  return (
+    <div className={d.grid} role="radiogroup" aria-labelledby={labelledBy}>
+      {concepts.map((c, i) => (
+        <BrandCard key={c.slug} concept={c} tile={bySlug.get(c.slug) ?? {}} index={i} onBrandHost={false}
+          labels={labels} pick={{ selected: selected === c.slug, onPick: () => onPick(c.slug) }} />
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The same trading cards, each leading to another page of the brand's (the
+ * /reserve picker: `/reserve/<slug>`, "Book at {brand}"). Server callers pass
+ * strings only (a prefix and a text), never functions.
+ */
+export function KitchenCards({ concepts, tiles, hrefPrefix, ctaText }: {
+  concepts: Concept[]
+  tiles: Record<string, unknown>[]
+  hrefPrefix: string
+  /** "{brand}" / "{name}" become the brand's name. */
+  ctaText: string
+}) {
+  const bySlug = new Map(tiles.map((t) => [str((t as TileFields).brand).trim(), t as TileFields]))
+  const labels = { backLabel: 'kitchen stats', hoursLabel: 'hours', backFoot: '', flipBackText: 'flip back' }
+  return (
+    <div className={d.grid}>
+      {concepts.map((c, i) => {
+        const name = formatBrandName(c.name)
+        return (
+          <BrandCard key={c.slug} concept={c} tile={bySlug.get(c.slug) ?? {}} index={i} onBrandHost={false} labels={labels}
+            action={{ href: `${hrefPrefix}${c.slug}`, text: (ctaText || 'Book at {brand}').replace(/\{brand\}|\{name\}/g, name) }} />
+        )
+      })}
+    </div>
+  )
+}
+
+function BrandCard({ concept, tile, index, onBrandHost, labels, pick, action }: {
   concept: Concept
   tile: TileFields
   index: number
   onBrandHost: boolean
   labels: { backLabel: string; hoursLabel: string; backFoot: string; flipBackText: string }
+  /** Picker mode (KitchenPicker): the card is a radio; no order / visit links. */
+  pick?: { selected: boolean; onPick: () => void }
+  /** Another page of the brand's in place of ordering (the /reserve picker). */
+  action?: { href: string; text: string }
 }) {
   const slug = concept.slug
   const meta = META[slug] ?? FALLBACK_META
@@ -178,10 +235,10 @@ function BrandCard({ concept, tile, index, onBrandHost, labels }: {
   const photo = safeSrc(tile.photo) || conceptHeroImage(concept, 'card') || ''
   const art = safeSrc(tile.art)
   const bundled = BUNDLED_ART[art]
-  const orderText = str(tile.orderText).replaceAll('{name}', name).trim()
-  const learnMoreText = str(tile.learnMoreText).replaceAll('{name}', name).trim()
+  const orderText = pick ? '' : action ? action.text : str(tile.orderText).replaceAll('{name}', name).trim()
+  const learnMoreText = pick ? '' : str(tile.learnMoreText).replaceAll('{name}', name).trim()
   const hours = hoursSummary(concept.serviceHours)
-  const orderHref = `${onBrandHost ? SERVD_LINK_ORIGIN : ''}/${slug}`
+  const orderHref = action ? action.href : `${onBrandHost ? SERVD_LINK_ORIGIN : ''}/${slug}`
   const lc = (v: string) => (isQuiet ? v.toLowerCase() : v)
 
   const cardRef = useRef<HTMLDivElement>(null)
@@ -271,7 +328,8 @@ function BrandCard({ concept, tile, index, onBrandHost, labels }: {
     : name
 
   return (
-    <article className={`${d.slot} ${isQuiet ? d.elegant : ''} reveal-on-scroll`} style={slotStyle}>
+    <article className={`${d.slot} ${isQuiet ? d.elegant : ''} ${pick || action ? '' : 'reveal-on-scroll'}`}
+      style={pick ? { ...slotStyle, outline: pick.selected ? '4px solid var(--servd-green)' : 'none', outlineOffset: 8, borderRadius: 26 } : slotStyle}>
       <div
         ref={cardRef}
         className={`${d.card} ${reduced ? d.calm : ''}`}
@@ -321,7 +379,12 @@ function BrandCard({ concept, tile, index, onBrandHost, labels }: {
 
           <div className={d.body}>
             <h3 className={d.name}>
-              {learnMoreText ? (
+              {pick ? (
+                <button type="button" role="radio" aria-checked={pick.selected} onClick={pick.onPick} className={d.stretch}
+                  style={{ background: 'none', border: 0, padding: 0, font: 'inherit', textAlign: 'inherit', cursor: 'pointer' }}>
+                  {nameInner}
+                </button>
+              ) : learnMoreText ? (
                 // Cross-origin (the brand's own domain): a plain link.
                 <a href={brandCanonical(slug)} className={d.stretch} aria-label={learnMoreText}>{nameInner}</a>
               ) : nameInner}
@@ -342,6 +405,11 @@ function BrandCard({ concept, tile, index, onBrandHost, labels }: {
                   {isQuiet ? orderText.toLowerCase() : orderText}
                   <ArrowRight aria-hidden size={18} strokeWidth={2.6} />
                 </Link>
+              )}
+              {pick && (
+                <span aria-hidden className={isQuiet ? d.orderQuiet : `sv-btn ${d.order}`}>
+                  {pick.selected ? (isQuiet ? 'picked' : 'Picked') : (isQuiet ? 'pick' : 'Pick')}
+                </span>
               )}
               {learnMoreText && (
                 <span aria-hidden className={d.visit}>

@@ -26,6 +26,7 @@ import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { guestTagTypeRoutes, findTagTypeInScope } from './guestTagTypes.js'
+import { reservationInviteRoutes } from './invites.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { verifyCustomerToken } from '../auth/service.js'
 import { isRevoked } from '../../lib/tokenRevocation.js'
@@ -117,10 +118,10 @@ async function assertCustomerInScope(req: FastifyRequest, customerId: string, mo
  * logged out / revoked) plus a live account — but WITHOUT switching the
  * request to the customer's RLS context.
  */
-async function signedInCustomer(req: FastifyRequest) {
+export async function signedInCustomer(req: FastifyRequest, message = 'Sign in to your servd account to book a table.') {
   const authRequired = () => new AppError(
     'AUTH_REQUIRED',
-    'Sign in to your servd account to book a table.',
+    message,
     401,
     { signInToBook: true },
   )
@@ -136,7 +137,7 @@ async function signedInCustomer(req: FastifyRequest) {
   if (await isRevoked(token, payload.sub, (payload as { iat?: number }).iat)) throw authRequired()
   const self = await prisma.customer.findFirst({
     where: { id: payload.sub, deletedAt: null },
-    select: { id: true, name: true, phone: true, email: true, phoneVerifiedAt: true, emailVerifiedAt: true },
+    select: { id: true, name: true, nickname: true, phone: true, email: true, phoneVerifiedAt: true, emailVerifiedAt: true },
   })
   if (!self) throw authRequired()
   return self
@@ -308,6 +309,8 @@ function strandsError(req: FastifyRequest): AppError {
 }
 
 export async function reservationRoutes(fastify: FastifyInstance) {
+  // "Invite your table" (owner, 2026-10-26) — ./invites.ts.
+  await fastify.register(reservationInviteRoutes)
   // List reservations — staff view, filtered by date / concept / status
   fastify.get<{ Querystring: { conceptId?: string; date?: string; status?: string } }>(
     '/',
@@ -334,6 +337,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
           table:    { select: { id: true, label: true, capacity: true, floorId: true } },
           customer: { select: { id: true, name: true, totalSpentCents: true, lastOrderAt: true } },
           concept:  { select: { id: true, name: true } },   // host-stand tablet shows the brand
+          // Members who joined by the booker's invite link (owner, 2026-10-26).
+          _count:   { select: { guests: true } },
         },
       })
     },

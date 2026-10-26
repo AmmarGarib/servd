@@ -32,6 +32,20 @@ function genShareCode(): string {
 }
 
 /** A group's cart as priceOrder lines — shared by the GET quote and submit. */
+/**
+ * The name a member shows under in a group (owner, 2026-10-26: "the name
+ * should auto pull from the servd name customer selects"): the customer's
+ * nickname when they have one — the typed name is then ignored — else the
+ * typed name (422 NAME_REQUIRED without one).
+ */
+async function memberName(customerId: string, typed: string | undefined): Promise<string> {
+  const c = await prisma.customer.findUnique({ where: { id: customerId }, select: { nickname: true } })
+  if (c?.nickname) return c.nickname
+  const t = typed?.trim()
+  if (!t) throw new AppError('NAME_REQUIRED', 'Pick your servd name first, or type the name to show in the group.', 422)
+  return t
+}
+
 function groupLines(items: Array<{ menuItemId: string; unitPriceCents: number; quantity: number }>) {
   return items.map((i) => ({ menuItemId: i.menuItemId, unitPriceCents: i.unitPriceCents, quantity: i.quantity }))
 }
@@ -47,7 +61,7 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const body = z.object({
         conceptSlug:    z.string().min(1),
-        initiatorName:  z.string().min(1).max(120),
+        initiatorName:  z.string().max(120).optional(),
         closingMin:     z.number().int().min(5).max(180).default(45),
       }).parse(req.body)
 
@@ -59,6 +73,8 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       // 409 BRAND_CLOSED with "opens at …", the same answer checkout gives.
       await assertOpenForOrders(concept, new Date(), false)
 
+      const initiatorName = await memberName(req.customer!.id, body.initiatorName)
+
       let code = genShareCode()
       for (let i = 0; i < 5; i++) {
         const exists = await prisma.groupOrder.findUnique({ where: { shareCode: code } })
@@ -69,12 +85,12 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
       const go = await prisma.groupOrder.create({
         data: {
           conceptId:           concept.id,
-          initiatorName:       body.initiatorName,
+          initiatorName,
           initiatorCustomerId: req.customer!.id,
           shareCode:           code,
           closingAt:           new Date(Date.now() + body.closingMin * 60_000),
           members: {
-            create: { displayName: body.initiatorName, customerId: req.customer!.id },
+            create: { displayName: initiatorName, customerId: req.customer!.id },
           },
         },
         include: { members: true },
@@ -128,7 +144,7 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
     { preHandler: requireCustomerAuth, config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
     async (req) => {
       const code = req.params.code.toUpperCase()
-      const body = z.object({ displayName: z.string().min(1).max(60) }).parse(req.body)
+      const body = z.object({ displayName: z.string().max(60).optional() }).parse(req.body ?? {})
       const go = await prisma.groupOrder.findUnique({ where: { shareCode: code } })
       if (!go) throw new NotFoundError('GroupOrder', code)
       if (go.status !== 'open') throw new AppError('GROUP_LOCKED', `Group is ${go.status}`, 422)
@@ -138,9 +154,10 @@ export async function groupOrderRoutes(fastify: FastifyInstance) {
         where: { groupOrderId: go.id, customerId: req.customer!.id },
       })
       if (existing) return existing
+      const displayName = await memberName(req.customer!.id, body.displayName)
       try {
         return await prisma.groupOrderMember.create({
-          data: { groupOrderId: go.id, displayName: body.displayName, customerId: req.customer!.id },
+          data: { groupOrderId: go.id, displayName, customerId: req.customer!.id },
         })
       } catch (err) {
         const e = err as { code?: string }

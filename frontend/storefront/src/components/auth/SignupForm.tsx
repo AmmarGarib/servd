@@ -7,7 +7,8 @@ import { useCustomerAuth } from '../../store/customerAuth'
 import { BlockedNotice, fetchBlocks, type AccountBlock } from '../account/BlockedNotice'
 import { ErrorToast } from '../ui/ErrorToast'
 import { MagneticButton } from '../ui/MagneticButton'
-import { isPkMobile, normalisePhone } from '../../lib/phone'
+import { PhoneInput } from '../ui/PhoneInput'
+import { DEFAULT_PHONE_COUNTRY, isValidPhone, nationalDigits, toE164, type PhoneCountry } from '../../lib/phoneCountries'
 import { NETWORK_ERROR, customerErrorMessage, postAuthDest, useAuthReturnPath, withReturnPath, type ApiErrorBody } from './authFlow'
 
 // The storefront's one-code sign-up (details → code). ONE code is sent to
@@ -57,6 +58,9 @@ export function SignupForm({
   const [name,     setName]     = useState('')
   const [email,    setEmail]    = useState('')
   const [phone,    setPhone]    = useState('')
+  // International picker (owner, 2026-10-26); Pakistan by default. The API gets "+<dial><number>".
+  const [country,  setCountry]  = useState<PhoneCountry>(DEFAULT_PHONE_COUNTRY)
+  const phoneE164 = () => toE164(country, phone)
   const [password, setPassword] = useState('')
   const [confirm,  setConfirm]  = useState('')
 
@@ -97,7 +101,7 @@ export function SignupForm({
       res = await fetch(`${API_URL}/api/v1/auth/customer/request-signup-codes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone.trim(), email: email.trim() }),
+        body: JSON.stringify({ phone: phoneE164(), email: email.trim() }),
       })
     } catch {
       onError(NETWORK_ERROR)
@@ -119,7 +123,7 @@ export function SignupForm({
   const rules: Record<string, (v: string) => string> = {
     name:     (v) => v.trim().length < 2 ? 'Please enter your full name' : '',
     email:    (v) => /\S+@\S+\.\S+/.test(v.trim()) ? '' : 'Please enter a valid email',
-    phone:    (v) => isPkMobile(normalisePhone(v)) ? '' : 'Use a Pakistani mobile like 0300 1234567',
+    phone:    (v) => isValidPhone(country, v) ? '' : `Enter a ${country.name} mobile number, like ${country.example}`,
     password: (v) => v.length < 8 ? 'At least 8 characters'
       : (!/[a-zA-Z]/.test(v) || !/[0-9]/.test(v)) ? 'Use a letter and a number as well' : '',
     confirm:  (v) => v !== password ? "Passwords don't match" : '',
@@ -134,8 +138,10 @@ export function SignupForm({
   // the moment it is valid.
   const live = (k: string, v: string) => { if (fieldErrors[k]) check(k, v) }
   const formatPhoneOnBlur = () => {
-    const n = normalisePhone(phone)
-    if (isPkMobile(n)) setPhone(`0${n.slice(2, 5)} ${n.slice(5)}`)
+    // Pakistan keeps its familiar 0300 1234567 spelling; other countries stay as typed.
+    if (country.iso !== 'PK') return
+    const n = nationalDigits(country, phone)
+    if (isValidPhone(country, phone)) setPhone(`0${n.slice(0, 3)} ${n.slice(3)}`)
   }
 
   async function handleStep1(e: React.FormEvent) {
@@ -167,7 +173,7 @@ export function SignupForm({
           name:    name.trim(),
           email:   email.trim(),
           password,
-          phone:   phone.trim(),
+          phone:   phoneE164(),
           code:    otp.trim(),
           ...(referralCode() && { referralCode: referralCode() }),
         }),
@@ -280,21 +286,27 @@ export function SignupForm({
             <Field id={`${idPrefix}-name`} label="Full name" type="text" autoComplete="name"
               value={name} onChange={(v) => { setName(v); live('name', v) }}
               onValidate={() => { check('name', name) }}
-              placeholder="Your name" autoFocus={autoFocus} error={fieldErrors['name']}
+              placeholder="Ammar Garib" autoFocus={autoFocus} error={fieldErrors['name']}
               inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
             <Field id={`${idPrefix}-email`} label="Email" type="email" autoComplete="email"
               value={email} onChange={(v) => { setEmail(v); live('email', v) }}
               onValidate={() => { check('email', email) }}
-              placeholder="you@example.com" error={fieldErrors['email']}
+              placeholder="the.goat@servd.pk" error={fieldErrors['email']}
               inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
 
-            <Field id={`${idPrefix}-phone`} label="Mobile (WhatsApp)" type="tel" autoComplete="tel"
-              inputMode="tel"
-              value={phone} onChange={(v) => { setPhone(v); live('phone', v) }}
-              onValidate={() => { if (!check('phone', phone)) formatPhoneOnBlur() }}
-              placeholder="0300 1234567" error={fieldErrors['phone']}
-              inp={inp} inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />
+            <div>
+              <label htmlFor={`${idPrefix}-phone`} className="block text-xs font-bold mb-1.5 text-[color:var(--servd-ink)]">Mobile (WhatsApp)</label>
+              <PhoneInput id={`${idPrefix}-phone`} country={country}
+                onCountryChange={(c) => { setCountry(c); if (fieldErrors['phone']) { const ok = isValidPhone(c, phone); if (ok) clearFieldError('phone') } }}
+                value={phone} onChange={(v) => { setPhone(v); live('phone', v) }}
+                onFocus={onFocus}
+                onBlur={(e) => { onBlur(e); if (!check('phone', phone)) formatPhoneOnBlur() }}
+                inputClassName={inp()} inputStyle={inpStyle} error={fieldErrors['phone']} required />
+              {fieldErrors['phone'] && (
+                <p id={`${idPrefix}-phone-err`} role="alert" className="mt-1 text-[11px] font-semibold" style={{ color: 'var(--servd-danger)' }}>{fieldErrors['phone']}</p>
+              )}
+            </div>
 
             <PasswordField id={`${idPrefix}-password`} label="Password" autoComplete="new-password"
               value={password} onChange={(v) => { setPassword(v); live('password', v); if (confirm) check('confirm', confirm, v) }}
@@ -317,7 +329,7 @@ export function SignupForm({
             <MagneticButton type="submit" disabled={loading}
               className="w-full rounded-xl py-3.5 font-black text-[0.95rem] transition-all disabled:opacity-40 active:scale-[0.98] mt-1"
               style={primaryBtnStyle(loading)}>
-              {loading ? 'Sending code…' : 'Continue →'}
+              {loading ? 'Sending code…' : 'Get your code'}
             </MagneticButton>
           </form>
         </>

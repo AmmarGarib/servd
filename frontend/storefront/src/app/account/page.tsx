@@ -6,6 +6,8 @@ import { useCustomerAuth } from '../../store/customerAuth'
 import { LoadingScreen } from '../../components/ui/Loader'
 import { fmt } from '../../lib/ui'
 import DeliveryPin, { type LatLng } from '../../components/checkout/DeliveryPin'
+import { NicknameField, saveNickname, useNicknameCheck } from '../../components/account/NicknameField'
+import { InviteTable } from '../../components/reserve/InviteTable'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -27,6 +29,7 @@ interface CustomerProfile {
   name: string | null; email: string | null; phone: string | null
   phoneVerifiedAt?: string | null; emailVerifiedAt?: string | null
   referralCode?: string | null
+  nickname?: string | null
   loyaltyAccount: LoyaltyAccount | null; orders: Order[]
 }
 interface CustomerAddress {
@@ -352,6 +355,9 @@ export default function AccountPage() {
               </div>
               <div>
                 <p className="font-black text-sm leading-tight" style={{ color: 'var(--servd-ink)' }}>{profile.name ?? 'Guest'}</p>
+                {profile.nickname && (
+                  <p className="text-[0.7rem] font-bold mt-0.5 truncate max-w-[120px]" style={{ color: 'var(--servd-purple)' }}>@{profile.nickname}</p>
+                )}
                 <p className="text-[0.6rem] mt-0.5 truncate max-w-[120px]" style={{ color: 'var(--servd-mute)' }}>
                   {profile.email ?? profile.phone ?? '—'}
                 </p>
@@ -713,6 +719,10 @@ export default function AccountPage() {
           )}
         </div>
 
+        {/* ── The servd name (owner, 2026-10-26) ── */}
+        <ServdNameSection token={token} current={profile.nickname ?? null}
+          onSaved={(n) => setProfile((p) => (p ? { ...p, nickname: n } : p))} />
+
         {/* ── Refer a friend ── */}
         <ReferralSection token={token} referralCode={profile.referralCode} customerName={profile.name} />
 
@@ -751,6 +761,53 @@ interface ReferralEntry {
   referredAt: string | null
   firstOrderAt: string | null
   rewarded: boolean
+}
+
+// ─── The servd name ──────────────────────────────────────────────────────────
+function ServdNameSection({ token, current, onSaved }: { token: string | null; current: string | null; onSaved: (n: string) => void }) {
+  const [editing, setEditing] = useState(!current)
+  const [value, setValue] = useState(current ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const check = useNicknameCheck(editing ? token : null, value, current)
+  useEffect(() => { if (current) { setValue(current); setEditing(false) } }, [current])
+  if (!token) return null
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!value.trim() || check.state === 'bad' || saving) return
+    setSaving(true); setError('')
+    const err = await saveNickname(token, value)
+    setSaving(false)
+    if (err) { setError(err); return }
+    onSaved(value.trim()); setEditing(false)
+  }
+  return (
+    <div className="rounded-3xl p-5 sm:p-6 mt-3" style={{ background: '#fff', border: '1px solid rgba(0,0,0,0.06)' }}>
+      <p className="text-[9px] font-black uppercase tracking-[0.28em]" style={{ color: 'var(--servd-mute)' }}>Your servd name</p>
+      {!editing ? (
+        <div className="flex items-center justify-between gap-3 mt-1">
+          <p className="text-lg font-black truncate" style={{ color: 'var(--servd-ink)' }}>@{current}</p>
+          <button type="button" onClick={() => setEditing(true)} className="min-h-[44px] px-3 text-sm font-bold" style={{ color: 'var(--servd-purple)' }}>Change</button>
+        </div>
+      ) : (
+        <form onSubmit={(e) => { void save(e) }} className="mt-2" noValidate>
+          <p className="text-sm mb-3" style={{ color: 'var(--servd-mute)' }}>Friends see this name in group orders and on tables you invite them to.</p>
+          <NicknameField id="account-nickname" value={value} onChange={(v) => { setValue(v); setError('') }} check={check} />
+          {error && <p role="alert" className="text-xs font-semibold" style={{ color: 'var(--servd-danger)' }}>{error}</p>}
+          <div className="flex gap-2 mt-2">
+            <button type="submit" disabled={saving || !value.trim() || check.state === 'bad' || check.state === 'checking'}
+              className="rounded-lg px-4 py-2.5 text-sm font-black disabled:opacity-40"
+              style={{ background: 'var(--servd-purple)', color: 'var(--servd-on-purple)' }}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            {current && (
+              <button type="button" onClick={() => { setValue(current); setEditing(false) }} className="rounded-lg px-4 py-2.5 text-sm font-bold" style={{ color: 'var(--servd-mute)' }}>Cancel</button>
+            )}
+          </div>
+        </form>
+      )}
+    </div>
+  )
 }
 
 function ReferralSection({
@@ -959,12 +1016,19 @@ interface MyReservationsResponse {
     id: string; partySize: number; startTime: string; status: string
     concept: { name: string; slug: string }
   }>
+  /** Tables joined through someone's invite link (2026-10-26). */
+  joined?: Array<{
+    id: string; partySize: number; startTime: string; status: string
+    concept: { name: string; slug: string }; host: string | null
+  }>
 }
 
 function MyBookingsSection({ token }: { token: string | null }) {
   const [data, setData] = useState<MyReservationsResponse | null>(null)
   const [cancelling, setCancelling] = useState<string | null>(null)  // reservationId being cancelled
   const [cancelled,  setCancelled]  = useState<Set<string>>(new Set())
+  const [inviteFor,  setInviteFor]  = useState<string | null>(null)  // reservationId whose invite panel is open
+  const [left,       setLeft]       = useState<Set<string>>(new Set())
 
   useEffect(() => {
     if (!token) return
@@ -991,7 +1055,13 @@ function MyBookingsSection({ token }: { token: string | null }) {
   }
 
   if (!data) return null
-  if (data.upcoming.length === 0 && data.past.length === 0) return null  // hide entirely if empty
+  const joined = (data.joined ?? []).filter((r) => !left.has(r.id) && ['booked', 'confirmed'].includes(r.status) && new Date(r.startTime) > new Date())
+  if (data.upcoming.length === 0 && data.past.length === 0 && joined.length === 0) return null  // hide entirely if empty
+  const leave = async (id: string) => {
+    if (!token) return
+    const r = await fetch(`${API_URL}/api/v1/reservations/joined/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(() => null)
+    if (r?.ok) setLeft((prev) => new Set([...prev, id]))
+  }
 
   const fmtDate = (iso: string) => new Date(iso).toLocaleString('en-GB', {
     timeZone: 'Asia/Karachi', weekday: 'short', day: 'numeric', month: 'short',
@@ -1053,6 +1123,14 @@ function MyBookingsSection({ token }: { token: string | null }) {
                       Confirm
                     </Link>
                   )}
+                  {canCancel && r.partySize > 1 && (
+                    <button type="button" onClick={() => setInviteFor((v) => (v === r.id ? null : r.id))}
+                      aria-expanded={inviteFor === r.id}
+                      className="rounded-lg px-3 py-1.5 text-xs font-bold whitespace-nowrap"
+                      style={{ background: 'var(--servd-surface)', color: 'var(--servd-purple)', border: '1px solid var(--servd-line)' }}>
+                      Invite your table
+                    </button>
+                  )}
                   {canCancel && (
                     <button
                       onClick={() => void cancelReservation(r.id, r.confirmToken)}
@@ -1066,6 +1144,27 @@ function MyBookingsSection({ token }: { token: string | null }) {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {inviteFor && token && data.upcoming.some((r) => r.id === inviteFor) && (
+        <div className="mb-4">
+          <InviteTable token={token} reservationId={inviteFor} partySize={data.upcoming.find((r) => r.id === inviteFor)?.partySize} />
+        </div>
+      )}
+
+      {joined.length > 0 && (
+        <div className="space-y-2 mb-4">
+          <p className="text-xs font-bold" style={{ color: 'var(--servd-mute)' }}>Tables you joined</p>
+          {joined.map((r) => (
+            <div key={r.id} className="rounded-xl p-3 flex items-center justify-between gap-3" style={{ background: 'var(--servd-surface)', border: '1px solid var(--servd-line)' }}>
+              <div className="min-w-0">
+                <p className="font-black text-sm truncate">{formatBrandName(r.concept.name)}{r.host ? ` · with @${r.host}` : ''}</p>
+                <p className="text-xs" style={{ color: 'var(--servd-mute)' }}>Party of {r.partySize} · {fmtDate(r.startTime)}</p>
+              </div>
+              <button type="button" onClick={() => { void leave(r.id) }} className="rounded-lg px-3 min-h-[44px] text-xs font-bold shrink-0" style={{ color: 'var(--servd-danger)' }}>Leave</button>
+            </div>
+          ))}
         </div>
       )}
 

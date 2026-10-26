@@ -765,6 +765,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.stationChangeRequest,
     // Sales sessions (2026-10-22): per brand, follow the brand's company.
     tx.menuSession,
+    // Booking guests by invite link (owner, 2026-10-26): follow the brand's company.
+    tx.reservationGuest,
     // Customer money.
     tx.giftCard, tx.walletTransaction, tx.tipPool, tx.taxInvoice,
     // HR back office.

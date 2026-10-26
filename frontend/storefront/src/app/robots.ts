@@ -33,7 +33,7 @@ const AI_CRAWLERS = [
 ]
 
 const PRIVATE_PATHS = [
-  '/*/order/', '/reserve/claim/', '/reserve/confirm/', '/group-order/',
+  '/*/order/', '/reserve/claim/', '/reserve/confirm/', '/reserve/invite/', '/group-order/',
   '/orders', '/account', '/login', '/signup',
   // The rider app's web version, and everything under it.
   '/rider',

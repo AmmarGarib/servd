@@ -1,4 +1,6 @@
 'use client'
+import { PhoneInput } from '../../../components/ui/PhoneInput'
+import { DEFAULT_PHONE_COUNTRY, type PhoneCountry } from '../../../lib/phoneCountries'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -189,6 +191,7 @@ export default function CheckoutPage() {
 
   const [name,  setName]  = useState('')
   const [phone, setPhone] = useState('')
+  const [phoneCountry, setPhoneCountry] = useState<PhoneCountry>(DEFAULT_PHONE_COUNTRY)
   const [notes,   setNotes]   = useState('')
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState('')
@@ -1373,8 +1376,10 @@ export default function CheckoutPage() {
                   placeholder="Your name" autoFocus />
               </FormField>
               <FormField label="Phone (optional)" htmlFor="co-phone">
-                <ServdInput id="co-phone" name="phone" autoComplete="tel" inputMode="tel" type="tel" value={phone} onChange={e => setPhone(e.target.value)}
-                  placeholder="03xx-xxxxxxx" />
+                <PhoneInput id="co-phone" name="phone" country={phoneCountry} onCountryChange={setPhoneCountry}
+                  value={phone} onChange={setPhone}
+                  inputClassName="servd-field w-full rounded-xl px-4 py-3 text-sm transition-all placeholder:text-black/25"
+                  inputStyle={{ background: '#fff', color: 'var(--servd-ink)', border: '1.5px solid rgba(0,0,0,0.1)' }} />
               </FormField>
               <FormField label="Special instructions (optional)" htmlFor="co-guest-notes">
                 <ServdTextarea id="co-guest-notes" name="notes" value={notes} onChange={e => setNotes(e.target.value)}

@@ -15,12 +15,16 @@ import { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
 import { NavIcon } from '../ui/NavIcon'
 import { GuestTagsPanel } from './GuestTagsPanel'
+import { MemberBarcode } from './MemberBarcode'
 
 interface CustomerContext {
   id: string
   name: string
   email: string | null
   phone: string | null
+  /** Internal member barcode + the servd name (owner, 2026-10-26). */
+  memberCode?: string | null
+  nickname?: string | null
   isBlacklisted: boolean
   blacklistReason: string | null
   birthdayMmDd: string | null
@@ -118,6 +122,10 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
           {data.phone && data.email && ' · '}
           {data.email && <span className="truncate">{data.email}</span>}
         </div>
+        {data.nickname && <div className="text-[11px] font-bold text-primary-ink mt-0.5">@{data.nickname}</div>}
+        {data.memberCode && (
+          <div className="mt-2"><MemberBarcode code={data.memberCode} name={data.name} compact /></div>
+        )}
         <div className="grid grid-cols-3 gap-2 mt-3">
           <Stat label="Lifetime"  value={`Rs. ${lifetime}`} />
           <Stat label="Last visit" value={lastVisitAgo} />

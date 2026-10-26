@@ -25,6 +25,7 @@ import { liveSectionFields } from '../../../sections/liveFields'
 import { str } from '../../../sections/safe'
 import { BlockedNotice } from '../../../components/account/BlockedNotice'
 import ReserveScreen from './ReserveScreen'
+import SimmerReserve from './SimmerReserve'
 import { MAX_PARTY } from './partySizes'
 
 export const dynamic = 'force-dynamic'
@@ -79,6 +80,17 @@ export default async function ReserveBrandPage({ params }: Params) {
       })}
     </p>
   )
+
+  // Simmer: the minimal supper-club page (owner, 2026-10-26: "invite your
+  // table"); every other brand keeps the standard widget.
+  if (concept.slug === 'simmer') {
+    return (
+      <>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(ld) }} />
+        <SimmerReserve />
+      </>
+    )
+  }
 
   return (
     <>

@@ -8,6 +8,7 @@ import { StorefrontNav } from '../components/StorefrontNav'
 import { StorefrontFooter } from '../components/StorefrontFooter'
 import { FeedbackSlot } from '../components/feedback/FeedbackSlot'
 import { PopupHost } from '../components/popups/PopupHost'
+import { NicknameSheet } from '../components/account/NicknameSheet'
 import { Analytics, type ConsentWords } from '../components/analytics/Analytics'
 import { SERVD_ORIGIN, SERVD_OG_IMAGE, BRAND_HOST_HEADER } from '../lib/brandDomains'
 import { ManagedPage } from '../sections/ManagedPage'
@@ -229,6 +230,8 @@ export default async function StorefrontLayout({ children }: { children: React.R
         <FeedbackSlot>
           <ManagedPage slug="servd:feedback" />
         </FeedbackSlot>
+        {/* First visit after sign-in: pick your servd name (owner, 2026-10-26). */}
+        <NicknameSheet initialBrandSlug={initialBrandSlug} />
       </body>
     </html>
   )

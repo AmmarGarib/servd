@@ -25,10 +25,11 @@ import { useCustomerAuth } from '../../../store/customerAuth'
 import { BlockedNotice } from '../../../components/account/BlockedNotice'
 import { formatBrandName } from '../../../lib/concept'
 import { smoothScrollTo } from '../../../lib/scroll'
+import { NicknameField, saveNickname, useNicknameCheck } from '../../../components/account/NicknameField'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
-interface Member { id: string; displayName: string }
+interface Member { id: string; displayName: string; customerId: string | null }
 interface GroupItem { id: string; memberId: string; menuItemId: string; name: string; quantity: number; unitPriceCents: number; notes: string | null }
 interface GroupOrder {
   id: string; status: 'open' | 'locked' | 'submitted' | 'cancelled'
@@ -76,6 +77,15 @@ export default function GroupOrderRoom() {
   const searchParams = useSearchParams()
   const myName = searchParams.get('me') ?? ''
   const token = useCustomerAuth((s) => s.token)
+  const customerId = useCustomerAuth((s) => s.customerId)
+  // Joining shows you under your servd name (owner, 2026-10-26). A member with
+  // no servd name yet picks one here first (the API answers 422 NAME_REQUIRED).
+  const [needName, setNeedName] = useState(false)
+  const [nameValue, setNameValue] = useState('')
+  const [nameSaving, setNameSaving] = useState(false)
+  const [nameError, setNameError] = useState('')
+  const nameCheck = useNicknameCheck(needName ? token : null, nameValue, null)
+  const joinTried = useRef(false)
 
   const [go, setGo] = useState<GroupOrder | null>(null)
   const [menu, setMenu] = useState<Category[]>([])
@@ -150,16 +160,24 @@ export default function GroupOrderRoom() {
           else menuLoaded.current = false
         }
 
-        // Auto-join as the named member if not already in (idempotent server-side)
-        if (myName && !data.members.some((m) => m.displayName === myName)) {
-          await fetch(`${API_URL}/api/v1/group-orders/${code}/join`, {
+        // Opening the invite link joins you (idempotent server-side), under
+        // your servd name. Without one the server asks for it (422
+        // NAME_REQUIRED): stop and show the picker instead of retrying.
+        const me = data.members.find((m) => m.customerId && m.customerId === customerId)
+        if (me) setMeId(me.id)
+        else if (data.status === 'open' && !joinTried.current) {
+          joinTried.current = true
+          const jr = await fetch(`${API_URL}/api/v1/group-orders/${code}/join`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders },
-            body: JSON.stringify({ displayName: myName }),
+            body: JSON.stringify(myName ? { displayName: myName } : {}),
           })
+          if (jr.ok) { const m = await jr.json() as Member; if (!cancelled) setMeId(m.id); lastJson.current = '' }
+          else {
+            const b = await jr.json().catch(() => null) as ApiError | null
+            if (!cancelled && b?.error?.code === 'NAME_REQUIRED') setNeedName(true)
+          }
         }
-        const me = data.members.find((m) => m.displayName === myName)
-        if (me) setMeId(me.id)
       } catch (e) {
         if (!cancelled) setError((e as Error).message)
       } finally {
@@ -177,7 +195,7 @@ export default function GroupOrderRoom() {
       document.removeEventListener('visibilitychange', onVisible)
       refreshRef.current = () => {}
     }
-  }, [code, myName, token, authHeaders])
+  }, [code, myName, token, customerId, authHeaders])
 
   // Hide the phone bar while the cart is on screen.
   const loaded = go !== null
@@ -232,7 +250,19 @@ export default function GroupOrderRoom() {
     refreshRef.current()
   }
 
-  const inviteUrl = () => `${window.location.origin}/group-order?code=${go?.shareCode ?? code}`
+  // The invite opens this room; a signed-out friend signs in (or makes a servd
+  // account) and lands back here, joined under their servd name.
+  const inviteUrl = () => `${window.location.origin}/group-order/${go?.shareCode ?? code}`
+  const pickName = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!token || !nameValue.trim() || nameCheck.state === 'bad' || nameSaving) return
+    setNameSaving(true); setNameError('')
+    const err = await saveNickname(token, nameValue)
+    setNameSaving(false)
+    if (err) { setNameError(err); return }
+    setNeedName(false); joinTried.current = false; lastJson.current = ''
+    refreshRef.current()
+  }
   const copyInvite = async () => {
     const url = inviteUrl()
     try {
@@ -337,6 +367,18 @@ export default function GroupOrderRoom() {
           )}
         </div>
       </div>
+
+      {needName && (
+        <form onSubmit={(e) => { void pickName(e) }} className="servd-card mt-4" style={{ padding: '1.25rem', maxWidth: '28rem' }} noValidate>
+          <h2 className="font-bold mb-1">Pick your servd name to join</h2>
+          <p className="text-sm mb-3 text-[color:var(--servd-mute)]">It&rsquo;s the name everyone in the group sees next to your items.</p>
+          <NicknameField id="group-nickname" value={nameValue} onChange={(v) => { setNameValue(v); setNameError('') }} check={nameCheck} autoFocus />
+          {nameError && <p role="alert" className="text-xs font-semibold" style={{ color: 'var(--servd-danger)' }}>{nameError}</p>}
+          <button type="submit" disabled={nameSaving || !nameValue.trim() || nameCheck.state === 'bad' || nameCheck.state === 'checking'} className="servd-btn-rect servd-btn-primary w-full mt-2">
+            {nameSaving ? 'Joining…' : 'Join the group'}
+          </button>
+        </form>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-[1fr_320px] gap-6 mt-4">
         {/* Menu */}

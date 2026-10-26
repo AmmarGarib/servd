@@ -16,7 +16,7 @@ import { scopeTenantWhere, conceptWhere } from '../../lib/tenantScope.js'
 import { formatBrandName } from '../../lib/brandName.js'
 import { assertPaymentMethodAvailable, availablePaymentMethods } from './paymentMethods.js'
 import { assertOpenForOrders, orderingState, orderTime, sectionVisibleAt } from './serviceHours.js'
-import { publicBrandWhere, isTestCompanyOf } from '../../lib/publicBrands.js'
+import { publicBrandWhere, listedBrandWhere, isTestCompanyOf } from '../../lib/publicBrands.js'
 import { walletBalanceAt, holdWalletForCheckout, attachHoldToOrder, releaseWalletHold, spendWalletOnOrder } from '../wallet/service.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
@@ -232,10 +232,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       const [brands, items] = await Promise.all([
         prisma.concept.findMany({
           where: {
-            isActive: true,
-            deletedAt: null,
-            storefrontVisible: true,
-            ...publicBrandWhere(),
+            ...listedBrandWhere(),
             OR: [
               { name:        { contains: q, mode: 'insensitive' } },
               { description: { contains: q, mode: 'insensitive' } },
@@ -522,7 +519,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     const { lat, lng } = req.query as { lat?: string; lng?: string }
 
     const all = await prisma.concept.findMany({
-      where: { isActive: true, storefrontVisible: true, deletedAt: null, ...publicBrandWhere() },
+      where: { ...listedBrandWhere() },
       select: {
         id: true, name: true, slug: true, type: true, description: true,
         // tenantId identifies the operating company. The storefront is a
@@ -1400,6 +1397,8 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       where: { id: req.customer!.id },
       select: {
         id: true, name: true, email: true, phone: true,
+        // The servd name (owner, 2026-10-26). memberCode is internal — never here.
+        nickname: true,
         phoneVerifiedAt: true, emailVerifiedAt: true,
         marketingOptIn: true, birthdayMmDd: true,
         firstOrderAt: true, lastOrderAt: true,
@@ -1480,7 +1479,28 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       r.startTime > now && ['booked', 'confirmed'].includes(r.status),
     )
     const past     = reservations.filter((r) => !upcoming.includes(r))
-    return { upcoming, past }
+    // Tables this customer joined through someone's invite link (owner,
+    // 2026-10-26). Read with the service client: the guest rows carry the
+    // brand's company, which the customer's RLS context does not hold.
+    const { serviceClient } = await import('../../lib/prisma.js')
+    const joinedRows = await serviceClient.reservationGuest.findMany({
+      where: { customerId: req.customer!.id, reservation: { startTime: { gte: ninetyDaysAgo } } },
+      orderBy: { joinedAt: 'desc' },
+      select: {
+        reservation: {
+          select: {
+            id: true, partySize: true, startTime: true, status: true,
+            concept: { select: { name: true, slug: true } },
+            customer: { select: { nickname: true } },
+          },
+        },
+      },
+    })
+    const joined = joinedRows.map(({ reservation: r }) => ({
+      id: r.id, partySize: r.partySize, startTime: r.startTime, status: r.status,
+      concept: r.concept, host: r.customer?.nickname ?? null,
+    }))
+    return { upcoming, past, joined }
   })
 
   // GET /storefront/my-reviews — reviews this customer has left. Lets them

@@ -754,13 +754,18 @@ model Reservation {
   promotionOfferedTableId   String?
   promotedFromWaitlistAt    DateTime?
 
-  createdById String? // staff user, null if from public website
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdById          String? // staff user, null if from public website
+  // "Invite your table" (owner, 2026-10-26): sha256 of the booker's invite
+  // link token (the token itself is shown once). null = no live link.
+  inviteTokenHash      String?   @unique
+  inviteTokenCreatedAt DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
-  concept  Concept   @relation(fields: [conceptId], references: [id])
-  customer Customer? @relation(fields: [customerId], references: [id])
-  table    Table?    @relation(fields: [tableId], references: [id])
+  concept  Concept            @relation(fields: [conceptId], references: [id])
+  customer Customer?          @relation(fields: [customerId], references: [id])
+  table    Table?             @relation(fields: [tableId], references: [id])
+  guests   ReservationGuest[]
 
   @@index([conceptId, startTime])
   @@index([tableId, startTime])
@@ -768,6 +773,25 @@ model Reservation {
   @@index([status, startTime])
   @@index([reminder24hSentAt])
   @@map("reservations")
+}
+
+// A servd member who joined a booking through the booker's invite link
+// (owner, 2026-10-26). tenantId = the brand's company (RLS, company merge
+// repoint). At most partySize − 1 guests (the booker is the first seat).
+model ReservationGuest {
+  id            String   @id @default(uuid())
+  tenantId      String
+  reservationId String
+  customerId    String
+  joinedAt      DateTime @default(now())
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  customer    Customer    @relation(fields: [customerId], references: [id])
+
+  @@unique([reservationId, customerId])
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("reservation_guests")
 }
 
 // ─── Concept blockouts ──────────────────────────────────────────────────────
@@ -1338,6 +1362,23 @@ model Customer {
   // referredById and referredAt stay set forever for cohort analytics.
   referralCode             String?   @unique
   referredById             String?
+  // ── The servd name and the member code (owner, 2026-10-26) ──────────────
+  // nickname = "the servd name": the customer picks it the first time they
+  // open servd after signing in; shown in group orders and booking invites.
+  // Customers are SERVD-WIDE accounts (no tenantId, deliberately — like
+  // referralCode), so the nickname is unique servd-wide, case-insensitive:
+  // the unique index is on lower("nickname") in SQL (migration
+  // 20261027100000), which Prisma cannot express — never re-declare it here.
+  nickname                 String?
+  // Internal member barcode (CRM / Marketing only, never shown to the
+  // customer). Set by the database DEFAULT customer_member_code() on EVERY
+  // insert path (signup, the till's guest form, magic link, WhatsApp,
+  // imports): 'SV' + 10 digits, a permuted sequence. The default, sequence and
+  // function are SQL-only (migration 20261027100000, applied in
+  // tests/setup.ts) — Prisma never writes the column; it is NOT NULL on the
+  // database (optional here only because Prisma does not know the default).
+  // Separate from the PUBLIC referralCode, which the customer shares.
+  memberCode               String?   @unique
   referredAt               DateTime?
   referralRewardCreditedAt DateTime? // null until the dual bonus has fired
   password                 String?
@@ -1396,9 +1437,10 @@ model Customer {
   referredBy Customer?  @relation("Referrals", fields: [referredById], references: [id])
   referrals  Customer[] @relation("Referrals")
 
-  strikes         CustomerStrike[]
-  bans            CustomerBan[]
-  waitlistSignups WaitlistSignup[]
+  strikes          CustomerStrike[]
+  bans             CustomerBan[]
+  waitlistSignups  WaitlistSignup[]
+  reservationSeats ReservationGuest[]
 
   @@map("customers")
 }
@@ -4475,22 +4517,22 @@ model SocialPost {
 // encrypted on the next read). `legacy` = the old global connection, kept for
 // nobody (tenantId / conceptId null, deliberately). modules/socialConnections.
 model SocialConnection {
-  id             String    @id @default(uuid())
-  tenantId       String? // the brand's company; null only for the legacy row
-  conceptId      String?
-  status         String // pending | approved | rejected | superseded | legacy
-  pageId         String
-  pageName       String?
-  igUserId       String?
-  token          String // secretBox value (enc:v1:…) or plain while no key is set
-  tokenHint      String?
-  requestedById  String?
-  requestedAt    DateTime  @default(now())
-  decidedById    String?
-  decidedAt      DateTime?
-  decisionNote   String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id            String    @id @default(uuid())
+  tenantId      String? // the brand's company; null only for the legacy row
+  conceptId     String?
+  status        String // pending | approved | rejected | superseded | legacy
+  pageId        String
+  pageName      String?
+  igUserId      String?
+  token         String // secretBox value (enc:v1:…) or plain while no key is set
+  tokenHint     String?
+  requestedById String?
+  requestedAt   DateTime  @default(now())
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([tenantId])
   @@index([conceptId, status])
@@ -6152,7 +6194,7 @@ model PhysicalCountLine {
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers); the per-unit cost
 // stays INT4.
 model StockLot {
-  id                  String   @id @default(uuid())
+  id                  String    @id @default(uuid())
   tenantId            String
   inventoryItemId     String
   // The site (outlet) holding the lot (owner, 2026-10-24: per-site stock). Every new lot names one (lib/stockSite.ts);
@@ -6179,8 +6221,8 @@ model StockLot {
   useBy               DateTime? @db.Date
   useByWarnedAt       DateTime?
   expiredWarnedAt     DateTime?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   inventoryItem InventoryItem     @relation(fields: [inventoryItemId], references: [id])
   receiptLine   GoodsReceiptLine? @relation(fields: [receiptLineId], references: [id], onDelete: SetNull)

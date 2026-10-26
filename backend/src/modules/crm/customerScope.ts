@@ -34,6 +34,9 @@ export function customerOfCompanies(t: TenantIdWhere): Prisma.CustomerWhereInput
     OR: [
       { orders:       { some: { deletedAt: null, concept: { ...t, deletedAt: null } } } },
       { reservations: { some: { concept: { ...t, deletedAt: null } } } },
+      // A member who joined one of the company's bookings by invite link
+      // (owner, 2026-10-26) is at the company's table too.
+      { reservationSeats: { some: { reservation: { concept: { ...t, deletedAt: null } } } } },
     ],
   }
 }

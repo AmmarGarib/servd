@@ -2798,6 +2798,37 @@ change a route only together with that file). Binding rules:
   storage yet; the admin tiles are `components/ui/DashboardTiles.tsx`. Payroll vs budget stays empty (no budget exists).
   A new number is added in that file's `sets` — read from an existing function. Tests: `tests/dashboardNumbers.test.ts`.
 
+### Customer identity, member codes and invites (owner, 2026-10-26)
+
+"the name should auto pull from the servd name customer selects … link an internal barcode for that customer …
+allow them to get ppl to join group or simmer booking with link. To join the group ppl have to make an account."
+
+- **The servd name = `Customer.nickname`** (customers are servd-wide, no tenantId, deliberately): 3–20 letters /
+  digits / `.` / `_`, starts with a letter or digit, reserved words refused (`lib/nickname.ts`, mirrored in storefront
+  `lib/nickname.ts`); unique servd-wide case-insensitive via the SQL index `customers_nickname_lower_key` on
+  lower(nickname) — never re-declare it in schema.prisma. `GET /storefront/account/nickname-available?q=`,
+  `PUT /storefront/account/nickname` (409 `NICKNAME_TAKEN`, 422 `NICKNAME_INVALID`; `storefront/identityRoutes.ts`).
+  Sign-up asks the PROPER name ("Full name"); the first visit after sign-in shows `NicknameSheet` (servd's own pages
+  only — never a brand page / brand host; "Later" = per tab). Group orders show members by nickname (server
+  ignores the typed name when one exists; none → 422 `NAME_REQUIRED`); a booking's name defaults to the proper name.
+- **Member code = `Customer.memberCode`** ('SV' + 10 digits) — INTERNAL (CRM / guest card barcode, never sent to the
+  customer); set by the DB default `customer_member_code()` on EVERY insert path (SQL-only: sequence + function +
+  default, migration `20261027100000`, applied in tests/setup.ts). Separate from the PUBLIC `referralCode`. CRM
+  search matches it; admin renders Code 128 itself (`lib/code128.ts`, `components/customer/MemberBarcode.tsx`).
+- **Phones are international:** storefront `components/ui/PhoneInput.tsx` + `lib/phoneCountries.ts` (the ONE phone
+  field; Pakistan default; placeholder per country) sends `+<dial><number>`; `otp.ts normalisePhone` keeps a `+` /
+  `00` non-92 number as E.164 digits, Pakistan rules unchanged; `notify.ts whatsappNumber` likewise.
+- **Invite your table:** `modules/reservations/invites.ts` (contract in its header). The booker's link token is
+  stored as sha256 only (`Reservation.inviteTokenHash`); joining needs a servd account; `ReservationGuest`
+  (tenantId = the brand's company, RLS, merge repoint) ≤ partySize − 1 (409 `BOOKING_FULL`), closed booking 410
+  `BOOKING_CLOSED`. Staff: `GET /reservations/:id/guests`; an invited guest counts as the company's customer
+  (`crm/customerScope.ts`). Simmer's booking page is `app/reserve/[slug]/SimmerReserve.tsx` (simmer-brand rules);
+  the invite page is `/reserve/invite/<token>`. Tests: `tests/customerIdentityInvites.test.ts`.
+- **One public brand-list rule:** `lib/publicBrands.ts listedBrandWhere()` (active, not deleted, storefrontVisible,
+  not a test company) for every public brand LIST; G's Kitchen is hidden by its storefrontVisible switch. The
+  group-order and /reserve pickers use servd home's trading cards (`sections/servd/Kitchens.tsx` `KitchenPicker` /
+  `KitchenCards`), never a second card design.
+
 ### Shift corrections (owner, 2026-10-21)
 
 "A shift closed by staff/cashier, Finance should have access to reopen the

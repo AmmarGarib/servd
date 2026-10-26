@@ -1,4 +1,5 @@
 'use client'
+import { MemberBarcode } from '../../components/customer/MemberBarcode'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -44,6 +45,8 @@ interface ActiveBan { id: string | null; reason: string; bannedAt: string; other
 
 interface Customer {
   id: string; name: string; phone: string | null; email: string | null
+  /** Internal member barcode + the servd name (owner, 2026-10-26). */
+  memberCode: string | null; nickname: string | null
   totalSpentCents: number; lastOrderAt: string | null; createdAt: string
   // One servd-wide balance — the API sends it to managers only (null otherwise).
   walletBalance: number | null
@@ -170,13 +173,13 @@ export default function CRMPage() {
 
   return (
     <div className="min-h-screen bg-s-bg">
-      <header className="border-b border-s-border px-6 py-4">
-        <div className="flex items-center justify-between gap-4">
+      <header className="border-b border-s-border px-4 py-4 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-black text-s-text mt-0.5">Customers / CRM</h1>
             <p className="text-sm text-s-muted">Customer profiles, loyalty, wallet and blocking</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Link href="/crm/segments" className="rounded-xl border border-s-border text-s-text text-sm font-semibold px-3 py-1.5 hover:border-primary">Segments</Link>
             <Link href="/crm/campaigns" className="rounded-xl border border-s-border text-s-text text-sm font-semibold px-3 py-1.5 hover:border-primary">Campaigns</Link>
             <Link href="/crm/naughty-list" className="rounded-xl border border-s-border text-s-text text-sm font-semibold px-3 py-1.5 hover:border-primary">Naughty list</Link>
@@ -285,12 +288,13 @@ export default function CRMPage() {
 
       <div className="flex h-[calc(100vh-81px)]">
         {/* ── Left sidebar ── */}
-        <aside className="w-72 shrink-0 border-r border-s-border flex flex-col">
+        {/* Phone: the list OR the profile (owner, 2026-10-26 — docs/UI_CHECKLIST.md); md+: side by side. */}
+        <aside className={`${selectedId ? 'hidden md:flex' : 'flex'} w-full md:w-72 shrink-0 md:border-r border-s-border flex-col`}>
           <div className="p-3 border-b border-s-border">
             <input
               value={search}
               onChange={(e) => { setSearch(e.target.value); setSelectedId(null) }}
-              placeholder="Search name, phone, email…"
+              placeholder="Search name, phone, email, member code…"
               type="search" name="customer-search" aria-label="Search customers" autoComplete="off" autoCapitalize="none" spellCheck={false}
               className="w-full rounded-xl bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none" />
           </div>
@@ -337,14 +341,19 @@ export default function CRMPage() {
         </aside>
 
         {/* ── Right panel ── */}
-        <div className="flex-1 overflow-y-auto">
+        <div className={`${selectedId ? 'block' : 'hidden md:block'} flex-1 min-w-0 overflow-y-auto`}>
+          {selectedId && (
+            <div className="md:hidden px-4 pt-3">
+              <button type="button" onClick={() => setSelectedId(null)} className="text-sm font-semibold text-primary-ink">← All customers</button>
+            </div>
+          )}
           {/* Customer detail */}
           {selected && customerDetail && (
-            <div className="p-6">
+            <div className="p-4 sm:p-6">
               <div className="max-w-2xl mx-auto space-y-5">
                 {/* Profile card */}
                 <div className="rounded-xl border border-s-border bg-s-surface p-5">
-                  <div className="flex items-start gap-4">
+                  <div className="flex flex-wrap items-start gap-4">
                     <div className={`h-14 w-14 rounded-full flex items-center justify-center text-2xl font-black shrink-0 ${
                       customerDetail.activeBan ? 'bg-s-red/20 text-s-red' : 'bg-s-border text-s-text'
                     }`}>
@@ -364,13 +373,21 @@ export default function CRMPage() {
                         {customerDetail.phone && <span className="text-sm text-s-muted"><NavIcon name="call" size={13} className="mr-1 inline" />{customerDetail.phone}</span>}
                         {customerDetail.email && <span className="text-sm text-s-muted"><NavIcon name="mail" size={13} className="mr-1 inline" />{customerDetail.email}</span>}
                       </div>
+                      {customerDetail.nickname && (
+                        <p className="text-xs font-bold text-primary-ink mt-1">@{customerDetail.nickname}</p>
+                      )}
                       <p className="text-xs text-s-muted mt-1">
                         Member since {new Date(customerDetail.createdAt).toLocaleDateString()}
                       </p>
+                      {customerDetail.memberCode && (
+                        <div className="mt-3">
+                          <MemberBarcode code={customerDetail.memberCode} name={customerDetail.name} />
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-4 gap-3 mt-4 pt-4 border-t border-s-border">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-s-border">
                     <div className="text-center">
                       <p className="text-2xl font-black text-s-text">{customerDetail.orders.length}</p>
                       <p className="text-xs text-s-muted mt-0.5">Orders</p>

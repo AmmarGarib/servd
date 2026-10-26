@@ -84,10 +84,15 @@ export async function sendEmail(to: string, subject: string, html: string, purpo
 
 /** A stored phone number as the WhatsApp gateway wants it: digits only, E.164 without the +. */
 export function whatsappNumber(raw: string): string {
+  // International numbers are stored as E.164 digits (signup's phone picker,
+  // 2026-10-26): a '+' means the country code is already there.
+  if (raw.trim().startsWith('+')) return raw.replace(/\D/g, '')
   const digits = raw.replace(/\D/g, '')
   if (digits.startsWith('92')) return digits
   if (digits.startsWith('0')) return '92' + digits.slice(1)
-  if (digits.length === 10) return '92' + digits
+  // 3001234567 — a Pakistan mobile typed without the 0. Another country's
+  // 10-digit E.164 (e.g. Singapore 65 + 8) is left alone.
+  if (digits.length === 10 && digits.startsWith('3')) return '92' + digits
   return digits
 }
 

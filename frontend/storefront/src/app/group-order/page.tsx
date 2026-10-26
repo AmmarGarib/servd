@@ -8,8 +8,9 @@
 
 import type { Metadata } from 'next'
 import { SERVD_ORIGIN, pageMetadata } from '../../lib/brandDomains'
-import { brandAccent, conceptHeroImage, formatBrandName } from '../../lib/concept'
-import { getLiveKits } from '../../lib/brandKitFetch'
+import { formatBrandName } from '../../lib/concept'
+import { liveSectionFields } from '../../sections/liveFields'
+import { list } from '../../sections/safe'
 import { conceptsOrFallback, fetchLiveConcepts, fitSentences, inBrandOrder, joinNames } from '../../lib/liveConcepts'
 import { BlockedNotice } from '../../components/account/BlockedNotice'
 import { GroupOrderEntryClient } from './GroupOrderEntryClient'
@@ -33,22 +34,18 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function GroupOrderEntryPage() {
-  const [concepts, kits] = await Promise.all([fetchLiveConcepts(), getLiveKits()])
-  // Pre-build the brand cards on the server so the client component
-  // gets a small typed payload (id/name/slug/accent/image) instead of
-  // re-fetching. The card art is the 640x480 card crop, not the full hero.
-  const brandCards = concepts.map((c) => ({
-    id: c.id,
-    name: formatBrandName(c.name),
-    slug: c.slug,
-    accent: brandAccent(c.slug, c.primaryColor, kits),
-    heroImage: conceptHeroImage(c, 'card'),
-  }))
+  // The public brand list (GET /storefront/concepts applies the one public-brand
+  // rule — active, shown on the storefront, not a test company — so a hidden or
+  // no-revenue brand such as G's Kitchen never shows here), in the fixed brand
+  // order, as the SAME trading cards as servd home's kitchens section, with
+  // that section's own tiles (owner, 2026-10-26).
+  const [concepts, kitchens] = await Promise.all([fetchLiveConcepts(), liveSectionFields('servd:home', 'servd.kitchens')])
+  const tiles = list<Record<string, unknown>>(kitchens['tiles'])
 
   return (
     <>
       <BlockedNotice className="container-narrow" style={{ paddingTop: '1rem' }} />
-      <GroupOrderEntryClient brands={brandCards} />
+      <GroupOrderEntryClient concepts={inBrandOrder(concepts)} tiles={tiles} />
     </>
   )
 }

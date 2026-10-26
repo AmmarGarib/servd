@@ -84,6 +84,7 @@ import { registerHeadOfficePlugins } from './modules/headOffices/index.js'
 import { hrHeadOfficeTransferRoutes } from './modules/hr/transferRoutes.js'
 import emergencyOverridesRoutes from './modules/emergencyOverrides/routes.js'
 import banAppealRoutes from './modules/storefront/banAppealRoutes.js'
+import identityRoutes from './modules/storefront/identityRoutes.js'
 import { customerAccountRoutes } from './modules/receivables/customerAccounts.js'
 import posOnAccountRoutes from './modules/pos/onAccountRoutes.js'
 import posCityLedgerRoutes from './modules/receivables/cityLedgerRoutes.js'
@@ -493,6 +494,7 @@ async function build() {
       await api.register(storefrontRoutes, { prefix: '/storefront' })
       // A banned customer's own view of their blocks + appeals (resumed 2026-10-15).
       await api.register(banAppealRoutes, { prefix: '/storefront' })
+      await api.register(identityRoutes, { prefix: '/storefront' })
       // Emergency overrides: send the hand-over code to the rider; food a rider brought back.
       await api.register(emergencyOverridesRoutes, { prefix: '/emergency-overrides' })
       await api.register(reviewRoutes, { prefix: '/reviews' })
