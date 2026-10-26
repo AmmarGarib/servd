@@ -29,6 +29,9 @@ const config: Config = {
           // `bg-s-bg-soft` (card headers, list-row hover) — same as `elevated`.
           'bg-soft':    ch('--elevated-rgb'),
           surface:      ch('--surface-rgb'),       // card base
+          // `bg-s-card` was used by pages but never defined (owner, 2026-10-26: menus showed the page
+          // through them). It is the card base.
+          card:         ch('--surface-rgb'),
           elevated:     ch('--elevated-rgb'),      // raised panels
           overlay:      ch('--overlay-rgb'),       // dropdowns, modals
           border:       ch('--border-rgb'),        // default border

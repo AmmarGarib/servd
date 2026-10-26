@@ -166,6 +166,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/admin/package-lock.json
       - run: npm install --legacy-peer-deps --no-audit --no-fund
+      - run: node scripts/check-tokens.mjs   # docs/UI_CHECKLIST.md: every s-* colour exists
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: '1'
