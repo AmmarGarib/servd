@@ -1389,6 +1389,13 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   document's sourceType, and a re-poster in `reconciliation/backfillOrders.ts`
   REPOSTERS. A new posting that can be refused adds both (and puts
   `metadata.documentDate` on its flag, so the period close dates it).
+- **Owner confirmed 2026-10-26 (G1, H5, G14, H14 — "keep as built"):** COD never paid stays pending and
+  blocks the close until finance books it (never automatic); own-rider COD on 1351, fleet rider via the
+  inter-company `cod` transfer; on-account = whole bill, cash GST rate, card or manager approval + credit
+  limit; a tax invoice per bill at completion, the statement is not a tax invoice. HO-Q1 = the default
+  (net cost 5000–6999, no markup). **HO-Q3 = SHOW AS INCOME** in the head office's books (not the 6990
+  contra-expense default) — to build before the recharge is switched on. City Ledger and the head-office
+  recharge stay OFF until the owner says so.
 - **Pending owner/CA decisions** (decisions page
   https://claude.ai/artifact/W8tzVdHxhzYSKJiyzhcLRk): COD never paid (G1),
   rider COD on 1351 (H5), on-account tender (G14) and the on-account tax
