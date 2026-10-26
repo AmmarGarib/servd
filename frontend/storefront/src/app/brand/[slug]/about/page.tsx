@@ -23,7 +23,7 @@ import { SUBPAGE_TITLE, brandCtx, brandPageMetadata, leadText, pageBlocks, type 
 export const dynamic = 'force-dynamic'
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const pageSlug = `brand:${slug}:about`
   const [concept, layout] = await Promise.all([resolveConcept(slug), fetchSiteLayout(pageSlug)])
   if (!concept) notFound()
@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const seo = pageSeo(layout)
   // The story the page tells: the story hero's text (empty = the brand's long
   // story, as the section renders it), else the first lead on the page.
-  const blocks = pageBlocks(pageSlug, layout)
+  const blocks = (await pageBlocks(pageSlug, layout))
   const ctx = brandCtx(pageSlug, concept)
   const description = seo.description
     ?? (leadText(blocks, ctx, { variants: ['brand.aboutHero'], keys: ['body'] })
@@ -43,7 +43,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function BrandAboutPage({ params }: Params) {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const concepts = await fetchLiveConcepts()
   const concept = findConceptOrThrow(slug, concepts)
   if (!concept) notFound()

@@ -43,7 +43,7 @@ const PRIVATE_PATHS = [
 ]
 
 export default async function robots(): Promise<MetadataRoute.Robots> {
-  const host = headers().get('host') ?? ''
+  const host = (await headers()).get('host') ?? ''
   const slug = await hostBrand(host)
   // Own-property check: a pattern host like constructor.servd.pk resolves to
   // the slug "constructor", which must not read Object.prototype.constructor

@@ -5,6 +5,9 @@ const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts')
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   ...(process.env.BUILD_STANDALONE === 'true' && { output: 'standalone' }),
+  // This app is its own package (own package-lock.json). Next 15 otherwise
+  // guesses the repo root from the lockfile above it and traces from there.
+  outputFileTracingRoot: __dirname,
   eslint: { ignoreDuringBuilds: true },
   poweredByHeader: false,
   // The image optimizer (/_next/image) is OFF: nothing uses next/image, and

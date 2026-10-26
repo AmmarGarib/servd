@@ -37,7 +37,7 @@ export default async function BrandLayout({
   children,
   params,
 }: Params & { children: React.ReactNode }) {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const [live, kits] = await Promise.all([fetchLiveConcepts(), getLiveKits()])
   const concept = findConceptOrThrow(slug, live)
   if (!concept) notFound()
@@ -66,7 +66,7 @@ export default async function BrandLayout({
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const [concept, layout] = await Promise.all([resolveConcept(slug), fetchSiteLayout(`brand:${slug}`)])
   // A real 404 for a slug that is not a brand (not a 200 "Not found" page).
   if (!concept) notFound()

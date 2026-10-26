@@ -21,8 +21,8 @@ import { lookupConcept } from '../lib/liveConcepts'
 import { NotFoundTitle } from './NotFoundTitle'
 
 /** The brand domain this request came in on (stamped by the middleware). */
-function brandSlugOfRequest(): string | null {
-  const slug = headers().get(BRAND_HOST_HEADER)
+async function brandSlugOfRequest(): Promise<string | null> {
+  const slug = (await headers()).get(BRAND_HOST_HEADER)
   return slug && /^[a-z0-9][a-z0-9-]{0,80}$/i.test(slug) ? slug : null
 }
 
@@ -32,7 +32,7 @@ async function brandNameOf(slug: string): Promise<string> {
 }
 
 export async function generateMetadata(): Promise<Metadata> {
-  const slug = brandSlugOfRequest()
+  const slug = await brandSlugOfRequest()
   return {
     // `absolute`: a brand's 404 must not carry servd's '· servd' template.
     title: { absolute: slug ? `Page not found · ${await brandNameOf(slug)}` : 'Page not found · servd' },
@@ -42,7 +42,7 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function NotFound() {
-  const slug = brandSlugOfRequest()
+  const slug = await brandSlugOfRequest()
   const brand = slug ? await brandNameOf(slug) : null
   const kit = (role: string, fallback: string) => (slug ? `var(--kit-${slug}-${role}, ${fallback})` : fallback)
   return (

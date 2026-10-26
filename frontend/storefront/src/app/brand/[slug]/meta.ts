@@ -19,7 +19,7 @@ import { resolveVariant } from '../../../components/blocks/SiteLayoutView'
 import type { SectionContext } from '../../../sections/types'
 import { fill } from '../../../sections/brand/util'
 
-export type Params = { params: Promise<{ slug: string }> | { slug: string } }
+export type Params = { params: Promise<{ slug: string }> }
 
 /** The microsite pages with a fixed path, and their short titles (also the
  *  breadcrumb labels). */
@@ -63,8 +63,8 @@ export function brandCtx(pageSlug: string, concept: Concept): SectionContext {
 /** The blocks a brand page renders for this visitor: its live layout (the
  *  visitor's A/B variant), else its default sections. Hidden blocks are left
  *  out, as the renderer does. */
-export function pageBlocks(pageSlug: string, layout: SiteLayoutRead | null): Block[] {
-  const blocks = layout?.blocks?.length ? resolveVariant(layout).blocks : defaultBlocks(pageSlug)
+export async function pageBlocks(pageSlug: string, layout: SiteLayoutRead | null): Promise<Block[]> {
+  const blocks = layout?.blocks?.length ? (await resolveVariant(layout)).blocks : defaultBlocks(pageSlug)
   return blocks.filter((b) => b && !b.hidden)
 }
 

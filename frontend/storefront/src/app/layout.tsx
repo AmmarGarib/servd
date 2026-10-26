@@ -184,7 +184,7 @@ export default async function StorefrontLayout({ children }: { children: React.R
   // Reading a request header makes the layout dynamic, which is right for this
   // app: it is a live ordering storefront, and the brand pages already opt out
   // of static rendering anyway (see the fetch-caching note in CLAUDE.md).
-  const initialBrandSlug = headers().get(BRAND_HOST_HEADER)
+  const initialBrandSlug = (await headers()).get(BRAND_HOST_HEADER)
   // Brand kits (Admin → Storefront → Brand kit): the ONE definition of every
   // brand's tokens (--simmer-* / --stackd-* / --flipd-* and the --kit-<slug>-*
   // roles), defaults ⊕ the published kits. Injected for every page so brand

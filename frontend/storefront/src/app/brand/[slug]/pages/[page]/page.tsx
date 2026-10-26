@@ -19,7 +19,7 @@ import { brandBreadcrumb, brandCtx, brandPageMetadata, leadText, pageBlocks } fr
 
 export const dynamic = 'force-dynamic'
 
-type Params = { params: Promise<{ slug: string; page: string }> | { slug: string; page: string } }
+type Params = { params: Promise<{ slug: string; page: string }> }
 
 // The brand's chrome and fixed pages are SiteLayouts under the same key
 // shape; /pages/<one of these> would serve the header as a page, or a second
@@ -39,20 +39,20 @@ async function livePage(slug: string, page: string) {
 const humanise = (s: string) => s.replace(/[-_]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug, page } = await Promise.resolve(params as Promise<{ slug: string; page: string }>)
+  const { slug, page } = await params
   const [concept, layout] = await Promise.all([resolveConcept(slug), livePage(slug, page)])
   if (!concept) notFound()
   const pageSlug = `brand:${slug}:${page}`
   const seo = pageSeo(layout)
   const title = seo.title ?? (layout.title?.trim() || humanise(page))
-  const lead = leadText(pageBlocks(pageSlug, layout), brandCtx(pageSlug, concept), { min: 40 })
+  const lead = leadText((await pageBlocks(pageSlug, layout)), brandCtx(pageSlug, concept), { min: 40 })
   const description = seo.description
     ?? (lead || fitSentences([`${title} — ${formatBrandName(concept.name)}.`, asSentence(concept.description)], 155))
   return brandPageMetadata({ concept, path: `pages/${page}`, title, description })
 }
 
 export default async function BrandCustomPage({ params }: Params) {
-  const { slug, page } = await Promise.resolve(params as Promise<{ slug: string; page: string }>)
+  const { slug, page } = await params
   const [concept, layout] = await Promise.all([resolveConcept(slug), livePage(slug, page)])
   if (!concept) notFound()
   const title = pageSeo(layout).title ?? (layout.title?.trim() || humanise(page))

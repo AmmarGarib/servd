@@ -27,10 +27,10 @@ function Strip({ children }: { children: ReactNode }) {
 export default async function PreviewPage({
   params, searchParams,
 }: {
-  params: Promise<{ token: string }> | { token: string }
-  searchParams?: { variant?: string }
+  params: Promise<{ token: string }>
+  searchParams?: Promise<{ variant?: string }>
 }) {
-  const { token } = await Promise.resolve(params as Promise<{ token: string }>)
+  const { token } = await params
   const layout = await fetchSiteLayoutPreview(token)
   if (!layout) {
     return (
@@ -42,7 +42,7 @@ export default async function PreviewPage({
       </>
     )
   }
-  const variant = searchParams?.variant === 'b' ? 'b' : 'a'
+  const variant = (await searchParams)?.variant === 'b' ? 'b' : 'a'
   const label = `Preview — not live${layout.settings?.ab ? ` · variant ${variant.toUpperCase()}` : ''}`
 
   if (layout.kind === 'popup' || layout.slug.startsWith('popup:')) {

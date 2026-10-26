@@ -17,10 +17,10 @@ import { SERVD_ORIGIN, brandCanonical, pageMetadata } from '../../../../lib/bran
 import { formatBrandName } from '../../../../lib/concept'
 import { resolveConcept } from '../../../../lib/liveConcepts'
 
-type Params = { params: Promise<{ slug: string }> | { slug: string } }
+type Params = { params: Promise<{ slug: string }> }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const concept = await resolveConcept(slug)
   if (!concept) notFound()
   return pageMetadata({
@@ -32,7 +32,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function BrandQRPage({ params }: Params) {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const concept = await resolveConcept(slug)
   if (!concept) notFound()
   const url = brandCanonical(slug, 'menu')

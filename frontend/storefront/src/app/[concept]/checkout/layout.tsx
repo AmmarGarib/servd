@@ -12,10 +12,10 @@ import { formatBrandName } from '../../../lib/concept'
 import { lookupConcept } from '../../../lib/liveConcepts'
 import { TestCompanyStripe } from '../../../components/TestCompanyStripe'
 
-type Params = { params: Promise<{ concept: string }> | { concept: string } }
+type Params = { params: Promise<{ concept: string }> }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { concept: slug } = await Promise.resolve(params as Promise<{ concept: string }>)
+  const { concept: slug } = await params
   // Only for the name (the fetch is memoised per request). Unknown, hidden,
   // or the API down → the generic title; the page still renders.
   const { concept } = await lookupConcept(slug)
@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function CheckoutLayout({ children, params }: Params & { children: React.ReactNode }) {
-  const { concept: slug } = await Promise.resolve(params as Promise<{ concept: string }>)
+  const { concept: slug } = await params
   const { concept } = await lookupConcept(slug)
   return <><TestCompanyStripe concept={concept} />{children}</>
 }

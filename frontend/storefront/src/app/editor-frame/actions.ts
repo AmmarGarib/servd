@@ -22,7 +22,7 @@ import { RENDER_ERROR_TEXT, type FrameRenderResult } from '../../editor/types'
 
 export async function renderEditorFrame(input: unknown): Promise<FrameRenderResult> {
   let ip = 'local'
-  try { ip = clientIp(headers()) } catch { /* outside a request */ }
+  try { ip = clientIp(await headers()) } catch { /* outside a request */ }
   const slot = acquireRenderSlot(ip)
   if (!slot) return { ok: false, rev: revOf(input), code: 'RATE_LIMITED', error: RENDER_ERROR_TEXT.RATE_LIMITED }
 

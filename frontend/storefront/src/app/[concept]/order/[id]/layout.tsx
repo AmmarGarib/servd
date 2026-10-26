@@ -11,10 +11,10 @@ import type { Metadata } from 'next'
 import { formatBrandName } from '../../../../lib/concept'
 import { lookupConcept } from '../../../../lib/liveConcepts'
 
-type Params = { params: Promise<{ concept: string; id: string }> | { concept: string; id: string } }
+type Params = { params: Promise<{ concept: string; id: string }> }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { concept: slug } = await Promise.resolve(params as Promise<{ concept: string; id: string }>)
+  const { concept: slug } = await params
   // Only for the name (the fetch is memoised per request). Unknown, hidden,
   // or the API down → the generic title; the tracker still renders.
   const { concept } = await lookupConcept(slug)

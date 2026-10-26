@@ -24,13 +24,13 @@ function hasAnimation(blocks: Block[]): boolean {
 }
 
 /** Blocks for this visitor. `forceVariant` (preview) skips the cookie. */
-export function resolveVariant(layout: SiteLayoutRead, forceVariant?: Variant): { variant: Variant; blocks: Block[] } {
+export async function resolveVariant(layout: SiteLayoutRead, forceVariant?: Variant): Promise<{ variant: Variant; blocks: Block[] }> {
   const main = layout.blocks ?? []
   const ab = layout.settings?.ab
   const bBlocks = ab && Array.isArray(ab.blocks) ? ab.blocks : null
   if (forceVariant) return forceVariant === 'b' && bBlocks ? { variant: 'b', blocks: bBlocks } : { variant: 'a', blocks: main }
   if (!bBlocks || !(ab!.splitPct > 0)) return { variant: 'a', blocks: main }
-  const vid = cookies().get(VISITOR_COOKIE)?.value
+  const vid = (await cookies()).get(VISITOR_COOKIE)?.value
   if (!vid) return { variant: 'a', blocks: main }
   const variant = pickVariant(vid, layout.slug, layout.version, ab!.splitPct)
   return { variant, blocks: variant === 'b' ? bBlocks : main }
@@ -42,7 +42,7 @@ export async function SiteLayoutView({ layout, context, previewVariant }: {
   /** Set on /preview: render this variant, send no stats. */
   previewVariant?: Variant
 }) {
-  const { variant, blocks } = resolveVariant(layout, previewVariant)
+  const { variant, blocks } = await resolveVariant(layout, previewVariant)
   const still = STILL_KINDS.has(layout.kind)
   const ctx: RenderContext | undefined = still ? { ...context, motion: false } : context
   const heading = cssFontFamily(layout.settings?.fonts?.heading)

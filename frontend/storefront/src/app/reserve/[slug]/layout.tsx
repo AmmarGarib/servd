@@ -21,17 +21,17 @@ import { asSentence, fitSentences, lookupConcept } from '../../../lib/liveConcep
 
 export const dynamic = 'force-dynamic'
 
-type Params = { params: Promise<{ slug: string }> | { slug: string } }
+type Params = { params: Promise<{ slug: string }> }
 
 export default async function ReserveBrandLayout({ children, params }: Params & { children: React.ReactNode }) {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const { status, concept } = await lookupConcept(slug)
   if (status === 'missing') notFound()
   return <><TestCompanyStripe concept={concept} />{children}</>
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const { status, concept } = await lookupConcept(slug)
   if (status === 'missing') notFound()
   // The API didn't answer and this isn't a bundled brand: render (above), but

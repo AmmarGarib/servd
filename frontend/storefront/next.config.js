@@ -64,6 +64,9 @@ const BASE_HEADERS = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   ...(process.env.BUILD_STANDALONE === 'true' && { output: 'standalone' }),
+  // This app is its own package (own package-lock.json). Next 15 otherwise
+  // guesses the repo root from the lockfile above it and traces from there.
+  outputFileTracingRoot: __dirname,
   eslint: { ignoreDuringBuilds: true },
   poweredByHeader: false,
   // The editor frame (/editor-frame) renders through a same-origin Server

@@ -48,7 +48,7 @@ export async function sectionContextFor(slug: string, known?: { concepts?: Conce
   const concepts = fetched.length ? fetched : Object.values(FALLBACK_CONCEPTS)
   const concept = brandOf(slug, concepts, kits)
   let onBrandHost = false
-  try { onBrandHost = !!headers().get(BRAND_HOST_HEADER) } catch { /* outside a request */ }
+  try { onBrandHost = !!(await headers()).get(BRAND_HOST_HEADER) } catch { /* outside a request */ }
   return { pageSlug: slug, concepts, onBrandHost, kits, ...(concept && { concept }), ...(known?.params && { params: known.params }) }
 }
 

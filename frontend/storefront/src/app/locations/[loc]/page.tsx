@@ -29,7 +29,7 @@ import { fillLocation, findLocation } from '../../../sections/servd/location'
 
 export const dynamic = 'force-dynamic'
 
-type Params = { params: Promise<{ loc: string }> | { loc: string } }
+type Params = { params: Promise<{ loc: string }> }
 
 const canonicalFor = (brand: BrandLocation) => `${SERVD_ORIGIN}/locations/${brand.locationSlug}`
 
@@ -39,7 +39,7 @@ function placeOf(brand: BrandLocation): string {
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { loc } = await Promise.resolve(params as Promise<{ loc: string }>)
+  const { loc } = await params
   const [brand, layout] = await Promise.all([findLocation(loc), fetchSiteLayout('servd:location')])
   if (!brand) notFound()
 
@@ -64,7 +64,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function LocationPage({ params }: Params) {
-  const { loc: locSlug } = await Promise.resolve(params as Promise<{ loc: string }>)
+  const { loc: locSlug } = await params
   // locationSlug first, then the concept slug, then a retired slug's brand
   // (see findLocation) — the same lookup the page's sections make.
   const [brand, live] = await Promise.all([findLocation(locSlug), fetchLiveConcepts()])

@@ -26,7 +26,7 @@ import { SUBPAGE_TITLE, brandCtx, brandPageMetadata, leadText, pageBlocks, brand
 export const dynamic = 'force-dynamic'
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const pageSlug = `brand:${slug}:menu`
   const [concept, layout, menu] = await Promise.all([resolveConcept(slug), fetchSiteLayout(pageSlug), fetchBrandMenu(slug)])
   if (!concept) notFound()
@@ -35,7 +35,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const seo = pageSeo(layout)
   // The menu's own intro (brand.menu "Line", flipd.menu "Intro") — the
   // owner's words — after a line that says whose menu and where it is.
-  const lead = leadText(pageBlocks(pageSlug, layout), brandCtx(pageSlug, concept))
+  const lead = leadText((await pageBlocks(pageSlug, layout)), brandCtx(pageSlug, concept))
   const sections = menu.filter((c) => (c.items?.length ?? 0) > 0).map((c) => c.name.trim()).filter(Boolean)
   const description = seo.description ?? fitSentences([
     `${name} menu — ${brandDescriptor(locationFromConcept(concept))}.`,
@@ -48,7 +48,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function BrandMenuPage({ params }: Params) {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const [concepts, menu] = await Promise.all([fetchLiveConcepts(), fetchBrandMenu(slug)])
   const concept = findConceptOrThrow(slug, concepts)
   if (!concept) notFound()

@@ -27,10 +27,10 @@ import { fetchOrderingMenu } from './orderingData'
 
 export const dynamic = 'force-dynamic'
 
-type Params = { params: Promise<{ concept: string }> | { concept: string } }
+type Params = { params: Promise<{ concept: string }> }
 
 export default async function ConceptOrderPage({ params }: Params) {
-  const { concept: slug } = await Promise.resolve(params as Promise<{ concept: string }>)
+  const { concept: slug } = await params
   const [{ status, concept }, initialMenu] = await Promise.all([lookupConcept(slug), fetchOrderingMenu(slug)])
   // Only the fields the hero needs, so the props stay small and serialisable
   // (the live record also carries hours, contacts and coordinates).

@@ -29,11 +29,11 @@ import { MAX_PARTY } from './partySizes'
 
 export const dynamic = 'force-dynamic'
 
-type Params = { params: Promise<{ slug: string }> | { slug: string } }
+type Params = { params: Promise<{ slug: string }> }
 
 
 export default async function ReserveBrandPage({ params }: Params) {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const { concept } = await lookupConcept(slug)
   if (!concept) return <ReserveScreen />
 

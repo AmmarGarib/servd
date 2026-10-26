@@ -28,16 +28,16 @@ import { asSentence, fitSentences, lookupConcept } from '../../../lib/liveConcep
 
 export const dynamic = 'force-dynamic'
 
-type Params = { params: Promise<{ concept: string }> | { concept: string } }
+type Params = { params: Promise<{ concept: string }> }
 
 export default async function ConceptMenuLayout({ children, params }: Params & { children: React.ReactNode }) {
-  const { concept: slug } = await Promise.resolve(params as Promise<{ concept: string }>)
+  const { concept: slug } = await params
   if ((await lookupConcept(slug)).status === 'missing') notFound()
   return <>{children}</>
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { concept: slug } = await Promise.resolve(params as Promise<{ concept: string }>)
+  const { concept: slug } = await params
   const { status, concept } = await lookupConcept(slug)
   if (status === 'missing') notFound()
   // The API didn't answer and this isn't a bundled brand: render (above), but

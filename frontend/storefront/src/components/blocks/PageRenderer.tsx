@@ -8,7 +8,7 @@
 // A block without valid motion, outside the editor, renders exactly as before.
 // Consecutive sticky-stack blocks are grouped in one .sv-stack.
 
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties, JSX, ReactNode } from 'react'
 import type { Block, ColumnsBlock } from '../../lib/blocks'
 import { PADDING_PX, BUTTON_SIZE_PX, cssFontFamily } from '../../lib/blocks'
 import { normalizeMotion, type NormalizedMotion } from '../../lib/motion'

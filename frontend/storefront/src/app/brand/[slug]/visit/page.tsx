@@ -44,7 +44,7 @@ function placeOf(loc: BrandLocation): string {
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const pageSlug = `brand:${slug}:visit`
   const [concept, layout, kitchens] = await Promise.all([
     resolveConcept(slug), fetchSiteLayout(pageSlug), fetchBrandKitchens(API_URL, slug),
@@ -57,7 +57,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const loc = locationFromConcept(concept, kitchens[0] ?? null)
   // The page header's own line, when the owner has written one (empty means
   // the generic service-type line, which says nothing about this place).
-  const header = pageBlocks(pageSlug, layout).find((b): b is Extract<Block, { type: 'section' }> =>
+  const header = (await pageBlocks(pageSlug, layout)).find((b): b is Extract<Block, { type: 'section' }> =>
     b.type === 'section' && b.variant === 'brand.pageHeader')
   const ownLine = header ? fill(str(mergeFields(header.variant, header.fields)['body']), brandCtx(pageSlug, concept)).trim() : ''
   const hours = (loc.hours?.length ?? 0) > 0
@@ -73,7 +73,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function BrandVisitPage({ params }: Params) {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const pageSlug = `brand:${slug}:visit`
   const [concepts, layout, kits] = await Promise.all([fetchLiveConcepts(), fetchSiteLayout(pageSlug), getLiveKits()])
   const found = findConceptOrThrow(slug, concepts)
@@ -85,7 +85,7 @@ export default async function BrandVisitPage({ params }: Params) {
   // so a scheduled publish landing mid-request can't split the two), resolved
   // by the same code.
   const ctx = brandCtx(pageSlug, concept)
-  const qa = pageBlocks(pageSlug, layout).flatMap((b) =>
+  const qa = (await pageBlocks(pageSlug, layout)).flatMap((b) =>
     b.type === 'section' && b.variant === 'brand.faq' ? faqSchemaEntries(mergeFields(b.variant, b.fields), ctx) : [])
 
   const ld: Record<string, unknown>[] = []

@@ -166,7 +166,7 @@ function servdEntries(
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const host = headers().get('host') ?? ''
+  const host = (await headers()).get('host') ?? ''
   const [hostSlug, list, pages] = await Promise.all([
     hostBrand(host),
     fetchConceptList(),

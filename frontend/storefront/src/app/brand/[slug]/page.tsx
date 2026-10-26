@@ -18,7 +18,7 @@ import type { Params } from './meta'
 export const dynamic = 'force-dynamic'
 
 export default async function BrandHome({ params }: Params) {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
 
   const [live, menu, kits] = await Promise.all([fetchLiveConcepts(), fetchBrandMenu(slug), getLiveKits()])
   const found = findConceptOrThrow(slug, live)

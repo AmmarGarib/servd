@@ -18,7 +18,7 @@ import { SiteLayoutView, resolveVariant } from '../../../components/blocks/SiteL
 
 export const dynamic = 'force-dynamic'
 
-type Params = { params: Promise<{ slug: string }> | { slug: string } }
+type Params = { params: Promise<{ slug: string }> }
 
 /** Plain text of an owner-written field (markdown / tags stripped). */
 function plain(v: unknown): string {
@@ -51,13 +51,13 @@ function firstText(blocks: Block[]): string {
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const layout = await fetchSiteLayout(`page:${slug}`)
   if (!layout?.blocks?.length) notFound()
   const seo = pageSeo(layout)
   const name = layout.title?.trim() || slug.replace(/[-_]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
   // The blocks this request renders: its A/B variant (no cookie → A).
-  const derived = firstText(resolveVariant(layout).blocks)
+  const derived = firstText((await resolveVariant(layout)).blocks)
   return pageMetadata({
     title:       seo.title ?? name,
     description: seo.description ?? (derived
@@ -68,7 +68,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
 }
 
 export default async function CustomPage({ params }: Params) {
-  const { slug } = await Promise.resolve(params as Promise<{ slug: string }>)
+  const { slug } = await params
   const layout = await fetchSiteLayout(`page:${slug}`)
   if (!layout?.blocks?.length) notFound()
   return <SiteLayoutView layout={layout} />
