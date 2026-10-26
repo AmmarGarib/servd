@@ -39,11 +39,22 @@ There is **no second transfer table** and **no `head_office` due accounts**
   The pair tie-out, `intercompany_mismatch` and the inter-company close checks
   therefore cover head-office pairs with no new code. 1400–1449 / 2100–2149
   stay reserved and unused.
-- **Head office books — the recharge account:** the head office's own template
-  **6990** "Costs Recharged to Group Companies" (`ACCT.GROUP_RECHARGES`,
-  credits only), resolved — never created as 6991+ (A1.2). The CA may re-map
-  it to another expense or to a revenue account (warning: the All-companies
-  P&L shows it as income and cost until eliminations are built).
+- **Head office books — the recharge account (HO-Q3 decided, owner
+  2026-10-26: SHOW AS INCOME):** the head office's own template **4220** "Head
+  Office Recharge Income" (`ACCT.HO_RECHARGE_INCOME`, revenue — 42xx other
+  income, never brand sales), resolved by `resolveRechargeAccount` (added by
+  `ensureChartInTx` / boot's `ensureChartOfAccounts`). The head office credits
+  4220, never **6990** — 6990 "Costs Recharged to Group Companies" stays the
+  shared-fleet recharge's recovery account (`intercompany/fleet.ts`) and is
+  refused as a head-office recharge account (422 `ACCOUNT_RESERVED`). Books
+  still mapped to 6990 from before HO-Q3 are re-mapped to 4220 at boot
+  (`accounts.ts moveRechargeToIncome`, recharge-OFF books only, confirmation
+  cleared; nothing posts, past 6990 lines stay). The CA may re-map it to
+  another non-engine revenue or expense account. The Books tab notes that the
+  All-companies P&L shows the recharge as income and cost until eliminations
+  are built. The HO-Q1 cost pool (5000–6999 at cost, 6990 excluded) never
+  counts the recharge: 4220 is outside the range, and `pool.ts` drops the
+  books' recharge account by id whatever its code.
 - **Company books — "Head office charges — <HO>":** an expense account at the
   first free code in **6200–6249** (422 `ACCOUNT_RANGE_FULL`), one per
   (company, head office); re-linking the same head office reuses it.
@@ -60,7 +71,7 @@ else is **404**. Every write is one `serviceClient` transaction.
 | Route | Rules |
 |---|---|
 | `GET /` | head offices the CEO belongs to, their live companies and switch state |
-| `POST / {name, isTest?}` | Tenant (kind `head_office`), `TenantMember(CEO, owner)`, the standard chart (in the transaction — `ensureChartInTx`; boot's `ensureChartOfAccounts` keeps it complete), `HeadOfficeBooks` on its 6990 with recharge OFF, HR settings with employee codes `HO-` (`hr/service.ts saveSettings`) |
+| `POST / {name, isTest?}` | Tenant (kind `head_office`), `TenantMember(CEO, owner)`, the standard chart (in the transaction — `ensureChartInTx`; boot's `ensureChartOfAccounts` keeps it complete), `HeadOfficeBooks` on its 4220 (income, HO-Q3) with recharge OFF, HR settings with employee codes `HO-` (`hr/service.ts saveSettings`) |
 | `GET /:id` | links (live and ended), the split in force this PKT month, books status, the last 12 runs, the live head-office-wide hand-overs (for the link dialog, A12) |
 | `PATCH /:id {name?, isActive?}` | switching off → 409 `HEAD_OFFICE_IN_USE` while it has a live link or any non-zero pair balance |
 | `POST /:id/companies {companyTenantId, extendDelegationIds?, revokeDelegationIds?}` | member of both (else 404); the target must be an active **company** (422 `LINK_TARGET_NOT_A_COMPANY` — never a head office under a head office); test and real never mix (422 `TEST_COMPANY_MIX`); 409 `ALREADY_LINKED`; **A12:** every live head-office-wide hand-over must be listed as extend or revoke (422 `DELEGATIONS_UNANSWERED`), the revoked ones in the same transaction. Creates the pair accounts, the charges account and a NEW link row; clears the confirmation and switches recharge OFF |
@@ -69,7 +80,7 @@ else is **404**. Every write is one `serviceClient` transaction.
 | `POST /:id/splits {effectiveFrom, lines, note?}` | each company live-linked (422 `COMPANY_NOT_LINKED`); each share 1..10000 bps, total ≤ 10000 (422 `SPLIT_OVER_100`; below 100% the rest stays with the head office); 409 `SPLIT_PERIOD_IN_USE` while a submitted or posted run exists for `effectiveFrom` or later; 409 `SPLIT_EXISTS` for a second version in the same month; draft runs from that month go stale |
 | `DELETE /:id/splits/:splitId` | only while no run references it (409 `SPLIT_IN_USE`) |
 | `GET /:id/books` | settings, mapped accounts per live link, warnings |
-| `PUT /:id/books/accounts {rechargeAccountId?, charges?[{companyTenantId, accountId}]}` | charges: an active expense in that company's chart, not controlled; recharge: an active expense or revenue in the head office's chart, not controlled; no posting-engine code (`ACCT.*`, `REQUIRED_ACCOUNT_CODES`) → 422 `ACCOUNT_RESERVED`, except 6990 as the recharge account; an account of another chart is 404 |
+| `PUT /:id/books/accounts {rechargeAccountId?, charges?[{companyTenantId, accountId}]}` | charges: an active expense in that company's chart, not controlled; recharge: an active expense or revenue in the head office's chart, not controlled; no posting-engine code (`ACCT.*`, `REQUIRED_ACCOUNT_CODES`) → 422 `ACCOUNT_RESERVED`, except 4220 as the recharge account (6990 is refused — it is the fleet's); an account of another chart is 404 |
 | `PUT /:id/books/pool` | ranges within 1000–9999, from ≤ to; codes are 4-digit strings |
 | `POST /:id/books/confirm {note, taxAnswer}` | both ≥ 10 characters; 422 `BOOKS_INCOMPLETE` while the recharge account or a live link's charges account is missing / off |
 | `PUT /:id/books/recharge {enabled, fromPeriod?, requireLockedPayroll?}` | enabling: 409 `ACCOUNTS_NOT_CONFIRMED`, 422 `FROM_PERIOD_REQUIRED`; switching off always works |

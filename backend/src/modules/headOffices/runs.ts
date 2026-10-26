@@ -18,7 +18,9 @@
 // (source 'ho_recharge', sourceRef 'ho_recharge:<lineId>'), which posts BOTH
 // books under 'ic.transfer:<transferId>':
 //   A > 0  debtor = the company  Dr its "Head office charges — <HO>" / Cr Due to HO
-//          creditor = the HO     Dr Due from company / Cr its recharge account (6990)
+//          creditor = the HO     Dr Due from company / Cr its recharge account
+//                                (4220 Head Office Recharge Income — HO-Q3, owner
+//                                2026-10-26: INCOME, never the fleet's 6990)
 //   A < 0  the sides swap (the HO is the debtor on its recharge account, the
 //          company the creditor on its charges account).
 // Dated the month's last day 23:59 PKT. A closed book refuses (409
@@ -54,7 +56,6 @@ import { payableEmployees } from '../hr/service.js'
 import { assertMonth, isMonthEnded, monthBounds, monthLabel } from '../intercompany/fleet.js'
 import { commonOpenPlacement, latestLock, postSystemTransferTx, reverseSystemTransfer } from '../intercompany/service.js'
 import { chargesAccountCodeFor } from './accounts.js'
-import { REVENUE_RECHARGE_WARNING } from './books.js'
 import { computePool, type PoolBasisLine, type PoolResult } from './pool.js'
 import { FULL_BPS, splitByBps, splitFor, type SplitLineInput } from './splits.js'
 
@@ -219,10 +220,8 @@ async function warningsFor(
       out.push(`${names.get(t) ?? 'A company'}'s books are closed through ${fmtPktDate(lock)} — approving needs "post into the first open month"`)
     }
   }
-  if (books.rechargeAccountId) {
-    const acc = await db.account.findUnique({ where: { id: books.rechargeAccountId }, select: { type: true } })
-    if (acc?.type === 'revenue') out.push(REVENUE_RECHARGE_WARNING)
-  }
+  // The revenue-account (eliminations) note is not a per-run warning since
+  // HO-Q3: income is the agreed default, shown once on the Books tab.
   if (c.baseCents < 0) out.push(`The head office's cost to recharge is negative (${pkr(c.baseCents)}) — the companies are credited`)
   if (c.splitTotalBps < FULL_BPS) {
     out.push(`The % table adds up to ${pct(c.splitTotalBps)} — ${pct(FULL_BPS - c.splitTotalBps)} stays with the head office as its own cost`)

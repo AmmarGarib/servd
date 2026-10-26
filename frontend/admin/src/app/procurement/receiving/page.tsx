@@ -52,7 +52,7 @@ interface OpenPo {
   supplier: { id: string; name: string }
   lines: OpenPoLine[]
 }
-interface InventoryItem { id: string; name: string; unit: string; unitCostCents: number | null }
+interface InventoryItem { id: string; name: string; unit: string; unitCostCents: number | null; purchaseUnit?: string | null; purchaseUnitFactor?: number | null }
 interface Receipt {
   id: string; poId: string | null; supplierId: string; receivedAt: string; status: string; varianceFlag: boolean
   lines: Array<{ id: string; description: string; receivedQty: number; unit: string }>
@@ -67,6 +67,10 @@ interface DraftLine {
   receivedQty: string
   unitCostPkr: string            // deliveries without a PO: cost per unit, PKR
   unit: string
+  /** No-PO lines: the item's purchase unit (e.g. case) and how many stock units it holds; qtyInPurchase = typed in it. */
+  purchaseUnit?: string | null
+  purchaseFactor?: number
+  inPurchase?: boolean
   notes: string
 }
 
@@ -156,11 +160,27 @@ export default function ReceivingPage() {
   }
   function pickItem(key: string, itemId: string) {
     const it = items.find((i) => i.id === itemId)
+    const pu = it?.purchaseUnit?.trim() || null
+    const f = it?.purchaseUnitFactor && it.purchaseUnitFactor > 0 ? it.purchaseUnitFactor : 1
+    const hasPu = !!pu && f !== 1 && pu.toLowerCase() !== (it?.unit ?? '').trim().toLowerCase()
     patchLine(key, {
+      purchaseUnit: hasPu ? pu : null, purchaseFactor: f, inPurchase: false,
       inventoryItemId: itemId || null,
       description: it?.name ?? '',
       unit: it?.unit ?? '',
       unitCostPkr: it?.unitCostCents != null ? String(it.unitCostCents / 100) : '',
+    })
+  }
+  // Unit toggle (no-PO lines): quantity and cost are typed in the chosen unit, so convert what is already typed.
+  function setUnitMode(l: DraftLine, toPurchase: boolean) {
+    if (!!l.inPurchase === toPurchase || !l.purchaseUnit) return
+    const f = l.purchaseFactor ?? 1
+    const qty = Number(l.receivedQty)
+    const cost = Number(l.unitCostPkr)
+    patchLine(l.key, {
+      inPurchase: toPurchase,
+      receivedQty: l.receivedQty.trim() !== '' && Number.isFinite(qty) ? String(Math.round((toPurchase ? qty / f : qty * f) * 1000) / 1000) : l.receivedQty,
+      unitCostPkr: l.unitCostPkr.trim() !== '' && Number.isFinite(cost) ? String(Math.round((toPurchase ? cost * f : cost / f) * 100) / 100) : l.unitCostPkr,
     })
   }
   function rmLine(key: string) {
@@ -204,6 +224,8 @@ export default function ReceivingPage() {
         inventoryItemId: l.poLineId ? null : l.inventoryItemId,
         quantityReceived: Math.max(0, Number(l.receivedQty) || 0),
         unitCostCents: l.poLineId ? null : Math.round(Number(l.unitCostPkr) * 100),
+        // Typed in the purchase unit: the server converts quantity × factor and cost ÷ factor. PO lines stay in stock units.
+        ...(!l.poLineId && l.inPurchase && l.purchaseUnit ? { unit: l.purchaseUnit } : {}),
         notes: l.notes.trim() || null,
       })),
     }),
@@ -382,13 +404,30 @@ export default function ReceivingPage() {
                     aria-label={`Received quantity${l.description ? ` of ${l.description}` : ''}`}
                     className={fieldCls + ' w-24'} placeholder="Recv" />
                   <div className="flex items-center gap-1">
-                    <span className="text-xs text-s-muted w-10">{l.unit}</span>
+                    <span className="text-xs text-s-muted w-10">{l.inPurchase && l.purchaseUnit ? l.purchaseUnit : l.unit}</span>
                     {!poId && <button type="button" onClick={() => rmLine(l.key)} className="text-white/30 hover:text-s-red text-sm px-2 [@media(pointer:coarse)]:min-h-11" aria-label="Remove line"><FIcon name="x" size={14} /></button>}
                   </div>
                 </div>
+                {!l.poLineId && l.purchaseUnit && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="text-s-muted">Count in</span>
+                    <div role="group" aria-label="Unit" className="inline-flex overflow-hidden rounded-lg border border-s-border">
+                      {[false, true].map((p) => (
+                        <button key={String(p)} type="button" aria-pressed={!!l.inPurchase === p} onClick={() => setUnitMode(l, p)}
+                          className={`px-3 py-1.5 font-bold ${!!l.inPurchase === p ? 'bg-primary text-primary-on' : 'text-s-muted hover:text-s-text'}`}>
+                          {p ? l.purchaseUnit : l.unit}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-s-muted font-mono">
+                      1 {l.purchaseUnit} = {l.purchaseFactor} {l.unit}
+                      {l.inPurchase && qty > 0 && <> · stock in: {Math.round(qty * (l.purchaseFactor ?? 1) * 1000) / 1000} {l.unit}</>}
+                    </span>
+                  </div>
+                )}
                 {!l.poLineId && (
                   <div className="flex items-center gap-2">
-                    <FieldLabel htmlFor={`cost-${l.key}`} className="whitespace-nowrap">Unit cost paid (PKR per {l.unit || 'unit'})</FieldLabel>
+                    <FieldLabel htmlFor={`cost-${l.key}`} className="whitespace-nowrap">Unit cost paid (PKR per {l.inPurchase && l.purchaseUnit ? l.purchaseUnit : l.unit || 'unit'})</FieldLabel>
                     <MoneyInput id={`cost-${l.key}`} value={centsOf(l.unitCostPkr)} onChange={(c) => patchLine(l.key, { unitCostPkr: pkrOf(c) })}
                       className={fieldCls + ' w-32'} placeholder="0.00" />
                   </div>

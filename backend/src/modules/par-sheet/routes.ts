@@ -149,7 +149,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
     const recipes = await prisma.recipe.findMany({
       where: { id: { in: [...ids] }, kind: 'component', isActive: true },
       select: {
-        id: true, name: true, yieldGrams: true, yieldUnit: true,
+        id: true, name: true, yieldGrams: true, yieldUnit: true, portionsPerBatch: true, portionLabel: true,
         ingredients: {
           select: {
             quantity: true, unit: true, yieldPct: true,
@@ -175,6 +175,9 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
       yieldGrams: r.yieldGrams,
       // The unit the batch yield is counted in — the prep stock item's unit (prep as stock, 2026-10-24).
       yieldUnit: r.yieldUnit,
+      // Portions per batch (K5): when set, the prep-batch logger takes the yield in portions.
+      portionsPerBatch: r.portionsPerBatch,
+      portionLabel: r.portionLabel,
       inputs: r.ingredients.filter((i) => i.inventoryItem).map((i) => {
         const src = i.inventoryItem!
         const item = (src.tenantId === tenantId || src.tenantId == null) && !src.deletedAt

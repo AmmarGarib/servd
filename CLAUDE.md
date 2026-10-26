@@ -1394,14 +1394,14 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   inter-company `cod` transfer; on-account = whole bill, cash GST rate, card or manager approval + credit
   limit; a tax invoice per bill at completion, the statement is not a tax invoice. HO-Q1 = the default
   (net cost 5000–6999, no markup). **HO-Q3 = SHOW AS INCOME** in the head office's books (not the 6990
-  contra-expense default) — to build before the recharge is switched on. City Ledger and the head-office
+  contra-expense default) — BUILT 2026-10-26: Cr 4220 Head Office Recharge Income. City Ledger and the head-office
   recharge stay OFF until the owner says so.
 - **Pending owner/CA decisions** (decisions page
   https://claude.ai/artifact/W8tzVdHxhzYSKJiyzhcLRk): COD never paid (G1),
   rider COD on 1351 (H5), on-account tender (G14) and the on-account tax
   invoice (H14) — resumed 2026-10-15 and BUILT on the defaults, awaiting
   owner/CA confirmation (see "Delivery money and customers" and "On-account
-  clients"). Head-office HO-Q1 / HO-Q3 wait for the CA (see "Head office").
+  clients"). Head-office HO-Q1 / HO-Q3 are decided (owner, 2026-10-26; see "Head office").
   **Hasnain's answers of 2026-10-16:** H45 = the night audit's "still
   awaiting settlement" warning fires after 2 working days; H46 confirms the
   business day (05:00 PKT); H47 withholding is taken at the bill; H48 loyalty
@@ -2008,9 +2008,13 @@ only, foreign rows 404). Contract: `backend/src/modules/headOffices/README.md`.
   1400–1449 / 2100–2149 stay reserved and unused. A monthly charge is one
   `IntercompanyTransfer` per run line, `source 'ho_recharge'`,
   `sourceRef 'ho_recharge:<lineId>'`, via `postSystemTransferTx`; settlements
-  are ordinary manual transfers. Head office books use 6990 "Costs Recharged to
-  Group Companies" (resolved, never 6991+); each company gets "Head office
-  charges — <HO>" at the first free code in 6200–6249.
+  are ordinary manual transfers. **Head office books credit 4220 "Head Office
+  Recharge Income"** (`ACCT.HO_RECHARGE_INCOME`, 42xx other income; HO-Q3
+  decided by the owner 2026-10-26: SHOW AS INCOME) — never 6990, which stays
+  the shared-fleet recharge's recovery account and is refused as a head-office
+  recharge account; books still on 6990 move to 4220 at boot (recharge-OFF
+  only, `headOffices/accounts.ts moveRechargeToIncome`). Each company gets
+  "Head office charges — <HO>" at the first free code in 6200–6249.
 - **The split is owner-set:** 37.5% GS Foods / 62.5% GS x Viva (3750 / 6250
   bps), created only by the setup wizard as "GS Head Office". Versioned per
   month (`splits.ts`); `splitByBps` is the ONE rounding rule (leftover paisa
@@ -2021,11 +2025,11 @@ only, foreign rows 404). Contract: `backend/src/modules/headOffices/README.md`.
   `rechargeFromPeriod` (DB CHECK `head_office_books_enable_chk`). Any change
   to accounts, pool or links switches it back off. The worker (under
   `ENABLE_WORKERS`) only PREPARES and SUBMITS a run for approval — it never
-  posts. **Still open with the accountant:** HO-Q1 (the cost pool — default =
-  the head office's net cost, 5000–6999 at cost, no markup, 6990 excluded)
-  and HO-Q3 (6990 contra-expense vs re-mapped to income — default
-  contra-expense; the All-companies P&L would show income and cost until
-  eliminations exist).
+  posts. **Decided (owner, 2026-10-26):** HO-Q1 = the default cost pool (the
+  head office's net cost, 5000–6999 at cost, no markup, 6990 excluded — the
+  recharge on 4220 is outside it and `pool.ts` drops the recharge account by
+  id); HO-Q3 = income (4220, BUILT; the All-companies P&L shows income and
+  cost until eliminations exist — noted on the Books tab).
 - **Reach and the lens are submit-only** (`lib/headOffice.ts`): a head-office
   login reaches its linked companies and picks one with the lens header
   (`x-servd-active-tenant`); in a reached company it may only SUBMIT (403

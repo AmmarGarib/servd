@@ -101,6 +101,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   inventory:      [
     { label: 'Inventory', href: '/inventory', icon: 'box', hint: 'Includes the waste log' },
     { label: 'Stock count', href: '/inventory/count', sub: true },
+    { label: 'Stock transfers', href: '/inventory/transfers', sub: true, hint: 'Move stock between two outlets of one company' },
     { label: 'Low stock', href: '/inventory/alerts', sub: true },
     { label: 'Prep list', href: '/kitchen/prep-list', sub: true },
   ],

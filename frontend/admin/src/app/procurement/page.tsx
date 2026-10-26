@@ -64,7 +64,7 @@ interface Supplier {
 interface PoLine {
   id: string; inventoryItemId: string; quantityOrdered: number; quantityReceived: number
   unitCostCents: number; notes?: string | null
-  inventoryItem?: { name: string; unit: string } | null
+  inventoryItem?: { name: string; unit: string; masterIngredient?: { name: string; spec?: string | null } | null } | null
 }
 
 interface PurchaseOrder {
@@ -497,7 +497,12 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
               <tbody>
                 {detail.lines.map((l) => (
                   <tr key={l.id} className="border-b border-s-border/30 last:border-0">
-                    <td className="py-1.5 text-s-text">{l.inventoryItem?.name ?? l.inventoryItemId}</td>
+                    <td className="py-1.5 text-s-text">
+                      {l.inventoryItem?.name ?? l.inventoryItemId}
+                      {l.inventoryItem?.masterIngredient?.spec?.trim() && (
+                        <span className="block text-[11px] font-normal text-s-muted">Spec: {l.inventoryItem.masterIngredient.spec.trim()}</span>
+                      )}
+                    </td>
                     <td className="py-1.5 text-right text-s-text">{l.quantityOrdered} {l.inventoryItem?.unit}</td>
                     <td className="py-1.5 text-right text-s-muted">{l.quantityReceived}</td>
                     <td className="py-1.5 text-right text-s-muted">{fmtPkrWhole(l.unitCostCents)}</td>

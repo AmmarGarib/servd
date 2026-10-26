@@ -38,7 +38,12 @@ export const zCostPool = z.object({
 })
 export type CostPool = z.infer<typeof zCostPool>
 
-/** The default pool (spec §0): expenses 5000–6999, minus the recharge account 6990. */
+/**
+ * The default pool (spec §0 / HO-Q1): expenses 5000–6999 at cost, minus 6990
+ * (the fleet recovery account, and the head-office recharge account before
+ * HO-Q3). The recharge itself credits 4220 income (HO-Q3), outside the range,
+ * and pool.ts also drops the books' recharge account by id whatever its code.
+ */
 export const DEFAULT_COST_POOL: CostPool = { include: [{ from: 5000, to: 6999 }], includeCodes: [], excludeCodes: ['6990'] }
 
 /** The stored pool, parsed; an unreadable value falls back to the default (never throws on a read). */
@@ -195,11 +200,13 @@ export async function headOfficeSetupApplied(db: Db = serviceClient): Promise<bo
 
 // ─── GET books ───────────────────────────────────────────────────────────────
 
-/** Shown whenever the recharge account is revenue-type (spec §3) or the shared 6990 (A1.2). */
+/**
+ * Shown on the Books tab whenever the recharge account is revenue-type — the
+ * default 4220 since HO-Q3 (owner, 2026-10-26: income, knowing the
+ * All-companies P&L shows it as income and cost until eliminations exist).
+ */
 export const REVENUE_RECHARGE_WARNING =
   'The All-companies P&L will show the recharge as both income and cost until eliminations are built'
-export const SHARED_6990_WARNING =
-  'The All-companies P&L shows 6990 as a credit inside expenses until eliminations are built'
 
 type AccountView = { id: string; code: string; name: string; type: string; isActive: boolean; controlledBy: string | null }
 const ACCOUNT_VIEW = { id: true, code: true, name: true, type: true, isActive: true, controlledBy: true } as const
@@ -235,7 +242,6 @@ export async function booksView(db: Db, hoId: string): Promise<BooksView> {
   })
   const warnings: string[] = []
   if (row.rechargeAccount?.type === 'revenue') warnings.push(REVENUE_RECHARGE_WARNING)
-  else if (row.rechargeAccount?.code === '6990') warnings.push(SHARED_6990_WARNING)
   if (!row.rechargeAccount || !row.rechargeAccount.isActive) warnings.push('Map an active recharge account')
   for (const l of links) {
     if (!l.charges || !l.charges.isActive) warnings.push(`${l.company.name}: map an active head office charges account`)

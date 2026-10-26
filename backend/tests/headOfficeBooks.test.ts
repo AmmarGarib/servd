@@ -73,12 +73,12 @@ async function cost(tenantId: string, date: string, accountCode: string, cents: 
   })
 }
 
-/** The head office's P&L for a month: expense debits − credits (it has no revenue). */
+/** The head office's net cost for a month: expense − revenue (the recharge is income on 4220, HO-Q3). */
 async function hoPnl(period: string) {
   const [y, m] = period.split('-').map(Number) as [number, number]
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate()
   const lines = await prisma.journalLine.findMany({
-    where: { account: { tenantId: HO, type: 'expense' }, journalEntry: { tenantId: HO, entryDate: { gte: parsePktStartOfDay(`${period}-01`), lte: parsePktEndOfDay(`${period}-${last}`) } } },
+    where: { account: { tenantId: HO, type: { in: ['expense', 'revenue'] } }, journalEntry: { tenantId: HO, entryDate: { gte: parsePktStartOfDay(`${period}-01`), lte: parsePktEndOfDay(`${period}-${last}`) } } },
     select: { type: true, amountCents: true },
   })
   return lines.reduce((s, l) => s + (l.type === 'debit' ? 1 : -1) * toCents(l.amountCents), 0)
@@ -270,6 +270,13 @@ describe('approve', () => {
       expect(d.tenantId).toBe(t.tenantId)
       expect(c.tenantId).toBe(HO)
       expect(d.entryDate.toISOString()).toBe(new Date('2026-09-30T23:59:00+05:00').toISOString())
+      // HO-Q3 (owner, 2026-10-26): the head office books the recharge as INCOME —
+      // Cr 4220 Head Office Recharge Income, and nothing on 6990.
+      const hoLines = await prisma.journalLine.findMany({ where: { journalEntryId: c.id }, include: { account: { select: { code: true, type: true } } } })
+      const credit = hoLines.filter((l) => l.type === 'credit')
+      expect(credit.map((l) => [l.account.code, l.account.type, toCents(l.amountCents)])).toEqual([['4220', 'revenue', t.amountCents]])
+      expect(hoLines.some((l) => l.account.code === '6990')).toBe(false)
+      expect(t.creditorAccountCode).toBe('4220')
     }
     const c1 = await pairBalances(prisma, HO, C1)
     expect(c1.aDueFromB).toBe(60_000_000)

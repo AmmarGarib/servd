@@ -32,9 +32,11 @@
 //              2026-10-17), created per company at brand create / boot
 //              (accounting/brandRevenueAccount.ts). Brand sales like 4001–4007.
 //   6200–6249  Head office charges — company books (created by headOffices, lazy)
-//   6990       Costs recharged to group companies (the provider / head-office
-//              side): a TEMPLATE account, the ONE recovery account shared by
-//              H30 fleet recharges and D1 head-office recharges. 6991–6999 unused.
+//   6990       Costs recharged to group companies (the provider side): a
+//              TEMPLATE account, the recovery account of the H30 shared-fleet
+//              recharge. 6991–6999 unused. The D1 head-office recharge credits
+//              4220 Head Office Recharge Income instead (owner HO-Q3,
+//              2026-10-26: income in the head office's books).
 //
 // Codes outside the template (the lazy pair / head-office accounts above,
 // an operator's own accounts) are never required and never added here.
@@ -160,6 +162,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   // sales KPIs, the food-cost denominator or the labour % base.
   { code: '4200', name: 'Gift Card Breakage (Other Income)',  type: 'revenue',   description: 'Unused value of SOLD gift cards at expiry or forfeit, no sales tax (H11)' },
   { code: '4210', name: 'No-show Deposits Kept (Other Income)', type: 'revenue', description: 'Booking deposits kept on a no-show: compensation, not a supply, no sales tax (H10)' },
+  { code: '4220', name: 'Head Office Recharge Income',        type: 'revenue',   description: "Head office books only: the monthly recharge of the head office's costs to its group companies (owner HO-Q3, 2026-10-26: income, not 6990)" },
 
   // ── COGS ──────────────────────────────────────────────────────────────
   { code: '5010', name: 'Food Cost',                          type: 'expense' },
@@ -212,7 +215,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   // Credits only — the recovery side of a cost this company bore for another
   // group company (H30 shared-fleet recharges, D1 head-office recharges). The
   // fleet provider credits it, so 6035 stays gross rider wages.
-  { code: '6990', name: 'Costs Recharged to Group Companies', type: 'expense',   description: 'Credits only: costs this company bore for another group company (shared fleet, head office) and recharged to it. Confirm with your CA.' },
+  { code: '6990', name: 'Costs Recharged to Group Companies', type: 'expense',   description: 'Credits only: costs this company bore for another group company (the shared fleet) and recharged to it. A head-office recharge goes to 4220 instead. Confirm with your CA.' },
 
   // ── Contra-revenue ────────────────────────────────────────────────────
   { code: '7010', name: 'Discounts Given',                    type: 'expense' },
@@ -229,7 +232,7 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
 /**
  * Codes the posting engine cannot run without — checked by /health, and a
  * required code can never be switched off in the chart. Codes posted only on
- * demand (1322, 1335, 1351, 1356, 1590, 6160, 6170, 6175, 6180, 6990)
+ * demand (1322, 1335, 1351, 1356, 1590, 4220, 6160, 6170, 6175, 6180, 6990)
  * are NOT here: their postings refuse cleanly (assertTemplateAccounts → 422,
  * nothing saved) when a company lacks them.
  */

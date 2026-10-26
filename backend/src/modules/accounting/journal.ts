@@ -239,6 +239,7 @@ export const ACCT = {
   DELIVERY_FEE_REVENUE:     '4110',
   GIFT_CARD_BREAKAGE:       '4200',
   NO_SHOW_DEPOSITS_KEPT:    '4210',   // kept no-show deposits: other income, no sales tax (H10)
+  HO_RECHARGE_INCOME:       '4220',   // head office books: the monthly recharge (HO-Q3, 2026-10-26: income)
   COST_ADJUSTMENT:          '5060',
   RENT:                     '6010',
   GRATUITY:                 '6036',
@@ -250,7 +251,7 @@ export const ACCT = {
   OFFICE_STATIONERY:        '6170',
   POSTAGE_COURIER:          '6175',
   STAFF_WELFARE:            '6180',
-  GROUP_RECHARGES:          '6990',
+  GROUP_RECHARGES:          '6990',   // shared-fleet recharge (provider side); never the head-office recharge
   ASSET_DISPOSAL:           '8030',
 } as const
 

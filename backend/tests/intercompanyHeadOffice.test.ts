@@ -11,7 +11,7 @@
 //     an ordinary company↔company transfer;
 //   - the preparer cannot approve (assertCanApprove and the claim);
 //   - reverse is CEO only; a 'ho_recharge' transfer is reversed from its run;
-//   - counters: the HO's recharge account / the link's charges account → 422;
+//   - counters: the HO's recharge account (4220 income, HO-Q3) / the link's charges account → 422;
 //   - unlinked B: its members get 404; HO↔B is never prepared;
 //   - through the lens the HO member sees only HO↔C1, never C1↔C2.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -124,7 +124,7 @@ describe('an HO finance member prepares for HO↔C1', () => {
 
   it('refuses the head office recharge account and the link charges account as counters (A9)', async () => {
     const base = { kind: 'charge', debtorTenantId: C1, creditorTenantId: HO, amountCents: 10_000, entryDate: daysAgo(3), memo: 'HO paid C1 cost' }
-    const r1 = await call(hoFin, 'POST', '/transfers', { ...base, debtorAccountCode: '6010', creditorAccountCode: '6990' })
+    const r1 = await call(hoFin, 'POST', '/transfers', { ...base, debtorAccountCode: '6010', creditorAccountCode: '4220' })
     expect(r1.statusCode).toBe(422)
     expect(r1.json().error.code).toBe('COUNTER_ACCOUNT_INVALID')
     const charges = await prisma.account.create({ data: { tenantId: C1, code: '6200', name: `Head office charges — ${P} HO`, type: 'expense' } })
@@ -280,7 +280,7 @@ describe('who may decide', () => {
 
     const sys = await prisma.$transaction((tx) => postSystemTransferTx(tx, {
       kind: 'charge', source: 'ho_recharge', sourceRef: `ho_recharge:test:${P}`, debtorTenantId: C1, creditorTenantId: HO,
-      amountCents: 3_000, entryDate: new Date(Date.now() - 86_400_000), debtorAccountCode: '6200', creditorAccountCode: '6990',
+      amountCents: 3_000, entryDate: new Date(Date.now() - 86_400_000), debtorAccountCode: '6200', creditorAccountCode: '4220',
       memo: 'Head office charge test', preparedById: 'system', period: null,
     }), { timeout: 30_000 })
     const view = await call(ceo, 'GET', `/transfers/${sys.transferId}`)

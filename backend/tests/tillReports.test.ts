@@ -25,6 +25,7 @@ const U: Record<string, string> = {}
 const O: Record<string, string> = {}
 const S: Record<string, string> = {}
 const M: Record<string, string> = {}
+const L: Record<string, string> = {}
 const cats: string[] = []
 let itemA = ''
 let itemB = ''
@@ -124,6 +125,7 @@ afterAll(async () => {
   await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } })
   await prisma.order.deleteMany({ where: { id: { in: orderIds } } })
   await prisma.shift.deleteMany({ where: { id: { in: Object.values(S) } } })
+  await prisma.location.deleteMany({ where: { id: { in: Object.values(L) } } })
   await prisma.menuItem.deleteMany({ where: { id: { in: Object.values(M) } } })
   await prisma.category.deleteMany({ where: { id: { in: cats } } })
   await app?.close()
@@ -318,5 +320,41 @@ describe('run', () => {
     const csv = await run('finA', 'menu_item_sales_summary', '&format=csv')
     expect(csv.statusCode).toBe(200)
     expect(csv.body).toContain('Burger')
+  })
+})
+
+describe('outlet filter (locationIds, owner 2026-10-26)', () => {
+  it('narrows orders by Order.locationId; a foreign or unknown outlet is 422 LOCATION_NOT_IN_COMPANY; lookups list only the brands’ company outlets', async () => {
+    L.a1 = (await prisma.location.create({ data: { name: `${P} A1`, slug: `${P}-la1`, tenantId: T.A } })).id
+    L.a2 = (await prisma.location.create({ data: { name: `${P} A2`, slug: `${P}-la2`, tenantId: T.A } })).id
+    L.b1 = (await prisma.location.create({ data: { name: `${P} B1`, slug: `${P}-lb1`, tenantId: T.B } })).id
+    await prisma.order.update({ where: { id: O.o1! }, data: { locationId: L.a1 } })
+    await prisma.order.update({ where: { id: O.o2! }, data: { locationId: L.a2 } })
+
+    // The catalog offers the field on the order-narrowing reports.
+    const cat = (await get('finA', '/catalog')).json() as { reports: Array<{ id: string; filters: string[] }> }
+    expect(cat.reports.find((r) => r.id === 'sales_detail')!.filters).toContain('locationIds')
+
+    const one = sectionsOf(await run('finA', 'sales_detail', `&locationIds=${L.a1}`))[0]!
+    expect(one.rows.map((r) => r.orderNo)).toEqual([orderRefOf(O.o1!)])
+    const both = sectionsOf(await run('finA', 'sales_detail', `&locationIds=${L.a1},${L.a2}`))[0]!
+    expect(both.rows.map((r) => r.orderNo).sort()).toEqual([O.o1, O.o2].map((id) => orderRefOf(id!)).sort())
+    // Payment summary follows the same bills.
+    expect(sectionsOf(await run('finA', 'payment_summary', `&locationIds=${L.a2}`))[0]!.totals).toMatchObject({ count: 1 })
+
+    // Company B's outlet, a made-up one, and a non-id.
+    for (const bad of [L.b1, '00000000-0000-4000-8000-000000000000']) {
+      const r = await run('finA', 'sales_detail', `&locationIds=${bad}`)
+      expect(r.statusCode, String(bad)).toBe(422)
+      expect(r.json().error.code).toBe('LOCATION_NOT_IN_COMPANY')
+    }
+    expect((await run('finA', 'sales_detail', '&locationIds=nope')).statusCode).toBe(400)
+    // One foreign id among good ones still refuses the whole request.
+    expect((await run('finA', 'sales_detail', `&locationIds=${L.a1},${L.b1}`)).statusCode).toBe(422)
+    // Company B's manager still cannot reach company A's brand at all.
+    expect((await run('mgrB', 'sales_detail', `&locationIds=${L.a1}`)).statusCode).toBe(404)
+
+    const lk = (await get('finA', `/lookups?conceptIds=${C.A}`)).json() as { locations: Array<{ id: string }> }
+    expect(lk.locations.map((x) => x.id).sort()).toEqual([L.a1, L.a2].sort())
   })
 })

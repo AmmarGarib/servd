@@ -8418,7 +8418,7 @@ model HeadOfficeLink {
 // and head_office_books_period_chk.
 model HeadOfficeBooks {
   tenantId              String    @id // the head office
-  rechargeAccountId     String? // HO chart; default 6990 (expense, credits); the CA may pick a revenue account
+  rechargeAccountId     String? // HO chart; default 4220 Head Office Recharge Income (HO-Q3, 2026-10-26; was 6990); the CA may re-map
   costPool              Json      @default("{\"include\":[{\"from\":5000,\"to\":6999}],\"includeCodes\":[],\"excludeCodes\":[\"6990\"]}")
   accountsConfirmedAt   DateTime? // NULL = "Confirm with your CA". Cleared by ANY change to accounts, pool or links
   accountsConfirmedById String?

@@ -1108,6 +1108,17 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[ledger] chart-of-accounts bootstrap skipped: ${(err as Error).message}`)
   }
+  // HO-Q3 (owner, 2026-10-26): the head-office recharge is INCOME (4220) in
+  // the head office's books. Books still mapped to 6990 (the old default) and
+  // with recharge OFF move to 4220 (confirmation cleared); nothing posts.
+  try {
+    const { moveRechargeToIncome } = await import('./modules/headOffices/accounts.js')
+    const r = await moveRechargeToIncome()
+    if (r.moved.length > 0) fastify.log.info(`[head-office] recharge account moved 6990 → 4220 for ${r.moved.length} head office(s)`)
+    if (r.skippedEnabled.length > 0) fastify.log.warn(`[head-office] ${r.skippedEnabled.length} head office(s) with recharge ON still credit 6990 — re-map to 4220 on the Books tab`)
+  } catch (err) {
+    fastify.log.error({ err }, '[head-office] recharge income boot step failed')
+  }
   // One sales account per brand (owner, 2026-10-17): every live brand with a
   // company and no sales account gets "Sales — <brand>" (4010–4089) in its
   // company's chart. Idempotent — brands that have one are skipped — so it

@@ -23,6 +23,7 @@ import { headOfficeRoutes } from '../src/modules/headOffices/routes.js'
 import { setupRoutes } from '../src/modules/setup/routes.js'
 import { headOfficeSetupApplied } from '../src/modules/headOffices/books.js'
 import { getSettings } from '../src/modules/hr/service.js'
+import { moveRechargeToIncome } from '../src/modules/headOffices/accounts.js'
 
 const P = `hoa-${Date.now()}`
 let app: FastifyInstance
@@ -127,7 +128,7 @@ afterAll(async () => {
 })
 
 describe('create', () => {
-  it('creates a head office: kind, CEO owner, chart, books on its own 6990 with recharge OFF, HR codes HO-', async () => {
+  it('creates a head office: kind, CEO owner, chart, books on its own 4220 income (HO-Q3) with recharge OFF, HR codes HO-', async () => {
     const res = await call('ceo', 'POST', '/head-offices', { name: 'GS Head Office' })
     expect(res.statusCode).toBe(201)
     HO = res.json().headOffice.id
@@ -140,7 +141,8 @@ describe('create', () => {
     const b = await books(HO)
     const recharge = await prisma.account.findUniqueOrThrow({ where: { id: b.rechargeAccountId! } })
     expect(recharge.tenantId).toBe(HO)
-    expect(recharge.code).toBe('6990')
+    expect(recharge.code).toBe('4220')
+    expect(recharge.type).toBe('revenue')
     expect(await prisma.account.count({ where: { tenantId: HO, code: { in: ['6991', '6992'] } } })).toBe(0)
     expect(b.rechargeEnabled).toBe(false)
     expect(b.accountsConfirmedAt).toBeNull()
@@ -151,6 +153,18 @@ describe('create', () => {
     expect(audits).toBe(1)
 
     HO2 = (await call('ceo', 'POST', '/head-offices', { name: 'Other Head Office' })).json().headOffice.id
+  })
+
+  it('HO-Q3: books still on the old 6990 move to 4220 income at boot (recharge OFF), once', async () => {
+    const ho6990 = await prisma.account.findUniqueOrThrow({ where: { tenantId_code: { tenantId: HO2, code: '6990' } } })
+    await prisma.headOfficeBooks.update({ where: { tenantId: HO2 }, data: { rechargeAccountId: ho6990.id } })
+    const r = await moveRechargeToIncome()
+    expect(r.moved).toContain(HO2)
+    const b = await books(HO2)
+    const acc = await prisma.account.findUniqueOrThrow({ where: { id: b.rechargeAccountId! } })
+    expect([acc.code, acc.type]).toEqual(['4220', 'revenue'])
+    expect(b.rechargeEnabled).toBe(false)
+    expect((await moveRechargeToIncome()).moved).not.toContain(HO2)
   })
 
   it('lists only head offices the CEO belongs to', async () => {
@@ -312,10 +326,13 @@ describe('books: any account, pool or link change clears the confirmation and sw
     expect(same.statusCode).toBe(200)
     expect((await books(HO)).rechargeEnabled).toBe(true)
 
-    // An engine code other than 6990 → ACCOUNT_RESERVED.
+    // An engine code other than 4220 → ACCOUNT_RESERVED.
     const salaries = await prisma.account.findUniqueOrThrow({ where: { tenantId_code: { tenantId: HO, code: '6010' } } })
     const reserved = await call('ceo', 'PUT', `/head-offices/${HO}/books/accounts`, { rechargeAccountId: salaries.id })
     expect(code(reserved)).toBe('ACCOUNT_RESERVED')
+    // HO-Q3: the fleet's 6990 is never the head office's recharge account.
+    const ho6990 = await prisma.account.findUniqueOrThrow({ where: { tenantId_code: { tenantId: HO, code: '6990' } } })
+    expect(code(await call('ceo', 'PUT', `/head-offices/${HO}/books/accounts`, { rechargeAccountId: ho6990.id }))).toBe('ACCOUNT_RESERVED')
     // Another company's account as the recharge account → 404 (company separation).
     const aConsult = await prisma.account.findUniqueOrThrow({ where: { tenantId_code: { tenantId: A, code: '6500' } } })
     expect((await call('ceo', 'PUT', `/head-offices/${HO}/books/accounts`, { rechargeAccountId: aConsult.id })).statusCode).toBe(404)

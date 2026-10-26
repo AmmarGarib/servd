@@ -51,7 +51,7 @@ async function membersOf(tx: Tx, userId: string): Promise<string[]> {
   return [...ids]
 }
 
-/** Make sure a head office has its books row (the recharge account mapped to 6990). */
+/** Make sure a head office has its books row (the recharge account mapped to 4220 income — HO-Q3). */
 export async function ensureBooks(tx: Tx, hoId: string, actorId: string): Promise<void> {
   const have = await tx.headOfficeBooks.findUnique({ where: { tenantId: hoId }, select: { tenantId: true } })
   if (have) return
@@ -73,7 +73,7 @@ export interface CreatedHeadOffice {
 /**
  * Create a head office in one transaction: the Tenant (kind head_office), the
  * CEO as its owner member, the standard chart, HeadOfficeBooks with the
- * recharge account = its own 6990 (never 6991+, A1.2) and recharge OFF, and HR
+ * recharge account = its own 4220 Head Office Recharge Income (HO-Q3) and recharge OFF, and HR
  * settings with employee codes 'HO-'. A head office has no fiscal POS
  * (connectors/registry.ts ensureConnectorRow skips head offices).
  *

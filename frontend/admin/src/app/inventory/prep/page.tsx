@@ -37,6 +37,9 @@ interface PrepOption {
   id: string; name: string; yieldGrams: number | null
   /** The unit the yield is counted in (g / ml / pcs) — the prep stock item's unit. */
   yieldUnit?: string
+  /** Portions one batch makes (K5); set = the cook logs in portions. */
+  portionsPerBatch?: number | null
+  portionLabel?: string | null
   inputs: Array<{ inventoryItemId: string | null; name: string; unit: string; qtyDrawn: number; missing: boolean }>
   subPreps: Array<{ id: string; name: string | null; grams: number }>
 }
@@ -102,6 +105,11 @@ export default function PrepBatchPage() {
   const itemById = useMemo(() => new Map(ingredients.map((i) => [i.id, i])), [ingredients])
   const prep = preps.find((p) => p.id === recipeId)
   const adHoc = recipeId === AD_HOC
+  // A recipe with portions per batch is logged in PORTIONS plus the whole batches cooked (server: 400 BATCHES_REQUIRED without).
+  const inPortions = !adHoc && !!prep?.portionsPerBatch && prep.portionsPerBatch > 0
+  const portionWord = prep?.portionLabel || 'portions'
+  const [actualPortions, setActualPortions] = useState<number | ''>('')
+  const [portionBatches, setPortionBatches] = useState<number | ''>('')
 
   // Fill the form from the sub-recipe × number of batches.
   function applyRecipe(p: PrepOption | undefined, mult: number) {
@@ -130,10 +138,14 @@ export default function PrepBatchPage() {
       locationId: locationId || null,
       itemName, inputs,
       // A recipe batch (prep as stock, 2026-10-24) draws its recipe × batches and adds the prep item at the actual yield.
-      ...(!adHoc && recipeId ? { batches: multiplier } : {}),
-      expectedYieldQty: expectedYieldQty === '' ? null : expectedYieldQty,
-      actualYieldQty: actualYieldQty === '' ? 0 : actualYieldQty,
-      unit: !adHoc && prep?.yieldUnit ? prep.yieldUnit : 'g',
+      ...(inPortions
+        ? { batches: Number(portionBatches), actualPortions: Number(actualPortions) }
+        : {
+          ...(!adHoc && recipeId ? { batches: multiplier } : {}),
+          expectedYieldQty: expectedYieldQty === '' ? null : expectedYieldQty,
+          actualYieldQty: actualYieldQty === '' ? 0 : actualYieldQty,
+          unit: !adHoc && prep?.yieldUnit ? prep.yieldUnit : 'g',
+        }),
       notes: notes || null,
       })
       // The batch is saved; a failed upload never undoes it.
@@ -159,7 +171,7 @@ export default function PrepBatchPage() {
           ? { tone: 'warn', text: 'Batch saved — low yield flagged.' }
           : { tone: 'ok', text: adHoc ? 'Batch logged. The ingredients were drawn from stock at the price paid.' : 'Batch logged. Its ingredients left stock and the prep is now in stock at what they cost.' })
       setRecipeId(''); setMultiplier(1); setTried(false)
-      setItemName(''); setInputs([]); setExpectedYieldQty(''); setActualYieldQty(''); setPhotos([]); setNotes('')
+      setItemName(''); setInputs([]); setExpectedYieldQty(''); setActualYieldQty(''); setActualPortions(''); setPortionBatches(''); setPhotos([]); setNotes('')
       if ((!ledger || ledger.posted) && !res?.uploadError) setTimeout(() => setFeedback(null), 6000)
     },
   })
@@ -171,14 +183,16 @@ export default function PrepBatchPage() {
   function patchInput(i: number, p: Partial<DraftInput>) { setInputs(inputs.map((x, idx) => idx === i ? { ...x, ...p } : x)) }
   function rmInput(i: number) { setInputs(inputs.filter((_, idx) => idx !== i)) }
 
-  const yieldPct = expectedYieldQty && actualYieldQty && +expectedYieldQty > 0 ? (+actualYieldQty / +expectedYieldQty) * 100 : null
+  const yieldPct = !inPortions && expectedYieldQty && actualYieldQty && +expectedYieldQty > 0 ? (+actualYieldQty / +expectedYieldQty) * 100 : null
   const missing = prep?.inputs.filter((i) => i.missing) ?? []
   // Why Log batch can't go through yet — shown once it is pressed (the button stays live).
   const problem = !recipeId ? 'Pick the sub-recipe you made (or Other).'
     : !itemName.trim() ? 'Name the prep.'
     : inputs.length === 0 ? 'Add at least one ingredient you used.'
     : inputs.some((x) => !x.inventoryItemId) ? 'Pick the ingredient on every line.'
-    : !actualYieldQty ? 'Enter the actual yield.'
+    : inPortions && !(Number(portionBatches) > 0) ? 'Say how many whole batches you made.'
+    : inPortions && !(Number(actualPortions) > 0) ? `Enter how many ${portionWord} came out.`
+    : !inPortions && !actualYieldQty ? 'Enter the actual yield.'
     : null
 
   return (
@@ -223,7 +237,7 @@ export default function PrepBatchPage() {
                 <option value={AD_HOC}>Other (not in the recipe library)</option>
               </Select>
             </Field>
-            {!adHoc && (
+            {!adHoc && !inPortions && (
               <Field label="Batches">
                 <NumberField decimals={2} min={0.25} value={multiplier} className={fieldCls}
                   onValueChange={(v) => {
@@ -265,6 +279,21 @@ export default function PrepBatchPage() {
               Also uses prepared: {prep.subPreps.map((s) => `${s.name ?? '—'} (${Math.round(s.grams * multiplier)} g)`).join(', ')}.
             </p>
           )}
+          {inPortions ? (
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <Field label="Batches cooked" required error={tried && !(Number(portionBatches) > 0) ? 'Say how many whole batches you made.' : null}>
+                <NumberField decimals={2} min={0} enterKeyHint="next" value={portionBatches === '' ? null : portionBatches}
+                  onValueChange={(v) => { setPortionBatches(v ?? ''); if (v && v > 0) applyRecipe(prep, v) }} placeholder="e.g. 2" className={fieldCls} />
+              </Field>
+              <Field label={`Actual ${portionWord} made`} required error={tried && !(Number(actualPortions) > 0) ? `Enter how many ${portionWord} came out.` : null}>
+                <NumberField decimals={1} min={0} enterKeyHint="next" value={actualPortions === '' ? null : actualPortions}
+                  onValueChange={(v) => setActualPortions(v ?? '')} placeholder="What came out" className={fieldCls} />
+              </Field>
+              <p className="col-span-2 text-xs text-s-muted">
+                One batch makes {prep?.portionsPerBatch} {portionWord}. The ingredients drawn are the recipe × the whole batches cooked; the {portionWord} are what came out, so a short batch shows as low yield.
+              </p>
+            </div>
+          ) : (
           <div className="grid grid-cols-2 gap-3 mt-3">
             <Field label="Expected yield (g)">
               <NumberField decimals={1} min={0} enterKeyHint="next" value={expectedYieldQty === '' ? null : expectedYieldQty} onValueChange={(v) => setExpectedYieldQty(v ?? '')} placeholder="e.g. 500" className={fieldCls} />
@@ -273,6 +302,7 @@ export default function PrepBatchPage() {
               <NumberField decimals={1} min={0} enterKeyHint="next" value={actualYieldQty === '' ? null : actualYieldQty} onValueChange={(v) => setActualYieldQty(v ?? '')} placeholder="What you got" className={fieldCls} />
             </Field>
           </div>
+          )}
           {yieldPct != null && (
             <div className="mt-3 rounded-lg p-3 text-sm font-bold"
               style={{

@@ -80,13 +80,13 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
     const company = await scopeTenantWhere(req, 'read')
     const outlets = await prisma.concept.findMany({ where: { deletedAt: null, ...company }, select: { id: true, name: true }, orderBy: { name: 'asc' } })
     const { conceptIds, tenantIds } = await ownedBrands(req, q['conceptIds'], false)
-    const empty = { users: [], waiters: [], categories: [], subCategories: [], sessions: [], menuItems: [], terminals: [], items: [], clAccounts: [] }
+    const empty = { locations: [] as Array<{ id: string; name: string }>, users: [], waiters: [], categories: [], subCategories: [], sessions: [], menuItems: [], terminals: [], items: [], clAccounts: [] }
     if (conceptIds.length === 0) return { outlets, ...empty, ...STATIC_LOOKUPS }
     // Users / waiters / drawers are read from the brands' orders in the window (default: the last 31 days).
     const { from, to } = reportDateRange(q['dateFrom'], q['dateTo'], 31)
     const window = { placedAt: { gte: from, lte: to } }
     const orderWhere = { conceptId: { in: conceptIds }, deletedAt: null, ...window }
-    const [staff, waiters, allCategories, menuItems, shifts, items, sessions] = await Promise.all([
+    const [staff, waiters, allCategories, menuItems, shifts, items, locations, sessions] = await Promise.all([
       prisma.order.findMany({ where: { ...orderWhere, posStaffId: { not: null } }, distinct: ['posStaffId'], select: { posStaff: { select: { id: true, name: true } } } }),
       prisma.order.findMany({ where: { ...orderWhere, waiterEmployeeId: { not: null } }, distinct: ['waiterEmployeeId'], select: { waiter: { select: { id: true, fullName: true, tenantId: true } } } }),
       prisma.category.findMany({ where: { conceptId: { in: conceptIds }, deletedAt: null }, select: { id: true, name: true, conceptId: true, parentId: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
@@ -100,6 +100,8 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
         orderBy: { openedAt: 'desc' }, take: 500,
       }),
       prisma.inventoryItem.findMany({ where: { tenantId: { in: tenantIds }, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      // Outlets (Location) of the brands' companies — the outlet filter's list.
+      prisma.location.findMany({ where: { deletedAt: null, AND: [{ tenantId: { in: tenantIds } }, company] }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
       // Sales sessions (2026-10-22): the brands' active ones.
       prisma.menuSession.findMany({ where: { conceptId: { in: conceptIds }, isActive: true }, select: { id: true, name: true, conceptId: true, startTime: true, endTime: true }, orderBy: [{ sortOrder: 'asc' }, { startTime: 'asc' }] }),
     ])
@@ -115,7 +117,7 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
       // A waiter is an HR employee of the order's company — never another company's.
       waiters: waiters.map((w) => w.waiter).filter((w): w is NonNullable<typeof w> => !!w && tenantIds.includes(w.tenantId))
         .map((w) => ({ id: w.id, name: w.fullName })).sort((a, b) => a.name.localeCompare(b.name)),
-      categories, subCategories, sessions, menuItems,
+      categories, subCategories, sessions, menuItems, locations,
       terminals: shifts.map((s) => ({ id: s.id, label: terminalLabel(s) })),
       items,
       // City Ledger accounts of the brands' companies (registered, approved — active first).
@@ -138,9 +140,18 @@ export async function tillReportRoutes(fastify: FastifyInstance) {
 
     const filters: TillFilters = {
       users: ids(q, 'users'), waiters: ids(q, 'waiters'), categories: ids(q, 'categories'), subCategories: ids(q, 'subCategories'), sessions: ids(q, 'sessions'), menuItems: ids(q, 'menuItems'),
-      terminals: ids(q, 'terminals'), orderBy: ids(q, 'orderBy'), settleBy: ids(q, 'settleBy'), items: ids(q, 'items'),
+      terminals: ids(q, 'terminals'), locationIds: ids(q, 'locationIds'), orderBy: ids(q, 'orderBy'), settleBy: ids(q, 'settleBy'), items: ids(q, 'items'),
       orderTypes: oneOf<OrderTypeKey>(q, 'orderTypes', ORDER_TYPES), sources: oneOf(q, 'sources', SOURCES),
       paymentMethods: oneOf(q, 'paymentMethods', PAYMENT_METHODS), paymentType: oneOf(q, 'paymentType', PAYMENT_TYPES),
+    }
+    // Outlets: each must be a live Location of the brands' companies AND of a company the caller reads — never trust the id.
+    if (def.filters.includes('locationIds') && filters.locationIds) {
+      filters.locationIds = [...new Set(filters.locationIds)]
+      const found = await prisma.location.findMany({
+        where: { id: { in: filters.locationIds }, deletedAt: null, AND: [{ tenantId: { in: brands.tenantIds } }, await scopeTenantWhere(req, 'read')] },
+        select: { id: true },
+      })
+      if (found.length !== filters.locationIds.length) throw new AppError('LOCATION_NOT_IN_COMPANY', 'Pick outlets of the selected brands\' own company', 422)
     }
     // City Ledger reports: the account field is required — ids, or 'all' (every account of the companies).
     if (def.filters.includes('clAccounts')) {

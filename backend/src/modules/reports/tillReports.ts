@@ -29,7 +29,7 @@ import type { ReportColumn, ReportRow, ReportTable } from '../../lib/reportExpor
 
 // ─── Catalog ─────────────────────────────────────────────────────────────────
 
-export const FILTER_KEYS = ['users', 'waiters', 'orderTypes', 'categories', 'subCategories', 'menuItems', 'sources', 'terminals', 'paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'q', 'items', 'sessions', 'clAccountTypes', 'clAccounts'] as const
+export const FILTER_KEYS = ['users', 'waiters', 'orderTypes', 'categories', 'subCategories', 'menuItems', 'sources', 'terminals', 'paymentMethods', 'paymentType', 'orderBy', 'settleBy', 'q', 'items', 'sessions', 'clAccountTypes', 'clAccounts', 'locationIds'] as const
 export type FilterKey = (typeof FILTER_KEYS)[number]
 export const OPTION_KEYS = ['orderType', 'session', 'category', 'subCategory', 'menuItem', 'tax', 'extraCharge', 'discount', 'payment', 'businessSource', 'waiterWise', 'userWise', 'taxableValue', 'includeNoCharge', 'vouchers', 'showCurrency', 'detail', 'ignoreZero'] as const
 export type OptionKey = (typeof OPTION_KEYS)[number]
@@ -100,6 +100,12 @@ export const TILL_REPORTS: Record<TillReportId, TillReportDef> = {
   driver_deliveries: { id: 'driver_deliveries', title: 'Driver Deliveries', filters: ['q'], options: ['showCurrency'], groupBy: null, printable: false },
 }
 
+// Outlet filter (owner, 2026-10-26): every report that narrows ORDERS (it lists the order-type or business-source
+// filter) can also be narrowed to chosen outlets (Order.locationId). Done once here so a new report cannot forget it.
+for (const def of Object.values(TILL_REPORTS)) {
+  if ((def.filters.includes('orderTypes') || def.filters.includes('sources')) && !def.filters.includes('locationIds')) def.filters.push('locationIds')
+}
+
 export function tillCatalog() {
   return {
     groups: [
@@ -129,6 +135,8 @@ export interface TillFilters {
   users?: string[]; waiters?: string[]; orderTypes?: OrderTypeKey[]; categories?: string[]; subCategories?: string[]; menuItems?: string[]; sessions?: string[]
   sources?: string[]; terminals?: string[]; paymentMethods?: string[]; paymentType?: Array<'sale' | 'refund'>
   orderBy?: string[]; settleBy?: string[]; q?: string; items?: string[]
+  /** Outlets (Location ids of the brands' companies — the route has already checked them): Order.locationId. */
+  locationIds?: string[]
   /** City Ledger: account types, and the accounts (null = all accounts — the report still needs the field sent). */
   clAccountTypes?: string[]; clAccounts?: string[] | null
 }
@@ -191,6 +199,7 @@ async function orderFilter(sq: SalesQuery, f: TillFilters, applies: FilterKey[],
   if (on('settleBy') && has(f.settleBy)) and.push({ payments: { some: { status: 'paid', shift: { userId: { in: f.settleBy } } } } })
   if (on('paymentType') && has(f.paymentType) && !f.paymentType.includes('sale')) and.push({ payments: { some: { status: 'refunded', amountCents: { lt: 0 } } } })
   if (on('waiters') && has(f.waiters)) and.push({ waiterEmployeeId: { in: f.waiters } })
+  if (on('locationIds') && has(f.locationIds)) and.push({ locationId: { in: f.locationIds } })
   if (on('sources') && has(f.sources)) and.push({ source: { in: f.sources as never } })
   if (on('terminals') && has(f.terminals)) and.push({ OR: [{ shiftId: { in: f.terminals } }, { payments: { some: { shiftId: { in: f.terminals } } } }] })
   if (on('paymentMethods') && has(f.paymentMethods)) and.push({ payments: { some: { status: 'paid', method: { in: f.paymentMethods as PaymentMethod[] } } } })
@@ -574,7 +583,7 @@ async function drawerMovements(input: TillReportInput): Promise<DrawerMovement[]
   const rows = await prisma.cashMovement.findMany({
     where: {
       type: { in: ['payout', 'payin'] }, recordedAt: { gte: input.sq.from, lte: input.sq.to },
-      shift: { tenantId: { in: input.tenantIds }, ...(has(f.terminals) && { id: { in: f.terminals } }), ...(has(f.users) && { userId: { in: f.users } }) },
+      shift: { tenantId: { in: input.tenantIds }, ...(has(f.terminals) && { id: { in: f.terminals } }), ...(has(f.users) && { userId: { in: f.users } }), ...(has(f.locationIds) && { locationId: { in: f.locationIds } }) },
     },
     select: { type: true, reason: true, amountCents: true, recordedAt: true, shift: { select: { userId: true } } },
     orderBy: { recordedAt: 'asc' },
@@ -623,7 +632,7 @@ async function noChargeItems(input: TillReportInput, def: TillReportDef, notes: 
 async function loadPayments(input: TillReportInput, def: TillReportDef) {
   const f = input.filters
   // Order-level filters (order type, source, search) narrow the orders; payment-level ones the payments.
-  const sq = await scopedQuery(input, { ...def, filters: def.filters.filter((k) => k === 'orderTypes' || k === 'sources' || k === 'q') }, 'any')
+  const sq = await scopedQuery(input, { ...def, filters: def.filters.filter((k) => k === 'orderTypes' || k === 'sources' || k === 'q' || k === 'locationIds') }, 'any')
   const types = has(f.paymentType) ? f.paymentType : ['sale', 'refund']
   const payWhere: Prisma.PaymentWhereInput = {
     method: has(f.paymentMethods) ? { in: f.paymentMethods as PaymentMethod[] } : { not: 'split' },

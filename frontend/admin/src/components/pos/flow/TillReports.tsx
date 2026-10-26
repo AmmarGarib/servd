@@ -14,7 +14,7 @@ import { ErrorLine, ghostBtn, inputCls, labelCls, primaryBtn } from './ui'
 // /lookups and /run/:reportId (?format=pdf|xlsx|csv for downloads). Read only.
 
 type FilterKey = 'users' | 'waiters' | 'orderTypes' | 'categories' | 'subCategories' | 'menuItems' | 'sources' | 'terminals'
-  | 'paymentMethods' | 'paymentType' | 'orderBy' | 'settleBy' | 'q' | 'items' | 'sessions' | 'clAccountTypes' | 'clAccounts'
+  | 'paymentMethods' | 'paymentType' | 'orderBy' | 'settleBy' | 'q' | 'items' | 'sessions' | 'clAccountTypes' | 'clAccounts' | 'locationIds'
 type OptionKey = 'orderType' | 'session' | 'category' | 'subCategory' | 'menuItem' | 'tax' | 'extraCharge' | 'discount' | 'payment'
   | 'businessSource' | 'waiterWise' | 'userWise' | 'taxableValue' | 'includeNoCharge' | 'vouchers' | 'showCurrency' | 'detail' | 'ignoreZero'
 type GroupByKey = 'payment_method' | 'payment_type' | 'order_by' | 'settle_by' | 'terminal' | 'order_type'
@@ -24,7 +24,8 @@ interface Catalog { groups: Array<{ key: string; title: string; reportIds: strin
 interface Named { id: string; name: string }
 interface Labelled { id: string; label: string }
 interface Lookups {
-  outlets: Named[]; users: Named[]; waiters: Named[]; categories: Array<Named & { conceptId?: string }>
+  /** Brands (the report's brand picker) — not to be confused with `locations`, the physical outlets. */
+  outlets: Named[]; locations?: Named[]; users: Named[]; waiters: Named[]; categories: Array<Named & { conceptId?: string }>
   subCategories?: Array<Named & { parentId: string | null; conceptId?: string }>
   sessions?: Array<Named & { conceptId: string; startTime: string; endTime: string }>
   menuItems: Array<Named & { categoryId?: string }>; terminals: Labelled[]; sources: Labelled[]
@@ -39,7 +40,7 @@ interface RunResult { id: string; title: string; period: string; outlets: string
 const FILTER_LABEL: Record<FilterKey, string> = {
   users: 'User', waiters: 'Waiter', orderTypes: 'Order type', categories: 'Category', subCategories: 'Sub Category', menuItems: 'Menu item', sessions: 'Session',
   sources: 'Business Source', terminals: 'Terminal', paymentMethods: 'Payment Method', paymentType: 'Payment Type',
-  orderBy: 'Order By', settleBy: 'Settle By', q: 'Search text', items: 'Item', clAccountTypes: 'Account Type', clAccounts: 'Account',
+  orderBy: 'Order By', settleBy: 'Settle By', q: 'Search text', items: 'Item', clAccountTypes: 'Account Type', clAccounts: 'Account', locationIds: 'Outlet',
 }
 const OPTION_LABEL: Record<OptionKey, string> = {
   orderType: 'Order type', session: 'Session', category: 'Category', subCategory: 'Sub Category', menuItem: 'Menu item', tax: 'Tax', extraCharge: 'Extra charge',
@@ -79,6 +80,7 @@ function optionsFor(k: FilterKey, l: Lookups | undefined, chosenTypes: string[] 
     }
     case 'menuItems': return named(l.menuItems)
     case 'items': return named(l.items)
+    case 'locationIds': return named(l.locations ?? [])
     case 'terminals': return l.terminals
     case 'sources': return l.sources
     case 'paymentMethods': return l.paymentMethods
@@ -396,7 +398,7 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
                         </div>
                       </div>
                       <MultiPick label="Outlet" required allLabel="Pick an outlet" options={outletList.map((o) => ({ id: o.id, label: o.name }))}
-                        value={selectedOutlets} onChange={(v) => setOutlets(v)} />
+                        value={selectedOutlets} onChange={(v) => { setOutlets(v); setFilters((f) => (f.locationIds?.length ? { ...f, locationIds: [] } : f)) }} />
                       {needsAccount && (
                         <>
                           <MultiPick label={FILTER_LABEL.clAccountTypes} options={optionsFor('clAccountTypes', lookups)} value={filters.clAccountTypes ?? []}

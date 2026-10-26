@@ -1,11 +1,16 @@
 // Head office (D1) — the two accounts a recharge posts to, beside the pair
-// accounts (spec §3 as amended by A1.1 / A1.2):
+// accounts (spec §3 as amended by A1.1 / A1.2 and the owner's HO-Q3):
 //
-//   • HO books: the RECHARGE account — the template 6990 "Costs Recharged to
-//     Group Companies" (ACCT.GROUP_RECHARGES, credits only; the ONE recovery
-//     account shared with the shared-fleet recharge). It is resolved, never
-//     created (no 6991–6999). The CA may re-map it to another expense or to a
-//     revenue account (with the eliminations warning).
+//   • HO books: the RECHARGE account — the template 4220 "Head Office Recharge
+//     Income" (ACCT.HO_RECHARGE_INCOME, revenue, 42xx other income). Owner
+//     HO-Q3, 2026-10-26: the monthly recharge SHOWS AS INCOME in the head
+//     office's own books — never the 6990 contra-expense, which stays the
+//     shared-fleet recharge's recovery account (intercompany/fleet.ts) and is
+//     never a head-office recharge account. 4220 is resolved, never created
+//     here (ensureChartOfAccounts / ensureChartInTx add it). The CA may re-map
+//     it to another revenue or expense account that is not an engine code.
+//     Books still on 6990 from before HO-Q3 are moved by
+//     `moveRechargeToIncome` at boot (recharge OFF ones only).
 //   • Company books: "Head office charges — <HO>" (expense), first free code
 //     in 6200–6249, one per (company, head office); re-linking the same head
 //     office reuses it.
@@ -17,27 +22,31 @@
 //
 // Re-mapping (PUT /head-offices/:id/books/accounts, `applyMapping`):
 //   charges   an active EXPENSE in that company's chart, not controlled
-//   recharge  an active EXPENSE or REVENUE in the head office's chart, not controlled
+//   recharge  an active REVENUE or EXPENSE in the head office's chart, not controlled
 //   neither may be a posting-engine code (ACCT.* or REQUIRED_ACCOUNT_CODES) —
-//   422 ACCOUNT_RESERVED — except 6990, the one engine code allowed, and only
-//   as the recharge account. Any accepted change clears the CA confirmation and
-//   switches recharge OFF in the same transaction.
+//   422 ACCOUNT_RESERVED — except 4220, the one engine code allowed, and only
+//   as the recharge account (6990 is refused: it is the fleet's). Any accepted
+//   change clears the CA confirmation and switches recharge OFF in the same
+//   transaction.
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { CHART_OF_ACCOUNTS, REQUIRED_ACCOUNT_CODES } from '../../lib/chartOfAccounts.js'
 import { ACCT } from '../accounting/journal.js'
-import { invalidateConfirmation, lockBooks, REVENUE_RECHARGE_WARNING, SHARED_6990_WARNING, type Invalidation } from './books.js'
+import { serviceClient } from '../../lib/prisma.js'
+import { invalidateConfirmation, lockBooks, REVENUE_RECHARGE_WARNING, type Invalidation } from './books.js'
 
 export type Tx = Prisma.TransactionClient
 export type Db = Tx | PrismaClient
 
 /** Company books: "Head office charges — <HO>" (A1.1). */
 export const HO_CHARGES_RANGE = { from: 6200, to: 6249 } as const
-/** HO books: the one recovery account (A1.2). */
-export const HO_RECHARGE_CODE = ACCT.GROUP_RECHARGES
+/** HO books: the recharge INCOME account (owner HO-Q3, 2026-10-26). */
+export const HO_RECHARGE_CODE = ACCT.HO_RECHARGE_INCOME
+/** The shared-fleet recovery account the head-office recharge used before HO-Q3 — never a recharge account now. */
+export const LEGACY_HO_RECHARGE_CODE = ACCT.GROUP_RECHARGES
 
-/** Posting-engine codes no head-office mapping may take (6990 is allowed as the recharge account only). */
+/** Posting-engine codes no head-office mapping may take (4220 is allowed as the recharge account only). */
 const ENGINE_CODES: ReadonlySet<string> = new Set<string>([...Object.values(ACCT), ...REQUIRED_ACCOUNT_CODES])
 
 /**
@@ -107,10 +116,10 @@ export async function ensureChartInTx(tx: Tx, tenantId: string): Promise<number>
 }
 
 /**
- * The head office's recharge account: its existing 6990 (A1.2 — resolved,
- * never created as 6991+). The template chart is added first when the head
- * office lacks 6990. 422 RECHARGE_ACCOUNT_UNUSABLE when 6990 is switched off,
- * not an expense, or controlled.
+ * The head office's recharge account: its template 4220 Head Office Recharge
+ * Income (HO-Q3 — resolved, never created here). The template chart is added
+ * first when the head office lacks 4220. 422 RECHARGE_ACCOUNT_UNUSABLE when
+ * 4220 is switched off, not a revenue account, or controlled.
  */
 export async function resolveRechargeAccount(tx: Tx, hoId: string): Promise<{ id: string; code: string }> {
   let acc = await tx.account.findUnique({
@@ -124,10 +133,10 @@ export async function resolveRechargeAccount(tx: Tx, hoId: string): Promise<{ id
       select: { id: true, code: true, type: true, isActive: true, controlledBy: true },
     })
   }
-  if (!acc || !acc.isActive || acc.type !== 'expense' || acc.controlledBy) {
+  if (!acc || !acc.isActive || acc.type !== 'revenue' || acc.controlledBy) {
     throw new AppError(
       'RECHARGE_ACCOUNT_UNUSABLE',
-      `The head office's ${HO_RECHARGE_CODE} account is missing, switched off, not an expense or controlled — fix it in Configuration → Chart of accounts`,
+      `The head office's ${HO_RECHARGE_CODE} account is missing, switched off, not an income account or controlled — fix it in Configuration → Chart of accounts`,
       422,
     )
   }
@@ -171,8 +180,8 @@ async function accountIn(tx: Db, id: string, tenantId: string): Promise<Acc> {
   return acc
 }
 
-function assertNotReserved(acc: Acc, allow6990: boolean): void {
-  if (allow6990 && acc.code === HO_RECHARGE_CODE) return
+function assertNotReserved(acc: Acc, allowRechargeCode: boolean): void {
+  if (allowRechargeCode && acc.code === HO_RECHARGE_CODE) return
   if (ENGINE_CODES.has(acc.code)) {
     throw new AppError('ACCOUNT_RESERVED', `${acc.code} ${acc.name} is an account servd posts to on its own — pick another one`, 422)
   }
@@ -197,7 +206,6 @@ export async function validateMapping(tx: Db, hoId: string, input: MappingInput)
     }
     assertNotReserved(recharge, true)
     if (recharge.type === 'revenue') warnings.push(REVENUE_RECHARGE_WARNING)
-    else if (recharge.code === HO_RECHARGE_CODE) warnings.push(SHARED_6990_WARNING)
   }
   const charges: Array<{ linkId: string; companyTenantId: string; account: Acc }> = []
   const seen = new Set<string>()
@@ -257,4 +265,41 @@ export async function applyMapping(tx: Tx, hoId: string, input: MappingInput, ac
     after: { rechargeAccountId: v.recharge?.id ?? books.rechargeAccountId, charges: afterCharges },
     warnings: v.warnings,
   }
+}
+
+// ─── HO-Q3: books still on 6990 → 4220 ───────────────────────────────────────
+
+/**
+ * Owner HO-Q3 (2026-10-26): the recharge shows as INCOME in the head office's
+ * books. Boot step (after ensureChartOfAccounts has added 4220): every head
+ * office whose books still map the recharge to its 6990 (the pre-HO-Q3
+ * default) is re-mapped to its 4220, with the CA confirmation cleared (the CA
+ * confirms what will actually post). Books with recharge ON are left alone and
+ * reported — the CEO re-maps those on the Books tab. Nothing is posted and no
+ * entry already on 6990 moves. Idempotent: a second run finds nothing.
+ */
+export async function moveRechargeToIncome(db: PrismaClient = serviceClient): Promise<{ moved: string[]; skippedEnabled: string[] }> {
+  const rows = await db.headOfficeBooks.findMany({
+    where: { rechargeAccount: { code: LEGACY_HO_RECHARGE_CODE } },
+    select: { tenantId: true },
+  })
+  const moved: string[] = []
+  const skippedEnabled: string[] = []
+  for (const r of rows) {
+    const out = await db.$transaction(async (tx) => {
+      const books = await lockBooks(tx, r.tenantId)
+      const cur = books.rechargeAccountId
+        ? await tx.account.findUnique({ where: { id: books.rechargeAccountId }, select: { code: true } })
+        : null
+      if (cur?.code !== LEGACY_HO_RECHARGE_CODE) return 'none' as const
+      if (books.rechargeEnabled) return 'enabled' as const
+      const income = await resolveRechargeAccount(tx, r.tenantId)
+      await invalidateConfirmation(tx, r.tenantId, 'system', books)
+      await tx.headOfficeBooks.update({ where: { tenantId: r.tenantId }, data: { rechargeAccountId: income.id, updatedById: 'system' } })
+      return 'moved' as const
+    })
+    if (out === 'moved') moved.push(r.tenantId)
+    else if (out === 'enabled') skippedEnabled.push(r.tenantId)
+  }
+  return { moved, skippedEnabled }
 }

@@ -233,7 +233,7 @@ async function assertHeadOfficePairLinked(db: Db, D: string, C: string, names: M
 /**
  * A9: on a head-office pair, a charge (the paired adjustment) may not name
  * the head office's RECHARGE account (HeadOfficeBooks.rechargeAccountId, else
- * the template 6990) in the head office's chart, nor any link's "Head office
+ * the template 4220, HO-Q3) in the head office's chart, nor any link's "Head office
  * charges" account in the company's chart — the recharge run owns them, and a
  * transfer line on them would feed back into the pool. 422 COUNTER_ACCOUNT_INVALID.
  */
@@ -248,7 +248,7 @@ async function assertHeadOfficeCounters(
     db.headOfficeBooks.findUnique({ where: { tenantId: ho }, select: { rechargeAccount: { select: { code: true, tenantId: true } } } }),
     db.headOfficeLink.findMany({ where: { tenantId: ho, companyTenantId: company }, select: { charges: { select: { code: true, tenantId: true } } } }),
   ])
-  const rechargeCode = books?.rechargeAccount && books.rechargeAccount.tenantId === ho ? books.rechargeAccount.code : ACCT.GROUP_RECHARGES // headOffices/accounts.ts HO_RECHARGE_CODE (not imported: books.ts → fleet.ts → here)
+  const rechargeCode = books?.rechargeAccount && books.rechargeAccount.tenantId === ho ? books.rechargeAccount.code : ACCT.HO_RECHARGE_INCOME // headOffices/accounts.ts HO_RECHARGE_CODE (not imported: books.ts → fleet.ts → here)
   if (codeOf[ho] === rechargeCode) {
     throw new AppError(
       'COUNTER_ACCOUNT_INVALID',
