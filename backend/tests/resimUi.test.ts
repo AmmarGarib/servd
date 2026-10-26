@@ -22,13 +22,13 @@ import { conceptRoutes } from '../src/modules/concepts/routes.js'
 import { invalidateModuleAccessCache } from '../src/lib/moduleAccess.js'
 
 const apiPost = vi.fn()
-vi.mock('/home/user/servd/frontend/admin/src/lib/api.ts', () => ({
+vi.mock('../../frontend/admin/src/lib/api.ts', () => ({
   api: { get: vi.fn(), post: (...a: unknown[]) => apiPost(...a) },
   ApiError: class ApiError extends Error { status = 0; code: string | null = null },
 }))
 
-const till = await import('/home/user/servd/frontend/admin/src/components/pos/tillApi.ts')
-const { fmtPkrWhole } = await import('/home/user/servd/frontend/admin/src/lib/money.ts')
+const till = await import('../../frontend/admin/src/components/pos/tillApi.ts')
+const { fmtPkrWhole } = await import('../../frontend/admin/src/lib/money.ts')
 
 let posApp: FastifyInstance
 let conceptApp: FastifyInstance

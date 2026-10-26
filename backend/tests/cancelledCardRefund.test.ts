@@ -17,11 +17,11 @@ import { recordApprovedCharge } from '../src/connectors/terminal/service.js'
 
 // The admin till's REAL offer rule (tillApi cancelledCardRefundOffer) runs
 // against the REAL server answers — only the browser API client is mocked.
-vi.mock('/home/user/servd/frontend/admin/src/lib/api.ts', () => ({
+vi.mock('../../frontend/admin/src/lib/api.ts', () => ({
   api: { get: vi.fn(), post: vi.fn() },
   ApiError: class ApiError extends Error { status = 0; code: string | null = null },
 }))
-const till = await import('/home/user/servd/frontend/admin/src/components/pos/tillApi.ts')
+const till = await import('../../frontend/admin/src/components/pos/tillApi.ts')
 
 let app: FastifyInstance
 let call: ReturnType<typeof caller>
