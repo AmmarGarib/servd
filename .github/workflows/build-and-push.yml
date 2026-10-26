@@ -33,7 +33,24 @@ on:
   workflow_dispatch:  # allow manual triggers from the Actions tab
 
 jobs:
+  # Skips the whole release (no failure email) while the Docker Hub sign-in is not saved in the
+  # repo secrets. Until IT adds DOCKERHUB_USERNAME + DOCKERHUB_TOKEN, releases are built and pushed
+  # by hand (CLAUDE.md "Manual fallback").
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.c.outputs.enabled }}
+    steps:
+      - id: c
+        env:
+          U: ${{ secrets.DOCKERHUB_USERNAME }}
+          T: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$U" ] && [ -n "$T" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"; else echo "enabled=false" >> "$GITHUB_OUTPUT"; echo "::notice::Docker Hub sign-in not saved in repo secrets — skipping the image release."; fi
+
   build-storefront:
+    needs: check
+    if: needs.check.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     permissions: { contents: read }
     steps:
@@ -63,6 +80,8 @@ jobs:
           cache-to: type=inline
 
   build-admin:
+    needs: check
+    if: needs.check.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     permissions: { contents: read }
     steps:
@@ -90,6 +109,8 @@ jobs:
           cache-to: type=inline
 
   build-api:
+    needs: check
+    if: needs.check.outputs.enabled == 'true'
     runs-on: ubuntu-latest
     permissions: { contents: read }
     steps:
