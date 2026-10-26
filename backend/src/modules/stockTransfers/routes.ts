@@ -44,6 +44,16 @@
 // A transfer shipped before per-site stock (no 'transfer_out' rows) keeps the
 // old rule on receipt: its shortfall is 'transit_loss' waste at the sending
 // site.
+//
+// BRANDS (owner B13 (a), 2026-10-26): a transfer may move stock between BRANDS
+// of the company (`brandMove`: fromConceptId → toConceptId, NULL = shared
+// lots), at the same outlet (from = to location — allowed only for a brand
+// move) or between outlets. The ship draws ONLY the from-brand's lots; the
+// arrival opens the to-brand's lots and posts 'inventory.brand_move:<id>'
+// (Dr 12x0 new brand / Cr 12x0 old brand — no P&L at the move). A plain
+// transfer (no brands) draws every lot and its arrived lots keep their brand.
+// POST /stock-transfers/brand-move does a brand move at one outlet at once
+// (brandMove.ts brandMoveTx — the same engine, all steps stamped).
 
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
@@ -58,10 +68,12 @@ import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { toPurchaseUnits } from '../../lib/recipeCost.js'
 import { assertInt4Fits } from '../../lib/money.js'
 import {
-  consumeFifoTx, ensureFifoReady, lockItemsTx, returnToLotsTx, settleTransferLotsTx, STOCK_EPS, STOCK_SOURCE, transferInTx, transferOutRowsTx,
+  assertBrandOfCompany, consumeFifoTx, ensureFifoReady, lockItemsTx, returnToLotsTx, settleTransferLotsTx, STOCK_EPS, STOCK_SOURCE, transferInTx, transferOutRowsTx,
 } from '../../lib/stockLedger.js'
 import { postInventoryDocInSavepoint, WASTE_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
 import { costsHiddenFor } from '../inventory/routes.js'
+import { brandMoveTx } from './brandMove.js'
+import { activeTenantId } from '../../lib/tenantScope.js'
 import { flagPostingFailed } from '../accounting/journal.js'
 
 /** A transfer's shortfall reason, like every waste and count difference, is read by the CEO before its cost is settled (H20). */
@@ -94,8 +106,11 @@ const createSchema = z.object({
   unit:            z.string().min(1).max(20),
   reason:          z.string().max(300).optional(),
   notes:           z.string().max(1000).optional(),
-}).refine((v) => v.fromLocationId !== v.toLocationId, {
-  message: 'fromLocationId and toLocationId must differ',
+  // Brand stock (owner B13 (a)): a brand move names both sides (null = the shared lots).
+  fromConceptId:   z.string().uuid().nullable().optional(),
+  toConceptId:     z.string().uuid().nullable().optional(),
+}).refine((v) => v.fromLocationId !== v.toLocationId || v.fromConceptId !== undefined || v.toConceptId !== undefined, {
+  message: 'fromLocationId and toLocationId must differ (or move the stock between two brands)',
 })
 
 export async function stockTransferRoutes(fastify: FastifyInstance) {
@@ -144,7 +159,7 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       where: { id: { in: [body.fromLocationId, body.toLocationId] }, deletedAt: null, ...createWhere },
       select: { id: true },
     })
-    if (locations.length !== 2) {
+    if (locations.length !== new Set([body.fromLocationId, body.toLocationId]).size) {
       throw new AppError('LOCATION_NOT_IN_COMPANY', 'Both locations must belong to the active company', 422)
     }
     // The item must be the active company's own. A company-less legacy item
@@ -157,10 +172,23 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
     if (!item.tenantId) {
       throw new AppError('ITEM_HAS_NO_COMPANY', `${item.name} belongs to no company yet — assign it one (Inventory → Unassigned) before moving it.`, 422)
     }
+    // A brand move: both sides named (null = shared), different, brands of the item's company (never across companies).
+    const brandMove = body.fromConceptId !== undefined || body.toConceptId !== undefined
+    if (brandMove) {
+      if (body.fromConceptId === undefined || body.toConceptId === undefined) {
+        throw new AppError('BRAND_MOVE_NEEDS_BOTH', 'A brand move names the brand it comes from and the brand it goes to (null = shared stock)', 400)
+      }
+      if (body.fromConceptId === body.toConceptId) throw new AppError('SAME_BRAND', 'Pick two different brands (or shared stock)', 422)
+      await assertBrandOfCompany(prisma, item.tenantId, body.fromConceptId)
+      await assertBrandOfCompany(prisma, item.tenantId, body.toConceptId)
+    }
 
     const transfer = await prisma.stockTransfer.create({
       data: {
         ...body,
+        fromConceptId: body.fromConceptId ?? null,
+        toConceptId: body.toConceptId ?? null,
+        brandMove,
         requestedById: req.staffUser!.id,
         status: 'requested',
       },
@@ -214,6 +242,8 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
         const r = await consumeFifoTx(tx, {
           tenantId: item.tenantId, inventoryItemId: item.id, qty, kind: 'transfer_out', sourceType: STOCK_SOURCE.transferShip, sourceId: t.id,
           clamp: false, locationId: t.fromLocationId, occurredAt: shippedAt, createdById: actorId,
+          // Brand stock: a brand move ships ONLY the from-brand's lots (null = the shared ones).
+          lotOwner: t.brandMove ? { conceptId: t.fromConceptId, shared: false } : 'any',
         })
         return { qty: r.takenQty, valueCents: r.valueCents }
       } catch (err) {
@@ -295,6 +325,8 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
         // The loss is booked from the arrived lots FIRST; only then do they settle the site's earlier shortfalls.
         const landed = await transferInTx(tx, {
           tenantId, inventoryItemId: item.id, transferId: t.id, toLocationId: t.toLocationId, receivedAt: at, createdById: actorId, settle: false,
+          // Brand stock: a brand move's lots arrive as the to-brand's (and re-tag the cost); a plain transfer keeps each lot's brand.
+          ...(t.brandMove ? { toConceptId: t.toConceptId } : {}),
         })
         const perSite = landed.lotIds.length > 0
         const settle = () => settleTransferLotsTx(tx, { tenantId, inventoryItemId: item.id, lotIds: landed.lotIds, at })
@@ -306,17 +338,19 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
         const r = await consumeFifoTx(tx, {
           tenantId, inventoryItemId: item.id, qty: lossQty, kind: 'waste', sourceType: STOCK_SOURCE.wasteLog, sourceId: wasteLogId,
           clamp: false, locationId: perSite ? t.toLocationId : null, occurredAt: at, createdById: actorId, ...(perSite ? { preferLotIds: landed.lotIds } : {}),
+          // The loss comes out of the very lots that arrived, whoever owns them.
+          lotOwner: 'any',
         })
         assertInt4Fits(r.valueCents, `The transit loss of ${item.name}`)
         await tx.wasteLog.create({
           data: {
-            id: wasteLogId, tenantId, locationId: wasteSite, inventoryItemId: item.id,
+            id: wasteLogId, tenantId, locationId: wasteSite, inventoryItemId: item.id, conceptId: t.brandMove ? t.toConceptId : null,
             quantity: lossQty, unit: item.unit, reason: perSite ? 'transfer_shortfall' : 'transit_loss', estimatedCostCents: r.valueCents,
             notes: `Transfer ${t.id.slice(-8).toUpperCase()}: sent ${t.quantity} ${t.unit}, received ${received} ${t.unit} — ${reason}`.slice(0, 1000),
             recordedById: actorId, recordedAt: at,
           },
         })
-        const post = await postInventoryDocInSavepoint(tx, WASTE_SOURCE_TYPE, wasteLogId, { tenantId, actorId, amountCents: r.valueCents })
+        const post = await postInventoryDocInSavepoint(tx, WASTE_SOURCE_TYPE, wasteLogId, { tenantId, actorId, amountCents: r.valueCents, conceptId: t.brandMove ? t.toConceptId : null })
         await settle()
         return { wasteLogId, ledger: post.ledger, failure: post.failure, at }
       }, TX_OPTS)
@@ -343,6 +377,42 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       }
     },
   )
+
+  // POST /stock-transfers/brand-move — move stock between two brands at ONE outlet, at once (owner B13 (a)). The
+  // active company's item and outlet; brands of that company (null = shared stock); 409 INSUFFICIENT_STOCK when the
+  // from-brand does not hold it. Managers. Same engine as a transfer (brandMove.ts); audit 'stock-transfer.brand_move'.
+  fastify.post('/brand-move', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+    const body = z.object({
+      inventoryItemId: z.string().uuid(),
+      locationId:      z.string().uuid(),
+      fromConceptId:   z.string().uuid().nullable(),
+      toConceptId:     z.string().uuid().nullable(),
+      quantity:        z.number().positive().max(1_000_000),
+      unit:            z.string().min(1).max(20).optional(),
+      reason:          z.string().trim().max(300).optional(),
+    }).parse(req.body)
+    const tenantId = activeTenantId(req, 'a brand move is one company\'s stock')
+    const item = await prisma.inventoryItem.findFirst({
+      where: { id: body.inventoryItemId, tenantId, deletedAt: null }, select: { id: true, name: true, unit: true, tenantId: true },
+    })
+    if (!item) throw new NotFoundError('InventoryItem', body.inventoryItemId)
+    const unit = body.unit ?? item.unit
+    const qty = toPurchaseUnits(body.quantity, unit, item.unit)
+    if (qty == null) throw new AppError('UNIT_MISMATCH', `${item.name} is stocked in ${item.unit}; ${unit} can't be converted to it`, 422)
+    await ensureFifoReady(tenantId)
+    const actorId = req.staffUser!.id
+    const r = await prisma.$transaction((tx) => brandMoveTx(tx, {
+      tenantId, inventoryItemId: item.id, locationId: body.locationId, fromConceptId: body.fromConceptId, toConceptId: body.toConceptId,
+      qty, unit: item.unit, actorId, at: new Date(), reason: body.reason ?? null,
+    }), TX_OPTS)
+    await audit({ category: 'identity',
+      action: 'stock-transfer.brand_move', entity: 'StockTransfer', entityId: r.transferId,
+      userId: actorId, tenantId, userEmail: req.staffUser?.email ?? null,
+      after: { item: item.name, qty: r.qty, unit: item.unit, fromConceptId: body.fromConceptId, toConceptId: body.toConceptId, locationId: body.locationId },
+    })
+    const t = await prisma.stockTransfer.findUniqueOrThrow({ where: { id: r.transferId } })
+    return reply.status(201).send(costsHiddenFor(req) ? t : { ...t, movedValueCents: r.valueCents })
+  })
 
   // PATCH /stock-transfers/:id/cancel — abort (any non-received status)
   fastify.patch<{ Params: { id: string }; Body: { reason?: string } }>(

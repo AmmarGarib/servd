@@ -1466,6 +1466,8 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       where: {
         customerId: req.customer!.id,
         startTime: { gte: ninetyDaysAgo },
+        // A booking past capacity waiting for the CEO is not the guest's yet (owner C10, 2026-10-26).
+        status: { not: 'pending_approval' },
       },
       orderBy: { startTime: 'desc' },
       select: {

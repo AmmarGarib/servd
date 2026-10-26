@@ -64,6 +64,7 @@ export type NotificationKind =
   | 'hr.reminder'             // an HR request waiting on the same step for 2+ days — whoever must act next
   | 'integration.alert'       // the WhatsApp gateway dropped / is back (platform-wide) — CEO + IT
   | 'food_safety.overdue'     // a temperature check or cleaning task is overdue — the company's kitchen managers
+  | 'backup.result'           // the weekly database backup was made / failed (platform-wide) — the CEO (owner S13)
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical'
 

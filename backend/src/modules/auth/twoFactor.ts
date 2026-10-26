@@ -1,3 +1,9 @@
+// RETIRED (owner, 2026-10-26: "remove two-step sign-in; nobody has it on
+// today"). No route calls the login challenge or enrolment any more — /auth/2fa/*
+// answers 410 TWO_STEP_RETIRED, POST /auth/login never asks for a code, and
+// migration 20261027110000 cleared every enrolment. Kept only for maskPhone
+// (waitlist) and the outbound tests that drive the code sender directly.
+//
 // Two-factor authentication for staff accounts, over WhatsApp.
 //
 // Why WhatsApp and not an authenticator app: everyone on the floor already has

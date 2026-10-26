@@ -9,7 +9,7 @@
 // we don't try to predict; we just notify when the deps clear.
 
 import type { FastifyInstance } from 'fastify'
-import { Prisma, type ItemStatus, type UserRole } from '@prisma/client'
+import { Prisma, type UserRole } from '@prisma/client'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
@@ -22,8 +22,6 @@ import { SERVICE_PHASES } from './fire.js'
 const HANDOFF_ACTION = 'expo.handoff'
 /** Who may override course pacing ("fire all now"): the manager tiers and the expediter. */
 const FIRE_ALL_ROLES: UserRole[] = [...MANAGERS, 'expediter']
-/** Orders that ended without food going out — nothing of theirs belongs on a station screen. */
-const ENDED_NO_SALE: Array<'cancelled' | 'rejected' | 'refunded'> = ['cancelled', 'rejected', 'refunded']
 
 /**
  * Ids of the orders still on the pass, newest first, at most `take` — with
@@ -105,6 +103,11 @@ async function paidNotHandedOff<I extends Prisma.OrderInclude>(conceptIds: strin
 }
 
 export async function expoRoutes(fastify: FastifyInstance) {
+  // Station board, Start, cook timers, the expo backlog + 60-second alert,
+  // bag stickers (owner B12, 2026-10-26) — ./kitchenBoard.ts.
+  const { kitchenBoardRoutes } = await import('./kitchenBoard.js')
+  await fastify.register(kitchenBoardRoutes)
+
 
   // GET /expo/queue — everything expo needs in one round-trip:
   //   • awaitingFire — `received` (not yet confirmed); each row has the
@@ -507,95 +510,10 @@ export async function expoRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const tenantId = (await scopeTenantWhere(req, 'read')).tenantId
-      const stationId = req.params.stationId
-      // A held pre-order's lines are not on the station yet (O-RV-3).
-      const { PRE_ORDER_PREP_MS } = await import('../orders/service.js')
-      const kitchenDue = [{ scheduledFor: null }, { scheduledFor: { lte: new Date(Date.now() + PRE_ORDER_PREP_MS) } }]
-      const legacyStates: ItemStatus[] = req.query.states === 'all'
-        ? ['pending', 'preparing', 'held', 'recalled']
-        : ['pending', 'preparing', 'recalled']
-
-      const steps = await prisma.orderItemStep.findMany({
-        where: {
-          stationId,
-          status: { in: ['preparing', 'waiting'] },        // surface waiting too so the cook can see what's coming
-          orderItem: {
-            order: { concept: { tenantId }, status: { notIn: ENDED_NO_SALE } },
-            // A held dish's steps are paused work too — off a screen that
-            // didn't ask for held lines (see legacyStates).
-            ...(req.query.states !== 'all' && { status: { not: 'held' as const } }),
-          },
-        },
-        include: {
-          recipeStep: { select: { instruction: true, instructionUrdu: true, phase: true, estimatedSeconds: true } },
-          orderItem:  {
-            include: {
-              order: {
-                select: {
-                  id: true, customerName: true, source: true, placedAt: true,
-                  fulfilmentType: true,
-                  concept: { select: { name: true, slug: true } },
-                  customer: { select: { name: true } },
-                  table:    { select: { label: true } },
-                },
-              },
-            },
-          },
-        },
-        orderBy: { firedAt: 'asc' },
-      })
-
-      const legacy = await prisma.orderItem.findMany({
-        where: {
-          stationId,
-          // Held and recalled lines stay on the cook's screen, with their
-          // state (BOH-04): a hold is paused work, a recall is a remake. They
-          // used to drop off the screen the moment they changed state.
-          status: { in: legacyStates },
-          // Not on an order that ended without a sale (R8): its leftover
-          // lines used to sit on the station until someone bumped them.
-          order: { concept: { tenantId }, status: { notIn: ENDED_NO_SALE } },
-          AND: [
-            {
-              OR: [
-                // Skip items that already have OrderItemStep rows — those are
-                // routed through the step engine, no double-counting...
-                { steps: { none: {} } },
-                // ...except a recalled one: its steps are done, the remake is
-                // the whole dish, back on the station it is routed to.
-                { status: 'recalled' },
-              ],
-            },
-            {
-              // A step-routed dish not fired yet has no steps — it is not a
-              // legacy line: firing lays its steps out on their stations
-              // (R5). Shown here it could be bumped pending → bumped, the
-              // fire then skipped it and no station ever cooked it.
-              OR: [
-                { status: { not: 'pending' } },
-                { menuItemId: null },
-                { menuItem: { is: { recipe: { is: null } } } },
-                { menuItem: { is: { recipe: { is: { recipeSteps: { none: { phase: { in: [...SERVICE_PHASES] } } } } } } } },
-              ],
-            },
-            // A pending line of a pre-order before its prep window is not
-            // this station's work yet; once fired it shows like any other.
-            { OR: [{ status: { not: 'pending' } }, { order: { OR: kitchenDue } }] },
-          ],
-        },
-        include: {
-          order: {
-            select: {
-              id: true, customerName: true, source: true, placedAt: true,
-              fulfilmentType: true,
-              concept: { select: { name: true, slug: true } },
-              customer: { select: { name: true } },
-              table:    { select: { label: true } },
-            },
-          },
-        },
-        orderBy: { firedAt: 'asc' },
-      })
+      // The queries live in kitchenBoard.ts (loadStationQueue) — the station
+      // board (owner B12) reads the same two lists.
+      const { loadStationQueue } = await import('./kitchenBoard.js')
+      const { steps, legacy } = await loadStationQueue(req.params.stationId, tenantId, req.query.states === 'all')
 
       return {
         steps: steps.map((s) => ({
@@ -652,7 +570,7 @@ export async function expoRoutes(fastify: FastifyInstance) {
     '/steps/:id/bump',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
-      const { bumpStep, broadcastCascade } = await import('./stepCascade.js')
+      const { completeStepBump } = await import('./stepCascade.js')
       const step = await prisma.orderItemStep.findUnique({
         where: { id: req.params.id },
         include: { orderItem: { include: { order: { include: { concept: true } } } } },
@@ -665,26 +583,10 @@ export async function expoRoutes(fastify: FastifyInstance) {
         throw new NotFoundError('OrderItemStep', req.params.id)
       }
 
-      const result = await bumpStep(req.params.id, req.staffUser!.id)
-      broadcastCascade(result, step.orderItemId)
-
-      // Item-level completion: if the cascade closed out the last step on
-      // the item, route through updateItemStatus so the existing order-
-      // complete + financial-entry side-effects fire.
-      if (result.itemBumped && step.orderItem.status !== 'bumped') {
-        const { updateItemStatus } = await import('../orders/service.js')
-        try {
-          // Every step is done, so the dish is done: a hold on the item (not
-          // offered for step tickets, but possible through the API) is
-          // resumed first — a held item can't be bumped directly (R4).
-          const cur = await prisma.orderItem.findUnique({ where: { id: step.orderItemId }, select: { status: true } })
-          if (cur?.status === 'held') await updateItemStatus(step.orderItemId, 'preparing', req.staffUser!.id)
-          await updateItemStatus(step.orderItemId, 'bumped', req.staffUser!.id)
-        } catch (e) {
-          // State-machine may reject if the item already moved — that's fine.
-          if ((e as { code?: string })?.code !== 'INVALID_TRANSITION') throw e
-        }
-      }
+      // Cascade + broadcast + the item's own bump when its last step is done
+      // (stepCascade.ts completeStepBump — the one path, shared with the
+      // station card's "done" tick).
+      const result = await completeStepBump(req.params.id, step.orderItemId, req.staffUser!.id)
 
       return reply.status(200).send(result)
     },

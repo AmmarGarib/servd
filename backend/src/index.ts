@@ -74,6 +74,7 @@ import { requireAuth, MANAGERS, OTP_LOGIN_ROLES } from './modules/auth/middlewar
 
 // Modules
 import { authRoutes } from './modules/auth/routes.js'
+import { backupRoutes } from './modules/backups/routes.js'
 import { conceptRoutes } from './modules/concepts/routes.js'
 import { stationRoutes } from './modules/stations/routes.js'
 import { orderRoutes, orderItemRoutes, orderCourseRoutes } from './modules/orders/routes.js'
@@ -97,6 +98,8 @@ import { startTillClearingSweepWorker } from './workers/tillClearingSweep.js'
 import { startOnAccountDailyWorker } from './workers/onAccountDaily.js'
 import { startStaffNotificationsWorker } from './workers/staffNotifications.js'
 import { startHrDigestWorker } from './workers/hrDigest.js'
+import { startShiftSessionWorker } from './workers/shiftSessions.js'
+import { startDatabaseBackupWorker } from './workers/databaseBackup.js'
 import { startFoodSafetyOverdueWorker } from './workers/foodSafetyOverdue.js'
 import { startStockExpiryWorker } from './workers/stockExpiry.js'
 import { inventoryRoutes } from './modules/inventory/routes.js'
@@ -411,6 +414,7 @@ async function build() {
   await fastify.register(
     async (api) => {
       await api.register(authRoutes, { prefix: '/auth' })
+      await api.register(backupRoutes, { prefix: '/backups' }) // CEO → Backups (owner S13, 2026-10-26)
       await api.register(conceptRoutes, { prefix: '/concepts' })
       await api.register(stationRoutes, { prefix: '/stations' })
       await api.register(orderRoutes,      { prefix: '/orders' })
@@ -1364,6 +1368,8 @@ async function build() {
     startOnAccountDailyWorker()
     startStaffNotificationsWorker()   // the bell: exception claim-poller + retention
     startHrDigestWorker()             // weekly HR expiry digest + 2-day waiting-request reminders (bell)
+    startShiftSessionWorker()         // sign-in = one shift: drawers closed by any path end their cashier's sessions (owner B1)
+    startDatabaseBackupWorker()       // weekly encrypted database backup, Sunday 03:00 PKT (owner S13; never on the practice copy)
     startFoodSafetyOverdueWorker()    // overdue temperature checks / cleaning tasks (bell)
     startStockExpiryWorker()          // use-by: lots expiring tomorrow / expired (bell; owner B6)
     startOrderAutoCancelWorker()

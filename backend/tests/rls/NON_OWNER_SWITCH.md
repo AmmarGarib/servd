@@ -67,7 +67,10 @@ pre-sign-in): `ingredient_masters` (K1 servd-wide master),
 `site_layout_versions`, `site_layout_stats` (children of `site_layouts`,
 whose policy admits any staff request; stats are counted on anonymous
 storefront reads), `waitlist_signups`, `waitlist_visits` (public servd.pk
-sign-ups).
+sign-ups), `database_backups` (the whole-database backup files, CEO only,
+owner S13 2026-10-26). NOTE: the weekly backup's pg_dump must keep running as
+the OWNER login (`MIGRATE_DATABASE_URL` or `BACKUP_DATABASE_URL`) — as the
+non-owner login RLS would hide most rows from the dump.
 
 ## Steps (Neon)
 

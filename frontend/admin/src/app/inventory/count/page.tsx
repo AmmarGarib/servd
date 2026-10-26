@@ -87,6 +87,12 @@ export default function PhysicalCountPage() {
   const [mode, setMode] = useState<Mode>('spot')
   const [search, setSearch] = useState('')
   const [locationId, setLocationId] = useState('')
+  // Brand stock (owner B13 (a)): count ONE brand's stock ('' = the outlet's whole stock). Shared stock the brand finds
+  // on its shelf becomes the brand's (no variance); a shortfall comes off the brand's own stock only.
+  const [countBrand, setCountBrand] = useState('')
+  const { data: stockBrands = [] } = useQuery<Array<{ id: string; name: string; tenantId: string | null }>>({
+    queryKey: ['concepts-picker'], queryFn: () => api.get('/concepts?view=picker'), retry: false, meta: { background: true }, staleTime: 300_000,
+  })
   const [lines, setLines] = useState<Record<string, DraftLine>>({})
   const [notes, setNotes] = useState('')
   const [suggested, setSuggested] = useState<SuggestedItem[] | null>(null)
@@ -224,6 +230,7 @@ export default function PhysicalCountPage() {
     mutationFn: () => api.post<CountResult>('/crosschecks/physical-counts', {
       kind: mode,
       locationId: locationId || null,
+      ...(countBrand ? { conceptId: countBrand } : {}),
       lines: entered.map(([id, l]) => {
         const it = itemById.get(id)!
         if (mode === 'opening') {
@@ -335,6 +342,12 @@ export default function PhysicalCountPage() {
             <Select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fi} aria-label="Outlet counted">
               <option value="">Outlet: pick the one counted</option>
               {outlets.map((l) => <option key={l.id} value={l.id}>{l.name}{l.tenant?.name ? ` — ${l.tenant.name}` : ''}</option>)}
+            </Select>
+          )}
+          {stockBrands.length > 1 && (
+            <Select value={countBrand} onChange={(e) => setCountBrand(e.target.value)} className={fi} aria-label="Brand counted">
+              <option value="">Brand: the outlet's whole stock</option>
+              {stockBrands.map((b) => <option key={b.id} value={b.id}>Only {b.name}'s stock</option>)}
             </Select>
           )}
         </div>

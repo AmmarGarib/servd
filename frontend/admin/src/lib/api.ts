@@ -58,6 +58,12 @@ export function readLensTenant(): string | null {
 }
 
 let _refreshing: Promise<string | null> | null = null
+/** The last refresh said the sign-in's shift is over (401 SESSION_ENDED, owner B1 2026-10-26). */
+let _sessionEnded = false
+/** Where a signed-out request goes: the sign-in page, saying why when the shift ended. */
+export function signInPath(): string {
+  return _sessionEnded ? '/login?ended=shift' : '/login'
+}
 
 /** The refresh could not be TRIED (rate limit, server restarting, network) —
  *  the session may well be fine, so the caller must not sign anyone out. */
@@ -89,7 +95,12 @@ async function refreshAccessToken(): Promise<string | null> {
       // a 5xx during a release or a proxy error says nothing about the
       // session (owner 2026-10-17: staff were being sent to sign in while
       // moving between pages).
-      if (res.status === 401 || res.status === 403) return null
+      if (res.status === 401 || res.status === 403) {
+        // A sign-in lasts one shift: say so on the sign-in page instead of "Session expired".
+        const body = await res.json().catch(() => null) as { error?: { code?: string } } | null
+        _sessionEnded = body?.error?.code === 'SESSION_ENDED'
+        return null
+      }
       if (!res.ok) throw new RefreshUnavailableError(res.status)
       const data = (await res.json()) as { accessToken?: string }
       // Mirror the rotated token into memory for the WS handshake. The cookie is
@@ -124,6 +135,7 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
   /^\/me\b/,                    // self-prefs (theme, notifications)
   /^\/media\/upload-url\b/,     // presigned URL is tenant-agnostic
   /^\/record-files\b/,           // files on a saved record: the server stamps the RECORD's company
+  /^\/backups\b/,               // the whole-database backup (owner S13): no company
   /^\/site-layouts\b/,          // page's company comes from its slug (brand) or none (shared pages)
   // Head office (D1/D3): the CEO's head-office pages and staff moves name their companies in the body, and a
   // delegation names its own scope — no active-company prompt.
@@ -270,7 +282,7 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
     // Refresh failed — clear auth and redirect to login
     // F43: clear via the store so all subscribers (UI, socket) react.
     useAuthStore.getState().clearAuth()
-    if (typeof window !== 'undefined') window.location.href = '/login'
+    if (typeof window !== 'undefined') window.location.href = signInPath()
     throw new ApiError(401, 'UNAUTHORIZED', 'Session expired')
   }
 
@@ -336,7 +348,7 @@ async function fetchBlob(path: string, retry = true): Promise<Blob> {
   if (res.status === 401 && retry) {
     if (await refreshAccessToken()) return fetchBlob(path, false)
     useAuthStore.getState().clearAuth()
-    window.location.href = '/login'
+    window.location.href = signInPath()
     throw new ApiError(401, 'UNAUTHORIZED', 'Session expired')
   }
   if (!res.ok) {

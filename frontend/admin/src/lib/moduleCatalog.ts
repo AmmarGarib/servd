@@ -51,6 +51,8 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   // Trash and Hand-over are left-menu links of their own (owner, 2026-10-20), not CEO-workspace pages: Trash is a
   // personal page (PERSONAL_PAGES) for every login; Hand-over is added for the CEO in AppShell.
   trash:          [],
+  // Backups (owner S13, 2026-10-26: "make it a weekly file i can download and save to my pc.. ceo only..").
+  backups:        [{ label: 'Backups', href: '/ceo/backups', icon: 'lock', hint: 'Weekly encrypted copy of the whole database to download' }],
   business_info:  [
     { label: 'Locations', href: '/configuration/locations', icon: 'pin', hint: 'Kitchen address and map pin' },
     { label: 'Delivery zones', href: '/configuration/delivery-zones', sub: true, hint: 'Beyond the last zone, delivery is refused' },
@@ -359,7 +361,7 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   staff_directory: 'A login is access only; one login can be linked to an employee in each company. Team leads add logins for their own roles from My team, and the CEO approves each one. HR adds and offboards logins from the employee record: floor staff are active at once, manager and office logins wait for the CEO.',
   scheduling: 'Generated from the HR roster and approved swaps; managers store only one-off changes. Costed from HR salaries.',
   api_pos: 'Vendors not chosen yet: until the CEO goes live with a fiscal POS driver, every sale is held (visible, never sent). No nightly card-settlement match yet. Raast QR bank-SMS matching is off per company until the CEO switches it on; servd never logs in to internet banking.',
-  integrations: 'No backup or data export screen. Webhooks: one API, but only order events fire. Supplier chat still sends mail through its own env-only SMTP transport.',
+  integrations: 'No data export screen (database backups: CEO → Backups). Webhooks: one API, but only order events fire. Supplier chat still sends mail through its own env-only SMTP transport.',
   audit_log: 'Sign-ins (success, failure, OTP, 2FA, sign-out) are audited alongside account, access and on-shift actions, per company.',
 }
 

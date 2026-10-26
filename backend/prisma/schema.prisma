@@ -416,6 +416,9 @@ model Station {
   name         String
   displayOrder Int       @default(0)
   isActive     Boolean   @default(true)
+  // Owner B12 (2026-10-26): how many order cards the station screen shows at
+  // once (4–6, default 5; CHECK stations_visible_cards_chk). The rest queue.
+  visibleCards Int       @default(5)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?
@@ -686,6 +689,10 @@ enum ReservationStatus {
   completed
   no_show
   cancelled
+  // Owner C10 (2026-10-26): an overbook raised by anyone but the CEO waits here
+  // (off the floor plan, capacity and reminders; the guest is told nothing)
+  // until the CEO approves (→ booked) or rejects (→ cancelled).
+  pending_approval
 }
 
 enum ReservationSource {
@@ -773,6 +780,39 @@ model Reservation {
   @@index([status, startTime])
   @@index([reminder24hSentAt])
   @@map("reservations")
+}
+
+// Owner C10 (2026-10-26): "overbooking should auto come to ceo for approval.
+// Manager shouldnt be able to do that without approval." A booking (kind
+// create — the reservation waits as pending_approval) or a change of one (kind
+// edit — the reservation stays as it is, the change waits in `changes`) that
+// goes past capacity, raised by anyone but the CEO. Approval type
+// reservation_overbook (CEO only, never handed over). tenantId = the brand's
+// company (RLS, merge repoint). SQL-only: one pending request per reservation,
+// kind / status CHECKs (migration 20261027120000_reservation_overbook_approval).
+model ReservationOverbookRequest {
+  id                   String    @id @default(uuid())
+  tenantId             String
+  reservationId        String
+  conceptId            String
+  kind                 String // create | edit
+  changes              Json      @default("{}") // edit: the proposed fields; create: {}
+  reason               String
+  managerApproverId    String? // the manager (own login or PIN) who raised / allowed it
+  viaPin               Boolean   @default(false)
+  // edit: the reservation's updatedAt when raised — approval refuses (409 RESERVATION_CHANGED) if it moved.
+  reservationUpdatedAt DateTime?
+  status               String    @default("pending") // pending | approved | rejected | cancelled
+  requestedById        String
+  requestedAt          DateTime  @default(now())
+  decidedById          String?
+  decidedAt            DateTime?
+  decisionNote         String?
+  updatedAt            DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([reservationId])
+  @@map("reservation_overbook_requests")
 }
 
 // A servd member who joined a booking through the booker's invite link
@@ -1030,8 +1070,15 @@ model User {
   // turns it on. Enforcing it by role alone would have locked out every
   // owner the moment this shipped, which is exactly the mistake the PIN
   // change already made once.
+  // RETIRED (owner, 2026-10-26: two-step sign-in removed). Cleared by
+  // migration 20261027110000 and read by nothing; columns kept, no data drop.
   twoFactorPhone      String?
   twoFactorEnabledAt  DateTime?
+  // A sign-in lasts one shift (owner B1, 2026-10-26). Set when this login's
+  // till drawer closes (auth/sessionEnd.ts endSessionsForClosedDrawer): every
+  // session ISSUED before it ends SHIFT_CLOSE_GRACE_MS after it (time to see /
+  // print the Z-report). Checked on every request and on refresh.
+  sessionsEndedAt     DateTime?
   role                UserRole      @default(kitchen)
   // Free-text job title shown next to the role chip in /workforce. The role
   // enum is the *category* (FOH / BOH / Procurement / etc); jobTitle is what
@@ -2071,6 +2118,11 @@ model OrderItem {
   notes           String?
   course          Int? // course number for sequencing
   firedAt         DateTime?
+  // Owner B12 (2026-10-26): a line with no recipe steps — when the cook
+  // tapped Start, and when the card first showed in the station's visible
+  // window (the expo's 60-second unstarted alert reads both).
+  startedAt       DateTime?
+  kdsShownAt      DateTime?
   completedAt     DateTime?
   voidedAt        DateTime?
   voidReason      String?
@@ -2860,7 +2912,8 @@ model OrderItemStep {
   dependsOnStepIds String[]      @default([])
   // Same shape as OrderItem timing fields so the KDS card UI can reuse logic.
   firedAt          DateTime?
-  startedAt        DateTime?
+  startedAt        DateTime? // the cook tapped Start (owner B12, 2026-10-26)
+  kdsShownAt       DateTime? // first shown in the station's visible window (owner B12)
   completedAt      DateTime?
   bumpedById       String? // KitchenStaff or User who confirmed
   createdAt        DateTime      @default(now())
@@ -2872,6 +2925,32 @@ model OrderItemStep {
   @@index([stationId, status])
   @@index([orderItemId])
   @@map("order_item_steps")
+}
+
+// Owner B12 (2026-10-26): a cook's countdown on a dish / step at a station.
+// Server-side (started at + duration) so a refresh or another tablet shows it;
+// when it ends the card blinks red — no sound. tenantId = the order's company
+// (RLS, merge repoint). Stopped = dismissed / done.
+model KitchenTimer {
+  id              String    @id @default(uuid())
+  tenantId        String
+  orderId         String
+  orderItemId     String
+  orderItemStepId String?
+  stationId       String
+  label           String
+  durationSeconds Int
+  startedAt       DateTime  @default(now())
+  endsAt          DateTime
+  stoppedAt       DateTime?
+  startedById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([stationId, stoppedAt])
+  @@index([orderId])
+  @@map("kitchen_timers")
 }
 
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
@@ -2903,6 +2982,8 @@ model PurchaseOrder {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  conceptId String? // the brand that ordered (owner B13 (a)); its receipt's lots are that brand's. Plain id.
 
   supplier    Supplier            @relation(fields: [supplierId], references: [id])
   lines       PurchaseOrderLine[]
@@ -5910,6 +5991,12 @@ model StockTransfer {
   inventoryItemId String
   fromLocationId  String
   toLocationId    String
+  // Brand stock (owner B13 (a), 2026-10-26): whose lots ship (fromConceptId; NULL = shared lots) and who owns them on
+  // arrival (toConceptId; NULL = shared). brandMove false = a plain outlet transfer (any lot; arrived lots keep their
+  // brand). A BRAND MOVE (brandMove true) names both sides; from = to location is allowed only for it. Plain ids.
+  fromConceptId   String?
+  toConceptId     String?
+  brandMove       Boolean @default(false)
   quantity        Float
   unit            String
   // requested → approved → in_transit → received       (happy path)
@@ -6056,6 +6143,7 @@ model GoodsReceipt {
   // Food cost wave B (2026-10-14)
   tenantId           String? // the supplier's company (backfilled); every new row sets it
   locationId         String?
+  conceptId          String? // the brand whose stock this is (owner B13 (a)); NULL = shared. Its lots carry it.
   // Decision P6: a no-PO receipt created for food bought with cash. Its lines are born billed (billedQty =
   // receivedQty), it posts NOTHING itself (no 2015): the cash document's own entry carries Dr 12x0 / Cr 1011|1355.
   // One receipt per cash document (unique below), so the same food can't come in twice. CHECK
@@ -6132,6 +6220,7 @@ model PrepBatch {
   createdAt        DateTime @default(now())
   // Food cost wave B
   locationId       String?
+  conceptId        String? // the brand the batch is for (owner B13 (a)): draws its lots then shared; its prep lot is its
   drawValueCents   BigInt? // FIFO value drawn by an ad-hoc batch ('inventory.prep_draw:<id>')
 
   @@index([staffId, createdAt])
@@ -6155,6 +6244,7 @@ model PhysicalCount {
   // physical_counts_kind_chk (SQL only).
   kind        String   @default("spot")
   locationId  String?
+  conceptId   String? // a count of ONE brand's stock (owner B13 (a)); NULL = the site's whole stock
 
   lines PhysicalCountLine[]
 
@@ -6200,6 +6290,10 @@ model StockLot {
   // The site (outlet) holding the lot (owner, 2026-10-24: per-site stock). Every new lot names one (lib/stockSite.ts);
   // NULL only for a company with no location (its one pool) and pre-cut-over history.
   locationId          String?
+  // The OWNING BRAND (owner B13 (a), 2026-10-26: "Each brand keeps its own stock even when it shares a kitchen").
+  // NULL = shared (legacy, or an outlet with several brands until a count / brand move assigns it). A sale draws its
+  // brand's lots, then shared ones — never another brand's (lib/stockLedger.ts). Plain id (a Concept of tenantId).
+  conceptId           String?
   sourceType          String // goods_receipt_line | count_gain | opening | fifo_cutover | legacy_return | transfer_in | prep_batch
   // goods_receipt_line: '<receiptLineId>:<grniMatchId|po|dock>' (a receipt line may open SEVERAL lots: a pending-bill
   // quantity at the billed price + the rest at the PO price); legacy_return: '<orderItemId>:<event>';
@@ -6232,6 +6326,7 @@ model StockLot {
   @@index([tenantId, inventoryItemId, receivedAt])
   @@index([receiptLineId])
   @@index([inventoryItemId, locationId])
+  @@index([inventoryItemId, locationId, conceptId])
   @@map("stock_lots")
 }
 
@@ -9048,4 +9143,26 @@ model CityLedgerAllocation {
   @@index([chargeId])
   @@index([tenantId])
   @@map("city_ledger_allocations")
+}
+
+// ─── Weekly database backup (owner S13, 2026-10-26: "make it a weekly file i
+// can download and save to my pc.. ceo only..") ────────────────────────────
+// One row per backup FILE (modules/backups). Deliberately NO tenantId: a
+// backup is the WHOLE database (every company) and only the CEO reads it —
+// platform data, like the settings table. The file itself is encrypted
+// (AES-256-GCM) and only the CEO's backup passphrase opens it.
+model DatabaseBackup {
+  id          String    @id @default(uuid())
+  status      String    @default("running") // running | done | failed
+  trigger     String // weekly | manual
+  fileName    String?
+  sizeBytes   Float?
+  keyId       String? // which passphrase key made it (backup key fingerprint)
+  error       String?
+  createdById String?
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+
+  @@index([startedAt])
+  @@map("database_backups")
 }

@@ -58,6 +58,8 @@ const LOUD_ACTIONS = new Set([
   'user.create', 'user.role_change', 'user.enable', 'user.disable',
   'user.password_reissue', 'user.pin_reissue', 'role_modules.update',
   'auth.login_failed', 'auth.2fa_failed',
+  // A copy of the whole database left the server, or its lock changed (owner S13, 2026-10-26).
+  'backup.download', 'backup.passphrase_set', 'backup.passphrase_change',
 ])
 
 const SIGNIN_LABEL: Record<string, string> = {

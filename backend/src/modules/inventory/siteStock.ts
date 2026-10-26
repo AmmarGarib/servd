@@ -10,6 +10,9 @@
 //       the inventory page shows; the nightly flag stays.
 //   GET /inventory/by-site?locationId=    on hand per item per site (the
 //       stock_balances cache), for the stock screens' site filter.
+//   GET /inventory/by-brand?locationId=   on hand (and value, for cost viewers)
+//       per item per site per OWNING BRAND (owner B13 (a), 2026-10-26: each
+//       brand keeps its own stock; conceptId null = shared lots), from the lots.
 //
 // Both read the companies in view (resolveTenantScope); a locationId must be
 // one of their outlets (422 LOCATION_NOT_IN_COMPANY) — never another
@@ -128,5 +131,28 @@ export async function siteStockRoutes(fastify: FastifyInstance, opts: { readers:
       prisma.location.findMany({ where: { tenantId: { in: tenantIds }, deletedAt: null, ...(locationId ? { id: locationId } : {}) }, select: { id: true, name: true, tenantId: true }, orderBy: { name: 'asc' } }),
     ])
     return { sites, rows: rows.map((r) => ({ ...r, qty: Math.round(r.qty * 1000) / 1000 })) }
+  })
+
+  fastify.get<{ Querystring: { locationId?: string } }>('/by-brand', { preHandler: requireAuth(...(MANAGERS as never[]), ...(opts.readers as never[])) }, async (req) => {
+    const { tenantIds, locationId } = await siteScope(req, req.query.locationId)
+    if (tenantIds.length === 0) return { brands: [], rows: [] }
+    const hide = opts.hideCosts(req)
+    const [lots, brands] = await Promise.all([
+      prisma.stockLot.groupBy({
+        by: ['inventoryItemId', 'locationId', 'conceptId'],
+        where: { tenantId: { in: tenantIds }, remainingQty: { gt: 0.000001 }, ...(locationId ? { locationId } : {}) },
+        _sum: { remainingQty: true, remainingValueCents: true },
+      }),
+      prisma.concept.findMany({ where: { tenantId: { in: tenantIds } }, select: { id: true, name: true, tenantId: true }, orderBy: { name: 'asc' } }),
+    ])
+    return {
+      brands,
+      rows: lots.map((l) => ({
+        inventoryItemId: l.inventoryItemId, locationId: l.locationId, conceptId: l.conceptId,
+        qty: Math.round((l._sum.remainingQty ?? 0) * 1000) / 1000,
+        ...(hide ? {} : { valueCents: toCents(l._sum.remainingValueCents) ?? 0 }),
+      })),
+      ...(hide ? { costsHidden: true as const } : {}),
+    }
   })
 }

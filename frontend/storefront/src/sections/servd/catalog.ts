@@ -383,7 +383,7 @@ export const specs: SectionSpec[] = [
     ],
     defaults: {
       consentText: 'We use Google Analytics to see which pages and dishes people use, so we can improve the site. It sets cookies only if you accept. Ordering works either way.',
-      consentLink: { text: 'Privacy', href: 'https://servd.pk/privacy' },
+      consentLink: { text: '', href: '' },
       consentDecline: 'Only necessary',
       consentAccept: 'Accept',
       eyebrow: 'One place for every kitchen',
@@ -418,8 +418,6 @@ export const specs: SectionSpec[] = [
         { text: 'About servd', href: '/about' },
         { text: 'Contact', href: '/contact' },
         { text: 'Press', href: '/press' },
-        { text: 'Privacy', href: '/privacy' },
-        { text: 'Terms', href: '/terms' },
       ],
       copyright: '© {year} GS Foods. All rights reserved.',
       tagline: 'Made in Karachi. Cooked in Karachi. For Karachi.',

@@ -133,10 +133,12 @@ function bookingErrorText(err: unknown, minAdvanceHours?: number | null): string
   }
 }
 
-interface CreatedBooking { table?: { id: string; label: string } | null; overbooked?: boolean; waitlist?: boolean }
+interface CreatedBooking { table?: { id: string; label: string } | null; overbooked?: boolean; waitlist?: boolean; pendingApproval?: boolean }
 
 function bookedLine(r: CreatedBooking): string {
   if (r.waitlist) return 'Added to the waiting list — no table is held.'
+  // Owner C10 (2026-10-26): unless the CEO books it, an overbook waits for the CEO (202).
+  if (r.pendingApproval) return 'Sent to the CEO for approval — it goes past capacity. The guest is not told anything until the CEO approves.'
   const label = r.table?.label
   if (r.overbooked) {
     return label

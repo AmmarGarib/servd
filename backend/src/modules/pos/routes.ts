@@ -482,6 +482,11 @@ export async function posRoutes(fastify: FastifyInstance) {
         userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: shift.tenantId ?? null,
         after: { status: 'closed', closingFloatCents }, metadata: { actorRole: req.staffUser!.role, shiftUserId: shift.userId },
       })
+      // A sign-in lasts one shift (owner B1, 2026-10-26): the drawer's cashier
+      // is signed out once its close has had time to show the Z-report.
+      const { endSessionsForClosedDrawer } = await import('../auth/sessionEnd.js')
+      const row = await prisma.shift.findUnique({ where: { id: shift.id }, select: { closedAt: true } })
+      await endSessionsForClosedDrawer(shift.userId, row?.closedAt ?? new Date())
       return closed
     },
   )

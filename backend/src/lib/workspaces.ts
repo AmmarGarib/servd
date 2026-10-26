@@ -59,6 +59,8 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
       // and the per-person ticks on Workforce stay here, the CEO's.
       { key: 'access',    title: 'Logins & access',             modules: ['role_management'] },
       { key: 'rules',     title: 'Company rules',               modules: ['configuration', 'settings'] },
+      // The weekly encrypted database backup file (owner S13, 2026-10-26: "ceo only").
+      { key: 'backups',   title: 'Backups',                     modules: ['backups'] },
     ],
   },
   // Operations is the F&B manager's (D2): menu, stock, till, kitchen, buying,

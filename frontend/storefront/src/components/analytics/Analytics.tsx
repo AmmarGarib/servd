@@ -6,7 +6,7 @@ import {
   sendPageView, setConsent, track, type ConsentChoice,
 } from '../../lib/analytics'
 import { useOnBrandMicrosite } from '../../lib/host'
-import { safeHref } from '../../sections/safe'
+import { isHiddenLegalHref, safeHref } from '../../sections/safe'
 
 // Google Analytics 4 + the consent notice (SEO round 1, WP5).
 //
@@ -38,8 +38,8 @@ function whatsappAnchor(target: EventTarget | null): HTMLAnchorElement | null {
 export interface ConsentWords { text: string; linkText: string; linkHref: string; decline: string; accept: string }
 const DEFAULT_WORDS: ConsentWords = {
   text: 'We use Google Analytics to see which pages and dishes people use, so we can improve the site. It sets cookies only if you accept. Ordering works either way.',
-  linkText: 'Privacy',
-  linkHref: 'https://servd.pk/privacy',
+  linkText: '', // owner 2026-10-26 (S8): no Privacy link on the website for now
+  linkHref: '',
   decline: 'Only necessary',
   accept: 'Accept',
 }
@@ -48,7 +48,7 @@ export function Analytics({ initialBrandSlug = null, words }: { initialBrandSlug
   const w: ConsentWords = {
     text: words?.text.trim() || DEFAULT_WORDS.text,
     // An empty label hides the link; no words at all → the default link.
-    linkText: words ? words.linkText.trim() : DEFAULT_WORDS.linkText,
+    linkText: words && !isHiddenLegalHref(words.linkHref) ? words.linkText.trim() : DEFAULT_WORDS.linkText,
     linkHref: safeHref(words ? words.linkHref : DEFAULT_WORDS.linkHref, DEFAULT_WORDS.linkHref),
     decline: words?.decline.trim() || DEFAULT_WORDS.decline,
     accept: words?.accept.trim() || DEFAULT_WORDS.accept,

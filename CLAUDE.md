@@ -206,7 +206,7 @@ module id must be placed in a workspace in the same change.
   forecast, the kit's look) by anyone but the CEO is 403
   `BRAND_FIELD_CEO_ONLY` (an unchanged value in a full save passes). Creating
   and deleting brands, and creating companies, stay the CEO's (CEO →
-  Companies). `CEO_ONLY_MODULES` is empty. **Module access per person is the
+  Companies). `CEO_ONLY_MODULES` is `['backups']` only (2026-10-26). **Module access per person is the
   CEO's** (CEO → Logins & access → Logins & module access, `/workforce`; the
   "What they can open" panel shows to the CEO only); HR keeps only the role
   presets. The Configuration hub stays the CEO's (CEO → Company rules).
@@ -322,6 +322,7 @@ module id must be placed in a workspace in the same change.
   audit `staff.modules`. Admin rows are locked (every module). Every writer of
   a PERSON's module access is ADMIN_ONLY; an invite never carries it (tested
   in `tests/staffOnboarding.test.ts`; presets in `tests/rolePresetsHr.test.ts`).
+- **Privacy / Terms hidden from the website (owner S8, 2026-10-26: "hide from website … we'll add later for app").** No footer, brand-footer, cookie-notice, sitemap or llms link to `/privacy` / `/terms`; the pages stay (noindex). `sections/safe.ts isHiddenLegalHref` makes the servd and brand footers and the cookie notice skip such links, so saved layouts hide them too. The approvals inbox filter is ONE drop-down (U9c).
 - **One approvals inbox** (`/ceo/approvals`, `GET /approvals` +
   `/approvals/counts`, `backend/src/modules/approvals/`; owner decision D3).
   It READS each module's own queue as the caller (new logins, website
@@ -573,14 +574,34 @@ the media (owner, 2026-10-12) — `showTitle` off keeps the title only as an
   are retired (owner, 2026-10-07; migration `20261007120000`) — the brands
   live on `stackd.pk`, `simmer.pk`, `flipd.pk`.
 
-- **Staff 2FA over WhatsApp OTP.** `POST /auth/login` returns
-  `{ twoFactorRequired, challengeToken, phoneHint }` instead of a session when
-  the account is enrolled; `POST /auth/2fa/verify` trades the challenge + code
-  for tokens. Enrol via `/auth/2fa/start` then `/auth/2fa/enable` (two steps so
-  a mistyped number can't lock anyone out); `/auth/2fa/disable` requires the
-  password. **2FA is per-account, never by role** — enforcing by role would
-  lock out every owner on deploy. The challenge is a `type: 'mfa'` JWT and is
-  rejected everywhere an access token is expected.
+- **Staff 2FA is RETIRED (owner, 2026-10-26: "remove two-step sign-in; nobody
+  has it on today").** `POST /auth/login` always returns a session (no
+  `twoFactorRequired`); every `/auth/2fa/*` route and `/auth/users/:id/2fa/reset`
+  answer 410 `TWO_STEP_RETIRED`; migration `20261027110000` cleared every
+  enrolment (columns kept, read by nothing); `type: 'mfa'` tokens are refused
+  everywhere. The admin login has no code step. Never re-add a second factor
+  without the owner.
+- **A staff sign-in lasts ONE SHIFT (owner B1, 2026-10-26: "Signin can last 1
+  shift … at shift close servd should auto sign u out no matter who u are.
+  However people can login to servd outside the office").**
+  `auth/sessionEnd.ts staffSessionEndsAt` is THE rule, computed once at
+  sign-in (`service.ts issueShiftSession` — password, WhatsApp code, change
+  password): the nearest end of the person's shift today per `hr/rota.ts
+  rotaFor` (roster / swap / /scheduling / the company default rota; yesterday's
+  overnight shift still running counts), else — no HR record (CEO, IT), day
+  off, leave, or signing in after the shift — midnight PKT; never over 24 h.
+  The refresh token's exp and claim `se` ARE that end; access tokens never
+  outlive it; refresh after it → 401 `SESSION_ENDED` (a pre-release refresh
+  token with no `se` too: everyone signs in once after deploy); the admin then
+  shows "Your shift ended — sign in again" (`lib/api.ts signInPath`,
+  `/login?ended=shift`). Closing a till drawer (`POST /pos/shifts/:id/close`)
+  stamps the drawer's cashier `User.sessionsEndedAt`; every session issued
+  before it is refused (401 `SESSION_ENDED`, middleware + refresh) once
+  `SHIFT_CLOSE_GRACE_MS` (5 min, for the Z-report) has passed; worker
+  `shiftSessions` (every 5 min) stamps drawers closed by any other path.
+  `issueStaffSession(user)` without an end (tests, tooling) = 24 h. Customers
+  and riders are unchanged. Landing after sign-in stays `/w` → the person's
+  own workspace (owner 2026-10-16). Tests: `tests/shiftSessions.test.ts`.
 
 - **The login rate limiter no longer fails open.** It falls back to per-process
   in-memory counters when Redis is unreachable, and `/health` reports
@@ -1947,6 +1968,26 @@ per-site stock now (D4).
   one for every outlet).
 - Migration `20261024140000_stock_by_site`; tests `tests/stockBySite.test.ts`,
   `tests/prepAsStock.test.ts`.
+- **Each brand keeps its own stock (owner B13 (a), 2026-10-26: "even when it shares a kitchen; moving stock between
+  brands moves the cost between the brands' P&Ls automatically").** Contract: "BRANDS" in the header of
+  `lib/stockLedger.ts`. A lot has an owning brand (`StockLot.conceptId`, NULL = shared). `addLotTx({conceptId})`
+  (another company's brand 422 `BRAND_NOT_IN_COMPANY`); `consumeFifoTx({lotOwner})` — a sale (and a waste naming a
+  brand) draws its brand's lots at the site, then the shared ones, NEVER another brand's (the rest is a shortfall, as
+  before; a brand's lot settles only its own brand's shortfalls). Receipts: `GoodsReceipt.conceptId` = the brand named
+  on the dock / PO receive, else `PurchaseOrder.conceptId`, else the outlet's only live brand, else shared
+  (`receiving.ts receiptBrandTx`); the GRN tags each Dr 12x0 with its lot's brand. Moving stock between brands is a
+  STOCK TRANSFER (`brandMove`, `fromConceptId` / `toConceptId`, null = shared; same outlet allowed only for it) —
+  `POST /stock-transfers/brand-move` (managers, active company, at once; `stockTransfers/brandMove.ts brandMoveTx`) or
+  the normal request → ship → receive flow: the ship draws only the from-brand's lots, `transferInTx({toConceptId})`
+  opens the to-brand's lots at the same cost and age and posts ONE `inventory.brand_move:<transferId>` (Dr 12x0 tagged
+  the new brand / Cr 12x0 tagged the old) — no P&L at the move; the seller's cost of sales (tagged by the selling
+  brand, as before) carries it. A brand count (`conceptId` on `POST /crosschecks/physical-counts`) books against the
+  brand's own lots: counted above them, the site's shared lots become the brand's first (a brand move, no variance),
+  only the rest is a gain; a loss comes off the brand's own lots. A prep batch with `conceptId` draws the brand's then
+  shared lots, and its prep lot / ad-hoc draw posting are the brand's. `GET /inventory/by-brand` = on hand per item per
+  site per brand. Migration `20261027130000_brand_stock` gave existing lots the brand of an outlet with exactly ONE
+  live brand (not when that outlet is / may be the stock home of a company with an outlet-less brand); outlets with
+  several brands stay shared until a brand count or move assigns them. Tests `tests/brandStock.test.ts`.
 
 ### Kitchen flow (owner, 2026-10-26)
 
@@ -2036,7 +2077,41 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   lot per stage (expires tomorrow / expired — markers written only by `stockLedger.ts markUseByNotifiedTx`), one
   notice per outlet to the company's kitchen managers holding `inventory`. Migration `20261026170000_stock_use_by`;
   tests `tests/stockUseBy.test.ts`.
+- **Station screen = 4–6 order cards, Start, timers, tick; expo backlog + 60 s alert + bag stickers (owner B12,
+  2026-10-26: "show them 4-6 orders at a time … Timer going off should just make the order card blink red.. no
+  noise … if an order card is sitting on screen for 1 minute without being started, expo needs an alert").**
+  `modules/expo/kitchenBoard.ts` extends the ONE KDS (never a second): `loadStationQueue` is THE station queue
+  (`/expo/station/:id/queue` reads it unchanged); a CARD = one order's live work at one station (fired steps +
+  legacy lines), oldest first, the first `Station.visibleCards` (4–6, default 5; `PUT /expo/stations/:id/display`,
+  managers + F&B manager / chef with `kds_config`, applies at once — a screen setting, not a C3 station change)
+  visible, the rest queued. `GET /expo/station/:id/board` stamps `kdsShownAt` once on first show; Start
+  (`/cards/:orderId/start`) stamps `startedAt` (step, or `OrderItem.startedAt` for a line); the tick
+  (`/cards/:orderId/done`) bumps every row through `stepCascade.ts completeStepBump` (the cascade — the next
+  station's step fires; also behind `POST /expo/steps/:id/bump`) or `updateItemStatus` (409 `CARD_ON_HOLD`).
+  `KitchenTimer` (tenantId = the order's company, RLS, merge repoint): `POST/PATCH /expo/kitchen-timers`,
+  `/:id/stop`; ended = the card blinks red — NO sound. `GET /expo/kitchen-status`: backlog `tickets` = orders
+  queued somewhere and visible nowhere, the 60 s unstarted list (never a held card). Stickers: `GET
+  /expo/orders/:id/print?kind=sticker|ticket&bags=1–20` at the company's label size (Setting
+  `kds.labelSize:<tenantId>`, `PUT /expo/label-settings`, managers + expediter); the ticket is not a bill.
+  Migration `20261027140000_kds_board_timers`; tests `tests/kdsBoard.test.ts`.
 
+- **Weekly database backup FILE, CEO only (owner S13, 2026-10-26: "make it a weekly file i can download and
+  save to my pc.. ceo only..").** `modules/backups/` (contract: `service.ts` header), page CEO → Backups
+  (`/ceo/backups`, module `backups` — CEO workspace, `CEO_ONLY_MODULES`; every route ADMIN_ONLY). The API runs
+  `pg_dump --format=custom` (the image installs `postgresql17-client` — build-arg `PG_CLIENT`; its major must be ≥
+  the server's) as `BACKUP_DATABASE_URL` → `MIGRATE_DATABASE_URL` (the owner: a non-owner login under RLS dumps empty
+  tables) → `DATABASE_URL`, password via PGPASSWORD only, streamed straight into an AES-256-GCM file (format in
+  `backups/crypto.ts`): a fresh data key per file wrapped with an RSA public key whose private key is stored ONLY
+  sealed under the CEO's backup passphrase (scrypt) — the passphrase is never stored, so the weekly job can encrypt
+  but nobody (servd included) can open a file without it; each file carries what it needs except the passphrase
+  in force when it was made. No passphrase → no backup (manual 409 `BACKUP_PASSPHRASE_REQUIRED`; weekly recorded
+  failed + bell). Weekly Sunday 03:00 PKT (`workers/databaseBackup.ts`, ENABLE_WORKERS, never on the practice copy);
+  files on the API box at `BACKUP_DIR` (default `/app/backups` = compose volume `servd_backups`), never the public
+  media bucket; the last 8 good ones kept (`DatabaseBackup` rows, platform table, no tenantId). Download
+  streams the ENCRYPTED file, audited `backup.download`; passphrase set / change audited (change needs the current
+  one or `replaceForgotten`). Bell `backup.result` to the CEO on every weekly result. Opener:
+  `backend/scripts/decrypt-backup.mjs <file>` (Node only; also `GET /backups/opener`) → `.dump` → `pg_restore`.
+  Tests: `tests/databaseBackup.test.ts`.
 - **Open-items IT answers (owner, 2026-10-26).** Error tracking: `lib/errorTracking.ts`
   (Sentry, `SENTRY_DSN_API`, scrubbed `beforeSend`, sandbox kind `error_report`; `captureServerError` is called
   only for the 5xx fall-through of the error handler). **The WhatsApp gateway watchdog is the EXISTING
@@ -2797,6 +2872,25 @@ change a route only together with that file). Binding rules:
   FINANCIALS_VIEWERS, others get `hidden`; a failing source = `value: null` + `reason`). Fixed sets, no per-person
   storage yet; the admin tiles are `components/ui/DashboardTiles.tsx`. Payroll vs budget stays empty (no budget exists).
   A new number is added in that file's `sets` — read from an existing function. Tests: `tests/dashboardNumbers.test.ts`.
+- **Overbooking goes to the CEO (owner C10, 2026-10-26: "overbooking should auto come to ceo for approval. Manager
+  shouldnt be able to do that without approval").** The host stand's overbook (manager's own login or a host with a
+  manager's PIN, reason) still raises it, but unless the CEO books it (an `admin` login, or the CEO's own PIN) a NEW
+  booking is stored as `ReservationStatus pending_approval` (202 `{ pendingApproval, overbookRequestId }`) — off the
+  floor plan, capacity, the no-overlap constraint, reminders and the guest's account — and the guest is told NOTHING;
+  a CHANGE past capacity (`PATCH /reservations/:id`) is held and the booking stays as it was. One store:
+  `ReservationOverbookRequest` (tenantId = the brand's company, RLS, merge repoint; one pending per booking) —
+  `modules/reservations/overbookApproval.ts` (contract in its header). Approval type `reservation_overbook` (section
+  ceo, never delegable; provider `reservations/overbookProvider.ts`): `POST /reservations/overbook-requests/:id/approve`
+  → booked + the normal confirmation (`sendBookingConfirmation`, the ONE host-stand confirmation); `/reject {note ≥10}`
+  → cancelled + a polite "fully booked" WhatsApp / email (never the CEO's note); `/withdraw` (a held change). While it
+  waits the booking is 409 `OVERBOOK_PENDING` on edit / confirm / seat / complete / no-show; cancelling it withdraws
+  the request; 409 `RESERVATION_CHANGED` when a held change's booking moved. Tests:
+  `tests/reservationOverbookApproval.test.ts`.
+- **Goodwill wallet credit has its own account (owner C6, 2026-10-26: "Give wallet goodwill credit its own account so
+  I can see what we give away").** `6065 Goodwill Credit to Customers` (canonical chart, every company at boot);
+  `wallet/service.ts WALLET_GOODWILL_EXPENSE` — new goodwill top-ups are Dr 6065 / Cr 2050; older ones stay on 6060
+  and anything undoing one mirrors ITS OWN entry (reverseJournalEntry), never today's constant. Paid top-ups unchanged.
+  Tests: `tests/walletGoodwillAccount.test.ts`.
 
 ### Customer identity, member codes and invites (owner, 2026-10-26)
 

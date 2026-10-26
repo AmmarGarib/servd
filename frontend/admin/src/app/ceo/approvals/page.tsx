@@ -33,6 +33,7 @@ import {
 } from '../approvalsData'
 import { useAuthStore } from '../../../store/auth'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { Select } from '../../../components/ui/Select'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface Item {
@@ -155,7 +156,14 @@ function ApprovalsInbox() {
   const showTabs = sections.length > 1 || (data?.handedOver ?? 0) > 0
   const inSection = (i: { type: string; section?: string }) =>
     section === 'all' || (i.section ?? data?.types.find((t) => t.type === i.type)?.section) === section
-  const types = (data?.types ?? []).filter((t) => section === 'all' || !t.section || t.section === section)
+  const allTypes = data?.types ?? []
+  // The single drop-down's value: a type, else a workspace, else everything.
+  const pick = filter !== 'all' ? `t:${filter}` : section !== 'all' ? `s:${section}` : 'all'
+  const onPick = (v: string) => {
+    if (v.startsWith('t:')) { setSection('all'); setFilter(v.slice(2)) }
+    else if (v.startsWith('s:')) { setSection(v.slice(2)); setFilter('all') }
+    else { setSection('all'); setFilter('all') }
+  }
   const items = useMemo(
     () => (data?.items ?? []).filter((i) => inSection(i) && (filter === 'all' || i.type === filter)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -221,25 +229,27 @@ function ApprovalsInbox() {
         </Link>
       )}
 
-      {showTabs && (
-        <div className="mt-5 flex items-center gap-2 overflow-x-auto sm:flex-wrap pb-1 [scrollbar-width:thin]" role="group" aria-label="Section">
-          <span className="text-[11px] font-black uppercase tracking-wider text-white/45 w-20 shrink-0">Workspace</span>
-          <Chip on={section === 'all'} onClick={() => { setSection('all'); setFilter('all') }} label="All" count={data?.total ?? 0} />
-          {sections.filter((sc) => sc.count > 0 || section === sc.id).map((sc) => (
-            <Chip key={sc.id} on={section === sc.id} onClick={() => { setSection(sc.id); setFilter('all') }}
-              label={sc.id === 'ceo' ? 'CEO only' : sc.title} count={sc.count} />
-          ))}
-        </div>
-      )}
-
-      {/* Counts per type */}
-      <div className="mt-4 flex items-center gap-2 overflow-x-auto sm:flex-wrap pb-1 [scrollbar-width:thin]" role="group" aria-label="Type">
-        <span className="text-[11px] font-black uppercase tracking-wider text-white/45 w-20 shrink-0">Type</span>
-        <Chip on={filter === 'all'} onClick={() => setFilter('all')} label={showTabs ? 'Every type' : 'All'}
-          count={section === 'all' ? (data?.total ?? 0) : (sections.find((x) => x.id === section)?.count ?? 0)} />
-        {types.filter((t) => t.count > 0 || t.error || filter === t.type).map((t) => (
-          <Chip key={t.type} on={filter === t.type} onClick={() => setFilter(t.type)} label={t.label} count={t.count} error={t.error} />
-        ))}
+      {/* ONE filter (owner U9c, 2026-10-26): All, then workspaces, then types, each with its count. */}
+      <div className="mt-5 max-w-md">
+        <label className="block">
+          <span className="text-[11px] font-black uppercase tracking-wider text-white/45">Show</span>
+          <Select className="s-input mt-1 w-full" aria-label="Filter approvals" value={pick}
+            onChange={(e) => onPick(e.target.value)}>
+            <option value="all">{`All (${data?.total ?? 0})`}</option>
+            {showTabs && (
+              <optgroup label="Workspace">
+                {sections.filter((sc) => sc.count > 0 || section === sc.id).map((sc) => (
+                  <option key={sc.id} value={`s:${sc.id}`}>{`${sc.id === 'ceo' ? 'CEO only' : sc.title} (${sc.count})`}</option>
+                ))}
+              </optgroup>
+            )}
+            <optgroup label="Type">
+              {allTypes.filter((t) => t.count > 0 || t.error || filter === t.type).map((t) => (
+                <option key={t.type} value={`t:${t.type}`}>{`${t.label} (${t.error ? '?' : t.count})`}</option>
+              ))}
+            </optgroup>
+          </Select>
+        </label>
       </div>
       {(() => {
         // Waiting in this login's other companies: counted, not listed.
@@ -362,24 +372,6 @@ function handedLabel(rows: Item[]): string {
   const until = ends.length === rows.filter((r) => r.handedOverTo).length && ends.length > 0
     ? ` until ${new Date(ends[ends.length - 1]!).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : ''
   return `Handed over to ${who}${until}`
-}
-
-function Chip({ on, onClick, label, count, error }: { on: boolean; onClick: () => void; label: string; count: number; error?: boolean }) {
-  return (
-    <button onClick={onClick} aria-pressed={on}
-      className="rounded-full px-3 py-2 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors"
-      style={on
-        ? { background: 'var(--erp-accent-dim)', border: '1px solid var(--erp-accent)', color: 'var(--text)' }
-        : { background: 'var(--surface)', border: '1px solid var(--border)', color: 'rgb(var(--fg-rgb) / 0.75)', opacity: count === 0 && !error ? 0.55 : 1 }}>
-      {label}
-      <span className="rounded-full px-1.5 text-[10px] font-black"
-        style={count > 0
-          ? { background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }
-          : { background: 'rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.5)' }}>
-        {error ? '?' : count}
-      </span>
-    </button>
-  )
 }
 
 function doneVerb(a: Action): string {

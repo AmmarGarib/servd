@@ -169,6 +169,8 @@ const poCreateSchema = z.object({
   expectedDate: z.string().optional().nullable(),
   reference:    z.string().optional().nullable(),
   notes:        z.string().optional().nullable(),
+  // Brand stock (owner B13 (a)): the brand that orders — its receipt's lots are that brand's (a brand of the supplier's company).
+  conceptId:    z.string().uuid().optional().nullable(),
   lines:        z.array(poLineSchema).min(1),
 })
 
@@ -766,6 +768,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         notes:    z.string().max(500).nullable().optional(),
         // The outlet the goods arrived at (one of the supplier's company's — else 422 LOCATION_NOT_IN_COMPANY).
         locationId: z.string().min(1).nullable().optional(),
+        // Brand stock (owner B13 (a)): whose stock it is — default the PO's brand, else the outlet's only brand.
+        conceptId: z.string().uuid().nullable().optional(),
         lines: z.array(z.object({
           poLineId:           z.string().uuid(),
           quantityReceived:   z.number().min(0),
@@ -785,6 +789,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         photoUrl: body.photoUrl ?? null,
         photoFiles,
         notes:    body.notes ?? null,
+        ...(body.conceptId !== undefined ? { conceptId: body.conceptId } : {}),
         lines:    body.lines.map((l) => ({
           poLineId:          l.poLineId,
           quantityReceived:  l.quantityReceived,

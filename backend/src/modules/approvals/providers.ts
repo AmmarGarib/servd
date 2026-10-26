@@ -26,6 +26,7 @@ import { shiftCorrections } from '../shiftCorrections/approvalProvider.js'
 import { locationPins } from '../locations/approvalProvider.js'
 import { socialConnections } from '../socialConnections/approvalProvider.js'
 import { stationChanges } from '../stations/approvalProvider.js'
+import { reservationOverbooks } from '../reservations/overbookProvider.js'
 import { karachiDay } from '../../connectors/util.js'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -1242,6 +1243,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   locationPins,
   socialConnections,
   stationChanges,
+  reservationOverbooks,
 ]
 
 export type { ProviderContext }

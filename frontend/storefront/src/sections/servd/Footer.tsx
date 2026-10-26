@@ -15,7 +15,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { formatBrandName } from '../../lib/concept'
 import { brandCanonical, brandOrigin, SERVD_ORIGIN } from '../../lib/brandDomains'
 import type { SectionProps } from '../types'
-import { color, link, list, safeHref, str } from '../safe'
+import { color, isHiddenLegalHref, link, list, safeHref, str } from '../safe'
 import './servd.css'
 
 interface LinkItem { text?: unknown; href?: unknown }
@@ -47,8 +47,8 @@ export function Footer({ fields }: SectionProps) {
   const accentText = str(fields.headlineAccent)
   const cta = link(fields.cta)
   const kitchens = list<{ name?: unknown; href?: unknown; dot?: unknown }>(fields.kitchens)
-  const customer = list<LinkItem>(fields.customerLinks)
-  const company = list<LinkItem>(fields.companyLines)
+  const customer = list<LinkItem>(fields.customerLinks).filter((l) => !isHiddenLegalHref(l.href))
+  const company = list<LinkItem>(fields.companyLines).filter((l) => !isHiddenLegalHref(l.href))
   const copyright = str(fields.copyright).replace(/\{year\}/g, String(new Date().getFullYear()))
   const tagline = str(fields.tagline)
   const blurb = str(fields.blurb)

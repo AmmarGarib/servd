@@ -30,8 +30,10 @@ import { subRecipeIdsForCompany } from '../par-sheet/routes.js'
 import { assertLocationOfCompany } from '../financePlanning/companyRefs.js'
 import { assertInt4Fits, sumCents, toCents, zInt4Cents } from '../../lib/money.js'
 import {
-  addLotTx, consumeFifoTx, ensureFifoReady, latestPurchaseCostCents, lockItemsTx, siteOnHandMany, STOCK_EPS, STOCK_SOURCE,
+  addLotTx, assertBrandOfCompany, consumeFifoTx, ensureFifoReady, latestPurchaseCostCents, lockItemsTx, siteOnHandMany, STOCK_EPS, STOCK_SOURCE,
+  type LotOwner,
 } from '../../lib/stockLedger.js'
+import { brandMoveTx } from '../stockTransfers/brandMove.js'
 import { stockHomeOf, stockSiteForDocument } from '../../lib/stockSite.js'
 import { postInventoryDocInSavepoint, postItemReclassTx, COUNT_SOURCE_TYPE, PREP_DRAW_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
 import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js'
@@ -150,6 +152,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       poId:       z.string().uuid().nullable().optional(),
       supplierId: z.string().uuid().nullable().optional(),
       locationId: z.string().uuid().nullable().optional(),
+      // Brand stock (owner B13 (a)): whose stock it is — default the PO's brand, else the outlet's only brand.
+      conceptId:  z.string().uuid().nullable().optional(),
       photoUrl:   z.string().url().nullable().optional(),
       photos:     z.array(zRecordFile).max(RECORD_FILES_MAX_PER_UPLOAD, `At most ${RECORD_FILES_MAX_PER_UPLOAD} photos`).optional(),
       notes:      z.string().max(500).nullable().optional(),
@@ -189,6 +193,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       poId:       body.poId ?? null,
       supplierId,
       locationId: body.locationId ?? null,
+      ...(body.conceptId !== undefined ? { conceptId: body.conceptId } : {}),
       photoUrl:   body.photoUrl ?? null,
       photoFiles,
       notes:      body.notes ?? null,
@@ -230,6 +235,9 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       unit:             z.string().max(20).default('g'),
       // The outlet the batch was made at (per-site stock, 2026-10-24): its inputs leave, and the prep item lands, there.
       locationId:       z.string().uuid().nullable().optional(),
+      // Brand stock (owner B13 (a)): the brand the batch is for — it draws that brand's lots, then shared ones, and the
+      // prep lot is that brand's. None = every lot at the site, and a shared prep lot (as before).
+      conceptId:        z.string().uuid().nullable().optional(),
       photoUrl:         z.string().url().nullable().optional(),
       notes:            z.string().max(500).nullable().optional(),
     }).parse(req.body)
@@ -239,6 +247,9 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     const tenantId = activeTenantId(req, 'a prep batch draws one company\'s stock')
     // Per-site stock (2026-10-24): a batch draws (and makes) stock at ONE site.
     const site = await stockSiteForDocument(prisma, tenantId, body.locationId)
+    await assertBrandOfCompany(prisma, tenantId, body.conceptId)
+    const batchBrand = body.conceptId ?? null
+    const drawOwner: LotOwner = batchBrand ? { conceptId: batchBrand, shared: true } : 'any'
 
     // The recipe is resolved inside the ACTIVE company (BOH-R2-04): a batch may
     // cite only a sub-recipe the company's brands use — the list the par sheet
@@ -341,8 +352,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       await lockItemsTx(tx, [...itemIds, ...(prep ? [prep.id] : [])])
       // Not enough on the site's lots fails the whole batch (no clamp): a draw
       // that did not happen is never recorded. Every short item is listed.
-      const onHand = await siteOnHandMany(tx, itemIds, site)
-      const orphan = site && site === await stockHomeOf(tx, tenantId) ? await siteOnHandMany(tx, itemIds, null) : new Map<string, number>()
+      const onHand = await siteOnHandMany(tx, itemIds, site, drawOwner)
+      const orphan = site && site === await stockHomeOf(tx, tenantId) ? await siteOnHandMany(tx, itemIds, null, drawOwner) : new Map<string, number>()
       const short = itemIds
         .map((id) => ({ id, need: drawByItem.get(id)!, have: (onHand.get(id) ?? 0) + (orphan.get(id) ?? 0) }))
         .filter((x) => x.need - x.have > 1e-9)
@@ -366,6 +377,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
           yieldVariancePct,
           staffId: req.staffUser!.id,
           locationId: site,
+          conceptId: batchBrand,
           photoUrl: body.photoUrl ?? null,
           notes: body.notes ?? null,
         },
@@ -381,7 +393,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
             tenantId, inventoryItemId: id, qty: drawByItem.get(id)!, kind: 'prep_draw',
             // A recipe batch's raw draw is a 12x0 → 12x0 move into the prep item (no cost of sales): its own source.
             sourceType: prep ? STOCK_SOURCE.prepInput : STOCK_SOURCE.prepBatch, sourceId: created.id, clamp: false,
-            locationId: site, occurredAt: created.createdAt, createdById: req.staffUser!.id,
+            locationId: site, occurredAt: created.createdAt, createdById: req.staffUser!.id, lotOwner: drawOwner,
           })
           value += r.valueCents
           for (const row of r.rows) {
@@ -409,6 +421,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
           tenantId, inventoryItemId: prep.id, qty: yieldQty, unitCostCents: Math.max(0, Math.round(value / yieldQty)), valueCents: value,
           kind: 'prep_make', lotSourceType: 'prep_batch', lotSourceId: created.id, movementSourceType: STOCK_SOURCE.prepBatch, movementSourceId: created.id,
           locationId: site, receivedAt: created.createdAt, createdById: req.staffUser!.id, costClass: toClass, useBy: prepUseBy,
+          conceptId: batchBrand,
         })
         // Inputs of another cost class move into the prep item's (12x0 → 12x0, the existing class-change posting).
         for (const c of COST_CLASSES) {
@@ -625,6 +638,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     const body = z.object({
       kind:       z.enum(['spot', 'opening']).default('spot'),
       locationId: z.string().uuid().nullable().optional(),
+      // Brand stock (owner B13 (a)): a count of ONE brand's stock at the site (recordPhysicalCountTx).
+      conceptId:  z.string().uuid().nullable().optional(),
       lines: z.array(z.object({
         inventoryItemId: z.string().uuid(),
         physicalQty:     z.number().min(0),
@@ -670,7 +685,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     if (body.kind === 'spot' && role !== 'admin') await assertCounterDidNotOrder(req.staffUser!.id, tenantId, site, ids)
     await ensureFifoReady(tenantId)
     const r = await prisma.$transaction((tx) => recordPhysicalCountTx(tx, {
-      tenantId, kind: body.kind, locationId: site, notes: body.notes ?? null, actorId: req.staffUser!.id,
+      tenantId, kind: body.kind, locationId: site, notes: body.notes ?? null, actorId: req.staffUser!.id, conceptId: body.conceptId ?? null,
       lines: body.lines.map((l) => ({ inventoryItemId: l.inventoryItemId, physicalQty: l.physicalQty, reason: l.reason ?? null, unitCostCents: l.unitCostCents ?? null })),
     }), TX_OPTS)
     await raiseCountFlags(r, req.staffUser!.id)
@@ -872,6 +887,15 @@ export interface RecordCountInput {
   actorId: string
   lines: CountLineInput[]
   /**
+   * Brand stock (owner B13 (a), 2026-10-26): a count of ONE brand's stock at the site. The book is the brand's own
+   * lots. Counted MORE than that: the difference is first taken from the site's SHARED lots (FIFO) and assigned to
+   * the brand by a brand move (stockTransfers/brandMove.ts — 'inventory.brand_move' re-tags the cost, no
+   * variance, no reason needed); only what the shared lots cannot cover is a count gain (a lot of the brand).
+   * Counted LESS: the loss comes out of the brand's own lots only. The shared lots are never written off by a brand
+   * count (count the site without a brand for that). Opening counts open the lot as the brand's.
+   */
+  conceptId?: string | null
+  /**
    * The company-assignment path: a company-less item's old history (pre-FIFO
    * deliveries, old counts) does not bar its opening count — only lots and
    * stock movements do (it has none: company-less stock never gets lots).
@@ -948,15 +972,23 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
   const ids = input.lines.map((l) => l.inventoryItemId)
   if (new Set(ids).size !== ids.length) throw new AppError('DUPLICATE_LINE', 'An item appears twice in the count', 400)
   await lockItemsTx(tx, ids)
-  // The book is the SITE's (per-site stock, 2026-10-24): what the counted site's lots hold.
+  // The book is the SITE's (per-site stock, 2026-10-24): what the counted site's lots hold — a brand count: the
+  // brand's own lots (brand stock, see RecordCountInput.conceptId).
   const site = input.locationId ?? await stockHomeOf(tx, input.tenantId)
+  const brand = input.conceptId ?? null
+  await assertBrandOfCompany(tx, input.tenantId, brand)
+  const bookOwner: LotOwner = brand ? { conceptId: brand, shared: false } : 'any'
   const rawItems = await tx.inventoryItem.findMany({
     where: { id: { in: ids }, deletedAt: null },
     select: { id: true, name: true, unit: true, tenantId: true, currentStock: true, unitCostCents: true },
   })
-  const onSite = await siteOnHandMany(tx, ids, site)
+  const isHome = !!site && site === await stockHomeOf(tx, input.tenantId)
+  const onSite = await siteOnHandMany(tx, ids, site, bookOwner)
   // Lots with no site (history before per-site stock) are the stock home's: they move there on the first write.
-  const orphan = site && site === await stockHomeOf(tx, input.tenantId) ? await siteOnHandMany(tx, ids, null) : new Map<string, number>()
+  const orphan = isHome ? await siteOnHandMany(tx, ids, null, bookOwner) : new Map<string, number>()
+  // A brand count may take the site's SHARED lots for the brand (assigned by a brand move, never a variance).
+  const sharedOnSite = brand && site ? await siteOnHandMany(tx, ids, site, { conceptId: null, shared: false }) : new Map<string, number>()
+  const sharedOrphan = brand && isHome ? await siteOnHandMany(tx, ids, null, { conceptId: null, shared: false }) : new Map<string, number>()
   const items = rawItems.map((i) => ({ ...i, currentStock: (onSite.get(i.id) ?? 0) + (orphan.get(i.id) ?? 0) }))
   const byId = new Map(items.map((i) => [i.id, i]))
   for (const id of ids) {
@@ -968,11 +1000,11 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
   if (input.kind === 'opening') await assertOpeningAllowed(tx, items, input.assignment === true)
 
   // Plan every line before writing anything.
-  type Plan = { line: CountLineInput; item: (typeof items)[number]; book: number; op: 'none' | 'loss' | 'gain' | 'opening'; cost: number; noCost: boolean }
+  type Plan = { line: CountLineInput; item: (typeof items)[number]; book: number; op: 'none' | 'loss' | 'gain' | 'opening'; cost: number; noCost: boolean; assign: number }
   const plans: Plan[] = []
   for (const line of input.lines) {
     const item = byId.get(line.inventoryItemId)!
-    const book = Math.abs(item.currentStock) < COUNT_EPS ? 0 : item.currentStock
+    let book = Math.abs(item.currentStock) < COUNT_EPS ? 0 : item.currentStock
     if (input.kind === 'opening') {
       if (!(line.physicalQty > COUNT_EPS)) throw new AppError('INVALID_QTY', `The opening count of ${item.name} needs a quantity above zero`, 422)
       const cost = line.unitCostCents ?? (await latestPurchaseCostCents(tx, item.id)) ?? item.unitCostCents
@@ -980,8 +1012,16 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
         throw new AppError('OPENING_COST_REQUIRED', `${item.name} has no purchase price or cost estimate — enter its unit cost for the opening count`, 422)
       }
       assertInt4Fits(cost, `${item.name}'s unit cost`)
-      plans.push({ line, item, book, op: 'opening', cost, noCost: false })
+      plans.push({ line, item, book, op: 'opening', cost, noCost: false, assign: 0 })
       continue
+    }
+    // Brand count: counted above the brand's own lots → first the shared lots at the site become the brand's.
+    let assign = 0
+    if (brand && site && line.physicalQty - book > COUNT_EPS) {
+      const shared = (sharedOnSite.get(item.id) ?? 0) + (sharedOrphan.get(item.id) ?? 0)
+      assign = Math.max(0, Math.min(line.physicalQty - book, shared))
+      if (assign < COUNT_EPS) assign = 0
+      book += assign
     }
     const diff = line.physicalQty - book
     const op = diff < -COUNT_EPS ? 'loss' : diff > COUNT_EPS ? 'gain' : 'none'
@@ -999,14 +1039,14 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
       noCost = c == null
       cost = c ?? 0
     }
-    plans.push({ line, item, book, op, cost, noCost })
+    plans.push({ line, item, book, op, cost, noCost, assign })
   }
 
   const countedAt = new Date()
   const count = await tx.physicalCount.create({
     data: {
       tenantId: input.tenantId, countedById: input.actorId, countedAt, notes: input.notes, status: 'completed',
-      kind: input.kind, locationId: site,
+      kind: input.kind, locationId: site, conceptId: brand,
     },
   })
   const shrinkage: RecordCountResult['shrinkage'] = []
@@ -1026,11 +1066,18 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
     })
     let valueCents: number | null = null
     let unitCostCents: number | null = null
+    if (p.assign > 0 && brand && site) {
+      // The shared stock the brand counted becomes the brand's (a brand move — no variance; the cost is re-tagged).
+      await brandMoveTx(tx, {
+        tenantId: input.tenantId, inventoryItemId: p.item.id, locationId: site, fromConceptId: null, toConceptId: brand,
+        qty: p.assign, unit: p.item.unit, actorId: input.actorId, at: countedAt, reason: `Assigned by count line ${row.id}`,
+      })
+    }
     if (p.op === 'loss') {
       const r = await consumeFifoTx(tx, {
         tenantId: input.tenantId, inventoryItemId: p.item.id, qty: p.book - physical, kind: 'count_loss',
         sourceType: STOCK_SOURCE.countLine, sourceId: row.id, clamp: false,
-        locationId: site, occurredAt: countedAt, createdById: input.actorId,
+        locationId: site, occurredAt: countedAt, createdById: input.actorId, lotOwner: bookOwner,
       })
       valueCents = -r.valueCents
       unitCostCents = r.takenQty > STOCK_EPS ? Math.round(r.valueCents / r.takenQty) : null
@@ -1040,7 +1087,7 @@ export async function recordPhysicalCountTx(tx: Tx, input: RecordCountInput): Pr
       await addLotTx(tx, {
         tenantId: input.tenantId, inventoryItemId: p.item.id, qty, unitCostCents: p.cost, kind,
         lotSourceType: kind, lotSourceId: row.id, movementSourceType: STOCK_SOURCE.countLine, movementSourceId: row.id,
-        locationId: site, receivedAt: countedAt, createdById: input.actorId,
+        locationId: site, receivedAt: countedAt, createdById: input.actorId, conceptId: brand,
       })
       valueCents = Math.round(qty * p.cost)   // = addLotTx's lot value
       unitCostCents = p.cost

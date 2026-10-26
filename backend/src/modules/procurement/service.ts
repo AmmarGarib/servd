@@ -31,7 +31,7 @@ import { postedOpeningBalances } from './openingBalance.js'
 import { assertItemsOfCompany } from './scope.js'
 import type { Prisma } from '@prisma/client'
 import { type DbMoney, assertInt4Fits, assertMoneyFits, toCents } from '../../lib/money.js'
-import { ensureFifoReady } from '../../lib/stockLedger.js'
+import { assertBrandOfCompany, ensureFifoReady } from '../../lib/stockLedger.js'
 import { flagException } from '../../lib/exceptions.js'
 import { audit } from '../../lib/audit.js'
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
@@ -91,6 +91,8 @@ export interface CreatePoInput {
   expectedDate?: string | null
   reference?: string | null
   notes?: string | null
+  /** The brand that orders (owner B13 (a)): a brand of the supplier's company (422 BRAND_NOT_IN_COMPANY). */
+  conceptId?: string | null
   lines: Array<{ inventoryItemId: string; quantityOrdered: number; unitCostCents: number; notes?: string | null }>
   createdBy: string
 }
@@ -113,6 +115,7 @@ export async function createPo(input: CreatePoInput) {
     throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before ordering from it', 422)
   }
   await assertItemsOfCompany(input.lines.map((l) => l.inventoryItemId), supplier.tenantId, supplier.name)
+  await assertBrandOfCompany(prisma, supplier.tenantId, input.conceptId)
 
   // A PO line's unit cost is INT4 (it becomes the item's stock cost); the
   // line total and the PO total are BIGINT (422, not a 500 at insert).
@@ -129,6 +132,7 @@ export async function createPo(input: CreatePoInput) {
       expectedDate: input.expectedDate ? new Date(input.expectedDate) : null,
       reference:    input.reference   ?? null,
       notes:        input.notes       ?? null,
+      conceptId:    input.conceptId   ?? null,
       totalCents,
       createdBy:    input.createdBy,
       status:       'draft',

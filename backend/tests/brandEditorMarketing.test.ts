@@ -74,7 +74,7 @@ describe('where Brands lives', () => {
   })
 
   it('marketing and brand_manager hold it by default (and through the grant); management and owner do not', () => {
-    expect(CEO_ONLY_MODULES).toEqual([])
+    expect(CEO_ONLY_MODULES).not.toContain('brands') // 'backups' is CEO-only since 2026-10-26 (owner S13)
     for (const r of ['admin', 'marketing', 'brand_manager'] as const) expect(DEFAULT_MODULE_ACCESS[r], r).toContain('brands')
     for (const r of ['management', 'owner', 'manager', 'hr', 'finance', 'fnb_manager'] as const) expect(DEFAULT_MODULE_ACCESS[r], r).not.toContain('brands')
     expect(MODULE_GRANTS).toContain('brands')

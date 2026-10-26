@@ -1,9 +1,7 @@
 import { redirect } from 'next/navigation'
 
-// Placeholder retired (D14). It described backups and exports that do not
-// exist; there is no backup screen to send anyone to, so this lands on the
-// Configuration hub. The gap stays recorded in lib/moduleCatalog.ts
-// (Integrations, webhooks & backups).
+// Backups live on CEO → Backups (owner S13, 2026-10-26): the weekly encrypted
+// database backup file, CEO only.
 export default function BackupConfigRedirect() {
-  redirect('/configuration')
+  redirect('/ceo/backups')
 }

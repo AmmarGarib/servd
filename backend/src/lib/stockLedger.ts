@@ -69,6 +69,34 @@
 // 'transfer_in'). Stock in transit is off the lots but still in the company's
 // 12x0 — lotValuation adds it back for the company total.
 //
+// BRANDS (owner B13 (a), 2026-10-26: "Each brand keeps its own stock even when
+// it shares a kitchen; moving stock between brands moves the cost between the
+// brands' P&Ls automatically"). Design:
+//   • A lot has an OWNING BRAND (StockLot.conceptId; NULL = shared — legacy
+//     lots, and an outlet with several brands until a brand count or a brand
+//     move assigns them). addLotTx takes `conceptId` (a brand of the item's
+//     company, else 422 BRAND_NOT_IN_COMPANY): a receipt's lots are the brand
+//     that ordered (GoodsReceipt / PurchaseOrder conceptId, else the outlet's
+//     only brand — procurement/receiving.ts), a count gain the counted brand's,
+//     a prep lot the batch's brand's.
+//   • consumeFifoTx draws by `lotOwner` (LotOwner below): a SALE (and a waste
+//     naming a brand) draws its brand's lots at the site FIFO, then the shared
+//     lots FIFO — never another brand's (a sale still never blocks: what is
+//     missing is a shortfall, as before; a later lot of that brand or a shared
+//     one settles it — settleShortfallsTx). Everything else (no brand named)
+//     draws every lot at the site, as before.
+//   • Moving stock between brands is a STOCK TRANSFER (modules/stockTransfers,
+//     brandMove — from = to outlet allowed only for it): the ship draws the
+//     FROM brand's lots ('transfer_out', FIFO at lot cost), transferInTx opens
+//     the lots at the TO brand and posts ONE balanced entry re-tagging the cost
+//     (inventoryPosting.ts postBrandMoveTx: Dr 12x0 tagged the new brand / Cr
+//     12x0 tagged the old) — no P&L at the move: the buyer's cost of sales
+//     carries it when it sells. Stock never moves across companies.
+//   • The postings keep the same 12x0 accounts in the same company; the goods
+//     receipt tags each Dr 12x0 with its lot's brand. Cost of sales stays
+//     tagged with the SELLING brand (accounting/cogs.ts), which now draws its
+//     own lots — so each brand's P&L carries the price of its own stock.
+//
 // Movement source conventions (STOCK_SOURCE below) — the postings read the
 // rows back by them: a sale line 'order_item.sale' + OrderItem.id; a waste
 // 'waste_log' + WasteLog.id (create the log first or pre-generate its id); a
@@ -133,6 +161,12 @@ export const STOCK_SOURCE = {
 
 /** ItemPriceHistory sources that are PURCHASE prices (the only kind it holds since wave B). */
 export const PURCHASE_PRICE_SOURCES = ['po_receive', 'dock_receive', 'bill_match'] as const
+
+/**
+ * Which lots a draw may take (see BRANDS in the header): `conceptId` = the brand whose lots come first (NULL = only
+ * the shared lots); `shared` = then the shared (NULL-brand) lots too. 'any' = every lot at the site, FIFO (no brand).
+ */
+export type LotOwner = { conceptId: string | null; shared: boolean } | 'any'
 
 export interface MovementRow { id: string; lotId: string | null; inventoryItemId: string; qty: number; valueCents: number; costClass: CostClass }
 
@@ -346,17 +380,31 @@ export async function siteOnHand(db: Db, itemId: string, site: string | null): P
 }
 
 /** On hand per item at one site (null = no-site lots), for many items. A site's view of every reader. */
-export async function siteOnHandMany(db: Db, itemIds: string[], site: string | null): Promise<Map<string, number>> {
+export async function siteOnHandMany(db: Db, itemIds: string[], site: string | null, owner: LotOwner = 'any'): Promise<Map<string, number>> {
   const out = new Map<string, number>()
   if (itemIds.length === 0) return out
   const rows = await db.stockLot.groupBy({
-    by: ['inventoryItemId'], where: { inventoryItemId: { in: itemIds }, locationId: site }, _sum: { remainingQty: true },
+    by: ['inventoryItemId'], where: { inventoryItemId: { in: itemIds }, locationId: site, ...lotOwnerWhere(owner) }, _sum: { remainingQty: true },
   })
   for (const r of rows) {
     const q = r._sum.remainingQty ?? 0
     out.set(r.inventoryItemId, Math.abs(q) < LOT_OPEN_EPS ? 0 : q)
   }
   return out
+}
+
+/** The lot filter of a LotOwner (brand stock, see the header). */
+export function lotOwnerWhere(owner: LotOwner): Prisma.StockLotWhereInput {
+  if (owner === 'any') return {}
+  if (owner.conceptId === null) return { conceptId: null }
+  return owner.shared ? { OR: [{ conceptId: owner.conceptId }, { conceptId: null }] } : { conceptId: owner.conceptId }
+}
+
+/** 422 BRAND_NOT_IN_COMPANY unless `conceptId` (when given) is a brand of `tenantId`. */
+export async function assertBrandOfCompany(db: Db, tenantId: string, conceptId: string | null | undefined): Promise<void> {
+  if (!conceptId) return
+  const ok = await db.concept.findFirst({ where: { id: conceptId, tenantId }, select: { id: true } })
+  if (!ok) throw new AppError('BRAND_NOT_IN_COMPANY', 'That brand does not belong to this company — stock never moves across companies', 422)
 }
 
 // ─── Reading ─────────────────────────────────────────────────────────────────
@@ -439,17 +487,23 @@ export async function latestCostsMany(db: Db, itemIds: string[]): Promise<Map<st
  * still in its 12x0 (−Σ transfer movement value); a site's (`locationId`)
  * is only what its lots hold.
  */
-export async function lotValuation(db: Db, tenantId: string, asOf?: Date, o: { locationId?: string } = {}): Promise<Record<CostClass, number>> {
+export async function lotValuation(db: Db, tenantId: string, asOf?: Date, o: { locationId?: string; conceptId?: string | null } = {}): Promise<Record<CostClass, number>> {
   const out = zeroByClass()
   const site = o.locationId ? { locationId: o.locationId } : {}
+  // Brand stock (owner B13 (a)): one brand's lots (NULL = the shared ones). Off the lots in transit is left out.
+  const brand = o.conceptId !== undefined ? { conceptId: o.conceptId } : {}
   if (!asOf) {
-    const rows = await db.stockLot.groupBy({ by: ['costClass'], where: { tenantId, ...site }, _sum: { remainingValueCents: true } })
+    const rows = await db.stockLot.groupBy({ by: ['costClass'], where: { tenantId, ...site, ...brand }, _sum: { remainingValueCents: true } })
     for (const r of rows) out[asClass(r.costClass)] += sumCents(r._sum.remainingValueCents)
   } else {
-    const rows = await db.stockMovement.groupBy({ by: ['costClass'], where: { tenantId, ...site, occurredAt: { lte: asOf } }, _sum: { valueCents: true } })
+    const rows = await db.stockMovement.groupBy({
+      by: ['costClass'],
+      where: { tenantId, ...site, occurredAt: { lte: asOf }, ...(o.conceptId !== undefined ? { lot: { conceptId: o.conceptId } } : {}) },
+      _sum: { valueCents: true },
+    })
     for (const r of rows) out[asClass(r.costClass)] += sumCents(r._sum.valueCents)
   }
-  if (!o.locationId) {
+  if (!o.locationId && o.conceptId === undefined) {
     const transit = await inTransitByClass(db, tenantId, asOf)
     for (const c of COST_CLASSES) out[c] += transit[c]
   }
@@ -474,6 +528,7 @@ interface OpenLot {
   id: string
   tenantId: string
   locationId: string | null
+  conceptId: string | null
   inventoryItemId: string
   costClass: string
   unitCostCents: number
@@ -482,16 +537,19 @@ interface OpenLot {
 }
 
 const OPEN_LOT_SELECT = {
-  id: true, tenantId: true, locationId: true, inventoryItemId: true, costClass: true, unitCostCents: true, remainingQty: true, remainingValueCents: true,
+  id: true, tenantId: true, locationId: true, conceptId: true, inventoryItemId: true, costClass: true, unitCostCents: true, remainingQty: true, remainingValueCents: true,
 } satisfies Prisma.StockLotSelect
 
-async function openLotsTx(tx: Tx, itemId: string, site: string | null): Promise<OpenLot[]> {
+/** The open lots a draw may take, in the order it takes them: the brand's FIFO, then the shared FIFO ('any': all FIFO). */
+async function openLotsTx(tx: Tx, itemId: string, site: string | null, owner: LotOwner = 'any'): Promise<OpenLot[]> {
   const lots = await tx.stockLot.findMany({
-    where: { inventoryItemId: itemId, locationId: site, remainingQty: { gt: LOT_OPEN_EPS } },
+    where: { inventoryItemId: itemId, locationId: site, remainingQty: { gt: LOT_OPEN_EPS }, ...lotOwnerWhere(owner) },
     orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
     select: OPEN_LOT_SELECT,
   })
-  return lots.map((l) => ({ ...l, remainingValueCents: toCents(l.remainingValueCents) }))
+  const out = lots.map((l) => ({ ...l, remainingValueCents: toCents(l.remainingValueCents) }))
+  if (owner === 'any' || owner.conceptId === null) return out
+  return [...out.filter((l) => l.conceptId === owner.conceptId), ...out.filter((l) => l.conceptId === null)]
 }
 
 interface Draw { lot: OpenLot; take: number; value: number; empties: boolean }
@@ -544,6 +602,11 @@ export async function consumeFifoTx(tx: Tx, a: {
   brandShares?: Array<{ conceptId: string; share: number }>; occurredAt: Date; createdById?: string | null
   /** Draw these lots first (a supplier return takes the bill's own lots), then FIFO — only lots at the site. */
   preferLotIds?: string[]
+  /**
+   * Which lots (brand stock, see the header). Default: a 'sale' or a 'waste' with a `conceptId` draws that brand's
+   * lots, then the shared ones; anything else every lot at the site ('any').
+   */
+  lotOwner?: LotOwner
 }): Promise<ConsumeResult> {
   if (!CONSUME_KINDS.has(a.kind)) throw new AppError('BAD_MOVEMENT_KIND', `consumeFifoTx cannot write a '${a.kind}' movement`, 500)
   if (a.clamp && a.kind !== 'sale') throw new AppError('CLAMP_SALES_ONLY', 'Only a sale may take more than the lots hold', 500)
@@ -569,7 +632,10 @@ export async function consumeFifoTx(tx: Tx, a: {
 
   const site = await resolveSiteTx(tx, item, a.locationId)
   await assertStockOnLots(tx, item, site)
-  let lots = await openLotsTx(tx, item.id, site)
+  const owner: LotOwner = a.lotOwner
+    ?? ((a.kind === 'sale' || a.kind === 'waste') && a.conceptId ? { conceptId: a.conceptId, shared: true } : 'any')
+  if (a.lotOwner && a.lotOwner !== 'any') await assertBrandOfCompany(tx, item.tenantId, a.lotOwner.conceptId)
+  let lots = await openLotsTx(tx, item.id, site, owner)
   for (const l of lots) if (l.tenantId !== item.tenantId) throw crossCompany(`A lot of ${item.name}`)
   if (a.preferLotIds && a.preferLotIds.length > 0) {
     const byId = new Map(lots.map((l) => [l.id, l]))
@@ -591,7 +657,7 @@ export async function consumeFifoTx(tx: Tx, a: {
     const onHand = lots.reduce((s, l) => s + l.remainingQty, 0)
     throw new AppError(
       'NEGATIVE_STOCK',
-      `Only ${fmtQty(onHand)} ${item.unit} of ${item.name} on hand${site ? ' at this site' : ''} — ${fmtQty(a.qty)} ${item.unit} cannot be taken. Count it or receive it first.`,
+      `Only ${fmtQty(onHand)} ${item.unit} of ${item.name} on hand${site ? ' at this site' : ''}${owner === 'any' ? '' : owner.conceptId ? (owner.shared ? ' for this brand (its own and shared stock)' : ' for this brand') : ' as shared stock'} — ${fmtQty(a.qty)} ${item.unit} cannot be taken. Count it or receive it first.`,
       422,
     )
   }
@@ -1050,6 +1116,8 @@ export async function addLotTx(tx: Tx, a: {
   costClass?: CostClass
   /** Use-by day (owner B6, 2026-10-26; a UTC-midnight Date of the Karachi day — lib/useBy.ts). Record only. */
   useBy?: Date | null
+  /** The owning brand (owner B13 (a); null / omitted = shared). A brand of the item's company, else 422 BRAND_NOT_IN_COMPANY. */
+  conceptId?: string | null
 }): Promise<{ lotId: string; movementId: string; settled?: { valueCents: number }; issued?: { valueCents: number } }> {
   if (!a.lotSourceId || !a.movementSourceType || !a.movementSourceId) {
     throw new AppError('STOCK_MISSING_SOURCE', 'A stock lot needs its source document', 500)
@@ -1085,6 +1153,7 @@ export async function addLotTx(tx: Tx, a: {
     return { lotId: existing.id, movementId: m?.id ?? '' }
   }
 
+  await assertBrandOfCompany(tx, item.tenantId, a.conceptId)
   const site = await resolveSiteTx(tx, item, a.locationId)
   if (a.kind !== 'fifo_cutover') {
     const hasLots = a.kind === 'opening' ? (await tx.stockLot.count({ where: { inventoryItemId: item.id } })) > 0 : true
@@ -1094,7 +1163,7 @@ export async function addLotTx(tx: Tx, a: {
   const costClass = a.costClass ?? costClassOf(item.category)
   const lot = await tx.stockLot.create({
     data: {
-      tenantId: item.tenantId, inventoryItemId: item.id, locationId: site,
+      tenantId: item.tenantId, inventoryItemId: item.id, locationId: site, conceptId: a.conceptId ?? null,
       sourceType: a.lotSourceType, sourceId: a.lotSourceId, receiptLineId: a.receiptLineId ?? null,
       costClass, receivedAt: a.receivedAt, qtyIn: a.qty, remainingQty: a.qty, unitCostCents: a.unitCostCents,
       valueInCents: value, remainingValueCents: value, useBy: a.useBy ?? null,
@@ -1116,13 +1185,13 @@ export async function addLotTx(tx: Tx, a: {
   let issued: { valueCents: number } | undefined
   if (a.kind === 'prep_make') {
     // A prep batch's yield settles the site's open sale shortfalls of the prep item, like a delivery would.
-    const lotNow = { id: lot.id, tenantId: item.tenantId, locationId: site, inventoryItemId: item.id, costClass, unitCostCents: a.unitCostCents, remainingQty: a.qty, remainingValueCents: value }
+    const lotNow = { id: lot.id, tenantId: item.tenantId, locationId: site, conceptId: a.conceptId ?? null, inventoryItemId: item.id, costClass, unitCostCents: a.unitCostCents, remainingQty: a.qty, remainingValueCents: value }
     const s = await settleShortfallsTx(tx, item, lotNow, a.receivedAt)
     if (s > 0) settled = { valueCents: s }
   }
   if (a.kind === 'receipt') {
     await recordPurchasePriceTx(tx, item, a)
-    const lotNow = { id: lot.id, tenantId: item.tenantId, locationId: site, inventoryItemId: item.id, costClass, unitCostCents: a.unitCostCents, remainingQty: a.qty, remainingValueCents: value }
+    const lotNow = { id: lot.id, tenantId: item.tenantId, locationId: site, conceptId: a.conceptId ?? null, inventoryItemId: item.id, costClass, unitCostCents: a.unitCostCents, remainingQty: a.qty, remainingValueCents: value }
     const s = await settleShortfallsTx(tx, item, lotNow, a.receivedAt)
     if (s > 0) settled = { valueCents: s }
     if (item.issueOnReceipt) {
@@ -1207,7 +1276,11 @@ export async function deadShortfallSaleIdsTx(db: Db, tenantId: string, sales: Ar
 async function settleShortfallsTx(tx: Tx, item: StockItem, lot: LotNow, receivedAt: Date): Promise<number> {
   const from = new Date(receivedAt.getTime() - SHORTFALL_SETTLE_DAYS * DAY_MS)
   const sales = await tx.stockMovement.findMany({
-    where: { tenantId: item.tenantId, inventoryItemId: item.id, locationId: lot.locationId, kind: 'sale', shortfallQty: { gt: STOCK_EPS }, occurredAt: { gte: from } },
+    where: {
+      tenantId: item.tenantId, inventoryItemId: item.id, locationId: lot.locationId, kind: 'sale', shortfallQty: { gt: STOCK_EPS }, occurredAt: { gte: from },
+      // Brand stock: a brand's lot settles only its own brand's (and brand-less) sales; a shared lot settles any.
+      ...(lot.conceptId ? { OR: [{ conceptId: lot.conceptId }, { conceptId: null }] } : {}),
+    },
     orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
     select: { id: true, shortfallQty: true, orderId: true, orderItemId: true, conceptId: true, locationId: true, sourceType: true, sourceId: true },
   })
@@ -1307,14 +1380,21 @@ async function issueOnReceiptTx(tx: Tx, item: StockItem, lot: LotNow, receivedAt
 export async function transferInTx(tx: Tx, a: {
   tenantId: string; inventoryItemId: string; transferId: string; toLocationId: string; receivedAt: Date; createdById?: string | null
   settle?: boolean
+  /**
+   * The brand that owns the arrived lots (brand stock, see the header; null = shared). Omitted = each arrived lot keeps
+   * its source lot's brand. When the owner changes, ONE entry 'inventory.brand_move:<transferId>' re-tags the cost
+   * (inventoryPosting.ts postBrandMoveTx: Dr 12x0 new brand / Cr 12x0 old brand).
+   */
+  toConceptId?: string | null
 }): Promise<{ lotIds: string[]; qty: number; valueCents: number }> {
   const item = await itemForWrite(tx, a.inventoryItemId, a.tenantId)
+  if (a.toConceptId !== undefined) await assertBrandOfCompany(tx, item.tenantId, a.toConceptId)
   const site = await resolveSiteTx(tx, item, a.toLocationId)
   if (!site) throw new AppError('LOCATION_REQUIRED', 'A transfer arrives at a site', 422)
   const outs = await tx.stockMovement.findMany({
     where: { tenantId: item.tenantId, inventoryItemId: item.id, kind: 'transfer_out', sourceType: STOCK_SOURCE.transferShip, sourceId: a.transferId },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    select: { lotId: true, lotKey: true, qty: true, valueCents: true, unitCostCents: true, costClass: true, lot: { select: { receivedAt: true, useBy: true } } },
+    select: { lotId: true, lotKey: true, qty: true, valueCents: true, unitCostCents: true, costClass: true, lot: { select: { receivedAt: true, useBy: true, conceptId: true } } },
   })
   // Price differences re-priced onto the units in transit (repriceLotTx: lot-less rows, lotKey 'reprice:<lotId>:…').
   const adjBySourceLot = new Map<string, number>()
@@ -1335,6 +1415,7 @@ export async function transferInTx(tx: Tx, a: {
     return { lotIds: prior.map((p) => p.id), qty: prior.reduce((t, p) => t + p.qtyIn, 0), valueCents: prior.reduce((t, p) => t + toCents(p.valueInCents), 0) }
   }
   await assertStockOnLots(tx, item, site)
+  const brandParts: Array<{ costClass: CostClass; fromConceptId: string | null; toConceptId: string | null; cents: number }> = []
   for (const o of outs) {
     if (!o.lotId) continue
     const q = -o.qty
@@ -1345,6 +1426,7 @@ export async function transferInTx(tx: Tx, a: {
     const lot = await tx.stockLot.create({
       data: {
         tenantId: item.tenantId, inventoryItemId: item.id, locationId: site, sourceType: 'transfer_in', sourceId: `${a.transferId}:${o.lotId}`,
+        conceptId: a.toConceptId !== undefined ? a.toConceptId : (o.lot?.conceptId ?? null),
         costClass: toClass, receivedAt: o.lot?.receivedAt ?? a.receivedAt, qtyIn: q, remainingQty: q, unitCostCents: unitCost,
         valueInCents: v, remainingValueCents: v,
         // The use-by travels with the food (owner B6): the arrived lot keeps the shipped lot's day.
@@ -1371,9 +1453,16 @@ export async function transferInTx(tx: Tx, a: {
       const { postItemReclassTx } = await import('../modules/accounting/inventoryPosting.js')
       await postItemReclassTx(tx, { itemId: item.id, auditLogId: `transfer:${a.transferId}:${lot.id}`, fromClass: asClass(o.costClass), toClass, valueCents: v })
     }
+    const fromBrand = o.lot?.conceptId ?? null
+    const toBrand = a.toConceptId !== undefined ? a.toConceptId : fromBrand
+    if (fromBrand !== toBrand && v > 0) brandParts.push({ costClass: toClass, fromConceptId: fromBrand, toConceptId: toBrand, cents: v })
     lotIds.push(lot.id)
     qty += q
     value += v
+  }
+  if (brandParts.length > 0) {
+    const { postBrandMoveTx } = await import('../modules/accounting/inventoryPosting.js')
+    await postBrandMoveTx(tx, { tenantId: item.tenantId, transferId: a.transferId, itemId: item.id, at: a.receivedAt, parts: brandParts })
   }
   await syncItemTx(tx, item.id)
   if (a.settle !== false) await settleTransferLotsTx(tx, { tenantId: item.tenantId, inventoryItemId: item.id, lotIds, at: a.receivedAt })

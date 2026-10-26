@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { posApi, type ZReport } from '../../../lib/api'
 import { usePosStore } from '../../../store/pos'
 import { useAuthStore } from '../../../store/auth'
@@ -55,6 +56,8 @@ export default function ShiftPage() {
     onSuccess: (report) => {
       setCloseBlock(null)
       setZReport(report)
+      // A sign-in lasts one shift (owner B1, 2026-10-26): closing your drawer signs you out shortly.
+      toast.info('Shift closed. You will be signed out in 5 minutes — print the Z-report now.', { id: 'shift-closed-signout', duration: 15_000 })
       setShiftId(null)
       void current.refetch()
     },

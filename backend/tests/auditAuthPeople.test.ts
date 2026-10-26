@@ -143,7 +143,8 @@ describe('PPL-06: staff admin is company-scoped for every admin', () => {
     expect((await call(ceoB, 'PATCH', `/users/${aCashier.id}`, { role: 'hr', tenantId: tenantB, tenantIds: [tenantB] })).statusCode).toBe(404)
     expect((await call(ceoB, 'DELETE', `/users/${aCashier.id}`)).statusCode).toBe(404)
     expect((await call(ceoB, 'POST', `/users/${aCashier.id}/reissue-password`, {})).statusCode).toBe(404)
-    expect((await call(ceoB, 'POST', `/users/${aCashier.id}/2fa/reset`, {})).statusCode).toBe(404)
+    // Two-step sign-in is retired (owner, 2026-10-26): the reset answers 410 for everyone.
+    expect((await call(ceoB, 'POST', `/users/${aCashier.id}/2fa/reset`, {})).statusCode).toBe(410)
     expect((await call(ceoB, 'PATCH', `/staff/${aPending.id}/approve`, {})).statusCode).toBe(404)
     expect((await call(ceoB, 'PATCH', `/staff/${aPending.id}/reject`, {})).statusCode).toBe(404)
 
@@ -224,12 +225,12 @@ describe('PPL-06: staff admin is company-scoped for every admin', () => {
     const asB = { 'x-servd-active-tenant': tenantB }
     expect((await call(owner, 'PATCH', `/users/${aFoh.id}`, { role: 'cashier' }, asB)).statusCode).toBe(200)
     expect((await call(owner, 'POST', `/users/${aFoh.id}/reissue-password`, {}, asB)).statusCode).toBe(200)
-    expect((await call(owner, 'POST', `/users/${aFoh.id}/2fa/reset`, {}, asB)).statusCode).toBe(200)
+    expect((await call(owner, 'POST', `/users/${aFoh.id}/2fa/reset`, {}, asB)).statusCode).toBe(410) // retired 2026-10-26
     expect((await call(owner, 'DELETE', `/users/${aFoh.id}`, undefined, asB)).statusCode).toBe(204)
 
     const rows = await prisma.auditLog.findMany({ where: { entityId: aFoh.id }, select: { action: true, tenantId: true, userId: true, metadata: true } })
     const byAction = new Map(rows.map((r) => [r.action, r]))
-    for (const action of ['user.role_change', 'user.password_reissue', 'user.2fa_reset', 'user.delete']) {
+    for (const action of ['user.role_change', 'user.password_reissue', 'user.delete']) {
       expect(byAction.get(action), action).toMatchObject({ tenantId: tenantA, userId: owner.id })
       expect((byAction.get(action)!.metadata as { actorTenantId: string }).actorTenantId).toBe(tenantB)
     }

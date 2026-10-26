@@ -146,6 +146,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   location_pin: spec(() => '/configuration/locations'),
   social_connection: spec(() => '/calendar/social'),
   station_change: spec(() => '/kds/config'),
+  reservation_overbook: spec(() => '/reservations'),
 }
 
 /** The inbox, filtered to the type (every login may open it). */
@@ -267,6 +268,18 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       const b = await db.concept.findUnique({ where: { id: r.conceptId }, select: { name: true } })
       const name = (r.changes as { name?: string } | null)?.name
       return { ref: `${r.kind === 'create' ? 'New kitchen station' : 'Kitchen station change'}${name ? ` "${name}"` : ''} — ${b?.name ?? 'a brand'}` }
+    }
+    case 'reservation_overbook': {
+      const r = await db.reservationOverbookRequest.findUnique({ where: { id }, select: { kind: true, conceptId: true, reservationId: true } })
+      if (!r) return null
+      const [b, res] = await Promise.all([
+        db.concept.findUnique({ where: { id: r.conceptId }, select: { name: true } }),
+        db.reservation.findUnique({ where: { id: r.reservationId }, select: { guestName: true, partySize: true } }),
+      ])
+      return {
+        ref: `${r.kind === 'create' ? 'Booking past capacity' : 'Booking change past capacity'} — ${res?.guestName ?? 'a guest'} at ${b?.name ?? 'a brand'}`,
+        ...(res && { detail: `party of ${res.partySize}` }),
+      }
     }
     case 'location_pin': {
       const l = await db.location.findUnique({ where: { id }, select: { name: true } })

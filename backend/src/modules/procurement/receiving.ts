@@ -59,7 +59,7 @@ import { MANAGERS } from '../auth/middleware.js'
 import { assertInt4Fits, assertMoneyFits, toCents } from '../../lib/money.js'
 import { toPurchaseUnits } from '../../lib/recipeCost.js'
 import { costClassOf, type CostClass } from '../../lib/inventoryClass.js'
-import { addLotTx, ensureFifoReady, lockItemsTx, STOCK_SOURCE } from '../../lib/stockLedger.js'
+import { addLotTx, assertBrandOfCompany, ensureFifoReady, lockItemsTx, STOCK_SOURCE } from '../../lib/stockLedger.js'
 import { postGoodsReceiptTx } from '../accounting/inventoryPosting.js'
 import { writeRecordFilesTx, type DecodedRecordFile, type RecordFileMeta } from '../../lib/recordFiles.js'
 import { audit } from '../../lib/audit.js'
@@ -82,6 +82,33 @@ export type DiscrepancyReason = 'short_shipment' | 'over_shipment' | 'damaged' |
 
 type Tx = Prisma.TransactionClient
 const EPS = 1e-9
+
+// ─── The receipt's brand (owner B13 (a), 2026-10-26) ─────────────────────────
+
+/**
+ * Whose stock a receipt is: the brand named (a brand of the company, else 422 BRAND_NOT_IN_COMPANY; null = shared),
+ * else the PO's brand, else the receiving outlet's only live brand of the company, else shared (null).
+ */
+export async function receiptBrandTx(tx: Tx, tenantId: string, named: string | null | undefined, poId: string | null, locationId: string | null): Promise<string | null> {
+  if (named !== undefined) {
+    await assertBrandOfCompany(tx, tenantId, named)
+    return named
+  }
+  if (poId) {
+    const po = await tx.purchaseOrder.findUnique({ where: { id: poId }, select: { conceptId: true } })
+    if (po?.conceptId) {
+      await assertBrandOfCompany(tx, tenantId, po.conceptId)
+      return po.conceptId
+    }
+  }
+  if (locationId) {
+    const links = await tx.conceptLocation.findMany({
+      where: { locationId, concept: { tenantId, deletedAt: null } }, select: { conceptId: true }, take: 2,
+    })
+    if (links.length === 1) return links[0]!.conceptId
+  }
+  return null
+}
 
 // ─── receiveGoodsTx — the one stock-in contract ──────────────────────────────
 
@@ -120,6 +147,11 @@ export interface ReceiveGoodsInput {
    *  USE_BY_REQUIRED). A cash buy (petty cash / cash request) records one only when typed or defaulted. */
   requireUseBy?: boolean
   settledBy?: SettledBy
+  /**
+   * Brand stock (owner B13 (a)): the brand whose stock this is. Omitted = the PO's brand, else the receiving outlet's
+   * only live brand, else shared (null). A brand of the receiving company, else 422 BRAND_NOT_IN_COMPANY.
+   */
+  conceptId?: string | null
   /** Receipt extras the dock / PO routes record. */
   photoUrl?: string | null
   notes?: string | null
@@ -195,6 +227,9 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
       throw new AppError('LOCATION_NOT_IN_COMPANY', 'That outlet is not one of this company\'s', 422)
     }
   }
+
+  // ── Brand (owner B13 (a)): whose stock the lots are ──
+  const conceptId = await receiptBrandTx(tx, tenantId, input.conceptId, input.poId ?? null, input.locationId ?? null)
 
   // ── Items + PO lines ──
   const itemIds = [...new Set(input.lines.map((l) => l.inventoryItemId))]
@@ -283,6 +318,7 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
         varianceFlag:       input.varianceFlag ?? false,
         tenantId,
         locationId:         input.locationId ?? null,
+        conceptId,
         settledByType:      settled?.kind ?? null,
         settledById:        settled?.id ?? null,
         settledAccountCode: settled?.creditAccountCode ?? null,
@@ -324,7 +360,7 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
       const lotArgs = {
         tenantId, inventoryItemId: p.item.id, kind: 'receipt' as const, lotSourceType: 'goods_receipt_line' as const,
         movementSourceType: STOCK_SOURCE.receiptLine, movementSourceId: rl.id, receiptLineId: rl.id,
-        locationId: input.locationId ?? null, receivedAt, createdById: input.receivedById, useBy: p.useBy,
+        locationId: input.locationId ?? null, receivedAt, createdById: input.receivedById, useBy: p.useBy, conceptId,
       }
       // 1. Quantity a bill already charged for (oldest bill first): at the billed price.
       if (p.poLine && !settled) {
@@ -415,6 +451,8 @@ export interface ReceiveGoodsRequest {
   supplierId?: string | null
   /** The outlet the goods arrived at — one of the supplier's company's locations. */
   locationId?: string | null
+  /** Brand stock (owner B13 (a)): whose stock it is (receiptBrandTx — omitted = the PO's brand, else the outlet's only brand). */
+  conceptId?:  string | null
   photoUrl?:   string | null
   /** Dock-door photos uploaded with the delivery (owner, 2026-10-16: files, not a URL) — already decoded
    *  by lib/recordFiles.ts decodeRecordFiles; saved as record files of the receipt in its transaction. */
@@ -600,6 +638,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
       supplierId: supplier.id,
       ...(po ? { poId: po.id } : {}),
       locationId: input.locationId ?? null,
+      ...(input.conceptId !== undefined ? { conceptId: input.conceptId } : {}),
       receivedById: input.actor.id,
       photoUrl: input.photoUrl ?? null,
       notes: input.notes ?? null,

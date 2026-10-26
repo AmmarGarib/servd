@@ -192,8 +192,6 @@ function pageLinks(): string[] {
     `- ${SERVD_ORIGIN}/faq : questions and answers`,
     `- ${SERVD_ORIGIN}/contact : contact servd`,
     `- ${SERVD_ORIGIN}/reserve : book a table`,
-    `- ${SERVD_ORIGIN}/privacy : privacy policy`,
-    `- ${SERVD_ORIGIN}/terms : terms of use`,
     `- ${SERVD_ORIGIN}/llms.txt : short map of the site`,
     '',
   ]

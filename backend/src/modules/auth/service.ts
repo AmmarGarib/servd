@@ -2,8 +2,8 @@ import bcrypt from 'bcryptjs'
 import { normalisePhone } from './otp.js'
 import { OTP_LOGIN_ROLES, usesOtpLogin } from './middleware.js'
 import type { Prisma } from '@prisma/client'
-import jwt, { type SignOptions } from 'jsonwebtoken'
-import { isTwoFactorEnabled, startLoginChallenge } from './twoFactor.js'
+import jwt from 'jsonwebtoken'
+import { staffSessionEndsAt, endedByDrawerClose, MAX_SESSION_MS } from './sessionEnd.js'
 import { nanoid } from 'nanoid'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError, UnauthorizedError } from '../../lib/errors.js'
@@ -17,8 +17,16 @@ if (!process.env['JWT_SECRET'] || !process.env['JWT_REFRESH_SECRET']) {
 }
 const JWT_SECRET = process.env['JWT_SECRET'] as string
 const JWT_REFRESH_SECRET = process.env['JWT_REFRESH_SECRET'] as string
-const JWT_ACCESS_EXPIRY: SignOptions['expiresIn']  = (process.env['JWT_ACCESS_EXPIRY']  ?? '15m') as SignOptions['expiresIn']
-const JWT_REFRESH_EXPIRY: SignOptions['expiresIn'] = (process.env['JWT_REFRESH_EXPIRY'] ?? '7d')  as SignOptions['expiresIn']
+// Access tokens: JWT_ACCESS_EXPIRY ('15m', '900', '1h'), default 15 minutes.
+// Refresh tokens live exactly until the shift's end (auth/sessionEnd.ts), so
+// JWT_REFRESH_EXPIRY is no longer read (owner B1, 2026-10-26).
+function durationSec(v: string | undefined, dflt: number): number {
+  const m = /^(\d+)\s*([smhd]?)$/.exec((v ?? '').trim())
+  if (!m) return dflt
+  const n = Number(m[1])
+  return n * ({ '': 1, s: 1, m: 60, h: 3600, d: 86400 } as Record<string, number>)[m[2] ?? '']!
+}
+const JWT_ACCESS_SEC = durationSec(process.env['JWT_ACCESS_EXPIRY'], 15 * 60)
 
 export interface StaffTokenPayload {
   sub: string   // user ID
@@ -26,7 +34,9 @@ export interface StaffTokenPayload {
   // /workforce don't have an address yet. Login mints empty string for those.
   email: string | null
   role: string
-  type: 'access' | 'refresh' | 'mfa'
+  type: 'access' | 'refresh'
+  /** When this sign-in ends (epoch seconds) — one shift (owner B1, 2026-10-26; auth/sessionEnd.ts). */
+  se?: number
 }
 
 export interface CustomerTokenPayload {
@@ -69,21 +79,22 @@ export async function staffLogin(email: string, password: string) {
   const valid = await bcrypt.compare(password, user.password)
   if (!valid) throw new UnauthorizedError('Invalid credentials')
 
-  // Second factor, if this account has one. The password is already verified at
-  // this point and deliberately so: sending a code before checking it would let
-  // anyone who knows an address flood that person's WhatsApp, and the fact that
-  // a code was sent at all would confirm the address belongs to a real account.
-  //
-  // Nothing here keys off role. An account has 2FA because someone enrolled it,
-  // full stop — enforcing by role would have locked out every owner the moment
-  // this deployed.
-  if (isTwoFactorEnabled(user)) {
-    const { challengeToken, phoneHint, practiceCode } = await startLoginChallenge(user)
-    return { twoFactorRequired: true as const, challengeToken, phoneHint, ...(practiceCode !== undefined && { practiceCode }) }
-  }
-
-  return { twoFactorRequired: false as const, ...issueStaffSession(user) }
+  // Two-step sign-in is retired (owner, 2026-10-26); enrolments were cleared
+  // by migration 20261027110000 and nothing reads them. The session lasts one
+  // shift (auth/sessionEnd.ts).
+  return issueShiftSession(user)
 }
+
+/**
+ * THE sign-in: works out when this person's session ends (their shift today,
+ * else midnight PKT, never over 24 h — auth/sessionEnd.ts) and mints the pair.
+ * Every staff sign-in path (password, WhatsApp code, change password) uses it.
+ */
+export async function issueShiftSession(user: Parameters<typeof issueStaffSession>[0]) {
+  const endsAt = await staffSessionEndsAt(user.id)
+  return issueStaffSession(user, endsAt)
+}
+
 
 /**
  * Mints the access + refresh pair for a staff member. Split out of staffLogin
@@ -138,22 +149,22 @@ export function issueStaffSession(user: {
   id: string; name: string; email: string | null; role: UserRole
   /** Set when the password was generated or reissued by someone else and not yet changed. */
   mustChangePassword?: boolean | null
-}) {
-  const accessToken = jwt.sign(
-    { sub: user.id, email: user.email, role: user.role, type: 'access' } satisfies StaffTokenPayload,
-    JWT_SECRET,
-    { expiresIn: JWT_ACCESS_EXPIRY },
-  )
-
+}, sessionEndsAt?: Date) {
+  // One shift (owner B1, 2026-10-26). Sign-in paths pass the computed end
+  // (issueShiftSession); without one (tests, tooling) it is 24 h — the cap.
+  const endMs = Math.min(sessionEndsAt?.getTime() ?? Date.now() + MAX_SESSION_MS, Date.now() + MAX_SESSION_MS)
+  const se = Math.floor(endMs / 1000)
+  const accessToken = signAccess(user, se)
   const refreshToken = jwt.sign(
-    { sub: user.id, email: user.email, role: user.role, type: 'refresh' } satisfies StaffTokenPayload,
+    { sub: user.id, email: user.email, role: user.role, type: 'refresh', se } satisfies StaffTokenPayload,
     JWT_REFRESH_SECRET,
-    { expiresIn: JWT_REFRESH_EXPIRY },
+    { expiresIn: Math.max(1, se - Math.floor(Date.now() / 1000)) },
   )
 
   return {
     accessToken,
     refreshToken,
+    sessionEndsAt: new Date(se * 1000).toISOString(),
     user: {
       id: user.id, name: user.name, email: user.email, role: user.role,
       // The admin's "choose your own password" nudge reads this. It was never
@@ -173,11 +184,15 @@ export async function refreshStaffToken(refreshToken: string) {
   let payload: StaffTokenPayload
   try {
     payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as StaffTokenPayload
-  } catch {
+  } catch (err) {
+    // The refresh token's exp IS the shift's end (owner B1): say so, so the admin shows "Your shift ended".
+    if ((err as Error)?.name === 'TokenExpiredError') throw sessionEnded()
     throw new UnauthorizedError('Invalid or expired refresh token')
   }
 
   if (payload.type !== 'refresh') throw new UnauthorizedError('Invalid token type')
+  // A refresh token minted before sign-ins lasted one shift has no end: sign in again (once).
+  if (typeof payload.se !== 'number' || payload.se * 1000 <= Date.now()) throw sessionEnded()
 
   // Revocation. Every other authenticated entry point runs this check, but
   // refresh went straight from "the signature is valid" to minting a new access
@@ -199,14 +214,29 @@ export async function refreshStaffToken(refreshToken: string) {
     where: { id: payload.sub, ...ACTIVE_ACCOUNT_WHERE },
   })
   if (!user) throw new UnauthorizedError('User not found or inactive')
+  // Their till drawer closed: the session is over (auth/sessionEnd.ts).
+  if (endedByDrawerClose(user.sessionsEndedAt, (payload as { iat?: number }).iat)) throw sessionEnded()
 
-  const accessToken = jwt.sign(
-    { sub: user.id, email: user.email, role: user.role, type: 'access' } satisfies StaffTokenPayload,
+  // Never outlives the sign-in's shift end.
+  const accessToken = signAccess(user, payload.se)
+
+  return { accessToken, sessionEndsAt: new Date(payload.se * 1000).toISOString() }
+}
+
+/** 401 SESSION_ENDED — the admin answers "Your shift ended — sign in again". */
+export function sessionEnded(): AppError {
+  return new AppError('SESSION_ENDED', 'Your shift ended — sign in again.', 401)
+}
+
+/** An access token: 15 minutes, never past the session's end. */
+function signAccess(user: { id: string; email: string | null; role: UserRole }, se: number): string {
+  const nowSec = Math.floor(Date.now() / 1000)
+  const left = Math.max(1, se - nowSec)
+  return jwt.sign(
+    { sub: user.id, email: user.email, role: user.role, type: 'access', se } satisfies StaffTokenPayload,
     JWT_SECRET,
-    { expiresIn: JWT_ACCESS_EXPIRY },
+    { expiresIn: Math.min(left, JWT_ACCESS_SEC) },
   )
-
-  return { accessToken }
 }
 
 // ─── Customer auth (password-based) ──────────────────────────────────────────
@@ -576,7 +606,8 @@ export function verifyStaffToken(token: string, expected: StaffTokenType): Staff
   // a rider is not a User, and a staff guard (or the socket handshake in
   // lib/ws.ts, which calls this) accepting one would hand them every
   // ALL_STAFF route, the hand-over codes included.
-  if (!['access', 'refresh', 'mfa'].includes(payload.type)) {
+  // ('mfa' challenge tokens are gone with two-step sign-in, owner 2026-10-26.)
+  if (!['access', 'refresh'].includes(payload.type)) {
     throw new UnauthorizedError('Invalid token type')
   }
   if (payload.type !== expected) {

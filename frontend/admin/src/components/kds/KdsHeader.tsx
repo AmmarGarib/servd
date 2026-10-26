@@ -45,8 +45,8 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
         Tap to enable sound. New-order chimes stay silent until you do.
       </button>
     )}
-    <header className="flex min-h-14 items-center justify-between border-b border-kds-border bg-kds-card px-4">
-      <div className="flex items-center gap-3">
+    <header className="flex min-h-14 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-kds-border bg-kds-card px-4 py-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
         <h1 className="text-lg font-bold tracking-wide text-kds-text">{title}</h1>
         <span className="rounded-full bg-kds-red px-2.5 py-0.5 text-sm font-bold text-white">
           {count ?? activeOrders.length}
@@ -75,7 +75,7 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
         )}
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="ml-auto flex flex-wrap items-center gap-2 sm:gap-3">
         {/* Language toggle */}
         <div className="flex rounded-lg border border-kds-border overflow-hidden text-xs font-bold">
           <button

@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
+import { signInPath } from '../../lib/api'
 
 // Exact paths anyone may load without a session.
 //
@@ -47,7 +48,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!hydrated) return
     if (!user && !isPublicPath(pathname)) {
-      router.replace('/login')
+      router.replace(signInPath()) // '/login?ended=shift' when the sign-in's shift ended (owner B1)
     }
   }, [user, pathname, router, hydrated])
 

@@ -122,3 +122,33 @@ export function broadcastCascade(result: BumpResult, orderItemId: string) {
     })
   }
 }
+
+/**
+ * A station's step bump with every side effect (the ONE path — POST
+ * /expo/steps/:id/bump and the station card's "done" tick, owner B12 call it):
+ * the cascade (bumpStep), its station broadcast, and — when the last step of
+ * the dish is done — the item's own bump through updateItemStatus, so the
+ * order-level "all done → ready / complete" logic runs. The caller has
+ * already checked the step belongs to the caller's company.
+ */
+export async function completeStepBump(stepId: string, orderItemId: string, staffId: string): Promise<BumpResult> {
+  const result = await bumpStep(stepId, staffId)
+  broadcastCascade(result, orderItemId)
+  if (result.itemBumped) {
+    const cur = await prisma.orderItem.findUnique({ where: { id: orderItemId }, select: { status: true } })
+    if (cur && cur.status !== 'bumped' && cur.status !== 'voided') {
+      const { updateItemStatus } = await import('../orders/service.js')
+      try {
+        // Every step is done, so the dish is done: a hold on the item (not
+        // offered for step tickets, but possible through the API) is resumed
+        // first — a held item can't be bumped directly (R4).
+        if (cur.status === 'held') await updateItemStatus(orderItemId, 'preparing', staffId)
+        await updateItemStatus(orderItemId, 'bumped', staffId)
+      } catch (e) {
+        // State-machine may reject if the item already moved — that's fine.
+        if ((e as { code?: string })?.code !== 'INVALID_TRANSITION') throw e
+      }
+    }
+  }
+  return result
+}

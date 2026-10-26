@@ -57,6 +57,11 @@ services:
     # migration still boots is the difference between "the deploy broke" and
     # "the books are quietly wrong".
     # No `command:` override here on purpose.
+    # Weekly encrypted database backups (owner S13, 2026-10-26; CEO → Backups).
+    # A named volume so the last 8 survive image updates. Files are encrypted
+    # with the CEO's backup passphrase; the CEO downloads them to their PC.
+    volumes:
+      - servd_backups:/app/backups
     networks:
       - servd_net
 
@@ -113,6 +118,9 @@ services:
       - storefront
     networks:
       - servd_net
+
+volumes:
+  servd_backups:
 
 networks:
   servd_net:

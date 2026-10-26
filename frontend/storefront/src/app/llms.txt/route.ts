@@ -126,7 +126,6 @@ function servdText(brands: Brand[]): string {
     `- [What is servd](${SERVD_ORIGIN}/about): who servd is and the kitchens on it`,
     `- [FAQ](${SERVD_ORIGIN}/faq): ordering, delivery, payment (Cash, Card, Raast QR), Insiders rewards, reservations and refunds`,
     `- [Contact](${SERVD_ORIGIN}/contact): contact servd`,
-    `- [Privacy](${SERVD_ORIGIN}/privacy) and [Terms](${SERVD_ORIGIN}/terms)`,
     `- [Press](${SERVD_ORIGIN}/press): press information and media contact`,
     `- [Email servd](mailto:${SERVD_EMAIL}): ${SERVD_EMAIL}`,
     '',

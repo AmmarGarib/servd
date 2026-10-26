@@ -96,7 +96,7 @@ const footer: SectionSpec = {
     { key: 'allKitchens', label: 'All kitchens link', kind: 'link', hint: 'Empty label hides it' },
     { key: 'legal', label: 'Legal name', kind: 'text', hint: 'After “© year Brand ·”' },
     { key: 'legalLinks', label: 'Privacy, terms and contact links', kind: 'list', itemLabel: 'Link', max: 6, item: linkItem,
-      hint: 'Shown in the bottom bar. Plain paths such as /privacy open servd.pk’s page (the same policy for every kitchen). Empty list = none.' },
+      hint: 'Shown in the bottom bar. Privacy and Terms links are not shown on the website for now. Empty list = none.' },
     { key: 'backLink', label: 'Back to servd link', kind: 'link', hint: 'Empty label hides it' },
   ],
   defaults: {
@@ -128,8 +128,6 @@ const footer: SectionSpec = {
     allKitchens: { text: 'See all kitchens', href: '/home#kitchens' },
     legal: 'GS Foods Pvt. Ltd.',
     legalLinks: [
-      { text: 'Privacy', href: '/privacy' },
-      { text: 'Terms', href: '/terms' },
       { text: 'Contact', href: '/contact' },
     ],
     backLink: { text: 'back to servd', href: '/home' },

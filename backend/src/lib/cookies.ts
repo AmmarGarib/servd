@@ -28,9 +28,12 @@ function serialize(name: string, value: string, maxAgeSec: number): string {
   return parts.join('; ')
 }
 
-export function setAuthCookies(reply: FastifyReply, accessToken: string, refreshToken?: string): void {
+/** `sessionEndsAt` (a staff sign-in's shift end, owner B1 2026-10-26): the refresh cookie lives no longer. */
+export function setAuthCookies(reply: FastifyReply, accessToken: string, refreshToken?: string, sessionEndsAt?: string): void {
   const cookies = [serialize(ACCESS, accessToken, ACCESS_MAX_SEC)]
-  if (refreshToken) cookies.push(serialize(REFRESH, refreshToken, REFRESH_MAX_SEC))
+  const endSec = sessionEndsAt ? Math.floor((new Date(sessionEndsAt).getTime() - Date.now()) / 1000) : NaN
+  const refreshMax = Number.isFinite(endSec) ? Math.max(1, Math.min(endSec, REFRESH_MAX_SEC)) : REFRESH_MAX_SEC
+  if (refreshToken) cookies.push(serialize(REFRESH, refreshToken, refreshMax))
   reply.header('Set-Cookie', cookies)
 }
 

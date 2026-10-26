@@ -231,23 +231,25 @@ describe('ONL-R2-04 — staff bookings are held to capacity', () => {
     expect(noReason.statusCode).toBe(400)
   })
 
-  it('a host with the manager’s PIN overbooks: stored without a table, flagged, audited with the approver', async () => {
+  it('a host with the manager’s PIN overbooks: stored without a table, waiting for the CEO (owner C10), audited with the approver', async () => {
     const r = await hostBook(hostA, { guestName: 'Squeeze', overbook: true, overbookReason: 'regular, tables pushed', managerOverridePin: PIN_A })
-    expect(r.statusCode).toBe(201)
+    expect(r.statusCode).toBe(202)
     const body = r.json()
     expect(body.tableId).toBeNull()
     expect(body.overbooked).toBe(true)
+    expect(body.pendingApproval).toBe(true)
+    expect(body.status).toBe('pending_approval')
     expect(body.notes).toMatch(/Overbooked: regular, tables pushed/)
-    const log = await prisma.auditLog.findFirst({ where: { action: 'reservation.overbook', entityId: body.id } })
+    const log = await prisma.auditLog.findFirst({ where: { action: 'reservation.overbook_requested', entityId: body.overbookRequestId } })
     expect(log).not.toBeNull()
     expect(log!.tenantId).toBe(A.tenantId)
     expect(log!.metadata).toMatchObject({ approverId: mgrA.id, viaPin: true, reason: 'regular, tables pushed' })
   })
 
-  it('a manager overbooks on their own login', async () => {
+  it('a manager overbooks on their own login — it still waits for the CEO (owner C10)', async () => {
     const r = await hostBook(mgrA, { guestName: 'Mgr', overbook: true, overbookReason: 'birthday group' })
-    expect(r.statusCode).toBe(201)
-    const log = await prisma.auditLog.findFirst({ where: { action: 'reservation.overbook', entityId: r.json().id } })
+    expect(r.statusCode).toBe(202)
+    const log = await prisma.auditLog.findFirst({ where: { action: 'reservation.overbook_requested', entityId: r.json().overbookRequestId } })
     expect(log!.metadata).toMatchObject({ approverId: mgrA.id, viaPin: false })
   })
 
@@ -355,7 +357,7 @@ describe('PPL-R2-05 — staffCodeLogin health', () => {
 
 describe('O-RV-1 / O-RV-2 — capacity: set aside what is already over, named tables count', () => {
   let C: Company, D: Company
-  let hostC: Who, mgrC: Who, hostD: Who, mgrD: Who
+  let hostC: Who, mgrC: Who, hostD: Who, mgrD: Who, ceoC: Who, ceoD: Who
   let d4: string, d2: string
   const PIN_D = '739154'
   const at = (days: number, hourUtc = 15) => { const d = new Date(Date.now() + days * DAY); d.setUTCHours(hourUtc, 0, 0, 0); return d.toISOString() }
@@ -378,6 +380,9 @@ describe('O-RV-1 / O-RV-2 — capacity: set aside what is already over, named ta
     mgrC = await mkUser('rv-mgr-c', 'foh_management', C.tenantId)
     hostD = await mkUser('rv-host-d', 'foh', D.tenantId)
     mgrD = await mkUser('rv-mgr-d', 'foh_management', D.tenantId)
+    // Owner C10 (2026-10-26): only the CEO's overbook books at once; others wait for the CEO.
+    ceoC = await mkUser('rv-ceo-c', 'admin', C.tenantId)
+    ceoD = await mkUser('rv-ceo-d', 'admin', D.tenantId)
     await setManagerPin(mgrD.id, PIN_D)
     // C: two six-tops and six four-tops.
     for (const [label, capacity] of [['S1', 6], ['S2', 6], ['F1', 4], ['F2', 4], ['F3', 4], ['F4', 4], ['F5', 4], ['F6', 4]] as const) {
@@ -406,9 +411,12 @@ describe('O-RV-1 / O-RV-2 — capacity: set aside what is already over, named ta
     expect(strandsTableless(t, [{ tableId: null, partySize: 12 }], 's6')).toBe(false)
   })
 
-  it('O-RV-1: after a manager overbooks 12 with 8 tables, a host books 2 and the public slot stays open', async () => {
+  it('O-RV-1: after the CEO overbooks 12 with 8 tables, a host books 2 and the public slot stays open', async () => {
     const slot = at(2)
-    const big = await book(mgrC, C, { partySize: 12, startTime: slot, guestName: 'Big', overbook: true, overbookReason: 'two six-tops pushed together' })
+    // A manager's overbook waits for the CEO (owner C10) and holds nothing meanwhile.
+    const asked = await book(mgrC, C, { partySize: 12, startTime: slot, guestName: 'Big wait', overbook: true, overbookReason: 'two six-tops pushed together' })
+    expect(asked.statusCode).toBe(202)
+    const big = await book(ceoC, C, { partySize: 12, startTime: slot, guestName: 'Big', overbook: true, overbookReason: 'two six-tops pushed together' })
     expect(big.statusCode).toBe(201)
     expect(big.json()).toMatchObject({ tableId: null, overbooked: true })
 
@@ -457,11 +465,18 @@ describe('O-RV-1 / O-RV-2 — capacity: set aside what is already over, named ta
     const slot = at(4)
     await legacy(D, slot, 4)
     const r = await book(hostD, D, { startTime: slot, guestName: 'Pushed', tableId: d4, overbook: true, overbookReason: 'regular, will share', managerOverridePin: PIN_D })
-    expect(r.statusCode).toBe(201)
-    expect(r.json()).toMatchObject({ tableId: d4, overbooked: true })
+    expect(r.statusCode).toBe(202)
+    expect(r.json()).toMatchObject({ tableId: d4, overbooked: true, status: 'pending_approval' })
+    const asked = await prisma.auditLog.findFirst({ where: { action: 'reservation.overbook_requested', entityId: r.json().overbookRequestId } })
+    expect(asked!.tenantId).toBe(D.tenantId)
+    expect(asked!.metadata).toMatchObject({ approverId: mgrD.id, viaPin: true })
+    // The CEO approves → booked on the named table, audited with the CEO.
+    const ok = await call(ceoD, 'POST', `/reservations/overbook-requests/${r.json().overbookRequestId}/approve`, {})
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json().reservation).toMatchObject({ tableId: d4, status: 'booked' })
     const log = await prisma.auditLog.findFirst({ where: { action: 'reservation.overbook', entityId: r.json().id } })
     expect(log!.tenantId).toBe(D.tenantId)
-    expect(log!.metadata).toMatchObject({ approverId: mgrD.id, viaPin: true })
+    expect(log!.metadata).toMatchObject({ approverId: ceoD.id, managerApproverId: mgrD.id })
   })
 
   it('O-RV-2: PATCH onto a needed table, or a bigger party into a full window → 409; harmless edits pass', async () => {
@@ -483,11 +498,14 @@ describe('O-RV-1 / O-RV-2 — capacity: set aside what is already over, named ta
     const grow = await patch(hostD, y.id, { partySize: 4, startTime: slot })
     expect(grow.statusCode).toBe(409)
     expect(await prisma.reservation.findUniqueOrThrow({ where: { id: y.id }, select: { partySize: true } })).toMatchObject({ partySize: 2 })
-    // A manager overbooks the change on their own login.
-    const ok = await patch(mgrD, y.id, { partySize: 4, startTime: slot, overbook: true, overbookReason: 'birthday, tables pushed' })
-    expect(ok.statusCode).toBe(200)
-    expect(ok.json()).toMatchObject({ partySize: 4, overbooked: true })
-    expect(ok.json().notes).toMatch(/Overbooked: birthday, tables pushed/)
+    // A manager overbooks the change on their own login — it waits for the CEO (owner C10).
+    const asked = await patch(mgrD, y.id, { partySize: 4, startTime: slot, overbook: true, overbookReason: 'birthday, tables pushed' })
+    expect(asked.statusCode).toBe(202)
+    expect((await prisma.reservation.findUniqueOrThrow({ where: { id: y.id } })).partySize).toBe(2)
+    const ok = await call(ceoD, 'POST', `/reservations/overbook-requests/${asked.json().overbookRequestId}/approve`, {})
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json().reservation).toMatchObject({ partySize: 4 })
+    expect(ok.json().reservation.notes).toMatch(/Overbooked: birthday, tables pushed/)
     // A name change on that over-capacity row is never refused.
     const rename = await patch(hostD, y.id, { guestName: 'Renamed' })
     expect(rename.statusCode).toBe(200)

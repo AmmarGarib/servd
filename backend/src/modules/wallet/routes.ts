@@ -18,7 +18,7 @@ import { topUpWallet, walletBalancesOf, balanceInView, TOPUP_TENDERS, type TopUp
 // show the wallets of the companies in view only.
 
 const topUpKind = z.object({
-  // goodwill = a manager's credit (Dr 6060 Marketing & Promo); paid = the
+  // goodwill = a manager's credit (Dr 6065 Goodwill Credit to Customers); paid = the
   // customer paid for it (Dr 1010 cash / the bank account of the
   // ACTIVE company it was received into — lib/bankAccounts.ts moneyAccountCode).
   kind: z.enum(['goodwill', 'paid']).default('goodwill'),
@@ -40,7 +40,7 @@ const topUpKind = z.object({
 // Who records a top-up (owner, 2026-10-16: finance records paid wallet
 // top-ups — a back-office receipt like a gift-card sale). Managers record both
 // kinds; finance (with its 'accounting' module) records PAID top-ups only — a
-// goodwill credit is our own cost (Dr 6060) and stays a manager's call (403
+// goodwill credit is our own cost (Dr 6065) and stays a manager's call (403
 // GOODWILL_MANAGERS_ONLY). Every top-up is audited (wallet.topup /
 // wallet.bulk_topup) with the actor.
 const TOPUP_RECORDERS = FINANCE_TEAM

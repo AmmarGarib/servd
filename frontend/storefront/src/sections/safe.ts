@@ -19,6 +19,15 @@ export function safeSrc(v: unknown): string {
 }
 
 /** A string field ('' when missing). */
+/** Owner, 2026-10-26 (S8): the website shows no Privacy / Terms links for now ("will add later for the app").
+ *  True for a link to /privacy or /terms (relative, or on servd's origin, any query / hash). Footer renderers
+ *  skip these so links stored in a saved layout are hidden too. */
+export function isHiddenLegalHref(v: unknown): boolean {
+  if (typeof v !== 'string') return false
+  const m = v.trim().replace(/^https?:\/\/(www\.)?servd\.pk/i, '').match(/^\/(privacy|terms)(?:[/?#]|$)/i)
+  return !!m
+}
+
 export function str(v: unknown, fallback = ''): string {
   return typeof v === 'string' ? v : fallback
 }

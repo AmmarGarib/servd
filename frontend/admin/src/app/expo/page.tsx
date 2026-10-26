@@ -10,6 +10,7 @@ import { FIRE_ALL_EXTRA_ROLES, useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
 import { ArrowLeft, ArrowRight } from 'lucide-react'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
+import { BacklogStat, ReadyPrintControls, StickerSizeMenu, UnstartedAlert, stationQueueOf, useKitchenStatus } from '../../components/kds/ExpoKitchen'
 
 /**
  * Expo — the pass-station's screen. Three columns:
@@ -205,6 +206,8 @@ export default function ExpoPage() {
     refetchInterval: 5_000,
     staleTime: 2_000,
   })
+  // Backlog counter + the 60-second "not started" alert (owner B12).
+  const { data: kitchen } = useKitchenStatus()
 
   // Toast for items that fired but have no live station (none assigned, or
   // the station was retired). Surfaces the 'I clicked Fire and nothing
@@ -384,14 +387,17 @@ export default function ExpoPage() {
               Confirm incoming → watch progress → hand off ready.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <BacklogStat status={kitchen} />
             <Stat label="Awaiting" count={awaitingFire.length} tone="amber" />
             <Stat label="In progress" count={inProgress.length} tone="blue" />
             <Stat label="Ready" count={ready.length} tone="green" />
             {upcoming.length > 0 && <Stat label="Pre-orders" count={upcoming.length} tone="neutral" />}
+            <StickerSizeMenu />
           </div>
         </div>
       </header>
+      <UnstartedAlert status={kitchen} />
 
       {/* ── Upcoming pre-orders ─────────────────────────────────────────
           Scheduled orders before their prep window. The server holds them
@@ -657,6 +663,8 @@ export default function ExpoPage() {
                   )}
                 </div>
 
+                <ReadyPrintControls orderId={order.id} paid={!!order.paid} />
+
                 <button onClick={() => handoff.mutate(order.id)} disabled={handoff.isPending}
                   className={`w-full min-h-11 rounded-xl py-3 text-sm font-black transition-all disabled:opacity-40 ${fm.button}`}>
                   {handoff.isPending && handoff.variables === order.id ? 'Handing off…' : HANDOFF_LABEL[order.fulfilmentType]}
@@ -677,6 +685,7 @@ export default function ExpoPage() {
               <div className="space-y-1.5">
                 {list.map((s) => {
                   const busy = s.activeItems > 0
+                  const q = stationQueueOf(kitchen, s.id)
                   return (
                     <Link key={s.id} href={`/kds/${s.id}`}
                       className={`flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 transition-colors border ${busy
@@ -684,6 +693,11 @@ export default function ExpoPage() {
                       <span className={`text-xs font-bold flex-1 ${busy ? 'text-kds-amber' : 'text-white/75'}`}>
                         {s.name}
                       </span>
+                      {q && q.queued > 0 && (
+                        <span className="rounded-md bg-kds-red/15 px-1.5 py-0.5 text-xs font-black text-kds-red tabular-nums" title="Orders waiting behind the cook's screen">
+                          +{q.queued} waiting
+                        </span>
+                      )}
                       <span className={`text-sm font-black tabular-nums ${busy ? 'text-kds-amber' : 'text-white/30'}`}>
                         {s.activeItems}
                       </span>

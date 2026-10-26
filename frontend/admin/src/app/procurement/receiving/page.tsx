@@ -106,6 +106,13 @@ export default function ReceivingPage() {
   })
   const activeOutlets = outlets.filter((o) => o.isActive !== false)
   const [locationId, setLocationId] = useState('')
+  // Brand stock (owner B13 (a), 2026-10-26): whose stock the delivery is. '' = the server's default (the PO's brand,
+  // else the outlet's only brand, else shared); '__shared__' = shared stock; else a brand id.
+  const { data: brands = [] } = useQuery<Array<{ id: string; name: string; tenantId: string | null }>>({
+    queryKey: ['concepts-picker'], queryFn: () => api.get('/concepts?view=picker'),
+    enabled: canReceive, retry: false, meta: { background: true }, staleTime: 300_000,
+  })
+  const [brandId, setBrandId] = useState('')
   const [supplierId, setSupplierId] = useState('')
   const [poId, setPoId] = useState<string | null>(null)
   const [photos, setPhotos] = useState<PickedFile[]>([])
@@ -226,6 +233,7 @@ export default function ReceivingPage() {
       poId,
       supplierId: poId ? null : supplierId,
       locationId: locationId || null,
+      ...(brandId ? { conceptId: brandId === '__shared__' ? null : brandId } : {}),
       photos: asUploadBody(photos),
       notes: notes.trim() || null,
       lines: lines.map((l) => ({
@@ -475,7 +483,18 @@ export default function ReceivingPage() {
                 <option value="">No particular outlet</option>
                 {activeOutlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </Select>
-              <p className="text-xs text-s-muted mt-1">Stock is still one pool per company; the outlet is recorded for when per-outlet stock arrives.</p>
+              <p className="text-xs text-s-muted mt-1">The stock lands at this outlet.</p>
+            </div>
+          )}
+          {brands.length > 1 && (
+            <div className="mb-3">
+              <FieldLabel htmlFor="recv-brand">Whose stock is it?</FieldLabel>
+              <Select id="recv-brand" value={brandId} onChange={(e) => setBrandId(e.target.value)} className={fieldCls + ' mt-1'}>
+                <option value="">The brand that ordered it (else the outlet's only brand)</option>
+                <option value="__shared__">Shared by the outlet's brands</option>
+                {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </Select>
+              <p className="text-xs text-s-muted mt-1">Each brand keeps its own stock, even in a shared kitchen — its cost goes to that brand when it sells.</p>
             </div>
           )}
           <div id="recv-photo">

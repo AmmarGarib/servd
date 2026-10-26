@@ -186,6 +186,9 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '6040', name: 'Cleaning & Supplies',                type: 'expense' },
   { code: '6050', name: 'Repairs & Maintenance',              type: 'expense' },
   { code: '6060', name: 'Marketing & Promo',                  type: 'expense' },
+  // Owner C6 (2026-10-26): "Give wallet goodwill credit its own account so I can see what we give away."
+  // A manager's goodwill wallet credit (wallet/service.ts topUpWallet) books here, never 6060.
+  { code: '6065', name: 'Goodwill Credit to Customers',       type: 'expense',   description: 'Wallet credit a manager gives a customer as goodwill (no money received). Older goodwill credits stay on 6060.' },
   { code: '6070', name: 'Software & Subscriptions',           type: 'expense' },
   { code: '6080', name: 'Bank / Card Processing Fees',        type: 'expense' },
   { code: '6081', name: 'Bank Charges (Misc)',                type: 'expense' },

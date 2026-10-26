@@ -1,15 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import bcrypt from 'bcryptjs'                  // password checks on the self-service routes
 import { z } from 'zod'
-import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, issueStaffSession, findOtpLoginStaff, normaliseCustomerContact } from './service.js'
-import {
-  challengeSubject,
-  verifyLoginChallenge,
-  startEnrolment,
-  completeEnrolment,
-  disable as disableTwoFactor,
-  maskPhone,
-} from './twoFactor.js'
+import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, issueShiftSession, findOtpLoginStaff, normaliseCustomerContact } from './service.js'
 import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, requestSharedCode, verifySharedCode, issueStaffCodeInPerson } from './otp.js'
 import { preparePin, setManagerPin, PIN_FORMAT, isWeakPin, MIN_NEW_PIN_LENGTH, SHORT_PIN_GRACE_HOURS } from './managerPin.js'
 import { accountStateOf, whereAccountState, suspendData, reactivateData, approveData, softDeleteData } from './accountStatus.js'
@@ -239,7 +231,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       // addresses are floor staff.
       // The practice copy sends no codes, so its floor logins (made from a
       // name and a role, below) sign in with the password they were given.
-      if (!result.twoFactorRequired && usesOtpLogin(result.user?.role) && !isSandbox()) {
+      if (usesOtpLogin(result.user?.role) && !isSandbox()) {
         throw new AppError(
           'USE_CODE_LOGIN',
           'This account signs in with a code sent to WhatsApp. Tap "Sign in with a code".',
@@ -258,21 +250,10 @@ export async function authRoutes(fastify: FastifyInstance) {
       await signInAudit(req, 'auth.login_failed', { userId: known?.id ?? null, email: typed }, { reason: failReason(err), method: 'password' })
       throw err
     }
-    // 2FA accounts get no session yet — just the challenge and a masked hint
-    // of where the code went. No cookies are set here.
-    if (result.twoFactorRequired) {
-      return reply.status(200).send({
-        twoFactorRequired: true,
-        challengeToken: result.challengeToken,
-        phoneHint: result.phoneHint,
-        ...practiceCodeField(result.practiceCode), // practice copy only
-      })
-    }
-
     await signInAudit(req, 'auth.login', { userId: result.user.id, email: result.user.email }, { method: 'password' })
     // Manager web: also set httpOnly session cookies (the token stays out of
     // JS). Tablet/mobile ignore these and keep using the body tokens + Bearer.
-    setAuthCookies(reply, result.accessToken, result.refreshToken)
+    setAuthCookies(reply, result.accessToken, result.refreshToken, result.sessionEndsAt)
     return reply.status(200).send(result)
   })
 
@@ -361,85 +342,18 @@ export async function authRoutes(fastify: FastifyInstance) {
     await clearFailures(STAFF_OTP_PHONE_LIMIT, key)
 
     await signInAudit(req, 'auth.otp_login', { userId: staff.id, email: staff.email }, { method: 'otp' })
-    const session = issueStaffSession(staff)
-    setAuthCookies(reply, session.accessToken, session.refreshToken)
-    return reply.status(200).send({ twoFactorRequired: false, ...session })
-  })
-
-  // POST /auth/2fa/verify — trade a login challenge + WhatsApp code for a session.
-  //
-  // Rate limited on the same bucket as password login: the challenge is only
-  // handed out after a correct password, but a limit here still bounds anyone
-  // grinding codes against a challenge they have obtained.
-  fastify.post('/2fa/verify', async (req, reply) => {
-    const ip = req.ip ?? 'unknown'
-    await checkRateLimit(STAFF_PASSWORD_LIMIT, ip)
-
-    const body = z.object({
-      challengeToken: z.string().min(1),
-      code: z.string().min(4).max(10),
-    }).parse(req.body)
-
-    let user
-    try {
-      user = await verifyLoginChallenge(body.challengeToken, body.code)
-      await clearFailures(STAFF_PASSWORD_LIMIT, ip)
-    } catch (err) {
-      await recordFailure(STAFF_PASSWORD_LIMIT, ip)
-      const sub = challengeSubject(body.challengeToken)
-      const who = sub ? await prisma.user.findUnique({ where: { id: sub }, select: { id: true, email: true } }).catch(() => null) : null
-      await signInAudit(req, 'auth.2fa_failed', { userId: who?.id ?? null, email: who?.email ?? null }, { reason: failReason(err) })
-      throw err
-    }
-
-    await signInAudit(req, 'auth.login', { userId: user.id, email: user.email }, { method: 'password+2fa' })
-    const session = issueStaffSession(user)
-    setAuthCookies(reply, session.accessToken, session.refreshToken)
+    const session = await issueShiftSession(staff)
+    setAuthCookies(reply, session.accessToken, session.refreshToken, session.sessionEndsAt)
     return reply.status(200).send(session)
   })
 
-  // ─── 2FA enrolment (authenticated) ─────────────────────────────────────────
-  //
-  // Two steps on purpose: the number is stored only after a code sent to it has
-  // been typed back, so nobody can switch 2FA on for a number they mistyped and
-  // lock themselves out of their own account.
-
-  // POST /auth/2fa/start — send a code to the number being enrolled.
-  fastify.post('/2fa/start', { preHandler: requireAuth() }, async (req) => {
-    const body = z.object({ phone: z.string().min(6) }).parse(req.body)
-    return startEnrolment(req.staffUser!.id, body.phone)
-  })
-
-  // POST /auth/2fa/enable — code came back; store the number and switch 2FA on.
-  fastify.post('/2fa/enable', { preHandler: requireAuth() }, async (req) => {
-    const body = z.object({
-      phone: z.string().min(6),
-      code: z.string().min(4).max(10),
-    }).parse(req.body)
-    const { phoneHint } = await completeEnrolment(req.staffUser!.id, body.phone, body.code)
-    return { enabled: true, phoneHint }
-  })
-
-  // POST /auth/2fa/disable — requires the account password, not just a session,
-  // so a walked-up-to laptop or a stolen token can't strip the second factor.
-  fastify.post('/2fa/disable', { preHandler: requireAuth() }, async (req) => {
-    const body = z.object({ password: z.string().min(1) }).parse(req.body)
-    await disableTwoFactor(req.staffUser!.id, body.password)
-    return { enabled: false }
-  })
-
-  // GET /auth/2fa/status — what the settings screen renders.
-  fastify.get('/2fa/status', { preHandler: requireAuth() }, async (req) => {
-    const u = await prisma.user.findFirst({
-      where: { id: req.staffUser!.id, deletedAt: null },
-      select: { twoFactorPhone: true, twoFactorEnabledAt: true },
-    })
-    return {
-      enabled: Boolean(u?.twoFactorEnabledAt && u?.twoFactorPhone),
-      phoneHint: u?.twoFactorPhone ? maskPhone(u.twoFactorPhone) : null,
-      enabledAt: u?.twoFactorEnabledAt ?? null,
-    }
-  })
+  // Two-step sign-in is RETIRED (owner, 2026-10-26: "remove two-step sign-in;
+  // nobody has it on today"). Every /auth/2fa/* route — verify, start, enable,
+  // disable, status — and the CEO's /auth/users/:id/2fa/reset answer 410.
+  const twoStepGone = async (_req: FastifyRequest, reply: import('fastify').FastifyReply) =>
+    reply.status(410).send({ error: { code: 'TWO_STEP_RETIRED', message: 'Two-step sign-in has been retired. Sign in with your password or a code.' } })
+  fastify.all('/2fa/*', twoStepGone)
+  fastify.all('/users/:id/2fa/reset', twoStepGone)
 
   // ─── Password self-service ────────────────────────────────────────────
   //
@@ -643,8 +557,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       tenantId: req.staffUser!.tenantId ?? null,
     })
     // mustChangePassword is false now (applyPasswordChange cleared it).
-    const session = issueStaffSession({ id: me.id, name: me.name, email: me.email, role: me.role, mustChangePassword: false })
-    setAuthCookies(reply, session.accessToken, session.refreshToken)
+    const session = await issueShiftSession({ id: me.id, name: me.name, email: me.email, role: me.role, mustChangePassword: false })
+    setAuthCookies(reply, session.accessToken, session.refreshToken, session.sessionEndsAt)
     return reply.status(200).send(session)
   })
 
@@ -720,45 +634,6 @@ export async function authRoutes(fastify: FastifyInstance) {
         email: target.email,
         temporaryPassword,
       })
-    },
-  )
-
-  // POST /auth/users/:id/2fa/reset — admin clears someone's 2FA enrolment.
-  //
-  // Without this, an account enrolled in WhatsApp OTP whose phone is lost,
-  // stolen or reassigned is locked out permanently: /auth/2fa/disable is
-  // self-service and needs that person's own password, and PATCH /auth/users
-  // has no twoFactor field. PIN login used to be the accidental escape hatch
-  // because staffPinLogin never checked 2FA at all — that hatch closes when
-  // PIN login goes, so the deliberate one has to exist first.
-  fastify.post<{ Params: { id: string } }>(
-    '/users/:id/2fa/reset',
-    { preHandler: requireAuth(...ADMIN_ONLY) },
-    async (req, reply) => {
-      const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, twoFactorEnabledAt: true })
-      await prisma.user.update({
-        where: { id: target.id },
-        data: { twoFactorPhone: null, twoFactorEnabledAt: null },
-      })
-      // Their sessions die too: whoever holds the old phone should not keep a
-      // live session after we have unhooked the second factor.
-      await revokeAllForSubject(target.id)
-      req.log.warn({ actor: req.staffUser!.id, target: target.id }, '2FA reset by admin')
-      // Removing someone's second factor is a change to who can get in; it was
-      // never written to the identity trail.
-      await audit({
-        category: 'identity',
-        action: 'user.2fa_reset',
-        entity: 'User',
-        entityId: target.id,
-        userId: req.staffUser?.id ?? null,
-        userEmail: req.staffUser?.email ?? null,
-        tenantId: auditCompanyOf(target),
-        before: { twoFactorEnabled: !!target.twoFactorEnabledAt },
-        after: { twoFactorEnabled: false, targetEmail: target.email },
-        metadata: { actorTenantId: req.staffUser?.tenantId ?? null },
-      })
-      return reply.status(200).send({ id: target.id, name: target.name, twoFactorEnabled: false })
     },
   )
 

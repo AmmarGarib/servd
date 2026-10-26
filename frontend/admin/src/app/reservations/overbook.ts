@@ -13,6 +13,11 @@
 // approver. A booking that turned out to fit after all comes back as an
 // ordinary one (`overbooked: false`, a table assigned).
 //
+// Owner C10 (2026-10-26): "overbooking should auto come to ceo for approval".
+// Unless the CEO books it, an overbook comes back 202 `{ pendingApproval: true,
+// status: 'pending_approval' }`: the booking waits for the CEO and the guest is
+// told nothing until the CEO approves.
+//
 // The PIN refusals use the same words as every other PIN prompt in the admin
 // (components/pos/pinErrors.ts).
 
@@ -74,11 +79,14 @@ export interface CreatedBooking {
   table?: { id: string; label: string } | null
   overbooked?: boolean
   waitlist?: boolean
+  /** Waiting for the CEO (owner C10): not booked yet, the guest is told nothing. */
+  pendingApproval?: boolean
 }
 
 /** The line the dialog shows once the booking is made: which table it got, or that it has none yet. */
 export function bookedLine(r: CreatedBooking): string {
   if (r.waitlist) return 'Added to the waiting list — no table is held.'
+  if (r.pendingApproval) return 'Sent to the CEO for approval — it goes past capacity. The guest is not told anything until the CEO approves.'
   const label = r.table?.label
   if (r.overbooked) {
     return label

@@ -194,10 +194,11 @@ describe('ONL-R2-04 UI — the dialog against the real route (two companies)', (
     expect(await prisma.reservation.count({ where: { conceptId: A.conceptId } })).toBe(before)
 
     const ok = await call(hostA, 'POST', '/reservations', body(A, { guestName: 'Squeeze', ...ob.overbookFields('regular, tables pushed', PIN_A, true) }))
-    expect(ok.statusCode, ok.body).toBe(201)
-    expect(ok.json()).toMatchObject({ overbooked: true, tableId: null })
-    expect(ob.bookedLine(ok.json())).toMatch(/past capacity — no table is assigned yet/)
-    const log = await prisma.auditLog.findFirst({ where: { action: 'reservation.overbook', entityId: ok.json().id } })
+    // Owner C10 (2026-10-26): a manager's overbook waits for the CEO.
+    expect(ok.statusCode, ok.body).toBe(202)
+    expect(ok.json()).toMatchObject({ overbooked: true, tableId: null, pendingApproval: true, status: 'pending_approval' })
+    expect(ob.bookedLine(ok.json())).toMatch(/Sent to the CEO for approval/)
+    const log = await prisma.auditLog.findFirst({ where: { action: 'reservation.overbook_requested', entityId: ok.json().overbookRequestId } })
     expect(log?.metadata).toMatchObject({ reason: 'regular, tables pushed', approverId: mgrA.id, viaPin: true })
   })
 
@@ -207,8 +208,9 @@ describe('ONL-R2-04 UI — the dialog against the real route (two companies)', (
     const prompt = ob.slotFullPrompt(toApiError(full))
     expect(prompt?.managerRequired).toBe(false)
     const ok = await call(mgrA, 'POST', '/reservations', body(A, { guestName: 'Mgr', ...ob.overbookFields('birthday group', '', prompt!.managerRequired) }))
-    expect(ok.statusCode, ok.body).toBe(201)
+    expect(ok.statusCode, ok.body).toBe(202)
     expect(ok.json().overbooked).toBe(true)
+    expect(ok.json().pendingApproval).toBe(true)
   })
 
   it('a host without a PIN gets MANAGER_OVERRIDE_REQUIRED in plain words', async () => {
@@ -226,8 +228,9 @@ describe('ONL-R2-04 UI — the dialog against the real route (two companies)', (
     expect(own.json().concept.tenantId).toBe(B.tenantId)
     // B's manager PIN approves B's overbook only.
     const over = await call(hostB, 'POST', '/reservations', body(B, { guestName: 'B over', ...ob.overbookFields('two tops pushed', PIN_B, true) }))
-    expect(over.statusCode, over.body).toBe(201)
+    expect(over.statusCode, over.body).toBe(202)
     expect(over.json().overbooked).toBe(true)
+    expect(over.json().pendingApproval).toBe(true)
   })
 })
 

@@ -84,6 +84,8 @@ export function roleLabel(role: string | undefined | null): string {
 export type ModuleId =
   // Executive (CEO only by default)
   | 'ceo_overview' | 'approvals' | 'business_info' | 'role_management' | 'role_modules' | 'audit_log' | 'accounting_audit' | 'tenants' | 'trash'
+  // CEO → Backups (owner S13, 2026-10-26): the weekly encrypted database backup — CEO only
+  | 'backups'
   // Management — manager-tier dashboards (Brand Manager, F&B Manager)
   | 'brand_dashboard' | 'fnb_dashboard'
   // Live
@@ -129,6 +131,7 @@ export const MODULES: ModuleMeta[] = [
   { id: 'fnb_dashboard',      label: 'F&B Dashboard',       section: 'Management' },
   { id: 'tenants',            label: 'Tenants / Brands',    section: 'Executive' },
   { id: 'trash',              label: 'Trash',               section: 'Executive' },
+  { id: 'backups',            label: 'Backups',             section: 'Executive' },
 
   { id: 'dashboard',          label: 'Operations dashboard', section: 'Live' },
   { id: 'ops',                label: 'Prep list',           section: 'Live' },

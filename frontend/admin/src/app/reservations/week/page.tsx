@@ -42,6 +42,8 @@ const STATUS_DOT: Record<string, string> = {
   completed: 'bg-gray-400',
   no_show:   'bg-s-red',
   cancelled: 'bg-gray-300',
+  // Past capacity, waiting for the CEO (owner C10, 2026-10-26).
+  pending_approval: 'bg-s-amber',
 }
 
 export default function ReservationsWeekPage() {
@@ -145,7 +147,7 @@ export default function ReservationsWeekPage() {
         <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-s-muted">
           {Object.entries(STATUS_DOT).map(([k, c]) => (
             <span key={k} className="inline-flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full ${c}`} /> {k}
+              <span className={`w-2 h-2 rounded-full ${c}`} /> {k === 'pending_approval' ? 'waiting for the CEO' : k}
             </span>
           ))}
         </div>

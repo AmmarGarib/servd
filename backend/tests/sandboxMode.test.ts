@@ -93,7 +93,6 @@ const { connectorRoutes } = await import('../src/modules/connectors/routes.js')
 const { authRoutes } = await import('../src/modules/auth/routes.js')
 const { issueStaffSession } = await import('../src/modules/auth/service.js')
 const { requestSharedCode, normalisePhone } = await import('../src/modules/auth/otp.js')
-const { startEnrolment, completeEnrolment } = await import('../src/modules/auth/twoFactor.js')
 const { startLoyaltyTriggerWorker } = await import('../src/workers/loyaltyTriggers.js')
 const { startReservationReminderWorker } = await import('../src/workers/reservationReminders.js')
 const { startReviewPromptWorker } = await import('../src/workers/reviewPrompt.js')
@@ -604,27 +603,28 @@ describe('Raast bank-SMS intake', () => {
 // ── Login codes ──────────────────────────────────────────────────────────────
 
 describe('login codes', () => {
-  it('2FA login, live: no practiceCode in the response', async () => {
+  // Two-step sign-in is retired (owner, 2026-10-26): an account that was enrolled
+  // (the enrolment is ignored) signs straight in — live and practice alike — and
+  // no code is ever sent or echoed.
+  it('a formerly enrolled login signs straight in — live: no code, no practiceCode', async () => {
     const r = await inject('POST', '/api/v1/auth/login', { email: twoFaUser.email, password: PASSWORD })
     expect(r.status).toBe(200)
-    expect(r.body.twoFactorRequired).toBe(true)
+    expect('twoFactorRequired' in r.body).toBe(false)
+    expect(r.body.accessToken).toBeTruthy()
     expect('practiceCode' in r.body).toBe(false)
-    await prisma.phoneOtp.deleteMany({ where: { phone: TWO_FA_PHONE } })
-    await prisma.emailOtp.deleteMany({ where: { email: twoFaUser.email } })
   })
 
-  it('2FA login, practice copy: the code comes back after the password and signs the user in', async () => {
+  it('practice copy: the same — a session, no code sent, nothing echoed; /auth/2fa/verify is gone (410)', async () => {
     practice(true)
     const r = await inject('POST', '/api/v1/auth/login', { email: twoFaUser.email, password: PASSWORD })
     expect(r.status).toBe(200)
-    expect(r.body.twoFactorRequired).toBe(true)
-    expect(r.body.practiceCode).toMatch(/^\d{6}$/)
+    expect(r.body.accessToken).toBeTruthy()
+    expect('practiceCode' in r.body).toBe(false)
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(mail.transports).toBe(0)
-    logNeverHolds(r.body.practiceCode, TWO_FA_PHONE)
-    const v = await inject('POST', '/api/v1/auth/2fa/verify', { challengeToken: r.body.challengeToken, code: r.body.practiceCode })
-    expect(v.status).toBe(200)
-    expect(v.body.accessToken).toBeTruthy()
+    const v = await inject('POST', '/api/v1/auth/2fa/verify', { challengeToken: 'x', code: '123456' })
+    expect(v.status).toBe(410)
+    expect(v.body.error.code).toBe('TWO_STEP_RETIRED')
   })
 
   it('a wrong password never yields a code', async () => {
@@ -634,18 +634,13 @@ describe('login codes', () => {
     expect(JSON.stringify(r.body)).not.toMatch(/practiceCode/)
   })
 
-  it('2FA enrolment (signed-in user): practice copy returns the code; live never does', async () => {
-    const phone = `92300${String(STAMP).slice(-7)}`
-    const live = await startEnrolment(ownerA.id, phone)
-    expect('practiceCode' in live).toBe(false)
-    await prisma.phoneOtp.deleteMany({ where: { phone } })
-    practice(true)
-    const p = await startEnrolment(ownerA.id, phone)
-    expect(p.practiceCode).toMatch(/^\d{6}$/)
-    await completeEnrolment(ownerA.id, phone, p.practiceCode!)
-    const u = await prisma.user.findUniqueOrThrow({ where: { id: ownerA.id }, select: { twoFactorPhone: true } })
-    expect(u.twoFactorPhone).toBe(phone)
-    await prisma.user.update({ where: { id: ownerA.id }, data: { twoFactorPhone: null, twoFactorEnabledAt: null } })
+  it('2FA enrolment is gone (410) — live and practice', async () => {
+    for (const on of [false, true]) {
+      practice(on)
+      const r = await inject('POST', '/api/v1/auth/2fa/start', { phone: '923001234567' })
+      expect(r.status).toBe(410)
+      expect('practiceCode' in (r.body ?? {})).toBe(false)
+    }
   })
 
   it('code requests by a typed phone / email: the practice copy refuses up front (503), sends nothing, issues nothing, echoes nothing', async () => {

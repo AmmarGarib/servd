@@ -1,23 +1,21 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronUp, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, Check, Minus, Play, Plus, Timer, TriangleAlert, X } from 'lucide-react'
 import { FulfilmentIcon } from '../../../components/kds/FulfilmentIcon'
-import { formatDistanceToNowStrict } from 'date-fns'
-import { api } from '../../../lib/api'
+import { api, ApiError } from '../../../lib/api'
 import { useKdsSocket } from '../../../hooks/useKdsSocket'
 import { getSocket } from '../../../lib/socket'
 import { useKdsStore } from '../../../store/kds'
 import { KdsHeader } from '../../../components/kds/KdsHeader'
 import { NewOrderFlash } from '../../../components/kds/NewOrderFlash'
 import { useLineActions, LineStateBadge, HoldButton, RecallStrip } from '../../../components/kds/LineActions'
-import { orderRef } from '../../../lib/orderRef'
 
 // Recipe payload — matches /recipes/by-item/:menuItemId.
-// Used by the per-card expand panel to show free-text + per-step
-// instructions in the operator's chosen language with an optional photo.
+// Used by the order pop-up to show the dish's full recipe for a line with no
+// recipe steps of its own.
 interface RecipeData {
   steps:        string | null   // free-text English
   stepsUrdu:    string | null   // free-text Urdu
@@ -35,339 +33,523 @@ interface RecipeData {
 }
 
 /**
- * Per-station KDS — only what THIS station needs to cook right now.
+ * Station screen (owner B12, 2026-10-26) — the cook's tablet.
  *
- * Two data sources unioned by /expo/station/:id/queue:
+ * "Their screen should probs show them 4-6 orders at a time. They can either
+ * key in to order button to get quick popup of instructions or complete order
+ * from memory and press tick … start timer … multiple timers … Timer going
+ * off should just make the order card blink red.. no noise."
  *
- *   1. Step-level tickets: items whose recipe has steps configured. Each
- *      card is one step (e.g. "Sear steak" on Grill, "Boil rice" on Rice).
- *      Bumping fires the cascade — downstream steps appear on their station
- *      automatically.
- *
- *   2. Legacy items: menu items that don't have recipe steps yet still flow
- *      through the old per-item routing. Bumping uses the existing item
- *      status endpoint. As recipes get their steps, items naturally migrate.
- *      A legacy line can be put on Hold (it stays here, marked HELD, until
- *      Resume); a recalled line comes back marked REMAKE and its Bump starts
- *      and finishes the remake. Bumped lines can be recalled from the
- *      "Recently bumped" strip (BOH-04).
+ * Reads GET /expo/station/:id/board (modules/expo/kitchenBoard.ts): at most
+ * the station's `visibleCards` (4–6) ORDER cards, oldest first; the rest wait
+ * in a queue the cook does not see (only a count). On a card:
+ *   • tap the card → the order pop-up: each dish's step instructions (English
+ *     and Urdu), timers per dish, Hold / Resume for a line;
+ *   • Start → startedAt (the expo is alerted when a shown card is not started
+ *     within a minute);
+ *   • the tick → every dish of the order at this station is done; a recipe
+ *     step's next station gets the order (the cascade).
+ * Timers live on the server (started at + duration): a refresh or another
+ * tablet shows them. A finished timer makes its card blink red. No sound.
  */
 
 type FulfilmentType = 'dine_in' | 'takeout' | 'delivery'
 
-// Loud per-card badge so the line cook sees plate-vs-package at a glance.
-// Colours are kds-* tokens (green / amber / violet), never hex.
-const FULFILMENT_META: Record<FulfilmentType, { label: string; short: string; text: string; badge: string; card: string }> = {
-  dine_in:  { label: 'Dine-in',  short: 'PLATE',    text: 'text-kds-green',      badge: 'bg-kds-green/10 border-kds-green/30',           card: 'border-kds-green/35' },
-  takeout:  { label: 'Takeout',  short: 'PACK',     text: 'text-kds-amber',      badge: 'bg-kds-amber/10 border-kds-amber/30',           card: 'border-kds-amber/35' },
-  delivery: { label: 'Delivery', short: 'PACK+LBL', text: 'text-source-manual',  badge: 'bg-source-manual/10 border-source-manual/30',   card: 'border-source-manual/35' },
+const FULFILMENT_META: Record<FulfilmentType, { short: string; text: string; badge: string; card: string }> = {
+  dine_in:  { short: 'PLATE',    text: 'text-kds-green',     badge: 'bg-kds-green/10 border-kds-green/30',         card: 'border-kds-green/35' },
+  takeout:  { short: 'PACK',     text: 'text-kds-amber',     badge: 'bg-kds-amber/10 border-kds-amber/30',         card: 'border-kds-amber/35' },
+  delivery: { short: 'PACK+LBL', text: 'text-source-manual', badge: 'bg-source-manual/10 border-source-manual/30', card: 'border-source-manual/35' },
 }
+const CHANNEL_LABEL: Record<string, string> = { pos: 'Till', servd: 'Online', whatsapp: 'WhatsApp', manual: 'Phone', reservation: 'Booking' }
 
-interface StepTicket {
-  stepId:    string
-  itemId:    string
-  menuItemId: string | null   // null for custom-typed items; recipe lookup skipped
-  itemName:  string
-  qty:       number
-  itemNotes: string | null
-  status:    'preparing' | 'waiting'
-  firedAt:   string | null
-  instruction:      string
-  instructionUrdu:  string | null
-  phase:            string
-  estimatedSeconds: number
-  order: {
-    id: string; customerName: string | null; source: string; placedAt: string
-    fulfilmentType: FulfilmentType
-    tableLabel: string | null
-    concept: { name: string; slug: string }
-  }
-}
-
-interface LegacyTicket {
-  itemId:    string
+interface BoardEntry {
+  kind: 'step' | 'line'
+  id: string
+  itemId: string
   menuItemId: string | null
-  itemName:  string
-  qty:       number
-  itemNotes: string | null
-  status:    string
-  firedAt:   string | null
+  itemName: string
+  qty: number
+  notes: string | null
+  modifiers: string[]
+  status: string
+  firedAt: string | null
+  startedAt: string | null
+  instruction: string | null
+  instructionUrdu: string | null
+  estimatedSeconds: number | null
+}
+interface BoardCard {
   order: {
-    id: string; customerName: string | null; source: string; placedAt: string
-    fulfilmentType: FulfilmentType
-    tableLabel: string | null
-    concept: { name: string; slug: string }
+    id: string; ref: string; brand: string; channel: string; fulfilmentType: FulfilmentType
+    tableLabel: string | null; customerName: string | null; placedAt: string
   }
+  firedAt: string
+  started: boolean
+  held: boolean
+  unstarted: boolean
+  entries: BoardEntry[]
+}
+interface KitchenTimer {
+  id: string; orderId: string; orderItemId: string; orderItemStepId: string | null
+  label: string; durationSeconds: number; startedAt: string; endsAt: string
+}
+interface Board {
+  station: { id: string; name: string; brand: string; visibleCards: number }
+  visible: BoardCard[]
+  queuedCount: number
+  onDeck: Array<{ stepId: string; itemName: string; qty: number; instruction: string; order: { id: string; ref: string } }>
+  timers: KitchenTimer[]
+  serverNow: string
 }
 
-interface QueuePayload {
-  steps:  StepTicket[]
-  legacy: LegacyTicket[]
+const DEFAULT_LINE_TIMER = 120
+
+/** mm:ss (negative = over by). */
+function clock(seconds: number): string {
+  const s = Math.abs(Math.round(seconds))
+  const m = Math.floor(s / 60)
+  return `${seconds < 0 ? '+' : ''}${m}:${String(s % 60).padStart(2, '0')}`
+}
+
+function errorText(e: unknown): string {
+  if (e instanceof ApiError) return e.message
+  return (e as Error)?.message ?? 'Something went wrong'
 }
 
 export default function StationKdsPage() {
   const { station } = useParams<{ station: string }>()
   const qc = useQueryClient()
-  // Subscribe to socket events for live cascade updates.
   useKdsSocket({ stationId: station, role: 'kitchen' })
+  const lang = useKdsStore((s) => s.lang)
+  const showImages = useKdsStore((s) => s.showImages)
+  const isUrdu = lang === 'ur'
 
-  // ── Display mode (global, persisted by useKdsStore) ──────────────────
-  // - lang  = 'en' | 'ur'  → swaps instruction text + recipe steps to Urdu
-  // - showImages           → renders MenuItem.imageUrl in the expanded panel
-  //                          when on; pure-text otherwise (older iPad screens)
-  // The toggles live in KdsHeader only (one set of controls).
-  const lang        = useKdsStore((s) => s.lang)
-  const showImages  = useKdsStore((s) => s.showImages)
-  const isUrdu      = lang === 'ur'
-
-  // The station's real name (same list the KDS home reads).
-  const { data: myStations } = useQuery<{ stations: Array<{ id: string; name: string; concept: { name: string } }> }>({
-    queryKey: ['kds-my-stations'],
-    queryFn:  () => api.get('/kds/my-stations'),
-    staleTime: 30_000,
-  })
-  const stationName = myStations?.stations.find((s) => s.id === station)?.name
-
-  // ONE interval ticks every elapsed-time label once a second.
-  const [, setTick] = useState(0)
+  // ONE interval ticks every age / countdown once a second.
+  const [nowMs, setNowMs] = useState(() => Date.now())
   useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 1000)
+    const t = setInterval(() => setNowMs(Date.now()), 1000)
     return () => clearInterval(t)
   }, [])
 
-  // Which card is currently expanded for full instructions. Only one card can
-  // be open at a time so the cook can focus.
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-
-  const { data, isLoading } = useQuery<QueuePayload>({
-    queryKey: ['station-queue', station],
-    queryFn:  () => api.get<QueuePayload>(`/expo/station/${station}/queue?states=all`),
+  const boardKey = ['station-queue', station, 'board']
+  const { data, isLoading, isError, error } = useQuery<Board>({
+    queryKey: boardKey,
+    queryFn: () => api.get<Board>(`/expo/station/${station}/board`),
     refetchInterval: 5_000,
     staleTime: 2_000,
   })
+  // Server clock offset, so a timer reads the same on every tablet.
+  const offsetMs = useMemo(() => (data ? new Date(data.serverNow).getTime() - Date.now() : 0), [data])
+  const serverNow = nowMs + offsetMs
 
-  const bumpStep = useMutation({
-    mutationFn: (stepId: string) => api.post(`/expo/steps/${stepId}/bump`, {}),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ['station-queue', station] }),
+  const refresh = () => qc.invalidateQueries({ queryKey: ['station-queue', station] })
+  const [actionError, setActionError] = useState<string | null>(null)
+  const onErr = (e: unknown) => setActionError(errorText(e))
+  const onOk = () => { setActionError(null); refresh() }
+
+  const start = useMutation({
+    mutationFn: (orderId: string) => api.post(`/expo/station/${station}/cards/${orderId}/start`, {}),
+    onSuccess: onOk, onError: onErr,
   })
-
-  const bumpLegacy = useMutation({
-    mutationFn: (itemId: string) => api.patch(`/order-items/${itemId}/status`, { status: 'bumped' }),
-    onSuccess:  () => {
-      qc.invalidateQueries({ queryKey: ['station-queue', station] })
-      qc.invalidateQueries({ queryKey: ['station-recent-bumped', station] })
-    },
+  const done = useMutation({
+    mutationFn: (orderId: string) => api.post(`/expo/station/${station}/cards/${orderId}/done`, {}),
+    onSuccess: () => { onOk(); qc.invalidateQueries({ queryKey: ['station-recent-bumped', station] }) },
+    onError: onErr,
+  })
+  const startTimer = useMutation({
+    mutationFn: (v: { entryId: string; durationSeconds: number; label?: string }) =>
+      api.post('/expo/kitchen-timers', { stationId: station, ...v }),
+    onSuccess: onOk, onError: onErr,
+  })
+  const adjustTimer = useMutation({
+    mutationFn: (v: { id: string; addSeconds: number }) => api.patch(`/expo/kitchen-timers/${v.id}`, { addSeconds: v.addSeconds }),
+    onSuccess: onOk, onError: onErr,
+  })
+  const stopTimer = useMutation({
+    mutationFn: (id: string) => api.post(`/expo/kitchen-timers/${id}/stop`, {}),
+    onSuccess: onOk, onError: onErr,
   })
   const lineActions = useLineActions(station)
 
-  // Refresh the queue the moment a line is fired / moved for this station
-  // (expo fire, "Fire course", the pacing worker, another screen's bump) —
-  // not only on the next 5-second poll.
+  // Refresh the moment a line is fired / moved / timed for this station.
   useEffect(() => {
     const socket = getSocket()
-    const refresh = (data?: { stationId?: string | null }) => {
-      if (data?.stationId && data.stationId !== station) return
+    const onEvent = (d?: { stationId?: string | null }) => {
+      if (d?.stationId && d.stationId !== station) return
       qc.invalidateQueries({ queryKey: ['station-queue', station] })
     }
-    socket.on('item:updated', refresh)
-    socket.on('expo:fire', refresh)
+    socket.on('item:updated', onEvent)
+    socket.on('expo:fire', onEvent)
     return () => {
-      socket.off('item:updated', refresh)
-      socket.off('expo:fire', refresh)
+      socket.off('item:updated', onEvent)
+      socket.off('expo:fire', onEvent)
     }
   }, [station, qc])
 
-  const steps = data?.steps ?? []
-  const legacy = data?.legacy ?? []
-  const total = steps.filter((s) => s.status === 'preparing').length + legacy.length
-  const waitingCount = steps.filter((s) => s.status === 'waiting').length
+  const [openOrderId, setOpenOrderId] = useState<string | null>(null)
+  const cards = data?.visible ?? []
+  const timers = data?.timers ?? []
+  const openCard = cards.find((c) => c.order.id === openOrderId) ?? null
+  // The card left the screen (done elsewhere) → close its pop-up.
+  useEffect(() => { if (openOrderId && data && !openCard) setOpenOrderId(null) }, [openOrderId, data, openCard])
 
-  // Split into "ready to cook" (preparing/legacy) and "on deck" (waiting on deps)
-  const cooking: Array<StepTicket | { __legacy: true } & LegacyTicket> = [
-    ...steps.filter((s) => s.status === 'preparing'),
-    ...legacy.map((l) => ({ __legacy: true as const, ...l })),
-  ]
-  const waiting = steps.filter((s) => s.status === 'waiting')
+  const timersOf = (orderId: string) => timers.filter((t) => t.orderId === orderId)
+  const remaining = (t: KitchenTimer) => (new Date(t.endsAt).getTime() - serverNow) / 1000
+  const limit = data?.station.visibleCards ?? 5
 
   return (
-    <div className="erp-kitchen-dark flex h-screen flex-col bg-kds-bg">
+    <div className="erp-kitchen-dark flex min-h-screen flex-col bg-kds-bg">
       <NewOrderFlash />
       <div className="shrink-0 px-4 pt-3 pb-1 flex items-center justify-between gap-3 flex-wrap">
         <Link href="/expo" className="min-h-11 text-sm text-kds-subtext hover:text-kds-text flex items-center gap-1.5 transition-colors">
           <ArrowLeft size={16} aria-hidden="true" /> Expo
         </Link>
-        <div className="flex items-center gap-2">
-          {waitingCount > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {(data?.queuedCount ?? 0) > 0 && (
+            <span className="text-xs font-bold rounded-full px-2.5 py-1 bg-kds-amber/15 text-kds-amber">
+              {data!.queuedCount} more waiting
+            </span>
+          )}
+          {(data?.onDeck.length ?? 0) > 0 && (
             <span className="text-xs font-bold rounded-full px-2.5 py-1 bg-kds-blue/10 text-kds-blue">
-              {waitingCount} on deck
+              {data!.onDeck.length} on deck
             </span>
           )}
         </div>
       </div>
-      <KdsHeader title={stationName ?? 'Station'} stationId={station} count={total} />
+      <KdsHeader title={data?.station.name ?? 'Station'} stationId={station} count={cards.length} />
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {/* Cooking right now */}
-        <section>
-          <p className="text-xs uppercase tracking-[0.2em] font-black text-kds-subtext mb-3">
-            Cooking now ({cooking.length})
+      <div className="flex-1 p-3 sm:p-4 space-y-5">
+        {(actionError || lineActions.error) && (
+          <p role="alert" className="rounded-lg border border-kds-red/50 bg-kds-red/10 px-3 py-2 text-sm font-semibold text-kds-red">
+            {actionError ?? lineActions.error}
           </p>
-
-          {isLoading && <p className="text-sm text-kds-subtext">Loading…</p>}
-
-          {!isLoading && cooking.length === 0 && (
-            <div className="rounded-2xl p-12 text-center border border-kds-border bg-kds-card/40">
-              <Check size={36} aria-hidden="true" className="mx-auto mb-2 text-kds-green" />
-              <p className="text-base font-bold text-kds-text">All clear</p>
-              <p className="text-xs text-kds-subtext mt-1">New tickets will appear here when expo fires.</p>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-            {cooking.map((t) => {
-              const isLegacy = '__legacy' in t
-              const id = isLegacy ? t.itemId : t.stepId
-              const lineStatus = isLegacy ? t.status : 'preparing'
-              const isHeld = lineStatus === 'held'
-              const isRemake = lineStatus === 'recalled'
-              const onBump = () => isLegacy
-                ? (isRemake ? lineActions.bumpRemake.mutate(t.itemId) : bumpLegacy.mutate(t.itemId))
-                : bumpStep.mutate(t.stepId)
-              const pending = isLegacy
-                ? (bumpLegacy.isPending && bumpLegacy.variables === t.itemId)
-                  || (lineActions.bumpRemake.isPending && lineActions.bumpRemake.variables === t.itemId)
-                : bumpStep.isPending && bumpStep.variables === t.stepId
-              const elapsed = t.firedAt
-                ? formatDistanceToNowStrict(new Date(t.firedAt), { addSuffix: false })
-                : 'just now'
-              const eta = !isLegacy ? (t as StepTicket).estimatedSeconds : 0
-              const fm = FULFILMENT_META[t.order.fulfilmentType] ?? FULFILMENT_META.dine_in
-              const expanded = expandedId === id
-              const stepInstruction = !isLegacy
-                ? (isUrdu && (t as StepTicket).instructionUrdu
-                    ? (t as StepTicket).instructionUrdu
-                    : (t as StepTicket).instruction)
-                : null
-              return (
-                <div key={id} className={`rounded-2xl relative overflow-hidden border-2 bg-kds-card ${fm.card}`}
-                  dir={isUrdu ? 'rtl' : 'ltr'}>
-                  {/* Card body — clickable, toggles the instruction panel.
-                      The Bump button is outside this surface so it doesn't
-                      accidentally trigger an expand. */}
-                  <button
-                    onClick={() => setExpandedId(expanded ? null : id)}
-                    className="w-full text-left p-4 cursor-pointer hover:bg-white/[0.02] transition-colors">
-                    {/* Loud fulfilment badge — first thing the cook sees */}
-                    <div className={`absolute -top-2 left-3 px-2 py-0.5 rounded-md text-xs font-black uppercase tracking-[0.15em] border bg-kds-card ${fm.badge} ${fm.text}`}>
-                      <FulfilmentIcon type={t.order.fulfilmentType} size={12} /> {fm.short}
-                      {t.order.tableLabel && <span className="ml-1 opacity-80">· {t.order.tableLabel}</span>}
-                    </div>
-                    <div className="flex items-center justify-between mb-2 mt-1 text-xs uppercase tracking-wider font-bold">
-                      <span className="text-kds-subtext">{t.order.concept.name} · {t.order.source}</span>
-                      <span className="text-kds-amber">{elapsed}</span>
-                    </div>
-                    <LineStateBadge status={lineStatus} />
-                    <p className={`text-lg font-black text-kds-text leading-tight mb-1 ${isHeld ? 'opacity-60' : ''}`}>
-                      {t.qty > 1 && <span className="text-kds-amber mr-1">{t.qty}×</span>}
-                      {t.itemName}
-                    </p>
-                    {stepInstruction && (
-                      <p className="text-sm font-semibold mt-2 leading-snug text-kds-green">
-                        <ArrowRight size={14} aria-hidden="true" className="inline-block align-[-2px] mr-0.5" />{stepInstruction}
-                      </p>
-                    )}
-                    {t.itemNotes && (
-                      <p className="text-xs italic mt-1.5 text-kds-amber">
-                        <TriangleAlert size={12} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{t.itemNotes}
-                      </p>
-                    )}
-                    <p className="text-xs text-kds-subtext mt-2">
-                      {t.order.customerName ?? (isUrdu ? 'مہمان' : 'Walk-in')} · #{orderRef(t.order.id)}
-                    </p>
-                    {eta > 0 && (
-                      <p className="text-xs text-kds-subtext mt-1">
-                        {isUrdu ? 'ہدف' : 'Target'}: {Math.round(eta)}s
-                      </p>
-                    )}
-                    <p className="text-xs text-kds-subtext/60 mt-2 italic">
-                      {expanded ? <ChevronUp size={12} aria-hidden="true" className="inline-block align-[-2px] mr-0.5" /> : <ChevronDown size={12} aria-hidden="true" className="inline-block align-[-2px] mr-0.5" />}
-                      {expanded ? (isUrdu ? 'بند کریں' : 'Hide instructions') : (isUrdu ? 'ہدایات' : 'Tap for full instructions')}
-                    </p>
-                  </button>
-
-                  {/* Expanded instruction panel — recipe steps in chosen
-                      language, item image when showImages is on. Recipe is
-                      fetched on first expand. */}
-                  {expanded && (
-                    <StationInstructionPanel
-                      menuItemId={t.menuItemId}
-                      itemName={t.itemName}
-                      isUrdu={isUrdu}
-                      showImages={showImages}
-                    />
-                  )}
-
-                  {/* Bump — always visible at the bottom, never inside the
-                      clickable expand surface. */}
-                  <div className="p-4 pt-0 space-y-2">
-                    {/* A held line resumes before it can be bumped. */}
-                    {!isHeld && (
-                      <button onClick={onBump} disabled={pending}
-                        className="w-full min-h-11 rounded-xl py-3 text-base font-black transition-all disabled:opacity-40 bg-kds-green text-primary-on inline-flex items-center justify-center gap-2">
-                        {pending ? (isUrdu ? 'مکمل ہو رہا ہے…' : 'Bumping…') : (<><Check size={18} aria-hidden="true" />{isUrdu ? 'مکمل' : (isRemake ? 'Bump remake' : 'Bump')}</>)}
-                      </button>
-                    )}
-                    {isLegacy && <HoldButton itemId={t.itemId} status={lineStatus} actions={lineActions} />}
-                  </div>
-                </div>
-              )
-            })}
+        )}
+        {isError && (
+          <p role="alert" className="rounded-lg border border-kds-red/50 bg-kds-red/10 px-3 py-2 text-sm font-semibold text-kds-red">
+            Could not load this station: {errorText(error)}
+          </p>
+        )}
+        {isLoading && <p className="text-sm text-kds-subtext">Loading…</p>}
+        {!isLoading && !isError && cards.length === 0 && (
+          <div className="rounded-2xl p-10 text-center border border-kds-border bg-kds-card/40">
+            <Check size={36} aria-hidden="true" className="mx-auto mb-2 text-kds-green" />
+            <p className="text-base font-bold text-kds-text">All clear</p>
+            <p className="text-xs text-kds-subtext mt-1">New orders appear here when expo fires them.</p>
           </div>
-        </section>
+        )}
 
-        {lineActions.error && (
-          <p className="rounded-lg border border-kds-red/50 bg-kds-red/10 px-3 py-2 text-sm font-semibold text-kds-red">
-            {lineActions.error}
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          {cards.map((c) => {
+            const fm = FULFILMENT_META[c.order.fulfilmentType] ?? FULFILMENT_META.dine_in
+            const cardTimers = timersOf(c.order.id)
+            const rang = cardTimers.some((t) => remaining(t) <= 0)
+            const ageSec = (serverNow - new Date(c.firedAt).getTime()) / 1000
+            const busy = (done.isPending && done.variables === c.order.id) || (start.isPending && start.variables === c.order.id)
+            return (
+              <article key={c.order.id}
+                className={`rounded-2xl relative flex flex-col border-2 bg-kds-card ${rang ? 'border-kds-red bg-kds-red/20 animate-pulse' : c.unstarted ? 'border-kds-amber' : fm.card}`}
+                aria-label={`Order ${c.order.ref}${rang ? ', timer finished' : ''}`}>
+                <button type="button" onClick={() => setOpenOrderId(c.order.id)}
+                  className="w-full text-left p-3 sm:p-4 flex-1 hover:bg-white/[0.03] transition-colors rounded-t-2xl">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-2xl font-black text-kds-text leading-none tracking-wide">#{c.order.ref}</p>
+                      <p className="text-xs text-kds-subtext mt-1 truncate">
+                        {c.order.brand} · {CHANNEL_LABEL[c.order.channel] ?? c.order.channel}
+                        {c.order.customerName ? ` · ${c.order.customerName}` : ''}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className={`text-lg font-black tabular-nums ${ageSec > 600 ? 'text-kds-red' : 'text-kds-amber'}`}>{clock(ageSec)}</p>
+                      <span className={`inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider border ${fm.badge} ${fm.text}`}>
+                        <FulfilmentIcon type={c.order.fulfilmentType} size={11} /> {fm.short}
+                        {c.order.tableLabel && <span className="opacity-80">· {c.order.tableLabel}</span>}
+                      </span>
+                    </div>
+                  </div>
+
+                  <ul className="mt-3 space-y-2">
+                    {c.entries.map((e) => (
+                      <li key={e.id} className="leading-tight">
+                        <LineStateBadge status={e.status} small />
+                        <p className={`text-base font-black text-kds-text ${e.status === 'held' ? 'opacity-60' : ''}`}>
+                          {e.qty > 1 && <span className="text-kds-amber mr-1">{e.qty}×</span>}{e.itemName}
+                        </p>
+                        {e.modifiers.length > 0 && <p className="text-xs text-kds-subtext">{e.modifiers.join(', ')}</p>}
+                        {e.notes && (
+                          <p className="text-xs italic text-kds-amber">
+                            <TriangleAlert size={11} aria-hidden="true" className="inline-block align-[-1px] mr-1" />{e.notes}
+                          </p>
+                        )}
+                        {e.instruction && (
+                          <p className="text-xs font-semibold text-kds-green mt-0.5 line-clamp-2" dir={isUrdu && e.instructionUrdu ? 'rtl' : 'ltr'}>
+                            {isUrdu && e.instructionUrdu ? e.instructionUrdu : e.instruction}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+
+                  {cardTimers.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {cardTimers.map((t) => {
+                        const r = remaining(t)
+                        return (
+                          <span key={t.id} className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-black tabular-nums ${r <= 0 ? 'bg-kds-red text-kds-text' : 'bg-white/10 text-kds-text'}`}>
+                            <Timer size={12} aria-hidden="true" />
+                            <span className="max-w-[7rem] truncate font-semibold">{t.label}</span> {r <= 0 ? 'Done' : clock(r)}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {c.unstarted && !rang && <p className="mt-2 text-xs font-black uppercase tracking-wider text-kds-amber">Not started</p>}
+                </button>
+
+                <div className="p-3 sm:p-4 pt-0 flex gap-2">
+                  {!c.started && !c.held && (
+                    <button type="button" onClick={() => start.mutate(c.order.id)} disabled={busy}
+                      className="flex-1 min-h-12 rounded-xl text-sm font-black bg-white/10 text-kds-text inline-flex items-center justify-center gap-1.5 disabled:opacity-40">
+                      <Play size={16} aria-hidden="true" /> Start
+                    </button>
+                  )}
+                  {!c.held && (
+                    <button type="button" onClick={() => done.mutate(c.order.id)} disabled={busy}
+                      aria-label={`Order ${c.order.ref} done`}
+                      className="flex-1 min-h-12 rounded-xl text-base font-black bg-kds-green text-primary-on inline-flex items-center justify-center gap-1.5 disabled:opacity-40">
+                      <Check size={20} aria-hidden="true" /> {busy && done.isPending ? 'Sending…' : 'Done'}
+                    </button>
+                  )}
+                  {c.held && <p className="flex-1 text-center text-xs text-kds-subtext py-3">On hold — open the order to resume</p>}
+                </div>
+              </article>
+            )
+          })}
+        </div>
+
+        {(data?.queuedCount ?? 0) > 0 && (
+          <p className="text-center text-sm font-semibold text-kds-subtext">
+            {data!.queuedCount} more {data!.queuedCount === 1 ? 'order is' : 'orders are'} waiting — each appears when a card above is done.
           </p>
         )}
 
-        {/* Bumped in the last 30 minutes — Recall sends one back as a remake. */}
         <RecallStrip stationId={station} actions={lineActions} />
 
-        {/* Waiting (step deps not yet clear) */}
-        {waiting.length > 0 && (
+        {(data?.onDeck.length ?? 0) > 0 && (
           <section>
-            <p className="text-xs uppercase tracking-[0.2em] font-black text-kds-subtext mb-3">
-              On deck — waiting on prior steps ({waiting.length})
+            <p className="text-xs uppercase tracking-[0.2em] font-black text-kds-subtext mb-2">
+              On deck — waiting on another station ({data!.onDeck.length})
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-              {waiting.map((t) => {
-                const fm = FULFILMENT_META[t.order.fulfilmentType] ?? FULFILMENT_META.dine_in
-                return (
-                  <div key={t.stepId} className="rounded-2xl p-4 opacity-50 border border-dashed border-kds-border bg-kds-card/40">
-                    <p className={`text-xs uppercase tracking-wider font-bold mb-2 ${fm.text}`}>
-                      <FulfilmentIcon type={t.order.fulfilmentType} size={11} /> {fm.short} · {t.order.concept.name} · waiting
-                    </p>
-                    <p className="text-base font-bold text-kds-text/70 leading-tight">
-                      {t.qty > 1 && <span className="text-kds-subtext mr-1">{t.qty}×</span>}
-                      {t.itemName}
-                    </p>
-                    <p className="text-sm font-semibold mt-2 text-kds-subtext italic">
-                      {t.instruction}
-                    </p>
-                  </div>
-                )
-              })}
+            <div className="flex flex-wrap gap-2">
+              {data!.onDeck.map((d) => (
+                <span key={d.stepId} className="rounded-xl border border-dashed border-kds-border bg-kds-card/40 px-3 py-2 text-sm text-kds-subtext">
+                  #{d.order.ref} · {d.qty > 1 ? `${d.qty}× ` : ''}{d.itemName}
+                </span>
+              ))}
             </div>
           </section>
         )}
 
-        {/* Footer total */}
-        <p className="text-center text-xs text-kds-subtext pt-2">
-          {total} active · auto-refreshes every 5s
+        <p className="text-center text-xs text-kds-subtext pt-1">
+          Shows {limit} orders at a time · updates live
         </p>
       </div>
+
+      {openCard && (
+        <OrderPopup
+          card={openCard}
+          timers={timersOf(openCard.order.id)}
+          remaining={remaining}
+          isUrdu={isUrdu}
+          showImages={showImages}
+          onClose={() => setOpenOrderId(null)}
+          onStart={() => start.mutate(openCard.order.id)}
+          onDone={() => { done.mutate(openCard.order.id); setOpenOrderId(null) }}
+          onStartTimer={(entryId, durationSeconds, label) => startTimer.mutate({ entryId, durationSeconds, label })}
+          onAdjust={(id, addSeconds) => adjustTimer.mutate({ id, addSeconds })}
+          onStop={(id) => stopTimer.mutate(id)}
+          lineActions={lineActions}
+          busy={start.isPending || done.isPending || startTimer.isPending}
+        />
+      )}
     </div>
+  )
+}
+
+// ─── The order pop-up ───────────────────────────────────────────────────────
+//
+// Tap a card: every dish of the order at this station with its step
+// instruction in English and Urdu, the recipe for a dish with no steps, and a
+// timer per dish (default = the step's estimated time; − / + 30 s before
+// starting; several may run at once).
+
+function OrderPopup({
+  card, timers, remaining, isUrdu, showImages, onClose, onStart, onDone, onStartTimer, onAdjust, onStop, lineActions, busy,
+}: {
+  card: BoardCard
+  timers: KitchenTimer[]
+  remaining: (t: KitchenTimer) => number
+  isUrdu: boolean
+  showImages: boolean
+  onClose: () => void
+  onStart: () => void
+  onDone: () => void
+  onStartTimer: (entryId: string, durationSeconds: number, label?: string) => void
+  onAdjust: (id: string, addSeconds: number) => void
+  onStop: (id: string) => void
+  lineActions: ReturnType<typeof useLineActions>
+  busy: boolean
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null)
+  // The page re-renders every second (the clocks): keep the latest onClose in
+  // a ref so focus moves to Close once, on open — not on every tick.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null
+    closeRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current() }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey); opener?.focus?.() }
+  }, [])
+
+  return (
+    <div className="erp-kitchen-dark fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label={`Order ${card.order.ref}`}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-kds-border bg-kds-card text-kds-text">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-kds-border bg-kds-card px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-2xl font-black leading-none">#{card.order.ref}</p>
+            <p className="text-xs text-kds-subtext mt-1 truncate">
+              {card.order.brand} · {CHANNEL_LABEL[card.order.channel] ?? card.order.channel}
+              {card.order.tableLabel ? ` · Table ${card.order.tableLabel}` : ''}
+              {card.order.customerName ? ` · ${card.order.customerName}` : ''}
+            </p>
+          </div>
+          <button ref={closeRef} type="button" onClick={onClose} aria-label="Close"
+            className="min-h-11 min-w-11 rounded-xl bg-white/10 inline-flex items-center justify-center">
+            <X size={20} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {card.entries.map((e) => (
+            <EntryBlock key={e.id} entry={e} timers={timers.filter((t) => (e.kind === 'step' ? t.orderItemStepId === e.id : t.orderItemId === e.itemId && !t.orderItemStepId))}
+              remaining={remaining} isUrdu={isUrdu} showImages={showImages}
+              onStartTimer={onStartTimer} onAdjust={onAdjust} onStop={onStop} lineActions={lineActions} busy={busy} />
+          ))}
+        </div>
+
+        <div className="sticky bottom-0 flex gap-2 border-t border-kds-border bg-kds-card p-3">
+          {!card.started && !card.held && (
+            <button type="button" onClick={onStart} disabled={busy}
+              className="flex-1 min-h-12 rounded-xl text-sm font-black bg-white/10 inline-flex items-center justify-center gap-1.5 disabled:opacity-40">
+              <Play size={16} aria-hidden="true" /> Start
+            </button>
+          )}
+          {!card.held && (
+            <button type="button" onClick={onDone} disabled={busy}
+              className="flex-1 min-h-12 rounded-xl text-base font-black bg-kds-green text-primary-on inline-flex items-center justify-center gap-1.5 disabled:opacity-40">
+              <Check size={20} aria-hidden="true" /> Done
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EntryBlock({
+  entry, timers, remaining, isUrdu, showImages, onStartTimer, onAdjust, onStop, lineActions, busy,
+}: {
+  entry: BoardEntry
+  timers: KitchenTimer[]
+  remaining: (t: KitchenTimer) => number
+  isUrdu: boolean
+  showImages: boolean
+  onStartTimer: (entryId: string, durationSeconds: number, label?: string) => void
+  onAdjust: (id: string, addSeconds: number) => void
+  onStop: (id: string) => void
+  lineActions: ReturnType<typeof useLineActions>
+  busy: boolean
+}) {
+  const [seconds, setSeconds] = useState(entry.estimatedSeconds && entry.estimatedSeconds > 0 ? entry.estimatedSeconds : DEFAULT_LINE_TIMER)
+  const [showRecipe, setShowRecipe] = useState(false)
+  return (
+    <section className="rounded-xl border border-kds-border bg-black/20 p-3">
+      <LineStateBadge status={entry.status} small />
+      <p className="text-lg font-black leading-tight">
+        {entry.qty > 1 && <span className="text-kds-amber mr-1">{entry.qty}×</span>}{entry.itemName}
+      </p>
+      {entry.modifiers.length > 0 && <p className="text-sm text-kds-subtext">{entry.modifiers.join(', ')}</p>}
+      {entry.notes && (
+        <p className="text-sm italic text-kds-amber mt-0.5">
+          <TriangleAlert size={13} aria-hidden="true" className="inline-block align-[-2px] mr-1" />{entry.notes}
+        </p>
+      )}
+      {entry.instruction && (
+        <div className="mt-2 space-y-1">
+          <p className="text-base font-semibold text-kds-green">{entry.instruction}</p>
+          {entry.instructionUrdu && <p className="text-base font-semibold text-kds-green" dir="rtl" lang="ur">{entry.instructionUrdu}</p>}
+          {entry.estimatedSeconds ? <p className="text-xs text-kds-subtext">About {clock(entry.estimatedSeconds)}</p> : null}
+        </div>
+      )}
+
+      {/* Timers on this dish */}
+      {timers.length > 0 && (
+        <ul className="mt-3 space-y-1.5">
+          {timers.map((t) => {
+            const r = remaining(t)
+            return (
+              <li key={t.id} className={`flex flex-wrap items-center gap-2 rounded-lg px-2 py-1.5 ${r <= 0 ? 'bg-kds-red/30 animate-pulse' : 'bg-white/5'}`}>
+                <Timer size={14} aria-hidden="true" />
+                <span className="text-sm font-semibold truncate max-w-[10rem]">{t.label}</span>
+                <span className="text-lg font-black tabular-nums">{r <= 0 ? 'Done' : clock(r)}</span>
+                <span className="ml-auto flex gap-1.5">
+                  <button type="button" onClick={() => onAdjust(t.id, -30)} disabled={r <= 30} aria-label="30 seconds less"
+                    className="min-h-10 min-w-10 rounded-lg bg-white/10 inline-flex items-center justify-center disabled:opacity-30"><Minus size={16} aria-hidden="true" /></button>
+                  <button type="button" onClick={() => onAdjust(t.id, 30)} aria-label="30 seconds more"
+                    className="min-h-10 min-w-10 rounded-lg bg-white/10 inline-flex items-center justify-center"><Plus size={16} aria-hidden="true" /></button>
+                  <button type="button" onClick={() => onStop(t.id)}
+                    className="min-h-10 rounded-lg bg-white/10 px-3 text-sm font-bold">Stop</button>
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      {/* New timer: default from the step's time, − / + 30 s */}
+      {entry.status !== 'held' && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setSeconds((s) => Math.max(30, s - 30))} aria-label="30 seconds less"
+            className="min-h-11 min-w-11 rounded-lg bg-white/10 inline-flex items-center justify-center"><Minus size={16} aria-hidden="true" /></button>
+          <span className="text-lg font-black tabular-nums w-16 text-center">{clock(seconds)}</span>
+          <button type="button" onClick={() => setSeconds((s) => Math.min(4 * 3600, s + 30))} aria-label="30 seconds more"
+            className="min-h-11 min-w-11 rounded-lg bg-white/10 inline-flex items-center justify-center"><Plus size={16} aria-hidden="true" /></button>
+          <button type="button" onClick={() => onStartTimer(entry.id, seconds)} disabled={busy}
+            className="min-h-11 rounded-lg bg-kds-blue/20 text-kds-text px-3 text-sm font-black inline-flex items-center gap-1.5 disabled:opacity-40">
+            <Timer size={16} aria-hidden="true" /> Start timer
+          </button>
+        </div>
+      )}
+
+      {entry.kind === 'line' && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <HoldButton itemId={entry.itemId} status={entry.status} actions={lineActions} small />
+          <button type="button" onClick={() => setShowRecipe((v) => !v)} className="min-h-10 rounded-lg bg-white/10 px-3 text-sm font-bold">
+            {showRecipe ? 'Hide recipe' : 'Recipe'}
+          </button>
+        </div>
+      )}
+      {showRecipe && entry.kind === 'line' && (
+        <div className="mt-2 rounded-lg overflow-hidden">
+          <StationInstructionPanel menuItemId={entry.menuItemId} itemName={entry.itemName} isUrdu={isUrdu} showImages={showImages} />
+        </div>
+      )}
+    </section>
   )
 }
 

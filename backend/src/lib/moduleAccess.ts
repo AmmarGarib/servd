@@ -51,6 +51,10 @@ export const MODULE_IDS = [
   // is open to every login and each type is gated by its OWN module + roles
   // in modules/trash (registry.ts); only the CEO empties it.
   'trash',
+  // CEO → Backups (owner S13, 2026-10-26: "make it a weekly file i can download
+  // and save to my pc.. ceo only.."): the encrypted weekly database backup.
+  // CEO_ONLY_MODULES — every route is ADMIN_ONLY (modules/backups).
+  'backups',
   'brand_dashboard', 'fnb_dashboard',
   'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'chain',
   'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders',
@@ -127,7 +131,9 @@ const API_CONNECTORS = ['api_whatsapp', 'api_pos']
 // "adding brand info etc can go to marketing manager") — marketing and the
 // brand manager hold it by default; its tax / legal / look fields stay the
 // CEO's on the route itself (concepts/routes.ts BRAND_CEO_FIELDS).
-export const CEO_ONLY_MODULES: readonly string[] = []
+// 'backups' (owner S13, 2026-10-26): the whole-database backup file — every
+// company's data, so the CEO's alone.
+export const CEO_ONLY_MODULES: readonly string[] = ['backups']
 const CEO_ONLY_SET = new Set<string>(CEO_ONLY_MODULES)
 
 // DIRECTOR modules (owner, 2026-10-18). A director login holds EXACTLY these —

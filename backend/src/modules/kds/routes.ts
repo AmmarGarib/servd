@@ -59,6 +59,7 @@ export async function kdsRoutes(fastify: FastifyInstance) {
         name: s.name,
         displayOrder: s.displayOrder,
         isActive: s.isActive,
+        visibleCards: s.visibleCards,
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
         concept: s.concept,

@@ -25,6 +25,12 @@
 //   9  inventory.fifo_align:<tenantId>          Dr/Cr 12x0 vs 3020, prior-period difference  (CEO, once, dry run first)
 //  10  inventory.shortfall_settle:<lotId>       Dr 50x0 per brand / Cr 12x0                  (a late receipt settling earlier sales)
 //  11  inventory.issue_on_receipt:<lotId>       Dr 50x0 (usage split) / Cr 12x0              (unmeasured consumables)
+//  12  inventory.brand_move:<transferId>        Dr 12x0 tagged the new brand / Cr 12x0 tagged the old (owner B13 (a):
+//                                               stock moved between brands — no P&L at the move; the buyer's cost of
+//                                               sales carries it when it sells)
+//
+// Brand stock (owner B13 (a), 2026-10-26): a lot belongs to a brand (StockLot.conceptId, NULL = shared). The goods
+// receipt (1) tags each Dr 12x0 with the brand of the lot it opened; a brand move (12) re-tags the cost.
 //
 // H20 (owner, 2026-10-14 — "suspense, CEO clears"): waste and count
 // differences (2, 3 and inventory/voidWaste.ts postVoidWaste) wait in 1290
@@ -205,22 +211,33 @@ export async function postGoodsReceiptTx(tx: Tx, receiptId: string): Promise<{ p
   const lineIds = (await tx.goodsReceiptLine.findMany({ where: { receiptId: receipt.id }, select: { id: true } })).map((l) => l.id)
   const lots = lineIds.length === 0 ? [] : await tx.stockLot.findMany({
     where: { receiptLineId: { in: lineIds } },
-    select: { id: true, tenantId: true },
+    select: { id: true, tenantId: true, conceptId: true },
   })
   for (const l of lots) if (l.tenantId !== tenantId) throw crossCompany(`Lot ${l.id}`)
+  const brandOfLot = new Map(lots.map((l) => [l.id, l.conceptId]))
   const ins = lots.length === 0 ? [] : await tx.stockMovement.findMany({
     where: { lotId: { in: lots.map((l) => l.id) }, kind: 'receipt' },
-    select: { valueCents: true, costClass: true },
+    select: { lotId: true, valueCents: true, costClass: true },
   })
-  const byClass = zeroByClass()
-  for (const m of ins) byClass[asClass(m.costClass)] += toCents(m.valueCents)
-  const total = COST_CLASSES.reduce((s, c) => s + byClass[c], 0)
+  // Brand stock (owner B13 (a)): each class debit is tagged with the brand that owns the lot (NULL = shared).
+  const byClassBrand = new Map<string, { costClass: CostClass; conceptId: string | null; cents: number }>()
+  for (const m of ins) {
+    const cls = asClass(m.costClass)
+    const conceptId = (m.lotId ? brandOfLot.get(m.lotId) : null) ?? null
+    const key = `${cls}|${conceptId ?? ''}`
+    const b = byClassBrand.get(key) ?? { costClass: cls, conceptId, cents: 0 }
+    b.cents += toCents(m.valueCents)
+    byClassBrand.set(key, b)
+  }
+  const total = [...byClassBrand.values()].reduce((s, b) => s + b.cents, 0)
   if (total <= 0) return { posted: false }
 
   const ref = `GRN ${receipt.id.slice(-8).toUpperCase()}`
   const lines: JournalLineInput[] = []
   for (const c of COST_CLASSES) {
-    if (byClass[c] > 0) lines.push({ accountCode: CLASS_ACCOUNTS[c].inv, type: 'debit', amountCents: byClass[c], memo: `Goods received (${CLASS_LABEL[c]}) — ${supplier.name}, ${ref}`.slice(0, 250) })
+    for (const b of [...byClassBrand.values()].filter((x) => x.costClass === c)) {
+      if (b.cents > 0) lines.push({ accountCode: CLASS_ACCOUNTS[c].inv, type: 'debit', amountCents: b.cents, memo: `Goods received (${CLASS_LABEL[c]}) — ${supplier.name}, ${ref}`.slice(0, 250), conceptId: b.conceptId })
+    }
   }
   lines.push({ accountCode: ACCT.GRNI, type: 'credit', amountCents: total, memo: `Received, not yet billed — ${supplier.name}, ${ref}`.slice(0, 250) })
   assertBalanced(lines, `procurement.receipt:${receipt.id}`)
@@ -313,7 +330,7 @@ async function buildCountAdjustment(db: Db, countId: string, store: boolean): Pr
   const count = await db.physicalCount.findUnique({
     where: { id: countId },
     select: {
-      id: true, tenantId: true, kind: true, countedAt: true, countedById: true,
+      id: true, tenantId: true, kind: true, countedAt: true, countedById: true, conceptId: true,
       lines: { select: { id: true, inventoryItemId: true, systemQty: true, physicalQty: true, valueCents: true } },
     },
   })
@@ -347,11 +364,12 @@ async function buildCountAdjustment(db: Db, countId: string, store: boolean): Pr
     if (count.kind === 'opening') {
       const v = Math.abs(value)
       overCents += v
-      lines.push({ accountCode: inv, type: 'debit', amountCents: v, memo: `Opening stock — ${memo}`.slice(0, 250) })
+      lines.push({ accountCode: inv, type: 'debit', amountCents: v, memo: `Opening stock — ${memo}`.slice(0, 250), conceptId: count.conceptId ?? null })
       lines.push({ accountCode: ACCT.OWNERS_CAPITAL, type: 'credit', amountCents: v, memo: `Opening stock found by the first count (H19, owner's capital) — ${item.name}`.slice(0, 250) })
       continue
     }
-    const shares = await sharesFor(db, tenantId, item.id, count.countedAt, rows, store)
+    // A brand count (owner B13 (a)) is that brand's difference; otherwise the usage split (H20).
+    const shares = count.conceptId ? [{ conceptId: count.conceptId, share: 1 }] : await sharesFor(db, tenantId, item.id, count.countedAt, rows, store)
     if (value < 0) {
       shortCents += -value
       lines.push(...brandPairs(diffSide, inv, splitCents(-value, shares), { dr: `Count short — ${memo}`, cr: `Count short — ${memo}` }))
@@ -406,7 +424,7 @@ export async function postPrepDraw(batchId: string, opts: RepostOptions & { tx?:
   return inTx(opts.tx, async (tx) => {
     const batch = await tx.prepBatch.findUnique({
       where: { id: batchId },
-      select: { id: true, tenantId: true, recipeId: true, itemName: true, drawValueCents: true, createdAt: true, staffId: true },
+      select: { id: true, tenantId: true, recipeId: true, itemName: true, drawValueCents: true, createdAt: true, staffId: true, conceptId: true },
     })
     if (!batch) return { posted: false, entryId: null, reason: 'batch_not_found' }
     if (batch.recipeId) return { posted: false, entryId: null, reason: 'not_ad_hoc' }
@@ -435,7 +453,8 @@ export async function postPrepDraw(batchId: string, opts: RepostOptions & { tx?:
       for (const g of byItemClass.values()) {
         if (g.cents === 0) continue
         total += g.cents
-        const shares = await sharesFor(tx, tenantId, g.itemId, batch.createdAt, g.rows, true)
+        // A batch for one brand (owner B13 (a)) is that brand's cost; otherwise the usage split.
+        const shares = batch.conceptId ? [{ conceptId: batch.conceptId, share: 1 }] : await sharesFor(tx, tenantId, g.itemId, batch.createdAt, g.rows, true)
         const name = names.get(g.itemId) ?? g.itemId
         lines.push(...brandPairs(CLASS_ACCOUNTS[g.cls].cogs, CLASS_ACCOUNTS[g.cls].inv, splitCents(g.cents, shares), {
           dr: `Prep draw — ${name} for ${batch.itemName}`, cr: `Inventory drawn for prep (${CLASS_LABEL[g.cls]}) — ${name}`,
@@ -695,6 +714,58 @@ export async function postFifoAlign(
     if (!r.posted) throw new AppError('ALREADY_ALIGNED', 'Inventory was already aligned with the FIFO lots — it is done once.', 409)
     return { byClass, posted: true }
   })
+}
+
+// ─── 12. Brand move (owner B13 (a), 2026-10-26) ──────────────────────────────
+
+/**
+ * 'inventory.brand_move:<transferId>': stock of one company moved from one brand's lots to another's (a brand move,
+ * or an outlet transfer that changed owner) — Dr the class inventory tagged the NEW brand / Cr the same account tagged
+ * the OLD brand (NULL = shared), at the value moved, per (class, from, to). Same company, same 12x0: nothing changes
+ * in the trial balance or the P&L at the move; the brand that sells it later carries the cost in its cost of sales.
+ * Dated `at` (owner decision 6 when that month is closed), in the caller's transaction (lib/stockLedger.ts
+ * transferInTx). Idempotent (one key per transfer).
+ */
+export async function postBrandMoveTx(tx: Tx, a: {
+  tenantId: string; transferId: string; itemId: string; at: Date
+  parts: Array<{ costClass: CostClass; fromConceptId: string | null; toConceptId: string | null; cents: number }>
+}): Promise<void> {
+  const item = await tx.inventoryItem.findUnique({ where: { id: a.itemId }, select: { name: true, tenantId: true } })
+  if (!item) throw new AppError('ITEM_NOT_FOUND', `Inventory item ${a.itemId} not found`, 404)
+  if (item.tenantId !== a.tenantId) throw crossCompany(item.name)
+  const merged = new Map<string, { costClass: CostClass; fromConceptId: string | null; toConceptId: string | null; cents: number }>()
+  for (const p of a.parts) {
+    if (!Number.isInteger(p.cents) || p.cents < 0) throw new AppError('INVALID_AMOUNT', 'A moved value must be whole paisa, zero or more', 500)
+    if (p.cents === 0 || (p.fromConceptId ?? null) === (p.toConceptId ?? null)) continue
+    await assertConceptInCompany(tx, p.fromConceptId, a.tenantId)
+    await assertConceptInCompany(tx, p.toConceptId, a.tenantId)
+    const key = `${p.costClass}|${p.fromConceptId ?? ''}|${p.toConceptId ?? ''}`
+    const m = merged.get(key) ?? { ...p, cents: 0 }
+    m.cents += p.cents
+    merged.set(key, m)
+  }
+  const names = new Map((await tx.concept.findMany({
+    where: { id: { in: [...merged.values()].flatMap((m) => [m.fromConceptId, m.toConceptId]).filter((x): x is string => !!x) } },
+    select: { id: true, name: true },
+  })).map((c) => [c.id, c.name]))
+  const label = (id: string | null) => (id ? names.get(id) ?? 'a brand' : 'shared stock')
+  const lines: JournalLineInput[] = []
+  let total = 0
+  for (const m of merged.values()) {
+    const acct = CLASS_ACCOUNTS[asClass(m.costClass)].inv
+    const memo = `${item.name} moved from ${label(m.fromConceptId)} to ${label(m.toConceptId)}`.slice(0, 250)
+    lines.push({ accountCode: acct, type: 'debit', amountCents: m.cents, memo, conceptId: m.toConceptId })
+    lines.push({ accountCode: acct, type: 'credit', amountCents: m.cents, memo, conceptId: m.fromConceptId })
+    total += m.cents
+  }
+  if (lines.length === 0) return
+  assertBalanced(lines, `inventory.brand_move:${a.transferId}`)
+  const when = await systemDate(tx, a.tenantId, a.at)
+  const late = withLateNote(`Stock moved between brands — ${item.name}, ${pkr(total)}`, lines, when.memoNote)
+  await postJournalEntry({
+    tenantId: a.tenantId, sourceType: 'inventory.brand_move', sourceId: a.transferId,
+    description: late.description, entryDate: when.entryDate, lines: late.lines,
+  }, { tx })
 }
 
 // ─── 10-11. Postings made by stockLedger.addLotTx ────────────────────────────

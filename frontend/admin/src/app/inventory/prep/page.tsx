@@ -87,6 +87,11 @@ export default function PrepBatchPage() {
   const [photos, setPhotos] = useState<PickedFile[]>([])
   const [notes, setNotes] = useState('')
   const [locationId, setLocationId] = useState('')
+  // Brand stock (owner B13 (a)): the brand the batch is for — it draws that brand's stock, then shared stock.
+  const [prepBrand, setPrepBrand] = useState('')
+  const { data: stockBrands = [] } = useQuery<Array<{ id: string; name: string; tenantId: string | null }>>({
+    queryKey: ['concepts-picker'], queryFn: () => api.get('/concepts?view=picker'), retry: false, meta: { background: true }, staleTime: 300_000,
+  })
   const [feedback, setFeedback] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null)
   const [tried, setTried] = useState(false)
 
@@ -136,6 +141,7 @@ export default function PrepBatchPage() {
       const res = await api.post<BatchResult>('/crosschecks/prep-batches', {
       recipeId: adHoc || !recipeId ? null : recipeId,
       locationId: locationId || null,
+      ...(prepBrand ? { conceptId: prepBrand } : {}),
       itemName, inputs,
       // A recipe batch (prep as stock, 2026-10-24) draws its recipe × batches and adds the prep item at the actual yield.
       ...(inPortions
@@ -265,6 +271,16 @@ export default function PrepBatchPage() {
                 <Select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={fieldCls}>
                   <option value="">No particular outlet</option>
                   {activeOutlets.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </Select>
+              </Field>
+            </div>
+          )}
+          {stockBrands.length > 1 && (
+            <div className="mt-3">
+              <Field label="For brand (optional) — uses its stock, then shared stock">
+                <Select value={prepBrand} onChange={(e) => setPrepBrand(e.target.value)} className={fieldCls}>
+                  <option value="">Any stock at the outlet</option>
+                  {stockBrands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </Select>
               </Field>
             </div>

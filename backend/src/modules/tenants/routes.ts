@@ -763,10 +763,14 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.socialConnection,
     // Kitchen station changes waiting for the CEO (owner C3, 2026-10-26): follow the brand's company.
     tx.stationChangeRequest,
+    // Cook timers on the station screen (owner B12, 2026-10-26): follow the order's company.
+    tx.kitchenTimer,
     // Sales sessions (2026-10-22): per brand, follow the brand's company.
     tx.menuSession,
     // Booking guests by invite link (owner, 2026-10-26): follow the brand's company.
     tx.reservationGuest,
+    // Overbooks waiting for the CEO (owner C10, 2026-10-26): follow the brand's company.
+    tx.reservationOverbookRequest,
     // Customer money.
     tx.giftCard, tx.walletTransaction, tx.tipPool, tx.taxInvoice,
     // HR back office.

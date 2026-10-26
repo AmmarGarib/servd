@@ -22,6 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
     title:       seo.title ?? 'Terms of service for ordering on servd in Karachi',
     description: seo.description ?? 'The terms for ordering, paying, delivery, refunds and table bookings with servd and the GS Foods kitchens in Karachi, Pakistan.',
     canonical:   CANONICAL,
+    noindex:     true, // owner 2026-10-26 (S8): hidden from the website for now, page kept
   })
 }
 

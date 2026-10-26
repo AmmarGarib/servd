@@ -3,22 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 import { STOREFRONT_URL } from '../../lib/content'
-import { PracticeCode } from '../../components/SandboxBanner'
 import { PasswordInput } from '../../components/ui/PasswordInput'
 import { checkInOnSignIn } from '../../lib/checkInOnSignIn'
 
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 
-/** The practice copy's API sends nothing out. After a correct password it
- *  returns the 2FA code it would have sent as `practiceCode` — only there: a
- *  code or reset link asked for by phone / email alone is never echoed (anyone
- *  could ask). The live API never returns it. */
-function practiceCodeOf(d: unknown): string {
-  const v = (d as { practiceCode?: unknown } | null)?.practiceCode
-  return typeof v === 'string' ? v : ''
-}
-
-type Mode = 'password' | 'twofactor' | 'changepw' | 'forgot' | 'code'
+type Mode = 'password' | 'changepw' | 'forgot' | 'code'
 
 /**
  * The single staff login page. Email + password, and nothing else.
@@ -35,8 +25,8 @@ type Mode = 'password' | 'twofactor' | 'changepw' | 'forgot' | 'code'
  * where the generated password is shown once to hand over.
  *
  * Modes:
- *   password  — the default and the only way in.
- *   twofactor — the WhatsApp OTP step, for accounts enrolled in it.
+ *   password  — the default and the only way in. (The two-step code step was
+ *               retired, owner 2026-10-26.)
  *   changepw  — reachable from the sign-in form WITHOUT a session, because
  *               someone handed a generated password needs to replace it before
  *               they have anything else to sign in with.
@@ -53,15 +43,6 @@ export default function StaffLoginPage() {
 
   const [pwEmail,    setPwEmail]    = useState('')
   const [pwPassword, setPwPassword] = useState('')
-
-  // Second-factor step. The challenge token is what the API handed back instead
-  // of a session; the code is what arrives on WhatsApp. Neither is a credential
-  // on its own — the challenge is good for ten minutes and only for
-  // /auth/2fa/verify.
-  const [mfaChallenge, setMfaChallenge] = useState('')
-  const [mfaHint,      setMfaHint]      = useState('')
-  const [mfaCode,      setMfaCode]      = useState('')
-  const [mfaPractice,  setMfaPractice]  = useState('')
 
   // Change-password step.
   const [cpCurrent, setCpCurrent] = useState('')
@@ -85,14 +66,19 @@ export default function StaffLoginPage() {
 
   const [error,   setError]   = useState('')
   const [loading, setLoading] = useState(false)
+  // A sign-in lasts one shift (owner B1, 2026-10-26): lib/api.ts sends an ended
+  // session here with ?ended=shift. Read once on load (no Suspense needed).
+  const [shiftEnded, setShiftEnded] = useState(false)
+  useEffect(() => {
+    try { setShiftEnded(new URLSearchParams(window.location.search).get('ended') === 'shift') } catch { /* ignore */ }
+  }, [])
 
   // One error style, cleared as soon as anything in the form is edited.
-  useEffect(() => { setError('') }, [pwEmail, pwPassword, cpCurrent, cpNew, cpNew2, codePhone, codeValue, mfaCode])
+  useEffect(() => { setError('') }, [pwEmail, pwPassword, cpCurrent, cpNew, cpNew2, codePhone, codeValue])
 
   // A code is submitted once per value: the sixth digit auto-submits, and the
   // ref stops a paste + the form's own submit from sending it twice.
   const codeBusy = useRef(false)
-  const mfaRef  = useRef<HTMLInputElement>(null)
   const codeRef = useRef<HTMLInputElement>(null)
   const digits6 = (v: string) => v.replace(/\D/g, '').slice(0, 6)
 
@@ -123,17 +109,6 @@ export default function StaffLoginPage() {
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'Invalid credentials')
 
-      // Two-factor on: no session yet, only a challenge. Move to the code step
-      // rather than reading tokens that are not there.
-      if (d.twoFactorRequired) {
-        setMfaChallenge(d.challengeToken)
-        setMfaHint(d.phoneHint ?? '')
-        setMfaCode('')
-        setMfaPractice(practiceCodeOf(d))
-        setMode('twofactor')
-        return
-      }
-
       setAuth(d.user, d.accessToken, d.refreshToken)
       // Nudge, never a block: an account created with a generated (or
       // reissued) password is flagged on the login response, and lands on the
@@ -144,34 +119,6 @@ export default function StaffLoginPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Invalid credentials')
     } finally {
-      setLoading(false)
-    }
-  }
-
-  async function submitTwoFactor(e?: React.FormEvent, value?: string) {
-    e?.preventDefault()
-    const code = (value ?? mfaCode).trim()
-    if (code.length < 6) { setError('Enter the 6-digit code'); return }
-    if (codeBusy.current) return
-    codeBusy.current = true
-    setError(''); setLoading(true)
-    try {
-      const res = await fetch(`${API_URL}/api/v1/auth/2fa/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ challengeToken: mfaChallenge, code }),
-      })
-      const d = await res.json()
-      if (!res.ok) throw new Error(d.error?.message ?? 'That code did not work')
-      setAuth(d.user, d.accessToken, d.refreshToken)
-      const punchPage = await checkInOnSignIn(d.user?.role)
-      router.replace(d.user?.mustChangePassword ? '/account/password?first=1' : punchPage ?? '/w')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'That code did not work')
-      setTimeout(() => mfaRef.current?.select(), 0)
-    } finally {
-      codeBusy.current = false
       setLoading(false)
     }
   }
@@ -240,7 +187,6 @@ export default function StaffLoginPage() {
 
   function backToSignIn() {
     setMode('password'); setError(''); setCpDone(false); setFgDone(false)
-    setMfaChallenge(''); setMfaCode(''); setMfaPractice('')
     setCodeSent(false); setCodeValue(''); setCodeFromManager(false)
   }
 
@@ -319,7 +265,6 @@ export default function StaffLoginPage() {
             <h1 className="text-2xl font-black text-s-text">
               {mode === 'password'  ? 'Sign in'
                 : mode === 'code' ? 'Sign in with a code'
-                : mode === 'twofactor' ? 'Enter your code'
                 : mode === 'forgot' ? 'Reset your password'
                 : 'Change your password'}
             </h1>
@@ -328,11 +273,17 @@ export default function StaffLoginPage() {
                 : mode === 'code' ? (codeSent
                     ? (codeFromManager ? 'Enter the code your manager gave you' : 'Same code sent to your WhatsApp and email — use whichever arrives first')
                     : 'For cashiers, servers and kitchen staff')
-                : mode === 'twofactor' ? `We sent the same 6-digit code to your WhatsApp (${mfaHint || 'your number'}) and your email — use whichever arrives first`
                 : mode === 'forgot' ? 'We will email you a link to set a new one'
                 : 'You need your current password to set a new one'}
             </p>
           </div>
+
+          {shiftEnded && (mode === 'password' || (mode === 'code' && !codeSent)) && (
+            <p role="status" className="text-xs mb-4 rounded-xl px-3 py-2 text-center leading-relaxed"
+              style={{ background: 'color-mix(in srgb, var(--erp-primary) 8%, transparent)', color: 'var(--erp-primary)' }}>
+              Your shift ended — sign in again. A sign-in lasts one shift.
+            </p>
+          )}
 
           {mode === 'code' ? (
             !codeSent ? (
@@ -385,40 +336,6 @@ export default function StaffLoginPage() {
                 )}
               </form>
             )
-
-          ) : mode === 'twofactor' ? (
-            <form onSubmit={submitTwoFactor}>
-              {mfaPractice && <PracticeCode code={mfaPractice} />}
-              <input
-                ref={mfaRef}
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                value={mfaCode}
-                maxLength={6}
-                spellCheck={false}
-                autoCorrect="off"
-                aria-label="6-digit code"
-                onChange={(e) => { const v = digits6(e.target.value); setMfaCode(v); if (v.length === 6) void submitTwoFactor(undefined, v) }}
-                onPaste={(e) => { e.preventDefault(); const v = digits6(e.clipboardData.getData('text')); setMfaCode(v); if (v.length === 6) void submitTwoFactor(undefined, v) }}
-                placeholder="000000"
-                autoFocus
-                className="w-full mb-3 rounded-xl px-4 py-3 text-center text-2xl font-black tracking-[0.4em] text-s-text outline-none"
-                style={fieldStyle}
-              />
-              {error && <p role="alert" className="text-xs mb-3 text-center" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
-              <button type="submit" disabled={loading} className={cta} style={ctaStyle}>
-                {loading ? 'Checking…' : 'Sign in'}
-              </button>
-              <button type="button" onClick={backToSignIn}
-                className={`w-full mt-1 ${linkCls}`}>
-                ← Start over
-              </button>
-              <p className="text-xs text-s-muted mt-3 text-center leading-relaxed">
-                The code works for 5 minutes. To get a new one, start over.<br />
-                Didn&rsquo;t ask to sign in? Someone has your password. Change it as soon as you&rsquo;re in.
-              </p>
-            </form>
 
           ) : mode === 'forgot' ? (
             fgDone ? (

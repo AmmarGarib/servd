@@ -9,7 +9,7 @@ import type { CSSProperties } from 'react'
 import { brandSurface } from '../../lib/concept'
 import { useBrandSlug } from '../../lib/host'
 import type { SectionProps } from '../types'
-import { link, list, str } from '../safe'
+import { isHiddenLegalHref, link, list, str } from '../safe'
 import { brandHref, brandNameOf, fill, orLive, servdHref } from './util'
 import './brand.css'
 
@@ -79,13 +79,13 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
   // disappear when it is not set.
   const socials = list(fields.socials).flatMap((item) => {
     const l = link(item)
-    const target = to(l.href)
+    const target = isHiddenLegalHref(l.href) ? null : to(l.href)
     const label = fill(l.text, ctx, name)
     return target && label ? [{ label, ...target }] : []
   })
   const links = list(fields.links).flatMap((item) => {
     const l = link(item)
-    const target = to(l.href)
+    const target = isHiddenLegalHref(l.href) ? null : to(l.href)
     const label = fill(l.text, ctx, name)
     return target && label ? [{ label, ...target }] : []
   })
@@ -94,7 +94,7 @@ export function BrandFooter({ fields, ctx }: SectionProps) {
   // absolute on servd's origin from a brand domain (brandHref's servd path).
   const legalLinks = list(fields.legalLinks).flatMap((item) => {
     const l = link(item)
-    const target = to(l.href)
+    const target = isHiddenLegalHref(l.href) ? null : to(l.href)
     const label = fill(l.text, ctx, name)
     return target && label ? [{ label, ...target }] : []
   })

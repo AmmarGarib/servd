@@ -2,7 +2,7 @@
 // move of it reaches the right company's books.
 //
 //   ONL-R2-01  a top-up credits the ACTIVE company's wallet and posts there in
-//              the same transaction (goodwill: Dr 6060 / Cr 2050; paid: Dr the
+//              the same transaction (goodwill: Dr 6065 / Cr 2050 — 6060 before C6; paid: Dr the
 //              tender's account / Cr 2050). Only the wallet of the ORDER's
 //              company can pay an order; its spend is Dr 2050 in that company;
 //              a cancel / refund restores to that company's wallet. 2050 never
@@ -143,7 +143,7 @@ afterAll(async () => {
 // ─── Top-ups ─────────────────────────────────────────────────────────────────
 
 describe('ONL-R2-01: a top-up is booked in the top-up company', () => {
-  it('a goodwill top-up credits A only and posts Dr 6060 / Cr 2050 in A, balanced', async () => {
+  it('a goodwill top-up credits A only and posts Dr 6065 / Cr 2050 in A, balanced (owner C6)', async () => {
     const r = await asStaff('mgrA', 'POST', '/wallet/topup', { customerId: shared, amountCents: 50_000, description: 'Goodwill — late delivery' })
     expect(r.statusCode).toBe(201)
     expect(r.json()).toMatchObject({ newBalance: 50_000, tenantId: tenantA })
@@ -155,7 +155,7 @@ describe('ONL-R2-01: a top-up is booked in the top-up company', () => {
     expect(je!.id).toBe(r.json().entryId)
     const dr = je!.lines.filter((l) => l.type === 'debit')
     const cr = je!.lines.filter((l) => l.type === 'credit')
-    expect(dr.map((l) => [l.account.code, l.amountCents])).toEqual([['6060', 50_000]])
+    expect(dr.map((l) => [l.account.code, l.amountCents])).toEqual([['6065', 50_000]])
     expect(cr.map((l) => [l.account.code, l.amountCents])).toEqual([['2050', 50_000]])
     expect(je!.lines.every((l) => l.account.tenantId === tenantA)).toBe(true)
     // Nothing in B's books.
@@ -196,12 +196,12 @@ describe('ONL-R2-01: a top-up is booked in the top-up company', () => {
 
   it('a posting that cannot be made rolls the credit back (no wallet value without its entry)', async () => {
     const c = await mkCustomer([conceptA])
-    const acct = await prisma.account.findFirstOrThrow({ where: { tenantId: tenantA, code: '6060' } })
-    await prisma.account.update({ where: { id: acct.id }, data: { code: '6060-x' } })
+    const acct = await prisma.account.findFirstOrThrow({ where: { tenantId: tenantA, code: '6065' } })
+    await prisma.account.update({ where: { id: acct.id }, data: { code: '6065-x' } })
     try {
       await expect(topUpWallet({ tenantId: tenantA, customerId: c, amountCents: 5_000, kind: 'goodwill', description: 't', postedBy: 'test' })).rejects.toThrow()
     } finally {
-      await prisma.account.update({ where: { id: acct.id }, data: { code: '6060' } })
+      await prisma.account.update({ where: { id: acct.id }, data: { code: '6065' } })
     }
     expect(await walletAt(tenantA, c)).toBe(0)
     expect(await prisma.walletTransaction.count({ where: { customerId: c } })).toBe(0)

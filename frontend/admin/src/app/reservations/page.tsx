@@ -62,7 +62,7 @@ interface Reservation {
   partySize: number
   startTime: string
   endTime: string
-  status: 'booked' | 'confirmed' | 'seated' | 'completed' | 'no_show' | 'cancelled'
+  status: 'booked' | 'confirmed' | 'seated' | 'completed' | 'no_show' | 'cancelled' | 'pending_approval'
   source: string
   guestName: string
   guestPhone: string | null
@@ -85,6 +85,8 @@ const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
   completed: { cls: 'bg-s-elevated text-s-muted',      label: 'Done' },
   no_show:   { cls: 'bg-s-red-dim text-s-red',         label: 'No show' },
   cancelled: { cls: 'bg-s-red-dim text-s-red',         label: 'Cancelled' },
+  // Past capacity, waiting for the CEO (owner C10, 2026-10-26) — not on the floor, the guest is not told yet.
+  pending_approval: { cls: 'bg-s-amber-dim text-s-amber', label: 'Waiting for the CEO' },
 }
 
 export default function ReservationsPage() {
@@ -315,7 +317,7 @@ function ReservationRow({
   onViewCustomer: (id: string) => void
 }) {
   const confirm = useConfirm()
-  const badge = STATUS_BADGE[r.status]!
+  const badge = STATUS_BADGE[r.status] ?? { cls: 'bg-s-elevated text-s-muted', label: r.status }
   const time = new Date(r.startTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
   return (
     <div className="px-4 py-3 grid grid-cols-[80px_1fr_auto] items-start gap-3">
@@ -352,7 +354,7 @@ function ReservationRow({
         {r.status === 'seated' && (
           <button onClick={() => onTransition('complete')} className="min-h-11 text-xs font-bold px-3 rounded bg-secondary text-secondary-on">Complete</button>
         )}
-        {(r.status === 'booked' || r.status === 'confirmed') && (
+        {(r.status === 'booked' || r.status === 'confirmed' || r.status === 'pending_approval') && (
           <button onClick={async () => {
             const res = await confirm({
               title: `Cancel ${r.guestName}'s booking?`, body: `${r.partySize} ppl at ${time}.`,
@@ -488,10 +490,10 @@ function NewReservationModal({
 
   if (booked) {
     return (
-      <Modal title="Booking made" onClose={onCreated}
+      <Modal title={booked.pendingApproval ? 'Sent to the CEO' : 'Booking made'} onClose={onCreated}
         footer={<div className="flex justify-end"><button autoFocus onClick={onCreated} className="min-h-11 s-btn-primary min-h-11 text-sm">Done</button></div>}>
         <p className="text-sm text-s-text">{guestName.trim()} · {partySize} ppl · {fmtDay(startDate)} {startTime}</p>
-        <p className={`text-sm ${booked.overbooked ? 'text-s-amber' : 'text-s-text'}`}>{bookedLine(booked)}</p>
+        <p className={`text-sm ${booked.overbooked || booked.pendingApproval ? 'text-s-amber' : 'text-s-text'}`}>{bookedLine(booked)}</p>
       </Modal>
     )
   }
@@ -570,8 +572,9 @@ function NewReservationModal({
               <p className="text-xs font-semibold text-s-amber">No table fits this booking</p>
               <p className="text-xs text-s-text">{slotFull.message}</p>
               <p className="text-xs text-s-muted">
-                A manager can book it past capacity anyway (for example tables pushed together).
-                {slotFull.managerRequired ? ' Enter the manager’s PIN and the reason.' : ' Say why.'} It is recorded with the reason.
+                A manager can ask to book it past capacity anyway (for example tables pushed together).
+                {slotFull.managerRequired ? ' Enter the manager’s PIN and the reason.' : ' Say why.'} It goes to the CEO for approval
+                — the guest is told only once the CEO approves.
               </p>
               <Field label="Reason for booking past capacity *">
                 <input value={overReason} onChange={(e) => setOverReason(e.target.value)} maxLength={OVERBOOK_REASON_MAX}

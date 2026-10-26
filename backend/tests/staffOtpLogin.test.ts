@@ -196,8 +196,9 @@ describe('the code itself', () => {
 describe('the password side stays password-only', () => {
   it('still signs a manager in with their password', async () => {
     const res = await staffLogin('boss@gsfoods.pk', 'ManagerPass123!')
-    expect(res.twoFactorRequired).toBe(false)
-    if (!res.twoFactorRequired) expect(res.user.role).toBe('manager')
+    // Two-step sign-in is retired (owner, 2026-10-26): a password gives a session straight away.
+    expect('twoFactorRequired' in res).toBe(false)
+    expect(res.user.role).toBe('manager')
   })
 
   it('returns a cashier a session object the route then refuses', async () => {
@@ -208,11 +209,8 @@ describe('the password side stays password-only', () => {
     // this ever came back undefined the guard would silently never fire and
     // every cashier would keep a working password.
     const res = await staffLogin('till@gsfoods.pk', 'CashierPass123!')
-    expect(res.twoFactorRequired).toBe(false)
-    if (!res.twoFactorRequired) {
-      expect(res.user.role).toBe('cashier')
-      expect(usesOtpLogin(res.user.role)).toBe(true)
-    }
+    expect(res.user.role).toBe('cashier')
+    expect(usesOtpLogin(res.user.role)).toBe(true)
   })
 
   it('rejects a wrong password for both sides', async () => {

@@ -24,6 +24,8 @@ interface Station {
   isActive: boolean
   conceptId: string
   liveLoad: number
+  /** Order cards the station screen shows at once, 4–6 (owner B12). */
+  visibleCards?: number
 }
 
 /** A station add / change the F&B manager or the chef raised, waiting for the CEO (owner C3, 2026-10-26). */
@@ -142,6 +144,15 @@ function StationsTab() {
     mutationFn: ({ id, body }: { id: string; body: Partial<Station> }) =>
       api.patch<Station>(`/stations/${id}`, body),
     onSuccess: (r) => { afterSave(r); void qc.invalidateQueries({ queryKey: ['kds-stations'] }) },
+    onError: (e: Error) => setNotice({ text: e.message, error: true }),
+  })
+
+  // How many order cards the station screen shows (4–6) — a screen setting,
+  // applied at once (PUT /expo/stations/:id/display; owner B12, 2026-10-26).
+  const setDisplay = useMutation({
+    mutationFn: ({ id, visibleCards }: { id: string; visibleCards: number }) =>
+      api.put(`/expo/stations/${id}/display`, { visibleCards }),
+    onSuccess: () => { setNotice(null); void qc.invalidateQueries({ queryKey: ['kds-stations'] }) },
     onError: (e: Error) => setNotice({ text: e.message, error: true }),
   })
 
@@ -320,6 +331,20 @@ function StationsTab() {
                                 s.liveLoad > 0 ? 'bg-kds-amber/20 text-kds-amber' : 'bg-kds-bg text-kds-subtext'
                               }`}>
                                 load {s.liveLoad}
+                              </span>
+                              <span className="inline-flex items-center gap-1 text-xs text-kds-subtext" role="group" aria-label={`Cards on ${s.name}'s screen`}>
+                                Cards on screen
+                                {[4, 5, 6].map((n) => (
+                                  <button key={n} type="button"
+                                    onClick={() => setDisplay.mutate({ id: s.id, visibleCards: n })}
+                                    disabled={setDisplay.isPending}
+                                    aria-pressed={(s.visibleCards ?? 5) === n}
+                                    className={`min-h-10 min-w-10 rounded-lg border text-sm font-bold disabled:opacity-50 ${
+                                      (s.visibleCards ?? 5) === n ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-subtext hover:text-kds-text'
+                                    }`}>
+                                    {n}
+                                  </button>
+                                ))}
                               </span>
                               <button
                                 onClick={() => toggleActive(s)}

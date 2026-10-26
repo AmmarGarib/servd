@@ -27,6 +27,11 @@ import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } fr
 import { audit } from '../../lib/audit.js'
 import { guestTagTypeRoutes, findTagTypeInScope } from './guestTagTypes.js'
 import { reservationInviteRoutes } from './invites.js'
+import {
+  overbookApprovalRoutes, isCeoOverbook, raiseOverbookCreateTx, raiseOverbookEdit, auditRequested,
+  assertNoPendingOverbook, withdrawPendingOverbooks, sendBookingConfirmation, type OverbookChanges,
+} from './overbookApproval.js'
+import { approvalWaiting } from '../approvals/notify.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { verifyCustomerToken } from '../auth/service.js'
 import { isRevoked } from '../../lib/tokenRevocation.js'
@@ -311,6 +316,8 @@ function strandsError(req: FastifyRequest): AppError {
 export async function reservationRoutes(fastify: FastifyInstance) {
   // "Invite your table" (owner, 2026-10-26) — ./invites.ts.
   await fastify.register(reservationInviteRoutes)
+  // Overbooking goes to the CEO (owner C10, 2026-10-26) — ./overbookApproval.ts.
+  await fastify.register(overbookApprovalRoutes)
   // List reservations — staff view, filtered by date / concept / status
   fastify.get<{ Querystring: { conceptId?: string; date?: string; status?: string } }>(
     '/',
@@ -388,6 +395,9 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         action: 'Booking past capacity',
       })
     }
+    // Owner C10 (2026-10-26): only the CEO's own overbook books at once; anyone
+    // else's waits for the CEO as pending_approval (./overbookApproval.ts).
+    const ceoOverbook = overbookApproval ? await isCeoOverbook(req.staffUser!.role, overbookApproval) : false
 
     // Reservation policy enforcement — owner-controlled rules from /setup/reservation-policy.
     // Bypass if the booking is being created as a walk-in (assumed when source='walkin').
@@ -516,13 +526,20 @@ export async function reservationRoutes(fastify: FastifyInstance) {
             source:     body.source,
             waitlist:   body.waitlist ?? false,
             createdById: req.staffUser?.id ?? null,
+            ...(overbooked && !ceoOverbook && { status: 'pending_approval' as const }),
           },
           include: {
             concept: { select: { name: true, tenantId: true } },
             table:   { select: { id: true, label: true } },
           },
         })
-        return Object.assign(created, { overbooked })
+        const overbookRequest = overbooked && !ceoOverbook && overbookApproval
+          ? await raiseOverbookCreateTx(tx, {
+              tenantId: created.concept.tenantId!, reservationId: created.id, conceptId: created.conceptId,
+              reason: body.overbookReason!, approval: overbookApproval, requestedById: req.staffUser!.id,
+            })
+          : null
+        return Object.assign(created, { overbooked, overbookRequest })
       }),
     )
 
@@ -535,7 +552,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       after: { partySize: r.partySize, startTime: r.startTime, status: r.status, guestName: r.guestName, tableId: r.tableId },
       metadata: { source: r.source, ip: req.ip, ...(r.overbooked && { overbooked: true }) },
     })
-    if (r.overbooked && overbookApproval) {
+    if (r.overbooked && overbookApproval && !r.overbookRequest) {
       await audit({ category: 'identity',
         action: 'reservation.overbook',
         entity: 'Reservation',
@@ -546,6 +563,10 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         metadata: { reason: body.overbookReason, approverId: overbookApproval.approverId, viaPin: overbookApproval.viaPin },
       })
     }
+    if (r.overbookRequest) {
+      await auditRequested(req, r.overbookRequest)
+      approvalWaiting('reservation_overbook', r.overbookRequest.id, { round: r.overbookRequest.requestedAt.toISOString(), actorId: req.staffUser!.id })
+    }
 
     emitReservationEvent('reservation:created', {
       reservationId: r.id,
@@ -554,30 +575,24 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       status: r.status,
     })
 
-    // Best-effort confirmation
-    const when = startTime.toLocaleString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-    if (body.guestPhone) {
-      void sendPhoneMessage(body.guestPhone, `${formatBrandName(r.concept.name)}: reservation confirmed for ${body.partySize} on ${when} PKT. Reply CANCEL to cancel.`, 'reservation.confirmed', customerScope(r.concept.tenantId))
-        .catch((err) => req.log.error({ err: (err as Error).message }, 'reservation SMS failed'))
-    }
-    if (body.guestEmail) {
-      const html = `<p>Hi ${body.guestName},</p>
-        <p>Your table for ${body.partySize} at <strong>${formatBrandName(r.concept.name)}</strong> is booked for <strong>${when} PKT</strong>.</p>
-        ${body.notes ? `<p><em>Notes:</em> ${body.notes}</p>` : ''}
-        <p>If you need to cancel, reply to this email or call us.</p>
-        <p>— ${formatBrandName(r.concept.name)}</p>`
-      void sendEmail(body.guestEmail, `${formatBrandName(r.concept.name)} reservation confirmed`, html, 'reservation.confirmed', customerScope(r.concept.tenantId))
-        .catch((err) => req.log.error({ err: (err as Error).message }, 'reservation email failed'))
+    // Waiting for the CEO (owner C10): the guest is told nothing until the CEO
+    // approves (then overbookApproval.ts sends this same confirmation).
+    const { overbookRequest, ...created } = r
+    if (overbookRequest) {
+      return reply.status(202).send({ ...created, pendingApproval: true, overbookRequestId: overbookRequest.id })
     }
 
-    return reply.status(201).send(r)
+    // Best-effort confirmation
+    sendBookingConfirmation({ ...r, notes: body.notes ?? null }, req.log)
+
+    return reply.status(201).send(created)
   })
 
   // Patch — change time, party size, table, etc. Re-runs conflict check.
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...ALL_STAFF) },
-    async (req) => {
+    async (req, reply) => {
       const body = staffCreateSchema.partial().parse(req.body)
       // Editing an existing row: any company the operator belongs to; a
       // foreign or missing id is 404. (An empty scope denies.)
@@ -586,6 +601,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
+      // A booking (or a change of it) waiting for the CEO is not edited meanwhile (owner C10).
+      await assertNoPendingOverbook(r)
       // Reseating may only target a table of the booking's own brand.
       if (body.tableId) await assertTableInConcept(body.tableId, r.conceptId)
 
@@ -634,6 +651,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
             action: 'Booking past capacity',
           })
         : null
+      // Owner C10 (2026-10-26): only the CEO's own overbook applies at once.
+      const ceoOverbook = overbookApproval ? await isCeoOverbook(req.staffUser!.role, overbookApproval) : false
 
       const baseNotes = body.notes !== undefined ? body.notes : r.notes
       const updated = await withTableOverlapGuard(() =>
@@ -654,6 +673,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
             if (!fits) {
               if (!overbookApproval) throw tableId ? strandsError(req) : noTableError(req, tables, partySize)
               overbooked = true
+              // Not the CEO: nothing on the booking moves; the change waits (below).
+              if (!ceoOverbook) return Object.assign(r, { overbooked, held: true })
             }
           }
           const row = await tx.reservation.update({
@@ -671,9 +692,27 @@ export async function reservationRoutes(fastify: FastifyInstance) {
               tableId,
             },
           })
-          return Object.assign(row, { overbooked })
+          return Object.assign(row, { overbooked, held: false })
         }),
       )
+      if (updated.held && overbookApproval) {
+        const changes: OverbookChanges = {
+          ...(body.partySize  !== undefined && { partySize:  body.partySize }),
+          ...(body.guestName  !== undefined && { guestName:  body.guestName }),
+          ...(body.guestPhone !== undefined && { guestPhone: body.guestPhone }),
+          ...(body.guestEmail !== undefined && { guestEmail: body.guestEmail }),
+          ...(body.notes      !== undefined && { notes:      body.notes }),
+          ...(body.isVip      !== undefined && { isVip:      body.isVip }),
+          ...(body.waitlist   !== undefined && { waitlist:   body.waitlist }),
+          ...((body.startTime !== undefined || body.durationMin !== undefined) && { startTime: startTime.toISOString(), endTime: endTime.toISOString() }),
+          ...(tableId !== r.tableId && { tableId }),
+        }
+        const request = await raiseOverbookEdit(req, {
+          tenantId: owner!.tenantId!, reservation: r, changes, reason: body.overbookReason!, approval: overbookApproval,
+        })
+        reply.status(202)
+        return { ...r, pendingApproval: true, overbookRequestId: request.id }
+      }
       if (updated.overbooked && overbookApproval) {
         await audit({ category: 'identity',
           action: 'reservation.overbook',
@@ -708,6 +747,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const r = await prisma.reservation.findFirst({ where: { id: req.params.id, concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null } } })
       if (!r) throw new NotFoundError('Reservation', req.params.id)
       await assertConceptAccess(req.staffUser!, r.conceptId)
+      if (r.status === 'pending_approval') await assertNoPendingOverbook(r)
       const body = z.object({ tableId: z.string().uuid().optional() }).parse(req.body)
       // Only a table of the booking's own brand may be flipped to 'seated'.
       if (body.tableId) await assertTableInConcept(body.tableId, r.conceptId)
@@ -751,6 +791,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // loop against any customer. Answer idempotently rather than erroring:
       // a host double-tapping "complete" has done nothing wrong.
       if (r.status === 'completed') return r
+      if (r.status === 'pending_approval') await assertNoPendingOverbook(r)
       if (r.status === 'cancelled' || r.status === 'no_show') {
         throw new AppError('RESERVATION_CLOSED', `This reservation is already marked ${r.status}.`, 422)
       }
@@ -817,6 +858,8 @@ export async function reservationRoutes(fastify: FastifyInstance) {
         where: { id: r.id },
         data: { status: 'cancelled', cancelledAt: new Date(), cancelReason: body.reason ?? null },
       })
+      // Cancelling a booking withdraws whatever past-capacity request waits on it (owner C10).
+      await withdrawPendingOverbooks(r.id)
       await audit({ category: 'identity',
         action: 'reservation.cancel',
         entity: 'Reservation',
@@ -1814,6 +1857,8 @@ async function transition(
   })
   if (!r) throw new NotFoundError('Reservation', reservationId)
   await assertConceptAccess(req.staffUser!, r.conceptId)
+  // A booking past capacity waiting for the CEO is neither confirmed nor a no-show (owner C10).
+  if (r.status === 'pending_approval') await assertNoPendingOverbook(r)
 
   if (status === 'no_show') {
     // One no-show path for staff and the auto sweep: deposit capture, strike,

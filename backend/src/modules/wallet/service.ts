@@ -10,8 +10,9 @@
 //
 // This file is the ONE place a wallet balance moves:
 //   - topUpWallet:     credit the TOP-UP's company and post it there in the
-//                      same transaction — Dr 6060 Marketing & Promo (a
-//                      manager's goodwill credit) or Dr the account the money
+//                      same transaction — Dr 6065 Goodwill Credit to
+//                      Customers (a manager's goodwill credit; 6060 before
+//                      2026-10-26) or Dr the account the money
 //                      went into (a paid top-up: 1010 cash / the
 //                      company's bank account it was received into —
 //                      lib/bankAccounts.ts moneyAccountCode) / Cr 2050. Never
@@ -46,8 +47,14 @@ import { moneyAccountCode, RECEIPT_METHODS, assertPaymentReference, assertReceip
 
 type Tx = Prisma.TransactionClient
 
-/** Marketing & Promo — where a manager's goodwill wallet credit is expensed. */
-export const WALLET_GOODWILL_EXPENSE = '6060'
+/**
+ * Goodwill Credit to Customers — where a manager's goodwill wallet credit is
+ * expensed (owner C6, 2026-10-26: "Give wallet goodwill credit its own account
+ * so I can see what we give away"). Credits booked before that sit on 6060
+ * Marketing & Promo and stay there: anything that undoes a goodwill credit
+ * mirrors the lines of ITS OWN entry (reverseJournalEntry), never this constant.
+ */
+export const WALLET_GOODWILL_EXPENSE = '6065'
 
 /**
  * How the customer paid for a PAID top-up — the one back-office receipt list
@@ -197,7 +204,7 @@ export interface TopUpInput {
   tenantId: string
   customerId: string
   amountCents: number
-  /** goodwill = a manager's credit (Dr 6060); paid = the customer paid for it (Dr the tender). */
+  /** goodwill = a manager's credit (Dr 6065); paid = the customer paid for it (Dr the tender). */
   kind: 'goodwill' | 'paid'
   tender?: TopUpTender
   /** A bank-type tender: the bank account of `tenantId` it was received into. */
@@ -210,7 +217,7 @@ export interface TopUpInput {
 
 /**
  * Credit the customer's wallet AT `tenantId` and book it in that company in
- * the SAME transaction: Dr 6060 (goodwill) or the account the money went
+ * the SAME transaction: Dr 6065 (goodwill) or the account the money went
  * into (paid — moneyAccountCode, a bank of THAT company only) / Cr 2050. A
  * posting that cannot be made (period locked, chart missing a code, a bank of
  * another company) rolls the credit back — a wallet never holds value its

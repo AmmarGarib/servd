@@ -118,8 +118,6 @@ function servdEntries(
     { page: 'about',   changeFrequency: 'monthly' as const, priority: 0.7 },
     { page: 'faq',     changeFrequency: 'monthly' as const, priority: 0.7 },
     { page: 'contact', changeFrequency: 'monthly' as const, priority: 0.6 },
-    { page: 'privacy', changeFrequency: 'yearly'  as const, priority: 0.3 },
-    { page: 'terms',   changeFrequency: 'yearly'  as const, priority: 0.3 },
   ].map(({ page, changeFrequency, priority }) => ({
     url: `${SERVD_ORIGIN}/${page}`, ...lastModifiedOf(published, `servd:${page}`), changeFrequency, priority,
   }))

@@ -22,6 +22,7 @@ export async function generateMetadata(): Promise<Metadata> {
     title:       seo.title ?? 'Privacy policy: how servd handles your data in Karachi',
     description: seo.description ?? 'How servd and GS Foods in Karachi collect, use and protect your phone number, orders and cookies, and how to ask us about your data.',
     canonical:   CANONICAL,
+    noindex:     true, // owner 2026-10-26 (S8): hidden from the website for now, page kept
   })
 }
 

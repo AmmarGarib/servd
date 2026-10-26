@@ -1,5 +1,6 @@
 import type { FastifyRequest, FastifyReply } from 'fastify'
-import { verifyStaffToken, verifyCustomerToken } from './service.js'
+import { verifyStaffToken, verifyCustomerToken, sessionEnded } from './service.js'
+import { endedByDrawerClose } from './sessionEnd.js'
 import { ForbiddenError, UnauthorizedError } from '../../lib/errors.js'
 import type { UserRole } from '@prisma/client'
 // Auth middleware runs BEFORE the RLS context is populated — the whole point
@@ -78,11 +79,14 @@ declare module 'fastify' {
 // token belongs at the KDS PIN gate (`requirePinSession`), and a refresh
 // token belongs at the refresh route (`requireRefresh`). The two helpers
 // below share the same role/tenant plumbing.
-async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string; email: string | null; role: string }, allowedRoles: UserRole[]) {
+async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string; email: string | null; role: string; iat?: number }, allowedRoles: UserRole[]) {
   const u = await prisma.user.findUnique({
     where: { id: payload.sub },
-    select: { tenantId: true, name: true, role: true, isActive: true, accountStatus: true, deletedAt: true, moduleAllow: true, moduleDeny: true },
+    select: { tenantId: true, name: true, role: true, isActive: true, accountStatus: true, deletedAt: true, moduleAllow: true, moduleDeny: true, sessionsEndedAt: true },
   })
+  // A sign-in lasts one shift (owner B1, 2026-10-26): the login's till drawer
+  // closed, so every session issued before it is over (auth/sessionEnd.ts).
+  if (u && endedByDrawerClose(u.sessionsEndedAt, payload.iat)) throw sessionEnded()
 
   // Authorise on the role stored in the DB, never the one embedded in the JWT.
   // A token minted while someone was an admin keeps saying "admin" until it
@@ -267,10 +271,6 @@ export const DIRECTOR_ROUTES: ReadonlyArray<{ method: string; path: string }> = 
   { method: 'POST', path: '/auth/refresh' },
   { method: 'POST', path: '/auth/logout' },
   { method: 'POST', path: '/auth/password/change-authed' },
-  { method: 'GET',  path: '/auth/2fa/status' },
-  { method: 'POST', path: '/auth/2fa/start' },
-  { method: 'POST', path: '/auth/2fa/enable' },
-  { method: 'POST', path: '/auth/2fa/disable' },
 ]
 
 function isDirectorRoute(req: FastifyRequest): boolean {
