@@ -263,12 +263,11 @@ export function TenantSwitcher({ placement, hidden = false }: { placement: Switc
   }
 
   // Floating (every screen size, owner 2026-10-16): a small round badge pinned
-  // bottom-left of the content area. The name and brand live in the panel and
-  // the aria-label. `--sw` (set by the shell) is the sidebar width on desktop.
+  // bottom-left. The name and brand live in the panel and the aria-label.
   if (placement === 'floating') {
     if (hidden) return null
     return (
-      <div ref={triggerRef} className="erp-on-secondary fixed left-3 md:left-[var(--sw,12px)] z-[35] rounded-full"
+      <div ref={triggerRef} className="erp-on-secondary fixed left-3 z-[35] rounded-full"
         style={{ bottom: 'calc(12px + env(safe-area-inset-bottom, 0px))', background: 'var(--erp-secondary)', boxShadow: '0 6px 18px rgb(var(--ink-rgb) / 0.3)' }}>
         <button onClick={() => setOpen((o) => !o)} aria-expanded={open} title={summary}
           aria-label={`Switch company, brand${isSuper ? ' or role' : ''}: ${summary}`}

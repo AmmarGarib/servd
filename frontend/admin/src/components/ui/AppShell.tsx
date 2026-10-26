@@ -846,7 +846,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen h-dvh overflow-hidden" style={{ background: 'var(--bg)', ['--sw' as string]: collapsed ? '64px' : '232px' }}>
+    <div className="flex h-screen h-dvh overflow-hidden" style={{ background: 'var(--bg)' }}>
 
       <a href="#main"
         onClick={(e) => { e.preventDefault(); mainRef.current?.focus() }}
@@ -855,17 +855,17 @@ function Shell({ children }: { children: React.ReactNode }) {
         Skip to content
       </a>
 
-      {/* ── Mobile overlay ─────────────────────────────────────────────────── */}
+      {/* ── Drawer overlay ─────────────────────────────────────────────────── */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+          className="fixed inset-0 z-40 bg-black/60"
           onClick={() => setMobileOpen(false)}
           aria-hidden
         />
       )}
       {mobileOpen && <DrawerBehaviour panelRef={drawerRef} onClose={() => setMobileOpen(false)} />}
 
-      {/* ── Mobile drawer ──────────────────────────────────────────────────── */}
+      {/* ── Menu drawer (every screen size) ──────────────────────────────────────────────────── */}
       <aside
         ref={drawerRef}
         id="mobile-drawer"
@@ -873,7 +873,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         // Closed = inert: its links leave the tab order and the accessibility tree.
         // (React 18 has no `inert` prop; '' renders the attribute, undefined removes it.)
         {...({ inert: mobileOpen ? undefined : '' } as Record<string, unknown>)}
-        className={`erp-on-secondary fixed inset-y-0 left-0 z-50 w-[220px] flex flex-col transition-transform duration-300 md:hidden ${
+        className={`erp-on-secondary fixed inset-y-0 left-0 z-50 w-[220px] flex flex-col transition-transform duration-300 ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={sidebarBg}
@@ -909,13 +909,14 @@ function Shell({ children }: { children: React.ReactNode }) {
       {/* ── The switcher module: a small round button, bottom-left, every size ── */}
       <TenantSwitcher placement="floating" hidden={mobileOpen} />
 
-      {/* ── Floating buttons (UX-6, owner 2026-10-16): no top header on any screen.
-          Phone: menu + search top-left, bell top-right. Desktop: search + bell
-          top-right (the sidebar is already there). <main> reserves a strip under
+      {/* ── Floating buttons (UX-6, owner 2026-10-16; every screen size since
+          2026-10-26 — owner: "put the floating system on laptop/pc as well"): no
+          top header and no fixed sidebar. Menu top-left (opens the drawer),
+          search + bell top-right, company / brand / role switcher bottom-left. <main> reserves a strip under
           them so they never sit on a page's own title or its top-right buttons. */}
       {!mobileOpen && (
         <>
-          <div className="fixed left-3 z-[35] flex gap-2 md:hidden" style={{ top: 'calc(8px + env(safe-area-inset-top, 0px))' }}>
+          <div className="fixed left-3 z-[35] flex gap-2" style={{ top: 'calc(8px + env(safe-area-inset-top, 0px))' }}>
             <button ref={hamburgerRef} onClick={() => setMobileOpen(true)} aria-label="Open menu" aria-expanded={mobileOpen} aria-controls="mobile-drawer"
               className={FAB}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -934,55 +935,6 @@ function Shell({ children }: { children: React.ReactNode }) {
         </>
       )}
       <QuickJump open={jumpOpen} onClose={() => setJumpOpen(false)} />
-
-      {/* ── Desktop sidebar ────────────────────────────────────────────────── */}
-      <aside
-        className={`erp-on-secondary hidden md:flex flex-col shrink-0 relative transition-all duration-300 overflow-hidden ${
-          collapsed ? 'w-[52px]' : 'w-[220px]'
-        }`}
-        style={sidebarBg}
-      >
-        <div className="absolute pointer-events-none select-none"
-          style={{ width: '200px', height: '200px', bottom: '20%', left: '-60px',
-            background: 'radial-gradient(circle, rgb(var(--erp-primary-rgb) / 0.06) 0%, transparent 70%)',
-            animation: 'ops-glowPulse 8s ease-in-out infinite' }} />
-        <div className="absolute pointer-events-none select-none"
-          style={{ width: '160px', height: '160px', top: '15%', right: '-70px',
-            background: 'radial-gradient(circle, rgb(var(--ink-rgb) / 0.05) 0%, transparent 70%)',
-            animation: 'ops-glowPulse 11s ease-in-out infinite reverse' }} />
-
-        <div className={`relative z-10 flex items-center h-[54px] shrink-0 ${collapsed ? 'justify-center' : 'px-4 gap-3'}`}
-          style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
-          <ServdLogo size={30} />
-          {!collapsed && (
-            <>
-              <span className="flex-1" />
-              <button onClick={() => setCollapsedPersisted(true)} aria-label="Collapse sidebar" aria-expanded={true}
-                className="flex h-11 w-11 items-center justify-center text-white/40 hover:text-white/70 transition-colors rounded"
-                style={{ marginRight: '-12px' }}>
-                <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
-                  <path d="M8 2L3 6.5l5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </button>
-            </>
-          )}
-        </div>
-
-        {collapsed && (
-          <button onClick={() => setCollapsedPersisted(false)} aria-label="Expand sidebar" aria-expanded={false}
-            className="relative z-10 flex items-center justify-center min-h-[44px] transition-colors"
-            style={{ color: 'rgb(var(--fg-rgb) / 0.4)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.7)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.4)')}>
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
-              <path d="M5 2l5 4.5L5 11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-        )}
-
-        <NavLinks pathname={pathname} collapsed={collapsed} label="Sidebar" />
-        {UserFooter({ collapsed, switcher: false })}
-      </aside>
 
       {/* ── Main content ──────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden" style={{ background: 'var(--bg)' }}>
