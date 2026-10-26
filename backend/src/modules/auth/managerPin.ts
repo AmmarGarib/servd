@@ -8,6 +8,7 @@ import { hashPin } from './service.js'
 import { getRlsContext } from '../../lib/rlsContext.js'
 import { audit } from '../../lib/audit.js'
 import { flagException } from '../../lib/exceptions.js'
+import { notifyStaff, queueStaffNotify } from '../../lib/staffNotify.js'
 import { claimPinAttempt, pinAttemptSucceeded, MANAGER_PIN_ACTOR_LIMIT, MANAGER_PIN_ORDER_LIMIT, type PinAttemptKeys } from '../../lib/managerPinLimit.js'
 
 /**
@@ -26,12 +27,30 @@ import { claimPinAttempt, pinAttemptSucceeded, MANAGER_PIN_ACTOR_LIMIT, MANAGER_
  *            account whose role is an override approver (owner decision 7) and
  *            who belongs to the company the action happens in (primary company
  *            or a membership). No company → nobody matches.
- *   set    — 4 to 8 digits, not a guessable pattern, and not already held by
+ *   set    — 6 to 8 digits (owner C1, 2026-10-26), not a guessable pattern, and not already held by
  *            anyone else in the same company(ies), so an approval is always
  *            attributable to exactly one person.
  */
 
 export const PIN_FORMAT = /^\d{4,8}$/
+
+/**
+ * Owner C1 (2026-10-26, option b): "Managers and CEO need at least 6 digits
+ * (short PINs changed at next use)". Every NEW override PIN is 6 to 8 digits
+ * (422 PIN_TOO_SHORT) — User.pin is only ever an override PIN (CEO, managers,
+ * finance: canHoldOverridePin); floor staff punch with the HR kiosk PIN
+ * (hr/kioskPin.ts), which this does not touch.
+ *
+ * An existing 4–5 digit PIN still approves. Its FIRST successful use stamps
+ * `User.pinChangeRequiredAt` and tells the holder on the bell ("Set a new
+ * 6-digit PIN"); /auth/account returns `pinChangeRequired` + `pinChangeBy`
+ * for the account page. Once SHORT_PIN_GRACE_HOURS have passed since that
+ * first use, the short PIN is refused (403 PIN_CHANGE_REQUIRED) until the
+ * holder sets a new one (POST /auth/pin/change takes the short PIN as the
+ * current one). The 5-tries / 15-minute lock is unchanged.
+ */
+export const MIN_NEW_PIN_LENGTH = 6
+export const SHORT_PIN_GRACE_HOURS = 72
 
 /**
  * Reject PINs that a shoulder-surfer or a casual guesser would land quickly:
@@ -81,7 +100,7 @@ export interface ManagerPinContext {
  * voids, cancels, refunds, comps, discounts, price overrides, pay-outs, staff
  * meals, petty cash — comes through here, so this is the one limit.
  *
- * PIN length rules are unchanged (4 to 8 digits — owner decision).
+ * A stored PIN of 4 to 8 digits verifies; a 4–5 digit one is on notice (C1, shortPinUsed).
  */
 export async function verifyManagerPin(
   pin: string | null | undefined,
@@ -118,10 +137,45 @@ export async function verifyManagerPin(
 
   if (approver) {
     await pinAttemptSucceeded(keys)
+    if (pin.length < MIN_NEW_PIN_LENGTH) await shortPinUsed(approver.id, tenantId)
     return approver
   }
   await recordPinFailure(tenantId, actorId, ctx, claimed)
   return null
+}
+
+/**
+ * A correct but short (4–5 digit) PIN was just used (owner C1). First use:
+ * stamp pinChangeRequiredAt (conditional — once) and tell the holder on the
+ * bell. Past the grace: refuse (403 PIN_CHANGE_REQUIRED). Never touches the
+ * attempt limiter (the slot was already given back).
+ */
+async function shortPinUsed(userId: string, tenantId: string): Promise<void> {
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { pinChangeRequiredAt: true } })
+  const since = u?.pinChangeRequiredAt
+  if (since) {
+    if (Date.now() - since.getTime() > SHORT_PIN_GRACE_HOURS * 3600_000) {
+      throw new AppError('PIN_CHANGE_REQUIRED', 'This manager PIN is too short and has expired. The manager must set a new 6-digit PIN (Account → PIN) before approving again.', 403)
+    }
+    return
+  }
+  const now = new Date()
+  const stamped = await prisma.user.updateMany({ where: { id: userId, pinChangeRequiredAt: null }, data: { pinChangeRequiredAt: now } })
+  if (stamped.count === 0) return
+  const by = new Date(now.getTime() + SHORT_PIN_GRACE_HOURS * 3600_000)
+  queueStaffNotify(() => notifyStaff({
+    userId,
+    tenantId,
+    kind: 'task.next',
+    severity: 'warning',
+    title: 'Set a new 6-digit manager PIN',
+    body: `Your manager PIN is shorter than 6 digits. It worked this time, but it stops working after ${by.toISOString().slice(0, 16).replace('T', ' ')} UTC. Set a new 6-digit PIN on your account page.`,
+    link: '/account/password',
+    entityType: 'User',
+    entityId: userId,
+    actorId: null,
+    dedupeKey: `pin.short:${userId}:${now.getTime()}`,
+  }))
 }
 
 async function recordPinFailure(
@@ -211,7 +265,10 @@ export async function preparePin(
   scope: { tenantIds: string[]; excludeUserId?: string },
 ): Promise<string> {
   if (!PIN_FORMAT.test(pin)) {
-    throw new AppError('INVALID_PIN', 'PIN must be 4 to 8 digits.', 400)
+    throw new AppError('INVALID_PIN', 'PIN must be 6 to 8 digits.', 400)
+  }
+  if (pin.length < MIN_NEW_PIN_LENGTH) {
+    throw new AppError('PIN_TOO_SHORT', 'A manager PIN must be at least 6 digits (6 to 8).', 422)
   }
   if (isWeakPin(pin)) {
     throw new AppError('WEAK_PIN', 'That PIN is too easy to guess — avoid repeated digits (1111), runs (1234), and years.', 400)
@@ -261,6 +318,6 @@ export async function setManagerPin(userId: string, pin: string | null): Promise
   const hash = await preparePin(pin, { tenantIds: await companiesOf(userId), excludeUserId: userId })
   await prisma.user.update({
     where: { id: userId },
-    data: { pin: hash, pinMustReset: false, pinResetRequestedAt: null },
+    data: { pin: hash, pinMustReset: false, pinResetRequestedAt: null, pinChangeRequiredAt: null },
   })
 }

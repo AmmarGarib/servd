@@ -158,7 +158,8 @@ export async function orderingState(concept: { id: string; name: string }, at: D
  * Friday" and keeps the brand's opening hours (checked at that time by
  * assertOpenForOrders) meaningful.
  */
-export const MAX_PREORDER_AHEAD_MS = 7 * DAY_MS
+export const MAX_PREORDER_AHEAD_DAYS = 3 // owner, 2026-10-26: "2-3 days" (was 7) — the ONE place
+export const MAX_PREORDER_AHEAD_MS = MAX_PREORDER_AHEAD_DAYS * DAY_MS
 
 /**
  * The time an order is for: its scheduled time when that is in the future
@@ -176,7 +177,7 @@ export function orderTime(scheduledFor: string | null | undefined, now: Date = n
     if (t.getTime() > now.getTime() + MAX_PREORDER_AHEAD_MS) {
       throw new AppError(
         'SCHEDULE_TOO_FAR',
-        'Orders can be scheduled up to 7 days ahead. Pick an earlier time.',
+        `Orders can be scheduled up to ${MAX_PREORDER_AHEAD_DAYS} days ahead. Pick an earlier time.`,
         422,
         { maxScheduledFor: new Date(now.getTime() + MAX_PREORDER_AHEAD_MS).toISOString() },
       )

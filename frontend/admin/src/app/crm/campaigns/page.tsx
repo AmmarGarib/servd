@@ -12,6 +12,12 @@
 // waitlist (/crm/waitlist). It is not limited to this company's customers, so
 // the brand picker does not apply; the server counts and sends it as
 // segment=waitlist (opted-out and unsubscribed members excluded).
+//
+// Scheduling (owner B9, 2026-10-26): a campaign can be scheduled for a Karachi
+// date and time; the server sends it once at that time (workers/campaignSchedule).
+// WhatsApp campaigns are off until a separate campaign number exists (owner C19:
+// the shared number carries sign-in codes) — the server answers 422
+// WHATSAPP_CAMPAIGN_NEEDS_OWN_NUMBER, so the channel is offered as unavailable.
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
@@ -21,6 +27,7 @@ import { Select } from '@/components/ui/Select'
 import { FormField } from '@/components/ui/FormField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
+import { isoToPktLocal, pktLocalToIso } from '../../../lib/money'
 
 type Channel = 'email' | 'whatsapp'
 
@@ -32,6 +39,7 @@ interface Campaign {
   body: string
   subject: string | null
   sentAt: string | null
+  scheduledAt?: string | null
   createdAt: string
   segment: { slug: string; name: string | null } | null
   conceptIds?: string[]
@@ -82,7 +90,11 @@ function MessagePreview({ channel, subject, body, name }: { channel: Channel; su
   )
 }
 
-const EMPTY = { name: '', channel: 'whatsapp' as Channel, subject: '', body: '', segment: '' }
+const EMPTY = { name: '', channel: 'email' as Channel, subject: '', body: '', segment: '', sendAt: '' }
+
+const pktLabel = (iso: string) => `${isoToPktLocal(iso).replace('T', ' ')} (Karachi)`
+/** WhatsApp campaigns wait for their own number (owner C19, 2026-10-26). */
+const phoneChannel = (ch: string) => ch === 'whatsapp' || ch === 'sms'
 
 export default function CampaignsPage() {
   const qc = useQueryClient()
@@ -147,7 +159,7 @@ export default function CampaignsPage() {
   }
 
   const create = useMutation({
-    mutationFn: async (sendNow: boolean) => {
+    mutationFn: async (mode: 'draft' | 'now' | 'schedule') => {
       const c = await api.post<Campaign>('/crm/campaigns', {
         name: form.name,
         channel: form.channel,
@@ -155,8 +167,9 @@ export default function CampaignsPage() {
         body: form.body,
         segment: form.segment || null,
         conceptIds: isWaitlist ? [] : brandIds,
+        ...(mode === 'schedule' && form.sendAt ? { scheduledAt: pktLocalToIso(form.sendAt) } : {}),
       })
-      if (sendNow) await api.post(`/crm/campaigns/${c.id}/send`, {})
+      if (mode === 'now') await api.post(`/crm/campaigns/${c.id}/send`, {})
       return c
     },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['campaigns'] }); reset() },
@@ -165,6 +178,18 @@ export default function CampaignsPage() {
 
   const send = useMutation({
     mutationFn: (id: string) => api.post(`/crm/campaigns/${id}/send`, {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['campaigns'] }),
+    onError: (e: Error) => setSendError(e.message),
+  })
+
+  const [scheduling, setScheduling] = useState<{ id: string; at: string } | null>(null)
+  const schedule = useMutation({
+    mutationFn: (v: { id: string; at: string }) => api.post(`/crm/campaigns/${v.id}/schedule`, { scheduledAt: pktLocalToIso(v.at) }),
+    onSuccess: () => { setScheduling(null); void qc.invalidateQueries({ queryKey: ['campaigns'] }) },
+    onError: (e: Error) => setSendError(e.message),
+  })
+  const unschedule = useMutation({
+    mutationFn: (id: string) => api.post(`/crm/campaigns/${id}/cancel-schedule`, {}),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['campaigns'] }),
     onError: (e: Error) => setSendError(e.message),
   })
@@ -178,7 +203,7 @@ export default function CampaignsPage() {
         <div>
           <Link href="/crm" className="text-s-muted text-sm hover:text-s-text">← CRM</Link>
           <h1 className="text-2xl font-black text-s-text mt-0.5">Campaigns</h1>
-          <p className="text-sm text-s-muted">Email and WhatsApp broadcasts to a segment of your customers</p>
+          <p className="text-sm text-s-muted">Email broadcasts to a segment of your customers — now or at a time you pick</p>
         </div>
         <button
           type="button"
@@ -190,7 +215,7 @@ export default function CampaignsPage() {
 
       <div className="p-6 max-w-5xl mx-auto">
         {showForm && (
-          <form onSubmit={(e) => { e.preventDefault(); setError(null); create.mutate(false) }}
+          <form onSubmit={(e) => { e.preventDefault(); setError(null); create.mutate('draft') }}
             className="rounded-xl border border-primary bg-s-surface p-5 mb-6">
             <p className="font-bold text-s-text mb-4">New campaign</p>
             {error && <p className="mb-3 rounded-lg bg-s-red/10 border border-s-red/30 px-3 py-2 text-sm text-s-red">{error}</p>}
@@ -202,9 +227,13 @@ export default function CampaignsPage() {
                 </FormField>
                 <FormField label="Channel" required>
                   <Select value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value as Channel })} className={inp}>
-                    <option value="whatsapp">WhatsApp</option>
                     <option value="email">Email</option>
+                    <option value="whatsapp" disabled>WhatsApp — needs its own campaign number</option>
                   </Select>
+                </FormField>
+                <FormField className="col-span-2" label="Send at (Karachi time, optional — for Save and schedule)">
+                  <input type="datetime-local" value={form.sendAt} onChange={(e) => setForm({ ...form, sendAt: e.target.value })}
+                    name="campaign-send-at" className={inp} />
                 </FormField>
                 {form.channel === 'email' && (
                   <FormField className="col-span-2" label="Subject" required>
@@ -284,10 +313,15 @@ export default function CampaignsPage() {
                     body: `It goes to ${audience?.total.toLocaleString() ?? 'all'} customers straight away and cannot be recalled.`,
                     confirmLabel: 'Send now',
                   })
-                  if (ok) { setError(null); create.mutate(true) }
+                  if (ok) { setError(null); create.mutate('now') }
                 }}
                 className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90 disabled:opacity-50">
                 Save and send now
+              </button>
+              <button type="button" disabled={create.isPending || !canSave || !form.sendAt}
+                onClick={() => { setError(null); create.mutate('schedule') }}
+                className="rounded-xl border border-primary text-primary-ink text-sm font-bold px-4 py-2 hover:bg-primary/10 disabled:opacity-50">
+                Save and schedule
               </button>
               <button type="button" onClick={reset}
                 className="rounded-xl border border-s-border text-s-muted text-sm px-4 py-2 hover:border-s-border-strong">
@@ -330,12 +364,48 @@ export default function CampaignsPage() {
                       Created {formatDistanceToNowStrict(new Date(c.createdAt))} ago
                       {c.sentAt && ` · Sent ${formatDistanceToNowStrict(new Date(c.sentAt))} ago`}
                       {c.sentAt && c.recipientCount != null && ` to ${c.recipientCount.toLocaleString()}`}
+                      {c.status === 'scheduled' && c.scheduledAt && ` · Sends ${pktLabel(c.scheduledAt)}`}
                     </p>
+                    {phoneChannel(c.channel) && c.status !== 'sent' && (
+                      <p className="text-xs text-s-amber mt-1">WhatsApp campaigns are off until a separate campaign number is added. Create it again as an email campaign.</p>
+                    )}
+                    {scheduling?.id === c.id && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <input type="datetime-local" aria-label="Send at (Karachi time)" value={scheduling.at}
+                          onChange={(e) => setScheduling({ id: c.id, at: e.target.value })} className={`${inp} w-auto`} />
+                        <button type="button" disabled={!scheduling.at || schedule.isPending}
+                          onClick={() => { setSendError(null); schedule.mutate(scheduling) }}
+                          className="rounded-xl bg-primary text-primary-on text-xs font-bold px-3 py-1.5 hover:opacity-90 disabled:opacity-50">
+                          {schedule.isPending ? 'Saving…' : 'Schedule'}
+                        </button>
+                        <button type="button" onClick={() => setScheduling(null)}
+                          className="rounded-xl border border-s-border text-s-muted text-xs px-3 py-1.5">Close</button>
+                      </div>
+                    )}
                   </div>
+                  {(c.status === 'draft' || c.status === 'scheduled') && c.segment?.slug !== 'legacy' && !phoneChannel(c.channel) && (
+                    <div className="flex flex-col gap-1.5 shrink-0">
+                      <button type="button"
+                        onClick={() => setScheduling({ id: c.id, at: c.scheduledAt ? isoToPktLocal(c.scheduledAt) : '' })}
+                        className="rounded-xl border border-primary text-primary-ink text-xs font-bold px-3 py-1.5 hover:bg-primary/10">
+                        {c.status === 'scheduled' ? 'Change time' : 'Schedule'}
+                      </button>
+                      {c.status === 'scheduled' && (
+                        <button type="button" disabled={unschedule.isPending}
+                          onClick={async () => {
+                            const ok = await confirm({ title: `Cancel the schedule of "${c.name}"?`, body: 'It goes back to a draft and nothing is sent.', confirmLabel: 'Cancel schedule' })
+                            if (ok) { setSendError(null); unschedule.mutate(c.id) }
+                          }}
+                          className="rounded-xl border border-s-border text-s-muted text-xs font-bold px-3 py-1.5 hover:border-s-red hover:text-s-red disabled:opacity-50">
+                          Cancel schedule
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {/* A campaign sends once: the server claims it (draft → sent) before the
                       first message and answers 409 to any second press, so only a draft
                       (or a never-sent scheduled one) offers the button. */}
-                  {(c.status === 'draft' || c.status === 'scheduled') && c.segment?.slug !== 'legacy' && (
+                  {(c.status === 'draft' || c.status === 'scheduled') && c.segment?.slug !== 'legacy' && !phoneChannel(c.channel) && (
                     <button
                       onClick={async () => {
                         const ok = await confirm({ title: `Send "${c.name}" now?`, body: 'It goes to all recipients straight away and cannot be recalled.', confirmLabel: 'Send now' })

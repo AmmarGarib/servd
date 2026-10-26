@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../lib/api'
 import { Select } from '@/components/ui/Select'
+import Link from 'next/link'
 import { Smartphone, Utensils, Leaf, Gift, Camera, PartyPopper, Bell, SquareCheck, ChevronLeft, ChevronRight, User, X, TriangleAlert, Check, type LucideIcon } from 'lucide-react'
 import { isoToPktLocal, pktLocalToIso, localYmd } from '@/lib/money'
 
@@ -132,6 +133,9 @@ export default function CalendarPage() {
           >
             Today
           </button>
+          <Link href="/calendar/social" className="rounded border border-s-border px-2 py-1 text-xs text-s-muted hover:text-s-text">
+            Social pages
+          </Link>
         </div>
         <div className="flex items-center gap-3">
           {/* Filters */}

@@ -107,11 +107,21 @@ async function lineInWriteScope(req: FastifyRequest, id: string) {
     where: { id },
     select: {
       id: true, description: true, receivedQty: true, billedQty: true, writeOffRequestedAt: true, writeOffRequestedById: true,
-      writeOffReason: true, writtenOffAt: true,
-      receipt: { select: { id: true, tenantId: true, supplierId: true, settledByType: true } },
+      writeOffReason: true, writtenOffAt: true, receiptId: true,
     },
   })
   if (!line) throw new NotFoundError('GoodsReceiptLine', id)
+  // The receipt is read on its own: under the company lock (RLS) another
+  // company's receipt is hidden, and a required include of it was a 500.
+  const receipt = await prisma.goodsReceipt.findUnique({
+    where: { id: line.receiptId }, select: { id: true, tenantId: true, supplierId: true, settledByType: true },
+  })
+  if (!receipt) throw new NotFoundError('GoodsReceiptLine', id)
+  const { receiptId: _receiptId, ...rest } = line
+  return lineWithTenant(req, id, { ...rest, receipt })
+}
+
+async function lineWithTenant<L extends { receipt: { tenantId: string | null; supplierId: string } }>(req: FastifyRequest, id: string, line: L) {
   const tenantId = line.receipt.tenantId
     ?? (await prisma.supplier.findUnique({ where: { id: line.receipt.supplierId }, select: { tenantId: true } }))?.tenantId ?? null
   if (!tenantId || !req.staffUser!.memberTenantIds.includes(tenantId)) throw new NotFoundError('GoodsReceiptLine', id)

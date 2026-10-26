@@ -419,10 +419,13 @@ describe('W3B-RV-1 Module Access closes what wave 3 opened to finance and HR', (
     expect((await prisma.position.findUniqueOrThrow({ where: { id: ids.posA } })).headcount).not.toBe(7)
   })
 
-  it('the manager tiers pass exactly as before (fnb_manager holds no capital)', async () => {
-    for (const p of ['/opex/categories', '/trustops/deposit-drops', '/positions']) {
+  // Owner C2 (2026-10-26): "Make my Module Access ticks apply to managers too" — the manager
+  // tiers are no longer exempt: fnb_manager holds 'accounting' and 'staff_directory' but not 'capital'.
+  it('the manager tiers follow Module Access like everyone else (fnb_manager holds no capital)', async () => {
+    for (const p of ['/trustops/deposit-drops', '/positions']) {
       expect((await get('fnbA', p)).statusCode, p).toBe(200)
     }
+    expect((await get('fnbA', '/opex/categories')).statusCode).toBe(403)
   })
 })
 

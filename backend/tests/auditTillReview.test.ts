@@ -27,7 +27,7 @@ import { checkSplitRoutes } from '../src/modules/checkSplit/routes.js'
 import { orderRoutes } from '../src/modules/orders/routes.js'
 import { taxableRefundCents, applyGiftCardTender, recordCashMovement } from '../src/modules/pos/service.js'
 
-const PIN = '3917'
+const PIN = '391742'
 let app: FastifyInstance
 let tenantA: string, tenantB: string
 let conceptA: string, conceptB: string

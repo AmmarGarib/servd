@@ -31,8 +31,8 @@ import { prisma, mkCompany, mkUser, caller, resetConnectorCache, type Company, t
 let app: FastifyInstance
 let A: Company, B: Company
 let mgrA: Who, mgrB: Who
-const PIN_A = '5831'
-const PIN_B = '7364'
+const PIN_A = '583192'
+const PIN_B = '736481'
 
 const call = (...args: Parameters<ReturnType<typeof caller>>) => caller(app)(...args)
 

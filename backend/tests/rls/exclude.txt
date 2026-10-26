@@ -23,16 +23,10 @@ tests/resimTill.test.ts
 # passes on its own under the lock:
 tests/passwordReset.test.ts
 #
-# PRODUCT behaviour under the lock (reported, F9) — re-add once fixed:
-#   group_orders <-> group_order_members policies recurse (42P17)
-tests/groupOrderSubmit.test.ts
-#   POST /tenants: tenants_rls WITH CHECK refuses the new company; /tenants/mine hides member companies
-tests/headOfficeTenantGuards.test.ts
-#   flagException (lib/exceptions.ts) writes into a company outside the request scope -> flag dropped
-tests/hoProcurementRecipes.test.ts
-#   labour-budget.ts include of the counterparty tenant -> hidden row -> 500
-tests/headOfficeSetup.test.ts
-tests/labourBudgetHeadOffice.test.ts
+# PRODUCT behaviour under the lock (F9) — FIXED 2026-10-26 (migration
+# 20261026140000_rls_gap_close + serviceClient reads; see NON_OWNER_SWITCH.md):
+# groupOrderSubmit, headOfficeTenantGuards, hoProcurementRecipes,
+# headOfficeSetup, labourBudgetHeadOffice now run under the lock.
 #
 # Fail WITHOUT the lock too (2026-10-23, under other agents' edits) — the
 # normal suite reports them:

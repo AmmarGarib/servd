@@ -3,9 +3,11 @@ import 'dotenv/config'
 // Keep the process alive even if Redis/BullMQ throws an unhandled rejection
 process.on('unhandledRejection', (err) => {
   console.error('[unhandledRejection]', err instanceof Error ? err.message : err)
+  captureWorkerError(err, 'unhandledRejection')
 })
 
 import Fastify, { type FastifyError } from 'fastify'
+import { initErrorTracking, captureServerError, captureWorkerError } from './lib/errorTracking.js'
 import cors from '@fastify/cors'
 import helmet from '@fastify/helmet'
 import rateLimit from '@fastify/rate-limit'
@@ -28,7 +30,7 @@ import { startLoyaltyTriggerWorker } from './workers/loyaltyTriggers.js'
 import { startLoyaltyExpirationWorker } from './workers/loyaltyExpiration.js'
 import { startGiftCardExpiryWorker } from './workers/giftCardExpiry.js'
 import { startReservationReminderWorker } from './workers/reservationReminders.js'
-import { startDeliveryWatch } from './workers/deliveryWatch.js'
+import { startDeliveryWatch, DELIVERY_STATE_KEY } from './workers/deliveryWatch.js'
 import { startReviewPromptWorker } from './workers/reviewPrompt.js'
 // Fiscal filing goes ONLY through the POS connector (connectors/, spec §12):
 // the direct FBR/SRB workers are gone. drainLegacyTaxQueues empties their old
@@ -64,8 +66,9 @@ import { startSegmentComputationWorker } from './workers/segmentComputation.js'
 import { calendarRoutes } from './modules/calendar/routes.js'
 import { supplierChatRoutes } from './modules/procurement/chat.js'
 import { startSocialPublishWorker } from './workers/socialPublish.js'
+import { startCampaignScheduleWorker } from './workers/campaignSchedule.js'
 import { randomBytes } from 'crypto'
-import { getOAuthUrl, exchangeCodeForTokens } from './lib/meta-social.js'
+import { socialConnectionRoutes, socialCallbackRoutes } from './modules/socialConnections/routes.js'
 import { assertSandboxBoot, sandboxHealthFields, sandboxMetaRoutes, registerPracticeAccessGuard, sandboxScrub } from './lib/sandbox.js'
 import { requireAuth, MANAGERS, OTP_LOGIN_ROLES } from './modules/auth/middleware.js'
 
@@ -92,6 +95,9 @@ import { startShiftCorrectionSweepWorker, runShiftCorrectionSweepOnce } from './
 import { startTillClearingSweepWorker } from './workers/tillClearingSweep.js'
 import { startOnAccountDailyWorker } from './workers/onAccountDaily.js'
 import { startStaffNotificationsWorker } from './workers/staffNotifications.js'
+import { startHrDigestWorker } from './workers/hrDigest.js'
+import { startFoodSafetyOverdueWorker } from './workers/foodSafetyOverdue.js'
+import { startStockExpiryWorker } from './workers/stockExpiry.js'
 import { inventoryRoutes } from './modules/inventory/routes.js'
 import { tableRoutes } from './modules/tables/routes.js'
 import { reportRoutes } from './modules/reports/routes.js'
@@ -121,6 +127,7 @@ import { loyaltyRoutes } from './modules/loyalty/routes.js'
 import { storefrontRoutes } from './modules/storefront/routes.js'
 import { webhookRoutes, webhookManagementRoutes } from './modules/webhooks/routes.js'
 import { reviewRoutes } from './modules/reviews/routes.js'
+import { dashboardRoutes } from './modules/dashboards/routes.js'
 import { complaintRoutes } from './modules/complaints/routes.js'
 import { feedbackRoutes } from './modules/feedback/routes.js'
 import { stockTransferRoutes } from './modules/stockTransfers/routes.js'
@@ -179,6 +186,8 @@ import { whatsappConfigured as isWhatsappConfigured, whatsappSecretHealth } from
 import { emailConfigured as isEmailConfigured } from './lib/mailer.js'
 import { registerBrandScope } from './lib/brandScope.js'
 import { registerEmptyJsonBody } from './lib/jsonBody.js'
+
+initErrorTracking() // Sentry; a no-op unless SENTRY_DSN_API is set (owner, 2026-10-26)
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10)
 const HOST = '0.0.0.0'
@@ -392,6 +401,7 @@ async function build() {
     }
 
     fastify.log.error(err)
+    captureServerError(err, { method: _req.method, route: _req.routeOptions?.url })
     return reply.status(500).send({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } })
   })
 
@@ -486,6 +496,7 @@ async function build() {
       // Emergency overrides: send the hand-over code to the rider; food a rider brought back.
       await api.register(emergencyOverridesRoutes, { prefix: '/emergency-overrides' })
       await api.register(reviewRoutes, { prefix: '/reviews' })
+      await api.register(dashboardRoutes, { prefix: '/dashboards' })
       await api.register(complaintRoutes, { prefix: '/complaints' })
       await api.register(feedbackRoutes, { prefix: '/feedback' })
       await api.register(stockTransferRoutes, { prefix: '/stock-transfers' })
@@ -547,81 +558,11 @@ async function build() {
       await api.register(trackingRoutes,          { prefix: '/t' }) // public: campaign click/open tracking
       await api.register(sandboxMetaRoutes,       { prefix: '/meta' }) // public: GET /meta/sandbox (practice copy?)
 
-      // Meta OAuth.
-      //   GET /api/v1/integrations/social/status    → { configured, connected, page, ig } (authed)
-      //   GET /api/v1/integrations/social/connect   → returns { url } (authenticated JSON)
-      //   GET /api/v1/integrations/social/callback  → exchanges code + stores tokens (public — Facebook calls it)
-      //
-      // The connect step is JSON-not-redirect because the browser can't
-      // attach an Authorization header when navigating top-level — so the
-      // frontend fetches the OAuth URL with its bearer token, then
-      // window.location.hrefs the browser to Facebook directly.
-      // (GET /integrations/tax/status is gone with direct FBR/SRB filing — the
-      // POS connector page reads GET /connectors instead, spec §8.4.)
-
-      // Status (no secrets: page/ig names + flags) is also IT's — the Dev
-      // workspace's Integrations page (wave 3, UI-08). Connecting the Meta page
-      // token stays with the managers.
-      api.get('/integrations/social/status', { preHandler: requireAuth(...MANAGERS, ...CONNECTOR_ADMINS) }, async () => {
-        // env-config check is what the operator forgets first — surfacing
-        // it explicitly lets the UI tell them "go fill .env" instead of
-        // hiding the failure behind a generic auth screen.
-        const configured = Boolean(process.env['FACEBOOK_APP_ID'] && process.env['FACEBOOK_APP_SECRET'])
-        const rows = await prisma.setting.findMany({
-          where: { key: { in: ['fb_page_id', 'fb_page_name', 'fb_page_token', 'ig_user_id'] } },
-          select: { key: true, value: true },
-        })
-        const map = new Map(rows.map((r) => [r.key, r.value]))
-        const pageId    = map.get('fb_page_id')    ?? null
-        const pageName  = map.get('fb_page_name')  ?? null
-        const pageToken = map.get('fb_page_token') ?? null
-        const igUserId  = map.get('ig_user_id')    ?? null
-        return {
-          configured,
-          connected: Boolean(pageId && pageToken),
-          page: pageId ? { id: pageId, name: pageName } : null,
-          ig:   igUserId ? { userId: igUserId } : null,
-          redirectUri: `${process.env['API_URL'] ?? 'http://localhost:3001'}/api/v1/integrations/social/callback`,
-        }
-      })
-      api.get('/integrations/social/connect', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
-        const redirectUri = `${process.env['API_URL'] ?? 'http://localhost:3001'}/api/v1/integrations/social/callback`
-        // One-time CSRF state, tied to the operator who started the flow and
-        // valid for 10 minutes. The callback refuses anything else.
-        const state = randomBytes(32).toString('hex')
-        await redis.setex(`social:oauth:${state}`, 600, req.staffUser!.id)
-        const url = await getOAuthUrl(redirectUri, state)
-        return { url }
-      })
-      api.get<{ Querystring: { code?: string; error?: string; state?: string } }>(
-        '/integrations/social/callback',
-        async (req, reply) => {
-          const web = process.env['WEB_URL'] ?? 'http://localhost:3000'
-          if (req.query.error) return reply.redirect(`${web}/settings?social_error=${req.query.error}`)
-          if (!req.query.code) return reply.redirect(`${web}/settings?social_error=no_code`)
-
-          // Only finish a flow this server started. The state is consumed on
-          // first use, so a replayed or forged callback is rejected.
-          const state = req.query.state
-          if (!state) return reply.redirect(`${web}/settings?social_error=missing_state`)
-          let stateOwner: string | null = null
-          try {
-            stateOwner = await redis.get(`social:oauth:${state}`)
-            if (stateOwner) await redis.del(`social:oauth:${state}`)
-          } catch {
-            stateOwner = null
-          }
-          if (!stateOwner) return reply.redirect(`${web}/settings?social_error=invalid_state`)
-
-          try {
-            const redirectUri = `${process.env['API_URL'] ?? 'http://localhost:3001'}/api/v1/integrations/social/callback`
-            const result = await exchangeCodeForTokens(req.query.code, redirectUri)
-            return reply.redirect(`${process.env['WEB_URL'] ?? 'http://localhost:3000'}/settings?social_connected=${result.pageName}`)
-          } catch (err) {
-            return reply.redirect(`${process.env['WEB_URL'] ?? 'http://localhost:3000'}/settings?social_error=${encodeURIComponent((err as Error).message)}`)
-          }
-        },
-      )
+      // Facebook / Instagram pages are connected PER BRAND (owner C18, 2026-10-26):
+      // Marketing connects, the CEO approves in the inbox (modules/socialConnections).
+      // The OAuth callback keeps its registered address /integrations/social/callback.
+      await api.register(socialConnectionRoutes,  { prefix: '/social-connections' })
+      await api.register(socialCallbackRoutes,    { prefix: '/integrations/social' })
       await api.register(webhookRoutes,           { prefix: '/webhooks' })
       await api.register(webhookManagementRoutes, { prefix: '/webhooks' })
     },
@@ -721,6 +662,19 @@ async function build() {
         'WhatsApp (WHATSAPP_API_URL/WHATSAPP_API_KEY) is not configured. Customer signup is DOWN: the verification code cannot be sent, so nobody can create an account on the storefront.'
     }
 
+    // The gateway watchdog's last verdict (workers/deliveryWatch.ts, every 5 min):
+    // a CONFIRMED drop (two bad runs) is a warn, counts and a cause only.
+    try {
+      const row = await prisma.setting.findUnique({ where: { key: DELIVERY_STATE_KEY } })
+      const st = row ? (JSON.parse(row.value) as { ok?: boolean; cause?: string; failStreak?: number }) : null
+      if (st && st.ok === false && (st.failStreak ?? 0) >= 2) {
+        checks.whatsappGateway = 'warn'
+        details.whatsappGateway = `Gateway down (${st.cause ?? 'unknown'}) for ${st.failStreak} checks in a row — see Dev → API → WhatsApp.`
+      } else {
+        checks.whatsappGateway = 'ok'
+      }
+    } catch { checks.whatsappGateway = 'ok' }
+
     // Floor staff have NO password — a code is their whole credential. Without
     // WhatsApp the code cannot be SENT, but a manager can hand one over in
     // person (POST /auth/staff/:id/sign-in-code), so that is 'warn' naming the
@@ -761,6 +715,16 @@ async function build() {
     } catch {
       checks.smtpPassAtRest = 'warn'
       details.smtpPassAtRest = 'Could not check how the SMTP password is stored.'
+    }
+
+    // Social page tokens at rest (owner C18, 2026-10-26): off / ok / warn, counts only.
+    try {
+      const { socialTokenHealth } = await import('./modules/socialConnections/service.js')
+      const soc = await socialTokenHealth()
+      if (soc.check !== 'off') { checks.socialTokensAtRest = soc.check; details.socialTokensAtRest = soc.detail }
+    } catch {
+      checks.socialTokensAtRest = 'warn'
+      details.socialTokensAtRest = 'Could not check how the social page tokens are stored.'
     }
 
     // POS connector (spec §8.4): fiscal POS, card machine, the secret key for
@@ -1180,6 +1144,15 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[access] module grants skipped: ${(err as Error).message}`)
   }
+  // Social pages per brand (owner C18, 2026-10-26): the old servd-wide page
+  // connection (settings fb_page_*) moves once — see modules/socialConnections.
+  try {
+    const { migrateLegacySocialConnection } = await import('./modules/socialConnections/service.js')
+    const m = await migrateLegacySocialConnection()
+    if (m.moved !== 'none') fastify.log.warn(`[social] old servd-wide page connection moved: ${m.moved}`)
+  } catch (err) {
+    fastify.log.warn(`[social] legacy connection move skipped: ${(err as Error).message}`)
+  }
   // HR requests raised by HR that are already waiting on an HR step (owner,
   // 2026-10-21): HR's raising was its sign-off — move them on once.
   try {
@@ -1366,6 +1339,8 @@ async function build() {
     })
     startSegmentComputationWorker()
     startSocialPublishWorker()
+    // Scheduled campaigns (owner B9, 2026-10-26): due ones send once, per company.
+    startCampaignScheduleWorker()
     startCoursePacingWorker()
     // Pre-orders reach the kitchen (order:new + stock) at their prep window.
     startPreOrderReleaseWorker()
@@ -1386,6 +1361,9 @@ async function build() {
     startTillClearingSweepWorker()
     startOnAccountDailyWorker()
     startStaffNotificationsWorker()   // the bell: exception claim-poller + retention
+    startHrDigestWorker()             // weekly HR expiry digest + 2-day waiting-request reminders (bell)
+    startFoodSafetyOverdueWorker()    // overdue temperature checks / cleaning tasks (bell)
+    startStockExpiryWorker()          // use-by: lots expiring tomorrow / expired (bell; owner B6)
     startOrderAutoCancelWorker()
     startPaymentRetryWorker()
     startRiderDispatchWorker()

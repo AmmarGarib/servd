@@ -18,10 +18,11 @@
 // is a public build-time value (baked into the bundle), so it must be
 // restricted to the admin origin in Google Cloud.
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Map as LeafletMap, Marker as LeafletMarker } from 'leaflet'
 import { api } from '../../lib/api'
 import { NavIcon } from './NavIcon'
+import { AnchoredMenu } from './AnchoredMenu'
 
 interface Coords { lat: number | null; lng: number | null }
 
@@ -64,6 +65,8 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
 
   const [search, setSearch] = useState('')
   const [searching, setSearching] = useState(false)
+  const searchBox = useRef<HTMLDivElement>(null)
+  const closeResults = useCallback(() => { setResults([]); setSearching(false) }, [])
   const [results, setResults] = useState<Array<{ display_name: string; lat: string; lon: string }>>([])
   const [error, setError] = useState<string | null>(null)
   const [mapReady, setMapReady] = useState(false)
@@ -273,11 +276,10 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
           <NavIcon name="pin" size={14} className="inline" /> Use my location
         </button>
         <span className="text-[11px] text-white/35">or search:</span>
-        <div className="flex-1 min-w-[200px] relative">
+        <div ref={searchBox} className="flex-1 min-w-[200px] relative">
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Ittehad Commercial, DHA Phase 6" className={inputCls} />
-          {(searching || results.length > 0) && (
-            <div className="absolute top-full left-0 right-0 mt-1 z-[1000] rounded-lg overflow-hidden"
-              style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 12px 28px rgb(var(--ink-rgb) / 0.18)' }}>
+          <AnchoredMenu anchor={searchBox} open={searching || results.length > 0} onClose={closeResults} matchWidth role="listbox" className="!z-[1100] !py-0">
+            <div>
               {searching && <p className="text-xs text-white/45 px-3 py-2">Searching…</p>}
               {results.map((r, i) => (
                 <button key={i} type="button" onClick={() => pick(r)} className="w-full text-left px-3 py-2 text-xs text-white/75 hover:bg-white/[0.05]">
@@ -285,7 +287,7 @@ export function MapPin({ value, onChange, height = 320, hint }: Props) {
                 </button>
               ))}
             </div>
-          )}
+          </AnchoredMenu>
         </div>
       </div>
 

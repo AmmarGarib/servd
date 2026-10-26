@@ -61,6 +61,7 @@
 
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
+import { runWithRlsContext } from '../../lib/rlsContext.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { emitItem86d } from '../../lib/ws.js'
 import { flagException } from '../../lib/exceptions.js'
@@ -246,29 +247,38 @@ async function flagForeignStock(tenantId: string, conceptId: string | null, excl
  * flags; completion calls ensureOrderDepleted (never throws).
  */
 export async function deductInventoryForOrder(orderId: string): Promise<void> {
-  const head = await prisma.order.findUnique({ where: { id: orderId }, select: { status: true, concept: { select: { tenantId: true } } } })
+  const head = await prisma.order.findUnique({ where: { id: orderId }, select: { status: true, concept: { select: { tenantId: true, recipeOwnerTenantId: true } } } })
   if (!head || NO_SALE.includes(head.status)) return
   const tenantId = head.concept.tenantId
   if (!tenantId) {
     console.warn(`[inventory] order ${orderId}: its brand belongs to no company — no stock to take`)
     return
   }
-  await ensureFifoReady(tenantId)
-  if (!(await readFifoCutoverAt(prisma, tenantId))) {
-    const ranOut = await legacyDeduct(orderId)
-    if (ranOut === 'cut_over') return deductInventoryForOrder(orderId)
-    if (ranOut.length > 0) await autoEightySixDepletedItems(ranOut)
-    return
-  }
+  // The draw is the ORDER's company's own write, whoever's request triggered
+  // it — a customer's storefront checkout or a WhatsApp order carries no
+  // company, so under the company lock (RLS) its stock and audit rows were
+  // refused (flagged stock_restore_failed). Scoped to that company, plus the
+  // company that owns the brand's recipes (K4: a shared recipe's lines are
+  // resolved through the owner's items to the selling company's own).
+  const scope = [tenantId, ...(head.concept.recipeOwnerTenantId && head.concept.recipeOwnerTenantId !== tenantId ? [head.concept.recipeOwnerTenantId] : [])]
+  return runWithRlsContext({ tenantIds: scope, customerId: null, staffUserId: null }, async () => {
+    await ensureFifoReady(tenantId)
+    if (!(await readFifoCutoverAt(prisma, tenantId))) {
+      const ranOut = await legacyDeduct(orderId)
+      if (ranOut === 'cut_over') return deductInventoryForOrder(orderId)
+      if (ranOut.length > 0) await autoEightySixDepletedItems(ranOut)
+      return
+    }
 
-  const result = await prisma.$transaction(async (tx) => {
-    const locked = await lockOrderForStock(tx, orderId)
-    if (!locked || NO_SALE.includes(locked.status)) return null
-    const { depleted } = await claimsTx(tx, orderId)
-    if (depleted) return null
-    return depleteLinesTx(tx, tenantId, orderId, null)
-  }, TX_OPTS)
-  await afterDepletion(tenantId, result)
+    const result = await prisma.$transaction(async (tx) => {
+      const locked = await lockOrderForStock(tx, orderId)
+      if (!locked || NO_SALE.includes(locked.status)) return null
+      const { depleted } = await claimsTx(tx, orderId)
+      if (depleted) return null
+      return depleteLinesTx(tx, tenantId, orderId, null)
+    }, TX_OPTS)
+    await afterDepletion(tenantId, result)
+  })
 }
 
 /**

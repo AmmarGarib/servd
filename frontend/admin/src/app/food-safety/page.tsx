@@ -10,6 +10,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
+import { ExportMenu } from '../../components/ui/ExportMenu'
 import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
 import { useManagerRoles } from '../../lib/roles'
@@ -62,6 +63,9 @@ export default function FoodSafetyPage() {
         <Link href="/modules/haccp" className="inline-flex min-h-11 items-center gap-1.5 text-xs text-white/40 hover:text-white/70"><ArrowLeft size={14} aria-hidden="true" />Food safety</Link>
         <h1 className="text-2xl font-black text-white/90 mt-2">Food safety logs</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">Check every unit each day. A reading outside its limit needs a note on what you did.</p>
+        <div className="mt-3">
+          <ExportMenu path="/food-safety/inspector-report" filename="food-safety-inspection" formats={['pdf', 'xlsx']} label="Print for inspector" />
+        </div>
       </header>
 
       <div className="px-7 py-6 max-w-5xl mx-auto space-y-6">

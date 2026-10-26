@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError } from '../../lib/api'
@@ -17,6 +17,7 @@ import { Select } from '@/components/ui/Select'
 import { FormField } from '../../components/ui/FormField'
 import { NumberField } from '../../components/ui/NumberField'
 import { MoneyInput } from '../../components/ui/MoneyInput'
+import { ExpiringLots, type ExpiringRow } from '../../components/inventory/ExpiringLots'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number; parLevel: number
@@ -36,6 +37,10 @@ interface InventoryItem {
   purchaseUnit?: string | null
   purchaseUnitFactor?: number
   countFrequency?: 'daily' | 'weekly'
+  /** Use-by (owner B6, 2026-10-26): from servd's ingredient when linked (masterIngredientId), else the item's own. */
+  perishable?: boolean
+  shelfLifeDays?: number | null
+  masterIngredientId?: string | null
   /** Kitchen floor view: the API took cost and supplier out (wave 3). */
   costsHidden?: boolean
   // Tenant scoping added 2026-05-13. Backfilled via supplier where one
@@ -62,7 +67,7 @@ interface WasteLog {
 interface BrandLite { id: string; name: string; tenantId: string | null }
 interface OutletLite { id: string; name: string; tenantId?: string | null; isActive?: boolean }
 
-type Tab = 'stock' | 'alerts' | 'waste'
+type Tab = 'stock' | 'alerts' | 'waste' | 'expiring'
 
 const WASTE_REASONS = ['spoilage', 'over_prep', 'expired', 'damaged', 'other'] as const
 
@@ -150,6 +155,14 @@ function downloadStockCsv(items: InventoryItem[]) {
 export default function InventoryPage() {
   const qc = useQueryClient()
   const [tab, setTab] = useState<Tab>('stock')
+  // The bell's use-by notice links to /inventory?tab=expiring[&locationId=] (owner B6, 2026-10-26).
+  const [expiringSite, setExpiringSite] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search)
+      if (sp.get('tab') === 'expiring') { setTab('expiring'); setExpiringSite(sp.get('locationId') ?? undefined) }
+    } catch { /* no window */ }
+  }, [])
   const [showAdd, setShowAdd] = useState(false)
   // A panel's Save was pressed once: show what is missing next to each field.
   const [tried, setTried] = useState(false)
@@ -166,7 +179,7 @@ export default function InventoryPage() {
   // Edit panel (category, opening cost, par, issue on receipt) and the
   // "assign a company" panel for a company-less item.
   const [editItemId, setEditItemId] = useState<string | null>(null)
-  const [editForm, setEditForm] = useState({ category: '', costPkr: '', parLevel: '', issueOnReceipt: false, purchaseUnit: '', purchaseUnitFactor: '', countFrequency: 'weekly' })
+  const [editForm, setEditForm] = useState({ category: '', costPkr: '', parLevel: '', issueOnReceipt: false, purchaseUnit: '', purchaseUnitFactor: '', countFrequency: 'weekly', perishable: false, shelfLifeDays: '' })
   const [assignItemId, setAssignItemId] = useState<string | null>(null)
   const [assignForm, setAssignForm] = useState({ tenantId: '', costPkr: '' })
   const me = useAuthStore((s) => s.user)
@@ -265,6 +278,12 @@ export default function InventoryPage() {
       const pf = Number(editForm.purchaseUnitFactor)
       if (editForm.purchaseUnitFactor.trim() !== '' && pf > 0 && pf !== (item.purchaseUnitFactor ?? 1)) body['purchaseUnitFactor'] = pf
       if (editForm.countFrequency !== (item.countFrequency ?? 'weekly')) body['countFrequency'] = editForm.countFrequency
+      // Use-by: only an item with no servd ingredient keeps its own (a linked one takes the master's).
+      if (!item.masterIngredientId) {
+        const shelf = editForm.perishable && Number(editForm.shelfLifeDays) >= 1 ? Math.round(Number(editForm.shelfLifeDays)) : null
+        if (editForm.perishable !== !!item.perishable) body['perishable'] = editForm.perishable
+        if (shelf !== (item.shelfLifeDays ?? null)) body['shelfLifeDays'] = shelf
+      }
       return Object.keys(body).length === 0 ? Promise.resolve(null) : api.patch(`/inventory/${item.id}`, body)
     },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['inventory'] }); setEditItemId(null) },
@@ -335,6 +354,7 @@ export default function InventoryPage() {
       purchaseUnit: item.purchaseUnit ?? '',
       purchaseUnitFactor: String(item.purchaseUnitFactor ?? 1),
       countFrequency: item.countFrequency ?? 'weekly',
+      perishable: !!item.perishable, shelfLifeDays: item.shelfLifeDays != null ? String(item.shelfLifeDays) : '',
     })
   }
   function openAssign(item: InventoryItem) {
@@ -465,6 +485,7 @@ export default function InventoryPage() {
             { key: 'stock', label: 'All stock' },
             { key: 'alerts', label: alertCount > 0 ? `Alerts (${alertCount})` : 'Alerts' },
             { key: 'waste', label: 'Waste log' },
+            { key: 'expiring', label: 'Use-by' },
           ] as { key: Tab; label: string }[]).map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors
@@ -585,6 +606,24 @@ export default function InventoryPage() {
                   : 'No delivery yet: this cost is only an estimate. The first delivery replaces it with the price paid.'}
                 {' '}Changing the category to or from Drinks or Packaging moves the item&rsquo;s stock value to the right account.
               </p>
+              {editItem.masterIngredientId ? (
+                <p className="text-xs text-s-muted">
+                  {editItem.perishable ? `Perishable${editItem.shelfLifeDays ? ` (shelf life ${editItem.shelfLifeDays} days)` : ''}: deliveries carry a use-by date.` : 'Not perishable.'}
+                  {' '}Set on <Link href="/kitchen/ingredients" className="text-primary-ink underline">Operations → Ingredients</Link> (servd&rsquo;s ingredient).
+                </p>
+              ) : (
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="flex items-center gap-2 text-sm text-s-text cursor-pointer">
+                    <input type="checkbox" className="accent-accent" checked={editForm.perishable}
+                      onChange={(e) => setEditForm({ ...editForm, perishable: e.target.checked })} />
+                    Perishable — deliveries carry a use-by date
+                  </label>
+                  <F label="Shelf life (days, optional)">
+                    <NumberField decimals={0} min={1} value={numOf(editForm.shelfLifeDays)} disabled={!editForm.perishable}
+                      onValueChange={(v) => setEditForm({ ...editForm, shelfLifeDays: textOf(v) })} className={fi} />
+                  </F>
+                </div>
+              )}
               {managerRoles.has(me?.role ?? '') && (
                 <label className="flex items-start gap-2 text-sm text-s-text cursor-pointer">
                   <input type="checkbox" className="accent-accent mt-0.5" checked={editForm.issueOnReceipt}
@@ -932,6 +971,21 @@ export default function InventoryPage() {
                 </div>
               </div>
             )
+          )}
+
+          {/* ════ USE-BY (owner B6, 2026-10-26) ════ */}
+          {tab === 'expiring' && (
+            <ExpiringLots
+              outlets={outlets.filter((o) => (o as { isActive?: boolean }).isActive !== false)}
+              initialLocationId={expiringSite}
+              canWaste={canWaste}
+              onWaste={(r: ExpiringRow) => {
+                const item = items.find((i) => i.id === r.inventoryItemId)
+                if (!item) return
+                openWaste(item)
+                setWasteForm((f) => ({ ...f, reason: 'expired', locationId: r.locationId ?? '', quantity: String(r.remainingQty) }))
+              }}
+            />
           )}
 
           {/* ════ WASTE LOG ════ */}

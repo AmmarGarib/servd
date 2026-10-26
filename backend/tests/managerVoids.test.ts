@@ -33,9 +33,9 @@ import { returnUndeliveredOrder } from '../src/modules/orders/returnedFood.js'
 let app: FastifyInstance
 let A: Company, B: Company
 let cashierA: Who, waiterA: Who, mgrA: Who, cashierB: Who, mgrB: Who, finA: Who
-const PIN_A = '5821'
-const PIN_B = '7394'
-const PIN_FIN = '6482'
+const PIN_A = '582164'
+const PIN_B = '739482'
+const PIN_FIN = '648273'
 let beefA: string
 
 async function build(): Promise<FastifyInstance> {

@@ -1,5 +1,5 @@
 import { BlankDashboard } from '../../../components/ui/BlankDashboard'
 
 export default function OperationsDashboard() {
-  return <BlankDashboard title="Operations dashboard" />
+  return <BlankDashboard title="Operations dashboard" id="operations" />
 }

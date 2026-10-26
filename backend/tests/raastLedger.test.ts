@@ -423,7 +423,7 @@ describe('end to end: ring → Raast at the till → close → refund', () => {
   beforeAll(async () => {
     app = await buildApp()
     mgrA = await mkUser(`rl-mgr-a-${RUN}`, 'foh_management', A.tenantId)
-    await setManagerPin(mgrA.id, '7319')
+    await setManagerPin(mgrA.id, '731958')
   }, 60_000)
   afterAll(async () => { await app?.close() })
 

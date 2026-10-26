@@ -16,7 +16,7 @@
 // without it falls back to its brand's company, and failing that is written
 // company-less — invisible in every inbox — with a warning naming the caller.
 
-import { prisma } from './prisma.js'
+import { prisma, serviceClient } from './prisma.js'
 import { Prisma, type ExceptionSeverity } from '@prisma/client'
 import { tenantForConcept } from './setup-config.js'
 import type { TenantIdWhere } from './tenantScope.js'
@@ -184,7 +184,12 @@ export async function flagException(input: FlagInput): Promise<{ id: string } | 
     // only a non-finite or out-of-range figure is dropped (null).
     const a = input.amountCents
     const amountCents = a != null && Number.isFinite(a) && Math.abs(Math.round(a)) <= MAX_MONEY_CENTS ? Math.round(a) : null
-    const row = await prisma.exceptionFlag.create({
+    // serviceClient on purpose: a flag is stamped with the ITEM's company,
+    // which may lie outside the request's companies (a head-office delegate's
+    // self-approval, a counterparty) — under the company lock (RLS) the
+    // request's insert was refused and the flag silently dropped. The company
+    // comes from server code, never the client.
+    const row = await serviceClient.exceptionFlag.create({
       data: {
         tenantId,
         kind: input.kind,

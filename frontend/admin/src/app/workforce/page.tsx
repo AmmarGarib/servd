@@ -973,9 +973,9 @@ function InlineEditor({
             <DirectorBrandPicker value={directorBrands} onChange={setDirectorBrands} />
           </div>
         ) : (<>
-        <Field label="Override PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : '4–8 digits, not guessable.'}>
+        <Field label="Override PIN" hint={user.hasPin ? 'Type a new PIN to replace.' : '6–8 digits, not guessable.'}>
           <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-            maxLength={8} inputMode="numeric" autoComplete="off" name="override-pin" placeholder={user.hasPin ? '• • • •' : '4–8 digit PIN'}
+            maxLength={8} inputMode="numeric" autoComplete="off" name="override-pin" placeholder={user.hasPin ? '• • • •' : '6–8 digit PIN'}
             className={inputCls} />
         </Field>
         {tenants.length > 0 && (
@@ -1287,8 +1287,9 @@ function AddStaffModal({
     if (asHr) {
       if (!name.trim()) return setErr('Type their name.')
       if (!practice) {
-        if (!email.trim()) return setErr('An email is required — it is how they sign in.')
-        if (!/@gsfoods\.pk$/i.test(email.trim())) return setErr('Staff sign in with an @gsfoods.pk address.')
+        // Floor staff sign in with a WhatsApp code — no email needed (owner C14).
+        if (!email.trim() && !needsPhone) return setErr('An email is required — it is how they sign in.')
+        if (email.trim() && !/@gsfoods\.pk$/i.test(email.trim())) return setErr('Staff sign in with an @gsfoods.pk address.')
         if (needsPhone && phone.replace(/\D/g, '').length < 10) {
           return setErr('Add their mobile number — till and kitchen staff sign in with a code sent to it.')
         }

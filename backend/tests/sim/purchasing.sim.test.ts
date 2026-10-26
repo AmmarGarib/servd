@@ -431,10 +431,16 @@ describe('the simulated month — purchasing and stock', () => {
       expect(e.get('1290')).toBe(25_000)
       expect(e.get('1230')).toBe(-25_000)
     }
+    // Category is a servd-wide ingredient-master field (kitchen flow, 2026-10-26): the CEO changes it
+    // once on the master and every company stocking it is reclassed in its own books.
+    sim.clock.at('2026-10-16', T(sim.A, '10:00', '10:30'))
+    const mintItem = await sim.prisma.inventoryItem.findUniqueOrThrow({ where: { id: S(sim.A).items.mint } })
+    expect(mintItem.masterIngredientId).toBeTruthy()
+    const locked = await sim.as(S(sim.A).store, sim.A).patch(`/inventory/${S(sim.A).items.mint}`, { category: 'beverage' })
+    expect(locked.statusCode, 'category is locked on a linked item').toBe(422)
+    ok(await sim.as(sim.ceo, sim.A).patch(`/ingredient-master/${mintItem.masterIngredientId}`, { category: 'beverage' }), 200)
     for (const co of [sim.A, sim.B]) {
-      sim.clock.at('2026-10-16', T(co, '10:00', '10:30'))
       const s = S(co)
-      ok(await sim.as(S(co).store, co).patch(`/inventory/${s.items.mint}`, { category: 'beverage' }), 200)
       const moved = await sim.ledger.entriesBySource(co, `inventory.item_reclass:${s.items.mint}:`)
       expect(moved.length).toBe(1)
       const net = new Map<string, number>()

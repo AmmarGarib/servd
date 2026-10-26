@@ -4,27 +4,27 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, MARKETING_TEAM, ALL_STAFF } from '../auth/middleware.js'
 import { AppError, NotFoundError, ForbiddenError } from '../../lib/errors.js'
-import { sendEmail, sendPhoneMessage, whatsappNumber } from '../../lib/notify.js'
+import { sendEmail, sendPhoneMessage } from '../../lib/notify.js'
+import {
+  escapeHtml, isCampaignSegment, campaignSegmentOf, companyConceptIds, campaignAudienceWhere,
+  assertCampaignChannel, sendableSegment, claimAndBroadcast, CAMPAIGN_SEND_SELECT,
+} from './campaignBroadcast.js'
 import { audit } from '../../lib/audit.js'
-import { sendText } from '../../lib/whatsapp.js'
-import { reachableAtCompany, companyAudience, unsubscribeUrl } from '../../lib/marketingAudience.js'
+import { companyAudience } from '../../lib/marketingAudience.js'
 import { WAITLIST_AUDIENCE, WAITLIST_AUDIENCE_NAME, waitlistMemberWhere, staffModules } from '../waitlist/service.js'
 import {
-  computeAllSegments, getSegmentsWithMembers, companySegments, segmentMemberIds, isSegmentSlug, SEGMENT_DEFS,
+  computeAllSegments, getSegmentsWithMembers, companySegments, isSegmentSlug, SEGMENT_DEFS,
 } from './segmentComputation.js'
 import { deliverToCustomer } from '../../lib/customer-channels.js'
-import { testCompanyBlocks, customerScope } from '../../lib/outboundScope.js'
+import { customerScope } from '../../lib/outboundScope.js'
 import { scopeTenantWhere, assertConceptOwned, conceptIdsInScope, activeTenantId, type TenantIdWhere } from '../../lib/tenantScope.js'
 import { walletBalancesOf, balanceInView } from '../wallet/service.js'
 import {
   customerOfCompanies, findCustomerInScope, tenantIdsOf,
   strikeCompanies, banCompanies, inCompanies, userOfCompanies,
 } from './customerScope.js'
+import { contactCorrectionRoutes } from './contactCorrection.js'
 
-// ─── Campaign link / open tracking helpers ────────────────────────────────────
-// Rewrite links in outbound campaign content to route through the public
-// /t/c/:sendId redirect (records a click, then forwards), and embed a 1x1 open
-// pixel in email. Per-recipient sendId attributes engagement → CTR / open rate.
 // Loyalty accounts are per company (ONL-04): staff read only the accounts of
 // the companies in view (`loyaltyAccounts: { where: t }`), and `loyaltyAccount`
 // — the one-account shape the admin reads — is the account at the operator's
@@ -32,35 +32,6 @@ import {
 function loyaltyAccountInView<A extends { tenantId: string }>(accounts: A[], activeTenantId: string | null | undefined): A | null {
   return accounts.find((a) => a.tenantId === activeTenantId) ?? accounts[0] ?? null
 }
-
-const URL_RX = /(https?:\/\/[^\s<>"')]+)/g
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-function trackUrl(target: string, sendId: string, apiBase: string): string {
-  return `${apiBase}/api/v1/t/c/${sendId}?u=${encodeURIComponent(target)}`
-}
-function trackedHtml(body: string, sendId: string, apiBase: string): string {
-  let out = ''
-  let last = 0
-  body.replace(URL_RX, (m: string, _g1: string, offset: number) => {
-    out += escapeHtml(body.slice(last, offset))
-    out += `<a href="${trackUrl(m, sendId, apiBase)}">${escapeHtml(m)}</a>`
-    last = offset + m.length
-    return m
-  })
-  out += escapeHtml(body.slice(last))
-  const pixel = `<img src="${apiBase}/api/v1/t/o/${sendId}" width="1" height="1" alt="" style="display:none" />`
-  return `<p>${out}</p>${pixel}`
-}
-function trackedText(body: string, sendId: string, apiBase: string): string {
-  return body.replace(URL_RX, (m) => trackUrl(m, sendId, apiBase))
-}
-
-// A campaign's segment is a computed customer segment OR the servd-level
-// new-brand waitlist (modules/waitlist). Anything else is refused — an unknown
-// slug must never widen to "everyone".
-const isCampaignSegment = (slug: string): boolean => isSegmentSlug(slug) || slug === WAITLIST_AUDIENCE
 
 /**
  * The waitlist is a servd-level list, not one company's customers, so sending
@@ -206,12 +177,6 @@ async function companyActivityFigures(customerId: string, t: Prisma.ConceptWhere
 }
 
 /** Every live brand of one company. */
-async function companyConceptIds(tenantId: string | null): Promise<string[]> {
-  if (!tenantId) return []
-  const rows = await prisma.concept.findMany({ where: { tenantId, deletedAt: null }, select: { id: true } })
-  return rows.map((r) => r.id)
-}
-
 // ─── Campaign → segment ───────────────────────────────────────────────────────
 // Campaign.segmentId still points at the legacy `segments` table, and there is
 // no column yet for a CustomerSegment (see report: Campaign.customerSegment).
@@ -234,42 +199,9 @@ async function segmentPointerId(tenantId: string, slug: string): Promise<string>
   return created.id
 }
 
-/** The customer segment a campaign targets: null = none, 'legacy' = an old saved filter. */
-function campaignSegmentOf(segment: { filters: unknown } | null | undefined): string | null | 'legacy' {
-  if (!segment) return null
-  const f = segment.filters as { customerSegment?: unknown } | null
-  return typeof f?.customerSegment === 'string' && isCampaignSegment(f.customerSegment) ? f.customerSegment : 'legacy'
-}
-
 const segmentName = (slug: string | null | 'legacy'): string | null =>
   slug === null ? null : slug === 'legacy' ? 'Old saved filter (retarget before sending)'
     : slug === WAITLIST_AUDIENCE ? WAITLIST_AUDIENCE_NAME : (SEGMENT_DEFS.find((d) => d.slug === slug)?.name ?? slug)
-
-/**
- * The recipient filter for a campaign — reachable at the owning company
- * (lib/marketingAudience.ts: opt-out model, this company's bans) ∩ the
- * company's brand audience ∩ the segment's members ∩ has a contact for the
- * channel. Shared by the audience preview and the real send so the number
- * shown is the number sent. An empty `conceptIds` means every brand of the
- * company, never the platform.
- */
-async function campaignAudienceWhere(c: {
-  tenantId: string
-  companyConcepts: string[]
-  conceptIds?: string[] | null
-  segment?: string | null
-  channel?: string | null
-}): Promise<Prisma.CustomerWhereInput> {
-  // The waitlist audience is ONLY the list's members (servd-level, not limited
-  // to this company's customers), still under the sending company's
-  // reachability rules: marketing opt-out and that company's bans.
-  const audience = c.segment === WAITLIST_AUDIENCE ? waitlistMemberWhere() : companyAudience(c.companyConcepts, c.conceptIds)
-  const and: Prisma.CustomerWhereInput[] = [await reachableAtCompany(c.tenantId), audience]
-  if (c.channel === 'email') and.push({ email: { not: null } })
-  if (c.channel === 'sms' || c.channel === 'whatsapp') and.push({ phone: { not: null } })
-  if (c.segment && c.segment !== WAITLIST_AUDIENCE) and.push({ id: { in: await segmentMemberIds(c.segment, [c.tenantId]) } })
-  return { AND: and }
-}
 
 /** How another company's incident is shown to a company that did not raise it. */
 export const OTHER_KITCHEN = 'Another servd kitchen'
@@ -335,6 +267,8 @@ function conversationOfCompanies(t: TenantIdWhere): Prisma.CustomerConversationW
 }
 
 export async function crmRoutes(fastify: FastifyInstance) {
+  // Correct a guest's phone / email (owner C20, 2026-10-26) — ./contactCorrection.ts.
+  await fastify.register(contactCorrectionRoutes)
   // Who may do what (wave 3, UI-06). The Marketing workspace (lib/workspaces.ts:
   // owners marketing + brand_manager) holds crm + campaigns by default, so
   // MARKETING_TEAM (MANAGERS + marketing + brand_manager) reads the customer
@@ -633,154 +567,120 @@ export async function crmRoutes(fastify: FastifyInstance) {
     }
   })
 
+  // When a campaign may be scheduled for (owner B9, 2026-10-26): from a minute from now, at most a year ahead.
+  function scheduleDate(iso: string): Date {
+    const at = new Date(iso)
+    const now = Date.now()
+    if (Number.isNaN(at.getTime()) || at.getTime() < now + 60_000) throw new AppError('SCHEDULE_IN_PAST', 'Pick a time at least a minute from now', 422)
+    if (at.getTime() > now + 366 * 86_400_000) throw new AppError('SCHEDULE_TOO_FAR', 'A campaign can be scheduled at most a year ahead', 422)
+    return at
+  }
+
   // POST /crm/campaigns — a campaign belongs to the ACTIVE company. Every brand
   // it names must be one of that company's (404 otherwise); none named means
-  // every brand of that company, never the platform.
+  // every brand of that company, never the platform. With `scheduledAt` it is
+  // saved as scheduled (same rules as POST /:id/schedule), else as a draft.
   fastify.post('/campaigns', { preHandler: requireAuth(...MARKETING_TEAM) }, async (req, reply) => {
     const body = createCampaignSchema.parse(req.body)
     const own = await scopeTenantWhere(req, 'create')
     if (typeof own.tenantId !== 'string') throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before creating a campaign', 422)
     const conceptIds = [...new Set(body.conceptIds ?? [])]
     for (const id of conceptIds) await assertConceptOwned(req, id, 'create')
-    const { segment, ...fields } = body
+    const { segment, scheduledAt: when, ...fields } = body
     if (segment === WAITLIST_AUDIENCE) await assertCanUseWaitlist(req)
+    let scheduledAt: Date | null = null
+    if (when) {
+      assertCampaignChannel(fields.channel)
+      scheduledAt = scheduleDate(when)
+    }
     const campaign = await prisma.campaign.create({
       data: {
         ...fields,
         conceptIds,
         tenantId: own.tenantId,
         segmentId: segment ? await segmentPointerId(own.tenantId, segment) : null,
-        // Nothing sends scheduled campaigns yet (Campaign.scheduledAt is read by
-        // no worker), so a campaign is a draft until someone presses send.
-        status: 'draft',
-        scheduledAt: null,
+        status: scheduledAt ? 'scheduled' : 'draft',
+        scheduledAt,
       },
     })
+    if (scheduledAt) {
+      await audit({
+        category: 'identity', action: 'campaign.schedule', entity: 'Campaign', entityId: campaign.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: own.tenantId,
+        metadata: { scheduledAt: scheduledAt.toISOString(), channel: campaign.channel },
+      })
+    }
     return reply.status(201).send({ ...campaign, segment: segment ? { slug: segment, name: segmentName(segment) } : null })
   })
 
-  // POST /crm/campaigns/:id/send — immediately broadcast
+  /** A campaign of a company in `write` scope, or 404. A legacy campaign with no company is never sendable. */
+  async function campaignInScope(req: FastifyRequest, id: string) {
+    const campaign = await prisma.campaign.findFirst({
+      where: { id, ...(await scopeTenantWhere(req, 'write')) },
+      select: { ...CAMPAIGN_SEND_SELECT, scheduledAt: true },
+    })
+    if (!campaign || !campaign.tenantId) throw new NotFoundError('Campaign', id)
+    return campaign as typeof campaign & { tenantId: string }
+  }
+
+  // POST /crm/campaigns/:id/send — broadcast now (email only; WhatsApp is 422
+  // WHATSAPP_CAMPAIGN_NEEDS_OWN_NUMBER — modules/crm/campaignBroadcast.ts).
   fastify.post<{ Params: { id: string } }>(
     '/campaigns/:id/send',
     { preHandler: requireAuth(...MARKETING_TEAM) },
     async (req) => {
-      // Company-scoped lookup: a campaign of a company the operator is not in
-      // is a 404. A legacy campaign with no company cannot be sent at all.
-      const campaign = await prisma.campaign.findFirst({
-        where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
-        include: { segment: true },
-      })
-      if (!campaign) throw new NotFoundError('Campaign', req.params.id)
+      // Company-scoped lookup: a campaign of a company the operator is not in is a 404.
+      const campaign = await campaignInScope(req, req.params.id)
+      assertCampaignChannel(campaign.channel)
+      if (sendableSegment(campaign) === WAITLIST_AUDIENCE) await assertCanUseWaitlist(req)
+      const { recipientCount, run } = await claimAndBroadcast(campaign, { status: { in: ['draft', 'scheduled'] } }, fastify.log)
+      void run // fire-and-forget — the response does not wait for the broadcast
+      return { message: 'Campaign broadcast started', campaignId: campaign.id, recipientCount }
+    },
+  )
 
-      if (!campaign.tenantId) throw new NotFoundError('Campaign', req.params.id)
-      // A segment row of another company is never trusted: no audience at all.
-      const seg = campaign.segment && campaign.segment.tenantId !== campaign.tenantId ? 'legacy' : campaignSegmentOf(campaign.segment)
-      if (seg === 'legacy') {
-        throw new AppError('LEGACY_SEGMENT', 'This campaign targets an old saved filter. Create it again with a segment from /crm/segments.', 422)
-      }
-      if (seg === WAITLIST_AUDIENCE) await assertCanUseWaitlist(req)
-      const where = await campaignAudienceWhere({
-        tenantId: campaign.tenantId,
-        companyConcepts: await companyConceptIds(campaign.tenantId),
-        conceptIds: campaign.conceptIds,
-        segment: seg,
-        channel: campaign.channel,
+  // POST /crm/campaigns/:id/schedule {scheduledAt} — a draft (or a scheduled one, to move it) is sent once at that
+  // time by the worker (workers/campaignSchedule.ts), to its segment inside its own company.
+  fastify.post<{ Params: { id: string } }>(
+    '/campaigns/:id/schedule',
+    { preHandler: requireAuth(...MARKETING_TEAM) },
+    async (req) => {
+      const body = z.object({ scheduledAt: z.string().datetime() }).parse(req.body ?? {})
+      const campaign = await campaignInScope(req, req.params.id)
+      assertCampaignChannel(campaign.channel)
+      if (sendableSegment(campaign) === WAITLIST_AUDIENCE) await assertCanUseWaitlist(req)
+      const at = scheduleDate(body.scheduledAt)
+      const n = await prisma.campaign.updateMany({
+        where: { id: campaign.id, tenantId: campaign.tenantId, status: { in: ['draft', 'scheduled'] } },
+        data: { status: 'scheduled', scheduledAt: at },
       })
-      // Claim the campaign BEFORE anything is counted or sent (W3A-RV-01): a
-      // campaign broadcasts exactly once. Two presses at once, or a press
-      // while the first broadcast is still running, used to send the whole
-      // audience again. The conditional update is the single flight — only
-      // one request moves draft → sent; every other one is a 409.
-      const claimed = await prisma.campaign.updateMany({
-        where: { id: campaign.id, status: { in: ['draft', 'scheduled'] } },
-        data: { status: 'sent', sentAt: new Date() },
+      if (n.count === 0) throw new AppError('CAMPAIGN_NOT_DRAFT', 'Only a draft or scheduled campaign can be scheduled', 409)
+      await audit({
+        category: 'identity', action: 'campaign.schedule', entity: 'Campaign', entityId: campaign.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: campaign.tenantId,
+        metadata: { scheduledAt: at.toISOString(), before: campaign.scheduledAt?.toISOString() ?? null, channel: campaign.channel },
       })
-      if (claimed.count === 0) throw new AppError('CAMPAIGN_ALREADY_SENT', 'This campaign has already been sent', 409)
-      let recipientCount: number
-      try {
-        recipientCount = await prisma.customer.count({ where })
-      } catch (err) {
-        // Nothing went out yet — give the draft back so it can be sent again.
-        await prisma.campaign.update({ where: { id: campaign.id }, data: { status: campaign.status, sentAt: null } }).catch(() => {})
-        throw err
-      }
-      const campaignId = campaign.id
-      const apiBase = process.env['API_URL'] ?? 'http://localhost:3001'
-      // A test company never messages customers (lib/outboundScope.ts): every
-      // recipient is recorded as not sent, with the reason, and nothing goes out.
-      const scope = customerScope(campaign.tenantId)
-      const testCompany = await testCompanyBlocks('email', scope)
+      return { id: campaign.id, status: 'scheduled', scheduledAt: at }
+    },
+  )
 
-      // Fire-and-forget — don't block the HTTP response. Walks the audience in
-      // pages rather than loading it whole; there used to be a hard 2,000 cap
-      // here that silently dropped everyone after the 2,000th customer.
-      void (async () => {
-        let sent = 0
-        try {
-          let cursor: string | undefined
-          for (;;) {
-            const page = await prisma.customer.findMany({
-              where,
-              select: { id: true, name: true, email: true, phone: true },
-              orderBy: { id: 'asc' },
-              take: 500,
-              ...(cursor && { cursor: { id: cursor }, skip: 1 }),
-            })
-            if (page.length === 0) break
-            cursor = page[page.length - 1]!.id
-            for (const c of page) {
-              // One CampaignSend per recipient — the unit click/open tracking and
-              // unsubscribe attribute to. Created first so its id can be baked in.
-              let send: { id: string }
-              try {
-                send = await prisma.campaignSend.create({
-                  data: { campaignId, customerId: c.id, status: 'queued' },
-                  select: { id: true },
-                })
-              } catch (err) {
-                fastify.log.warn({ customerId: c.id, err }, 'CampaignSend row create failed')
-                continue
-              }
-              const stop = unsubscribeUrl(send.id)
-              if (testCompany) {
-                await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'Test company: not sent to customers' } })
-                continue
-              }
-              try {
-                if (campaign.channel === 'email' && c.email) {
-                  const html = trackedHtml(campaign.body, send.id, apiBase) +
-                    `<p style="font-size:11px;color:#888;margin-top:24px">Don't want these? <a href="${stop}">Unsubscribe</a>.</p>`
-                  await sendEmail(c.email, campaign.subject ?? campaign.name, html, 'campaign', scope)
-                } else if ((campaign.channel === 'whatsapp' || campaign.channel === 'sms') && c.phone) {
-                  // Phone messages go through the WhatsApp gateway (owner
-                  // decision 17). A legacy 'sms' campaign is sent the same way.
-                  await sendText(whatsappNumber(c.phone), `${trackedText(campaign.body, send.id, apiBase)}\n\nStop these messages: ${stop}`, scope)
-                } else {
-                  await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'failed', errorMsg: 'no contact for channel' } })
-                  continue
-                }
-                sent++
-                await prisma.campaignSend.update({ where: { id: send.id }, data: { status: 'sent', sentAt: new Date() } })
-              } catch (err) {
-                await prisma.campaignSend
-                  .update({ where: { id: send.id }, data: { status: 'failed', errorMsg: String((err as Error).message).slice(0, 280) } })
-                  .catch(() => { /* ignore */ })
-                fastify.log.warn({ customerId: c.id, err }, 'Campaign send failed for customer')
-              }
-            }
-          }
-          // Status and sentAt were set by the claim; only the count lands here.
-          await prisma.campaign.update({ where: { id: campaignId }, data: { recipientCount } })
-          fastify.log.info({ campaignId, sent, total: recipientCount }, 'Campaign broadcast complete')
-        } catch (err) {
-          // Part of the audience may already have it: mark it failed, never
-          // back to draft, so it cannot be re-sent to the same people.
-          await prisma.campaign.update({ where: { id: campaignId }, data: { status: 'failed', recipientCount } }).catch(() => {})
-          fastify.log.error({ campaignId, sent, err }, 'Campaign broadcast aborted')
-        }
-      })()
-
-      return { message: 'Campaign broadcast started', campaignId, recipientCount }
+  // POST /crm/campaigns/:id/cancel-schedule — back to a draft; nothing is sent.
+  fastify.post<{ Params: { id: string } }>(
+    '/campaigns/:id/cancel-schedule',
+    { preHandler: requireAuth(...MARKETING_TEAM) },
+    async (req) => {
+      const campaign = await campaignInScope(req, req.params.id)
+      const n = await prisma.campaign.updateMany({
+        where: { id: campaign.id, tenantId: campaign.tenantId, status: 'scheduled' },
+        data: { status: 'draft', scheduledAt: null },
+      })
+      if (n.count === 0) throw new AppError('CAMPAIGN_NOT_SCHEDULED', 'This campaign is not scheduled (it may already be sending)', 409)
+      await audit({
+        category: 'identity', action: 'campaign.schedule_cancel', entity: 'Campaign', entityId: campaign.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: campaign.tenantId,
+        metadata: { scheduledAt: campaign.scheduledAt?.toISOString() ?? null },
+      })
+      return { id: campaign.id, status: 'draft', scheduledAt: null }
     },
   )
 

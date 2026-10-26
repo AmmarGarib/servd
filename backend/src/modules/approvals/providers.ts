@@ -24,6 +24,8 @@ import type { ApprovalItem, ApprovalProvider, ApprovalType, ProviderContext } fr
 import { onAccountClients } from './onAccountProvider.js'
 import { shiftCorrections } from '../shiftCorrections/approvalProvider.js'
 import { locationPins } from '../locations/approvalProvider.js'
+import { socialConnections } from '../socialConnections/approvalProvider.js'
+import { stationChanges } from '../stations/approvalProvider.js'
 import { karachiDay } from '../../connectors/util.js'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -1238,6 +1240,8 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   connectorChanges,
   shiftCorrections,
   locationPins,
+  socialConnections,
+  stationChanges,
 ]
 
 export type { ProviderContext }

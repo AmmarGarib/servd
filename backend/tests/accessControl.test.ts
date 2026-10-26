@@ -374,10 +374,10 @@ describe('manager override PIN', () => {
     const a1 = await makeUser({ role: 'boh_management', tenantId: tenantA })
     const a2 = await makeUser({ role: 'fnb_manager', tenantId: tenantA })
     const b1 = await makeUser({ role: 'fnb_manager', tenantId: tenantB })
-    await setManagerPin(a1.id, '2468')
-    await expect(setManagerPin(a2.id, '2468')).rejects.toMatchObject({ code: 'PIN_COLLISION' })
-    await expect(setManagerPin(b1.id, '2468')).resolves.toBeUndefined()
-    await expect(setManagerPin(a1.id, '2468')).resolves.toBeUndefined()   // own PIN is not a collision
+    await setManagerPin(a1.id, '246813')
+    await expect(setManagerPin(a2.id, '246813')).rejects.toMatchObject({ code: 'PIN_COLLISION' })
+    await expect(setManagerPin(b1.id, '246813')).resolves.toBeUndefined()
+    await expect(setManagerPin(a1.id, '246813')).resolves.toBeUndefined()   // own PIN is not a collision
     await expect(setManagerPin(a2.id, '12')).rejects.toMatchObject({ code: 'INVALID_PIN' })
   })
 
@@ -385,9 +385,9 @@ describe('manager override PIN', () => {
     const a = await makeUser({ role: 'management', tenantId: tenantA })
     const b = await makeUser({ role: 'management', tenantId: tenantA })
     const patch = (id: string, pin: string) => app.inject({ method: 'PATCH', url: `/api/v1/auth/users/${id}`, headers: { authorization: ceoToken }, payload: { pin } })
-    expect((await patch(a.id, '8024')).statusCode).toBe(200)
-    expect((await patch(b.id, '8024')).statusCode).toBe(409)
-    expect((await patch(b.id, '1234')).statusCode).toBe(400)
+    expect((await patch(a.id, '802461')).statusCode).toBe(200)
+    expect((await patch(b.id, '802461')).statusCode).toBe(409)
+    expect((await patch(b.id, '123456')).statusCode).toBe(400)
   })
 
   it('issue-pin (no caller) is gone', async () => {

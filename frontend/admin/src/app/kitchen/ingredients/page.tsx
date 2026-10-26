@@ -25,11 +25,13 @@ const REVIEWERS = new Set(['admin', 'fnb_manager'])
 interface Draft {
   name: string; unit: string; category: string; allergens: string; yieldPct: string
   purchaseUnit: string; purchaseUnitFactor: string; spec: string; specFields: Array<{ k: string; v: string }>
+  perishable: boolean; shelfLifeDays: string
 }
 const draftOf = (m: MasterRow): Draft => ({
   name: m.name, unit: m.stockUnit, category: m.category ?? '', allergens: m.allergens.join(', '), yieldPct: String(m.yieldPct),
   purchaseUnit: m.purchaseUnit ?? '', purchaseUnitFactor: String(m.purchaseUnitFactor),
   spec: m.spec ?? '', specFields: Object.entries(m.specFields ?? {}).map(([k, v]) => ({ k, v })),
+  perishable: !!m.perishable, shelfLifeDays: m.shelfLifeDays != null ? String(m.shelfLifeDays) : '',
 })
 
 export default function IngredientsPage() {
@@ -97,6 +99,7 @@ export default function IngredientsPage() {
                   <td className="px-3 py-2 text-s-text">
                     {m.name}
                     {m.status === 'needs_review' && <span className="ml-2 s-badge-purple text-[10px] px-1.5 py-0.5 rounded">needs review</span>}
+                    {m.perishable && <span className="ml-2 s-badge-teal text-[10px] px-1.5 py-0.5 rounded">perishable{m.shelfLifeDays ? ` · ${m.shelfLifeDays} d` : ''}</span>}
                   </td>
                   <td className="px-3 py-2 text-s-muted">{m.stockUnit}{m.purchaseUnit ? ` · bought by ${m.purchaseUnit} (${m.purchaseUnitFactor})` : ''}</td>
                   <td className="px-3 py-2 text-s-muted">{categoryLabel(m.category)}</td>
@@ -161,6 +164,8 @@ function Editor({ master, canEdit, isReviewer, onClose }: { master: MasterRow; c
       yieldPct: Number(d.yieldPct) || 100,
       purchaseUnit: d.purchaseUnit.trim() || null, purchaseUnitFactor: Number(d.purchaseUnitFactor) || 1,
       spec: d.spec.trim() || null,
+      perishable: d.perishable,
+      shelfLifeDays: d.perishable && Number(d.shelfLifeDays) >= 1 ? Math.round(Number(d.shelfLifeDays)) : null,
       specFields: d.specFields.filter((r) => r.k.trim()).length ? Object.fromEntries(d.specFields.filter((r) => r.k.trim()).map((r) => [r.k.trim(), r.v.trim()])) : null,
       ...extra,
     }),
@@ -195,6 +200,15 @@ function Editor({ master, canEdit, isReviewer, onClose }: { master: MasterRow; c
           <Field label="Allergens" hint="Comma separated"><Input value={d.allergens} onChange={set('allergens')} disabled={!canEdit} /></Field>
           <Field label="Bought by" hint="e.g. case of 24"><Input value={d.purchaseUnit} onChange={set('purchaseUnit')} disabled={!canEdit} /></Field>
           <Field label={`Stock units in one ${d.purchaseUnit || 'buying unit'}`}><Input inputMode="decimal" value={d.purchaseUnitFactor} onChange={set('purchaseUnitFactor')} disabled={!canEdit} /></Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3 items-end">
+          <label className="flex items-center gap-2 text-sm text-s-text">
+            <input type="checkbox" checked={d.perishable} disabled={!canEdit} onChange={(e) => setD({ ...d, perishable: e.target.checked })} />
+            Perishable — deliveries carry a use-by date
+          </label>
+          <Field label="Shelf life (days)" hint="Optional: fills the use-by at the dock (received day + days)">
+            <Input inputMode="numeric" value={d.shelfLifeDays} onChange={set('shelfLifeDays')} disabled={!canEdit || !d.perishable} />
+          </Field>
         </div>
         <Field label="Spec — what we buy" hint="Printed on purchase orders and the shopping list"><Textarea rows={3} value={d.spec} onChange={set('spec')} disabled={!canEdit} /></Field>
         <div>

@@ -400,31 +400,31 @@ describe('PPL-11: generated passwords are flagged at sign-in and can be replaced
 describe('PPL-14: a manager sets their own first override PIN', () => {
   it('first PIN needs the password; after that, the current PIN', async () => {
     const mgr = await makeUser({ role: 'fnb_manager', tenantId: tenantA })
-    const noPw = await call(mgr, 'POST', '/pin/change', { currentPin: '0000', newPin: '4826' })
+    const noPw = await call(mgr, 'POST', '/pin/change', { currentPin: '0000', newPin: '482639' })
     expect(noPw.statusCode).toBe(400)
     expect(noPw.json().error.code).toBe('PASSWORD_REQUIRED')
-    expect((await call(mgr, 'POST', '/pin/change', { password: 'wrong-password', newPin: '4826' })).json().error.code).toBe('WRONG_PASSWORD')
-    expect((await call(mgr, 'POST', '/pin/change', { password: PASSWORD, newPin: '1234' })).json().error.code).toBe('WEAK_PIN')
-    const ok = await call(mgr, 'POST', '/pin/change', { password: PASSWORD, newPin: '4826' })
+    expect((await call(mgr, 'POST', '/pin/change', { password: 'wrong-password', newPin: '482639' })).json().error.code).toBe('WRONG_PASSWORD')
+    expect((await call(mgr, 'POST', '/pin/change', { password: PASSWORD, newPin: '123456' })).json().error.code).toBe('WEAK_PIN')
+    const ok = await call(mgr, 'POST', '/pin/change', { password: PASSWORD, newPin: '482639' })
     expect(ok.statusCode).toBe(200)
-    expect((await verifyManagerPin('4826', tenantA))?.id).toBe(mgr.id)
+    expect((await verifyManagerPin('482639', tenantA))?.id).toBe(mgr.id)
     expect(await prisma.auditLog.count({ where: { entityId: mgr.id, action: 'user.pin_set', tenantId: tenantA } })).toBe(1)
 
     // Now there is a PIN: the password alone no longer changes it.
-    expect((await call(mgr, 'POST', '/pin/change', { password: PASSWORD, newPin: '5937' })).json().error.code).toBe('BAD_PIN')
-    expect((await call(mgr, 'POST', '/pin/change', { currentPin: '4826', newPin: '5937' })).statusCode).toBe(200)
-    expect((await verifyManagerPin('5937', tenantA))?.id).toBe(mgr.id)
+    expect((await call(mgr, 'POST', '/pin/change', { password: PASSWORD, newPin: '593741' })).json().error.code).toBe('BAD_PIN')
+    expect((await call(mgr, 'POST', '/pin/change', { currentPin: '482639', newPin: '593741' })).statusCode).toBe(200)
+    expect((await verifyManagerPin('593741', tenantA))?.id).toBe(mgr.id)
   })
 
   it('only override approvers get a first PIN, and wrong guesses lock out', async () => {
     const cashier = await makeUser({ role: 'cashier', tenantId: tenantA, phone: normalisePhone(uniquePhone()) })
-    expect((await call(cashier, 'POST', '/pin/change', { password: PASSWORD, newPin: '4826' })).statusCode).toBe(403)
+    expect((await call(cashier, 'POST', '/pin/change', { password: PASSWORD, newPin: '482639' })).statusCode).toBe(403)
 
     const mgr = await makeUser({ role: 'foh_management', tenantId: tenantA })
     for (let i = 0; i < 5; i++) {
-      expect((await call(mgr, 'POST', '/pin/change', { password: `wrong-${i}`, newPin: '4826' })).statusCode).toBe(400)
+      expect((await call(mgr, 'POST', '/pin/change', { password: `wrong-${i}`, newPin: '482639' })).statusCode).toBe(400)
     }
-    expect((await call(mgr, 'POST', '/pin/change', { password: PASSWORD, newPin: '4826' })).statusCode).toBe(429)
+    expect((await call(mgr, 'POST', '/pin/change', { password: PASSWORD, newPin: '482639' })).statusCode).toBe(429)
   })
 })
 

@@ -518,7 +518,12 @@ export async function customerAccountRoutes(app: FastifyInstance): Promise<void>
     } catch (err) {
       if (isP2002(err)) {
         const target = String((err as { meta?: { target?: unknown } }).meta?.target ?? '')
-        if (target.includes('number')) throw new AppError('ACCOUNT_CODE_TAKEN', 'This company already has a client with that account code', 409)
+        // Under the company lock (RLS) Postgres hides the key of a unique
+        // violation, so Prisma reports no target: then look the code up.
+        const codeClash = target
+          ? target.includes('number')
+          : !!body.number && !!(await prisma.customerAccount.findFirst({ where: { tenantId, number: body.number }, select: { id: true } }))
+        if (codeClash) throw new AppError('ACCOUNT_CODE_TAKEN', 'This company already has a client with that account code', 409)
         throw nameTaken()
       }
       throw err

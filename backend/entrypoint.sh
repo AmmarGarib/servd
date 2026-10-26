@@ -32,12 +32,20 @@ if [ -n "${SERVD_SANDBOX:-}" ]; then
   node -e "import('./dist/src/lib/sandbox.js').then((m) => m.assertSandboxBoot()).catch((e) => { console.error('[sandbox] FATAL: ' + e.message); process.exit(1) })" || exit 1
 fi
 
+# Migrations may run as a different (owner) login than the API: set
+# MIGRATE_DATABASE_URL to the table owner's URL and DATABASE_URL to the
+# non-owner app login (backend/tests/rls/NON_OWNER_SWITCH.md). Unset = the
+# API's own DATABASE_URL, exactly as before.
+migrate_prisma() {
+  if [ -n "${MIGRATE_DATABASE_URL:-}" ]; then DATABASE_URL="$MIGRATE_DATABASE_URL" npx prisma "$@"; else npx prisma "$@"; fi
+}
+
 echo "[entrypoint] resolving 0_init baseline (idempotent)…"
-npx prisma migrate resolve --applied 0_init 2>&1 || \
+migrate_prisma migrate resolve --applied 0_init 2>&1 || \
   echo "[entrypoint] migrate resolve returned non-zero (often expected if already applied), continuing"
 
 echo "[entrypoint] applying any new migrations…"
-if ! npx prisma migrate deploy 2>&1; then
+if ! migrate_prisma migrate deploy 2>&1; then
   echo "[entrypoint] FATAL: prisma migrate deploy failed — refusing to boot against a stale schema. Roll back or fix the migration."
   exit 1
 fi

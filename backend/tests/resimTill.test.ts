@@ -39,8 +39,8 @@ let app: FastifyInstance
 let A: Company, B: Company
 let mgrA: Who, mgrB: Who, cashierB: Who
 const beef: Record<string, string> = {}
-const PIN_A = '5821'
-const PIN_B = '7394'
+const PIN_A = '582164'
+const PIN_B = '739482'
 
 async function build(): Promise<FastifyInstance> {
   const a = Fastify()
@@ -251,11 +251,11 @@ describe('T-RV-01 — knowing one valid PIN does not reset the guess budget', ()
 
   it('a manager on a discount over managerDiscountCap: 4 wrong, own PIN, then the 5th wrong flags and the 6th is 429', async () => {
     const mgr = await mkUser(`resimt-rv1m-${randomUUID().slice(0, 6)}`, 'foh_management', A.tenantId)
-    await setManagerPin(mgr.id, '6283')
+    await setManagerPin(mgr.id, '628371')
     const sixty = 87_000 // 60% of PKR 1,450 — over the 50% manager cap, so only an admin PIN approves
     for (let i = 0; i < 4; i++) expect((await ringDiscount(mgr, sixty, `81000${i}`)).json().error.code).toBe('INVALID_MANAGER_PIN')
     // Their own PIN matches but is not an admin's: still refused, nothing created.
-    const own = await ringDiscount(mgr, sixty, '6283')
+    const own = await ringDiscount(mgr, sixty, '628371')
     expect(own.statusCode).toBe(403)
     expect(own.json().error.code).toBe('DISCOUNT_OVER_MANAGER_CAP')
     expect(await flagsFor(mgr.id)).toBe(0)
@@ -266,7 +266,7 @@ describe('T-RV-01 — knowing one valid PIN does not reset the guess budget', ()
     expect(sixth.statusCode).toBe(429)
     expect(sixth.json().error.code).toBe('MANAGER_PIN_LOCKED')
     // ...and while locked, even the own PIN is not compared.
-    expect((await ringDiscount(mgr, sixty, '6283')).json().error.code).toBe('MANAGER_PIN_LOCKED')
+    expect((await ringDiscount(mgr, sixty, '628371')).json().error.code).toBe('MANAGER_PIN_LOCKED')
     expect(await prisma.auditLog.count({ where: { action: 'manager_pin.failed', userId: mgr.id } })).toBe(5)
     expect(await prisma.order.count({ where: { posStaffId: mgr.id } })).toBe(0)
   })

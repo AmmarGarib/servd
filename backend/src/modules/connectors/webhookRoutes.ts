@@ -30,7 +30,8 @@
 import { createHash } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
+import { setRlsContext } from '../../lib/rlsContext.js'
 import { decryptSecret } from '../../lib/secretBox.js'
 import { verifySignature, withTimeout } from '../../connectors/util.js'
 import { connectorNow } from '../../connectors/registry.js'
@@ -114,6 +115,9 @@ async function handleSms(req: FastifyRequest, reply: FastifyReply, viaPath: bool
     if (throttled(ip)) return tooMany()
     return reply.status(401).send({ error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } })
   }
+  // The device proved its company: the rest of the request is scoped to it
+  // (the company lock, RLS — an unauthenticated request otherwise sees nothing).
+  setRlsContext({ tenantIds: [device.tenantId] })
   try {
     const raw = typeof req.body === 'string' ? req.body : ''
     const fields = extractSmsFields(raw, req.headers['content-type'] ?? null)
@@ -161,7 +165,9 @@ export async function connectorWebhookRoutes(fastify: FastifyInstance) {
     bodyLimit: 256 * 1024,
   }, async (req, reply) => {
     const { token } = z.object({ token: z.string().regex(/^[0-9a-f]{64}$/) }).catch({ token: '' }).parse(req.params)
-    const conn = token ? await prisma.posConnector.findUnique({ where: { webhookToken: token } }) : null
+    // serviceClient: a pre-auth lookup by the connector's secret webhook token
+    // (under the company lock this request has no company yet).
+    const conn = token ? await serviceClient.posConnector.findUnique({ where: { webhookToken: token } }) : null
     if (!conn) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Not found' } })
 
     if (!conn.webhookSecretEnc) {
@@ -180,6 +186,8 @@ export async function connectorWebhookRoutes(fastify: FastifyInstance) {
       return reply.status(401).send({ error: { code: 'BAD_SIGNATURE', message: 'Signature missing, invalid or stale' } })
     }
 
+    // The signature proved the connector's company: scope the request to it.
+    setRlsContext({ tenantIds: [conn.tenantId] })
     let parsed: unknown
     try { parsed = JSON.parse(raw) } catch {
       return reply.status(400).send({ error: { code: 'BAD_BODY', message: 'Body is not JSON' } })

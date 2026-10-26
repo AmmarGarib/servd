@@ -85,6 +85,10 @@ export const APPROVAL_TYPES = [
   'shift_correction',      // finance's set of fixes on a closed drawer (void bills / cancel KOTs) — CEO only
   // Geo-fenced attendance (owner, 2026-10-22).
   'location_pin',          // a location's time-clock map pin / radius waiting for the CEO
+  // Social pages per brand (owner C18, 2026-10-26).
+  'social_connection',     // a brand's Facebook / Instagram page Marketing connected, waiting for the CEO
+  // Kitchen stations (owner C3, 2026-10-26).
+  'station_change',        // a new kitchen station or a change the F&B manager / chef raised, waiting for the CEO
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 
@@ -242,6 +246,19 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // POST /pos/shift-corrections/:id/approve | reject (modules/shiftCorrections): the CEO only, never handed
     // over; the CEO may approve a set the CEO raised (there is no one above); finance never approves.
     label: 'Shift corrections', section: 'ceo', queueModule: 'accounting', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  social_connection: {
+    // POST /social-connections/requests/:id/approve | reject (modules/socialConnections): the CEO only, never
+    // handed over (owner C18, 2026-10-26: "Approval goes thru me, marketing can connect").
+    label: 'Social page connections', section: 'ceo', queueModule: 'calendar', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  station_change: {
+    // POST /stations/requests/:id/approve | reject (modules/stations): the CEO only, never handed over (owner C3,
+    // 2026-10-26: "F&B manager and kitchen managers may add or change kitchen stations, with CEO approval";
+    // "Approval stays with me").
+    label: 'Kitchen station changes', section: 'ceo', queueModule: 'kds_config', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   location_pin: {
@@ -1030,6 +1047,14 @@ export async function approvalSubject(type: string, id: string, db: Db = service
         submitterIds: [r.preparedById, r.submittedById, ...r.preparedByIds], viaHeadOfficeId: null, status: r.status, submittedAt: r.submittedAt, kind: r.kind,
       })
     }
+    case 'social_connection': {
+      const c = await db.socialConnection.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, requestedAt: true } })
+      return c?.tenantId ? subject({ companyIds: [c.tenantId], ownerTenantId: c.tenantId, submitterIds: [c.requestedById], viaHeadOfficeId: null, status: c.status, submittedAt: c.requestedAt }) : null
+    }
+    case 'station_change': {
+      const r = await db.stationChangeRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, requestedAt: true, kind: true } })
+      return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.requestedAt, kind: r.kind })
+    }
     case 'location_pin': {
       const l = await db.location.findUnique({ where: { id }, select: { tenantId: true, deletedAt: true, updatedAt: true, latitude: true, longitude: true, geofenceRadiusMetres: true, fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true, fencePinRejected: true } })
       return l?.tenantId ? subject({ companyIds: [l.tenantId], ownerTenantId: l.tenantId, submitterIds: [], viaHeadOfficeId: null, status: !l.deletedAt && fencePinPending(l) ? 'pending' : 'settled', submittedAt: l.updatedAt }) : null
@@ -1135,6 +1160,8 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   connector_change: ['submitted'],
   shift_correction: ['submitted'],
   location_pin: ['pending'],
+  social_connection: ['pending'],
+  station_change: ['pending'],
 }
 
 /**

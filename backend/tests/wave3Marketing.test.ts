@@ -52,7 +52,7 @@ const { walletRoutes } = await import('../src/modules/wallet/routes.js')
 const { menuRoutes } = await import('../src/modules/menu/routes.js')
 const { DEFAULT_MODULE_ACCESS } = await import('../src/lib/moduleAccess.js')
 const { companySegmentSlug } = await import('../src/modules/crm/segmentComputation.js')
-const { sendText } = await import('../src/lib/whatsapp.js')
+const { sendEmail } = await import('../src/lib/notify.js')
 
 const RUN = Math.random().toString(36).slice(2, 8)
 let app: FastifyInstance
@@ -240,7 +240,8 @@ describe('UI-06 the marketing roles reach their workspace', () => {
 
 describe('UI-06 the workspace\'s normal writes work and bind to the active company', () => {
   it('campaigns: create, preview, send (stubbed) — in company A', async () => {
-    const created = await call('mktA', 'POST', '/crm/campaigns', { name: `mkt-${RUN}`, channel: 'whatsapp', body: 'Hi' })
+    // Email: WhatsApp campaigns wait for their own number (owner C19, 2026-10-26).
+    const created = await call('mktA', 'POST', '/crm/campaigns', { name: `mkt-${RUN}`, channel: 'email', subject: 'Hi', body: 'Hi' })
     expect(created.statusCode).toBe(201)
     expect((await prisma.campaign.findUniqueOrThrow({ where: { id: created.json().id } })).tenantId).toBe(tenantA)
     const sent = await call('bmA', 'POST', `/crm/campaigns/${created.json().id}/send`)
@@ -364,10 +365,10 @@ describe('W3A-RV-01 a campaign broadcasts exactly once', () => {
   }
 
   it('two presses at once: one 200, one 409, one message per recipient', async () => {
-    const id = (await call('bmA', 'POST', '/crm/campaigns', { name: `once-${RUN}`, channel: 'whatsapp', body: 'Once' })).json().id as string
-    const audience = (await call('bmA', 'GET', '/crm/campaigns/audience?channel=whatsapp')).json().total as number
+    const id = (await call('bmA', 'POST', '/crm/campaigns', { name: `once-${RUN}`, channel: 'email', subject: 'Once', body: 'Once' })).json().id as string
+    const audience = (await call('bmA', 'GET', '/crm/campaigns/audience?channel=email')).json().total as number
     expect(audience).toBeGreaterThanOrEqual(2)   // custA + shared, both reachable at A
-    vi.mocked(sendText).mockClear()
+    vi.mocked(sendEmail).mockClear()
     const [r1, r2] = await Promise.all([
       call('bmA', 'POST', `/crm/campaigns/${id}/send`),
       call('mktA', 'POST', `/crm/campaigns/${id}/send`),
@@ -379,11 +380,11 @@ describe('W3A-RV-01 a campaign broadcasts exactly once', () => {
     expect(done.sentAt).not.toBeNull()
     expect(done.recipientCount).toBe(audience)
     expect(await sendsOf(id)).toBe(audience)
-    expect(vi.mocked(sendText)).toHaveBeenCalledTimes(audience)
+    expect(vi.mocked(sendEmail)).toHaveBeenCalledTimes(audience)
   })
 
   it('a press after the broadcast finished is a 409 and sends nothing', async () => {
-    const id = (await call('mktA', 'POST', '/crm/campaigns', { name: `again-${RUN}`, channel: 'whatsapp', body: 'Again' })).json().id as string
+    const id = (await call('mktA', 'POST', '/crm/campaigns', { name: `again-${RUN}`, channel: 'email', subject: 'Again', body: 'Again' })).json().id as string
     expect((await call('mktA', 'POST', `/crm/campaigns/${id}/send`)).statusCode).toBe(200)
     await settled(id)
     const n = await sendsOf(id)

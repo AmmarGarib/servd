@@ -9,10 +9,14 @@
 // post to the ledger, stayed open (review W3B-RV-1). Owner decision 34 makes
 // Module Access THE control.
 //
-// The manager tiers (MANAGERS) pass exactly as before: they reached these
-// routes without a module check, and not every tier that uses the pages holds
-// the module (fnb_manager has 'accounting' but not 'capital'). Narrowing them
-// is the central GATED_PREFIXES rule's job, an owner call — not this gate's.
+// Manager tiers are NOT exempt (owner C2, 2026-10-26: "Make my Module Access
+// ticks apply to managers too"): the CEO's ticks on OpEx ('capital'),
+// Positions ('staff_directory' | 'capital'), petty cash and deposit drops
+// ('accounting') and the staff-meal log ('staff_directory') bind every role
+// the same way. The CEO (role admin) holds every module. A manager who lacks
+// the module was already refused the PAGE (admin canOpenPath has no manager
+// exemption), so only direct API calls change. A box's custodian keeps its
+// own non-keeper paths (petty-cash ?mine=1, top-up / spend of a box they hold).
 //
 // Same source of truth as the central gate (effectiveModulesForUser: role
 // override ?? role default, + moduleAllow, − moduleDeny). Fails CLOSED: these
@@ -25,9 +29,8 @@ import type { UserRole } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { ForbiddenError, UnauthorizedError } from '../../lib/errors.js'
-import { MANAGERS } from '../auth/middleware.js'
 
-export function moduleGateForNewRoles(anyOf: readonly string[], exempt: readonly UserRole[] = MANAGERS) {
+export function moduleGateForNewRoles(anyOf: readonly string[], exempt: readonly UserRole[] = []) {
   return async (req: FastifyRequest) => {
     const su = req.staffUser
     if (!su) throw new UnauthorizedError('Sign in first')

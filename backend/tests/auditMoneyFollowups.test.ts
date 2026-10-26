@@ -59,7 +59,7 @@ let app: FastifyInstance
 let tenantA: string, tenantB: string
 let conceptA: string, conceptReg: string, conceptB: string
 const users: Record<string, { id: string; token: string }> = {}
-const PIN = '4826'
+const PIN = '482639'
 
 async function mkUser(key: string, role: string, tenantId: string) {
   const u = await prisma.user.create({

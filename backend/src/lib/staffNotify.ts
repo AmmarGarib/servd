@@ -59,6 +59,11 @@ export type NotificationKind =
   | 'exception.digest'        // a burst of flags collapsed into one row
   | 'task.next'               // not an approval: your step is next (cash voucher pay / documents / verify)
   | 'shift_correction.applied' // a CEO-approved shift correction was applied (or failed) — finance + the requester
+  | 'stock.expiring'          // perishable lots at an outlet expire tomorrow / have expired — its kitchen managers (B6)
+  | 'hr.digest'               // weekly HR expiry digest (probation / contract / CNIC) — HR and each department head
+  | 'hr.reminder'             // an HR request waiting on the same step for 2+ days — whoever must act next
+  | 'integration.alert'       // the WhatsApp gateway dropped / is back (platform-wide) — CEO + IT
+  | 'food_safety.overdue'     // a temperature check or cleaning task is overdue — the company's kitchen managers
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical'
 

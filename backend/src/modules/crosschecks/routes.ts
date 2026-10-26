@@ -38,6 +38,7 @@ import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from '../accounting/dates.js'
 import { costsHiddenFor, OPENING_COUNT_ROLES } from '../inventory/routes.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
+import { addDays, dayToDate, karachiDay } from '../../lib/useBy.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -132,7 +133,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       where: { supplierId: { in: await receivingSupplierIds(req) }, status: { in: ['sent', 'partial'] } },
       include: {
         supplier: { select: { id: true, name: true } },
-        lines:    { include: { inventoryItem: { select: { id: true, name: true, unit: true } } } },
+        // perishable / shelfLifeDays: the dock asks for a use-by on a perishable line (owner B6, 2026-10-26).
+        lines:    { include: { inventoryItem: { select: { id: true, name: true, unit: true, perishable: true, shelfLifeDays: true } } } },
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
@@ -160,6 +162,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
         unit:              z.string().trim().max(30).nullable().optional(),
         discrepancyReason: z.enum(['short_shipment', 'over_shipment', 'damaged', 'wrong_item', 'quality_issue']).nullable().optional(),
         notes:             z.string().max(200).nullable().optional(),
+        // Use-by day (owner B6, 2026-10-26): required for a perishable item with no shelf life (422 USE_BY_REQUIRED).
+        useBy:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'A use-by date is YYYY-MM-DD').nullable().optional(),
       })).min(1),
     }).parse(req.body)
 
@@ -370,6 +374,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
 
       let value = 0
       const byClass = zeroByClass()
+      const drawnLotIds = new Set<string>()
       for (const id of itemIds) {
         try {
           const r = await consumeFifoTx(tx, {
@@ -379,7 +384,10 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
             locationId: site, occurredAt: created.createdAt, createdById: req.staffUser!.id,
           })
           value += r.valueCents
-          for (const row of r.rows) byClass[row.costClass] += -row.valueCents
+          for (const row of r.rows) {
+            byClass[row.costClass] += -row.valueCents
+            if (row.lotId) drawnLotIds.add(row.lotId)
+          }
         } catch (err) {
           if ((err as { code?: string }).code === 'NEGATIVE_STOCK') {
             throw new AppError('INSUFFICIENT_STOCK', `Not enough ${invById.get(id)?.name ?? 'stock'} on hand for this batch — ${(err as Error).message}`, 409)
@@ -391,10 +399,16 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       if (prep) {
         // D3: the prep item comes in as ONE lot at the ACTUAL yield, valued at exactly what was drawn.
         const toClass = costClassOf(prep.category)
+        // Use-by (owner B6, 2026-10-26): the earliest use-by of the lots drawn, capped by the prep item's own shelf
+        // life (made day + shelfLifeDays) when it has one. Record only.
+        const lotUseBys = drawnLotIds.size === 0 ? [] : (await tx.stockLot.findMany({ where: { id: { in: [...drawnLotIds] }, useBy: { not: null } }, select: { useBy: true } })).map((l) => l.useBy!)
+        const prepShelf = (await tx.inventoryItem.findUnique({ where: { id: prep.id }, select: { shelfLifeDays: true } }))?.shelfLifeDays ?? null
+        if (prepShelf) lotUseBys.push(dayToDate(addDays(karachiDay(created.createdAt), prepShelf)))
+        const prepUseBy = lotUseBys.length ? new Date(Math.min(...lotUseBys.map((d) => d.getTime()))) : null
         const lot = await addLotTx(tx, {
           tenantId, inventoryItemId: prep.id, qty: yieldQty, unitCostCents: Math.max(0, Math.round(value / yieldQty)), valueCents: value,
           kind: 'prep_make', lotSourceType: 'prep_batch', lotSourceId: created.id, movementSourceType: STOCK_SOURCE.prepBatch, movementSourceId: created.id,
-          locationId: site, receivedAt: created.createdAt, createdById: req.staffUser!.id, costClass: toClass,
+          locationId: site, receivedAt: created.createdAt, createdById: req.staffUser!.id, costClass: toClass, useBy: prepUseBy,
         })
         // Inputs of another cost class move into the prep item's (12x0 → 12x0, the existing class-change posting).
         for (const c of COST_CLASSES) {

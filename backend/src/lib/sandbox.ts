@@ -72,6 +72,7 @@ export type SandboxKind =
   | 'password_reset'
   | 'worker'
   | 'geocode'
+  | 'error_report'
 
 /** Is this server a practice copy? Read on every call (cheap; tests flip it). */
 export function isSandbox(): boolean {
@@ -218,7 +219,9 @@ export function assertSandboxBoot(env: NodeJS.ProcessEnv = process.env): void {
     throw new Error(`SERVD_SANDBOX must be exactly '1' (practice copy) or unset, not ${JSON.stringify(raw)}. Refusing to start.`)
   }
   const prodHosts = (env['SERVD_PROD_HOSTS'] ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
-  for (const name of ['DATABASE_URL', 'REDIS_URL'] as const) {
+  // MIGRATE_DATABASE_URL (entrypoint.sh: migrations as the owner login) is
+  // checked too — the migrations run before the API ever starts.
+  for (const name of ['DATABASE_URL', 'MIGRATE_DATABASE_URL', 'REDIS_URL'] as const) {
     const host = hostOf(env[name])
     if (host && prodHosts.includes(host)) {
       throw new Error(`Practice copy refused to start: ${name} points at a live host (${host}). Give the practice copy its own database branch and Redis.`)
@@ -453,6 +456,8 @@ export async function sandboxScrub(): Promise<SandboxScrubResult | null> {
   const hooks = await db.webhookSubscription.updateMany({ where: { isActive: true }, data: { isActive: false } })
   const push = await db.expoPushToken.updateMany({ where: { revokedAt: null }, data: { revokedAt: now } })
   const settings = await db.setting.deleteMany({ where: { key: { in: SCRUBBED_SETTINGS } } })
+  // Social pages per brand (2026-10-26): the copied page tokens are live's.
+  await db.socialConnection.deleteMany({})
   await db.setting.upsert({
     where: { key: SANDBOX_SCRUB_KEY },
     create: { key: SANDBOX_SCRUB_KEY, value: now.toISOString() },

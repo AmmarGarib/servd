@@ -399,7 +399,7 @@ export function normaliseCustomerContact(raw: string): { isEmail: boolean; conta
 
 // Spellings the same number has been stored under on customer rows (signup
 // writes the normalised form; older rows and imports carry 0300… or +92…).
-function phoneSpellings(n: string): string[] {
+export function phoneSpellings(n: string): string[] {
   const out = new Set([n, `+${n}`])
   if (n.startsWith('92') && n.length === 12) { out.add(`0${n.slice(2)}`); out.add(n.slice(2)) }
   return [...out]

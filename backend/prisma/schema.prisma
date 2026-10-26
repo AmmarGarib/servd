@@ -427,6 +427,32 @@ model Station {
   @@map("stations")
 }
 
+// Owner C3 (2026-10-26): a kitchen station add / change raised by the F&B
+// manager or the chef, applied only when the CEO approves (approval type
+// station_change, CEO only). tenantId = the brand's company. SQL-only: one
+// pending request per station, kind / status CHECKs, RLS
+// (migration 20261026130100_station_change_requests).
+model StationChangeRequest {
+  id               String    @id @default(uuid())
+  tenantId         String
+  conceptId        String
+  stationId        String?
+  kind             String // create | update
+  changes          Json // { name?, displayOrder?, isActive?, conceptId? }
+  status           String    @default("pending") // pending | approved | rejected | cancelled
+  requestedById    String
+  requestedAt      DateTime  @default(now())
+  decidedById      String?
+  decidedAt        DateTime?
+  decisionNote     String?
+  appliedStationId String?
+  updatedAt        DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([stationId])
+  @@map("station_change_requests")
+}
+
 // ─── Category ─────────────────────────────────────────────────────────────────
 
 model Category {
@@ -899,11 +925,39 @@ model GuestTag {
   color       String? // optional hex
   createdById String?
   createdAt   DateTime @default(now())
+  // B8 (owner, 2026-10-26): the company that put the tag on the guest and the catalogue entry it came from.
+  // NULL tenant = a legacy free-form tag (seen by every company that served the guest, as before).
+  tenantId    String?
+  tagTypeId   String?
 
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tagType  GuestTagType? @relation(fields: [tagTypeId], references: [id], onDelete: SetNull)
 
   @@index([customerId])
+  @@index([tenantId])
+  @@index([tagTypeId])
   @@map("guest_tags")
+}
+
+// The company's own list of guest tags (VIP, allergy, birthday …) that staff pick from on the guest card
+// (owner, 2026-10-26, B8). Company data: tenantId from the first commit, unique per company by normalised name,
+// switched off (never deleted) so old tags keep their meaning. GuestTag carries the typed tag on a guest.
+model GuestTagType {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  nameKey     String // lower-cased, trimmed, spaces collapsed — the per-company unique key
+  color       String?
+  active      Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tags GuestTag[]
+
+  @@unique([tenantId, nameKey])
+  @@index([tenantId])
+  @@map("guest_tag_types")
 }
 
 // ─── User (Staff) ─────────────────────────────────────────────────────────────
@@ -933,6 +987,10 @@ model User {
   // the request to the CEO/owner in the staff directory; cleared when a new
   // PIN is issued. Never reveals anything about the old PIN.
   pinResetRequestedAt DateTime?
+  // Owner C1 (2026-10-26): first successful use of a short (4–5 digit) override
+  // PIN; it is refused SHORT_PIN_GRACE_HOURS later until a 6-digit PIN is set
+  // (auth/managerPin.ts shortPinUsed). Cleared by every PIN set.
+  pinChangeRequiredAt DateTime?
   // ─── Two-factor authentication (WhatsApp OTP) ───────────────────────
   // A second factor for the accounts that can move money and read the
   // whole company: a 6-digit code sent to WhatsApp after the password
@@ -2259,6 +2317,12 @@ model InventoryItem {
   // supplier, par and stock. One live stock item per master per company — partial unique index
   // inventory_items_tenant_master_live_key (SQL only, migration 20261026120000_ingredient_master). Prep items have none.
   masterIngredientId String?
+  // Use-by dates (owner B6, 2026-10-26). A MIRROR of the master's definition for a linked item (MASTER_FIELDS, kept
+  // in step by the master PATCH, locked on the item); an unlinked item (a prep item, a legacy row) keeps its own.
+  // perishable = a delivery line must carry a use-by date (422 USE_BY_REQUIRED at the dock) unless shelfLifeDays
+  // gives the default (received day + shelfLifeDays). CHECK inventory_items_shelf_life_chk (1–3650, SQL only).
+  perishable         Boolean   @default(false)
+  shelfLifeDays      Int?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
   deletedAt          DateTime?
@@ -2328,6 +2392,10 @@ model IngredientMaster {
   purchaseUnitFactor Float    @default(1)
   spec               String?
   specFields         Json?
+  // Use-by dates (owner B6, 2026-10-26): the DEFINITION of perishable + its shelf life in days (optional). Linked
+  // company items mirror both (lib/ingredientMaster.ts MASTER_FIELDS). CHECK ingredient_masters_shelf_life_chk.
+  perishable         Boolean  @default(false)
+  shelfLifeDays      Int?
   status             String   @default("approved")
   createdByUserId    String?
   createdInTenantId  String?
@@ -4398,6 +4466,37 @@ model SocialPost {
   @@map("social_posts")
 }
 
+// Facebook / Instagram page connection PER BRAND (owner C18, 2026-10-26:
+// "Approval goes thru me, marketing can connect"). Marketing connects a brand's
+// page → `pending`; the CEO approves it in the approvals inbox (type
+// social_connection) → `approved` (the previous approved row of the brand →
+// `superseded`). Only an `approved` row is ever used to post. The page token is
+// sealed with lib/secretBox.ts (plain only while SERVD_SECRET_KEY is unset,
+// encrypted on the next read). `legacy` = the old global connection, kept for
+// nobody (tenantId / conceptId null, deliberately). modules/socialConnections.
+model SocialConnection {
+  id             String    @id @default(uuid())
+  tenantId       String? // the brand's company; null only for the legacy row
+  conceptId      String?
+  status         String // pending | approved | rejected | superseded | legacy
+  pageId         String
+  pageName       String?
+  igUserId       String?
+  token          String // secretBox value (enc:v1:…) or plain while no key is set
+  tokenHint      String?
+  requestedById  String?
+  requestedAt    DateTime  @default(now())
+  decidedById    String?
+  decidedAt      DateTime?
+  decisionNote   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([tenantId])
+  @@index([conceptId, status])
+  @@map("social_connections")
+}
+
 // ─── Supplier Chat ────────────────────────────────────────────────────────────
 
 model SupplierConversation {
@@ -6072,6 +6171,14 @@ model StockLot {
   unitCostCents       Int // per purchase unit (INT4 per-unit stock cost)
   valueInCents        BigInt
   remainingValueCents BigInt // exact: the last draw takes the remainder, so lots and 12x0 never drift by rounding
+  // Use-by (owner B6, 2026-10-26): the Karachi day the lot must be used by — typed at the dock for a perishable item
+  // (or received day + shelf life), the earliest of the lots a prep batch drew, carried over by a transfer. Record +
+  // report only: FIFO order and costing are unchanged. The bell markers (workers/stockExpiry.ts, written only through
+  // lib/stockLedger.ts markUseByNotifiedTx) make each lot notified once per stage. Partial index stock_lots_use_by_open
+  // (SQL only).
+  useBy               DateTime? @db.Date
+  useByWarnedAt       DateTime?
+  expiredWarnedAt     DateTime?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

@@ -54,7 +54,7 @@ import {
 import { recordDrawerToBoxTx } from '../pos/drawerToBox.js'
 
 export const CASH_KEEPERS: UserRole[] = FINANCE_TEAM
-/** The Module Access half of CASH_GUARD (manager tiers exempt). */
+/** The Module Access half of CASH_GUARD (every role but the CEO needs 'accounting' — owner C2). */
 export const CASH_MODULE_GATE = moduleGateForNewRoles(['accounting'])
 export const CASH_GUARD = [requireAuth(...CASH_KEEPERS), CASH_MODULE_GATE]
 

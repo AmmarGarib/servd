@@ -30,7 +30,7 @@ import { posRoutes } from '../src/modules/pos/routes.js'
 import { checkSplitRoutes, scalePortions } from '../src/modules/checkSplit/routes.js'
 import { orderRoutes } from '../src/modules/orders/routes.js'
 
-const PIN = '4729'
+const PIN = '472915'
 let app: FastifyInstance
 let tenantA: string, tenantB: string
 let conceptA: string, conceptB: string

@@ -18,7 +18,9 @@ import { z } from 'zod'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { requireAuth, KITCHEN_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { scopeTenantWhere, activeTenantId } from '../../lib/tenantScope.js'
+import { scopeTenantWhere, activeTenantId, resolveTenantScope } from '../../lib/tenantScope.js'
+import { exportFormatOf, sendReportFor } from '../../lib/reportExport.js'
+import { inspectorTable } from './overdue.js'
 
 const KINDS = ['fridge', 'freezer', 'hot_hold', 'cooking', 'delivery', 'other'] as const
 
@@ -106,6 +108,32 @@ export async function foodSafetyRoutes(fastify: FastifyInstance) {
       presets: { units: PRESETS, cleaning: CLEANING_PRESETS },
     }
   })
+
+  // GET /food-safety/inspector-report?format=pdf|xlsx|csv&from=YYYY-MM-DD&to=YYYY-MM-DD&locationId=
+  // The printout for an inspector (owner, 2026-10-26, B7a): temperature logs and
+  // cleaning logs, default the last 30 days, company scoped (the caller's view),
+  // one outlet with locationId (another company's outlet is a 404).
+  fastify.get<{ Querystring: { format?: string; from?: string; to?: string; locationId?: string } }>(
+    '/inspector-report', { preHandler: requireAuth(...KITCHEN_STAFF) }, async (req, reply) => {
+      const q = z.object({
+        format: z.string().optional(),
+        from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        locationId: z.string().uuid().optional(),
+      }).parse(req.query)
+      const scope = await resolveTenantScope(req)
+      const to = q.to ? new Date(`${q.to}T23:59:59.999+05:00`) : new Date()
+      const from = q.from ? new Date(`${q.from}T00:00:00.000+05:00`) : new Date(to.getTime() - 30 * 86_400_000)
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) throw new AppError('BAD_RANGE', 'Pick a valid date range', 400)
+      if (to.getTime() - from.getTime() > 366 * 86_400_000) throw new AppError('RANGE_TOO_LONG', 'Pick at most one year', 400)
+      if (q.locationId) {
+        const loc = await prisma.location.findFirst({ where: { id: q.locationId, tenantId: { in: scope.tenantIds }, deletedAt: null }, select: { id: true } })
+        if (!loc) throw new NotFoundError('Location', q.locationId)
+      }
+      const table = await inspectorTable(scope.tenantIds, { from, to, locationId: q.locationId ?? null })
+      return sendReportFor(req, reply, exportFormatOf(q.format, 'pdf')!, { base: 'food-safety-inspection', suffix: `${from.toISOString().slice(0, 10)}-to-${to.toISOString().slice(0, 10)}` }, table)
+    },
+  )
 
   // ── Units ──────────────────────────────────────────────────────────────
   const unitSchema = z.object({

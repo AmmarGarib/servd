@@ -539,3 +539,15 @@
    phones, the menu button on the left (owner 2026-10-16, floating buttons). */
 .erp-banners > * { padding-right: 7.5rem; }
 @media (max-width: 767px) { .erp-banners > * { padding-left: 3.75rem; } }
+
+/* ── Tab bars on phones (owner, 2026-10-26; docs/UI_CHECKLIST.md) ─────────
+   Underline tabs (`border-b-2` buttons / links in a row) never break a label
+   over two lines ("Use-\nby"); a row too wide for the screen scrolls sideways
+   inside itself instead of squeezing the labels or widening the page. */
+:is(button, a).border-b-2 { white-space: nowrap; flex-shrink: 0; }
+:where(div, nav):has(> :is(button, a).border-b-2) {
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+:where(div, nav):has(> :is(button, a).border-b-2)::-webkit-scrollbar { display: none; }

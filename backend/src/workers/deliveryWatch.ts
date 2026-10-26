@@ -31,6 +31,8 @@ import { sendText } from '../lib/whatsapp.js'
 import { sendEmail, emailConfigured } from '../lib/mailer.js'
 import { whatsappConfigured } from '../lib/whatsapp.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
+import { notifyStaffMany, type NotifyInput } from '../lib/staffNotify.js'
+import { CONNECTOR_ADMINS } from '../lib/connectorRoles.js'
 
 /** Where the current delivery state is parked for the admin dashboard. */
 export const DELIVERY_STATE_KEY = 'integrations.delivery.state'
@@ -172,6 +174,37 @@ async function notify(text: string, subject: string, html: string): Promise<void
   }
 }
 
+/**
+ * The bell (owner, 2026-10-26, S17: "alert when the WhatsApp gateway drops").
+ * The gateway is platform-wide, so the audience is every active CEO and IT
+ * login (CONNECTOR_ADMINS). The bell is per company, so each recipient gets
+ * ONE row under their own company (primary, else first membership); a CEO
+ * with no company still gets it (null tenant is allowed for admin only), an
+ * IT login with no company cannot. `dedupeKey` carries the outage's start, so
+ * a re-alert of the same outage after 6 h is a new row but a repeated tick
+ * never is. Called only at the alert / all-clear moments of the state machine.
+ */
+export async function bellGatewayState(kind: 'down' | 'up', state: DeliveryState, outageKey: string): Promise<number> {
+  const users = await prisma.user.findMany({
+    where: { role: { in: [...CONNECTOR_ADMINS] }, isActive: true, deletedAt: null, accountStatus: 'active' },
+    select: { id: true, role: true, tenantId: true, tenantMemberships: { select: { tenantId: true }, orderBy: { tenantId: 'asc' }, take: 1 } },
+    orderBy: { id: 'asc' },
+  })
+  const rows: NotifyInput[] = users.map((u) => ({
+    userId: u.id,
+    tenantId: u.tenantId ?? u.tenantMemberships[0]?.tenantId ?? null,
+    kind: 'integration.alert' as const,
+    severity: kind === 'down' ? 'critical' as const : 'success' as const,
+    title: kind === 'down' ? 'WhatsApp gateway is down — codes are not sending' : 'WhatsApp gateway is back up',
+    body: kind === 'down' ? `${state.detail} ${state.fix}` : 'Codes are sending again.',
+    link: '/connectors/whatsapp',
+    entityType: 'whatsapp_gateway',
+    entityId: null,
+    dedupeKey: `whatsapp.gateway.${kind}:${outageKey}`,
+  }))
+  return notifyStaffMany(rows)
+}
+
 async function alert(state: DeliveryState): Promise<void> {
   await notify(
     `servd alert — ${state.detail}\n\nWhat to do: ${state.fix}`,
@@ -198,7 +231,7 @@ export async function runDeliveryWatch(): Promise<DeliveryState> {
   const state = await confirmedProbe()
   const previous = await readState()
 
-  // A fault has to be there on two runs in a row (ten minutes apart, each
+  // A fault has to be there on two runs in a row (five minutes apart, each
   // already retried) before anyone hears about it: one slow answer from the
   // gateway used to send "down", then "back up", then "down" in a minute.
   state.failStreak = state.ok ? 0 : (previous && !previous.ok ? (previous.failStreak ?? 1) + 1 : 1)
@@ -209,6 +242,7 @@ export async function runDeliveryWatch(): Promise<DeliveryState> {
   if (confirmed && (!alertedThisCause || stale)) {
     await alert(state)
     state.lastAlertedAt = new Date().toISOString()
+    await bellGatewayState('down', state, state.lastAlertedAt)
     state.alertedCause = state.cause
   } else if (!state.ok && previous?.lastAlertedAt) {
     state.lastAlertedAt = previous.lastAlertedAt
@@ -220,6 +254,7 @@ export async function runDeliveryWatch(): Promise<DeliveryState> {
   if (state.ok && previous?.lastAlertedAt) {
     const okLine = 'servd: codes are sending again. Signup is back up.'
     await notify(okLine, 'servd: customer signup is back up', `<p>${okLine}</p>`)
+    await bellGatewayState('up', state, previous.lastAlertedAt)
   }
 
   await writeState(state)
@@ -228,13 +263,13 @@ export async function runDeliveryWatch(): Promise<DeliveryState> {
 
 export function startDeliveryWatch(): void {
   if (sandboxBlocks('worker', { summary: 'deliveryWatch' })) return // practice copy: nothing to watch
-  // Every ten minutes. Frequent enough that a dropped session is caught within
-  // one order's worth of time; infrequent enough to be invisible.
-  cron.schedule('*/10 * * * *', () => {
+  // Every five minutes (owner, 2026-10-26). Two bad runs in a row (each already
+  // re-probed) raise the alert, so a real drop is announced in about ten.
+  cron.schedule('*/5 * * * *', () => {
     runDeliveryWatch().catch((err) => console.error('[deliveryWatch] failed:', (err as Error).message))
   })
   // And once at boot, so a deploy that lands during an outage says so
   // immediately rather than up to ten minutes later.
   runDeliveryWatch().catch(() => {})
-  console.log('[deliveryWatch] started — checking delivery every 10 minutes')
+  console.log('[deliveryWatch] started — checking delivery every 5 minutes')
 }

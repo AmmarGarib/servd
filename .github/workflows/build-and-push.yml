@@ -16,6 +16,9 @@ name: Build and push to Docker Hub
 # Optional:
 #   SENTRY_DSN_STOREFRONT
 #   SENTRY_DSN_ADMIN
+#   (SENTRY_DSN_API is NOT a CI secret — it is read by the API at runtime from the box's .env.production)
+#   Repo VARIABLE (optional): GA_MEASUREMENT_ID — the storefront's GA4 id (G-XXXXXXXXXX),
+#   baked in at build; unset = no analytics script, no consent notice.
 
 on:
   push:
@@ -55,6 +58,7 @@ jobs:
             NEXT_PUBLIC_SENTRY_DSN=${{ secrets.SENTRY_DSN_STOREFRONT }}
             NEXT_PUBLIC_SITE_URL=${{ vars.PUBLIC_SITE_URL || 'https://servd.pk' }}
             NEXT_PUBLIC_SERVD_HOST=${{ vars.PUBLIC_SITE_URL || 'https://servd.pk' }}
+            NEXT_PUBLIC_GA4_ID=${{ vars.GA_MEASUREMENT_ID || secrets.GA_MEASUREMENT_ID }}
           cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME }}/servd:storefront
           cache-to: type=inline
 

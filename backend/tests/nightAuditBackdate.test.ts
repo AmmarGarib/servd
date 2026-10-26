@@ -29,7 +29,7 @@ import { prisma, mkCompany, mkUser, caller, openDrawer, resetConnectorCache, typ
 let app: FastifyInstance
 let A: Company, B: Company
 let cashierA: Who, mgrA: Who, ceo: Who, mgrB: Who
-const PIN_A = '5821'
+const PIN_A = '582164'
 const DAY_MS = 86_400_000
 const yesterday = fmtPktDate(new Date(Date.now() - DAY_MS))
 const today = fmtPktDate(new Date())

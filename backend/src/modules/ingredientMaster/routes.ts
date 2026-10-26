@@ -21,7 +21,8 @@
 //                                              at once; a category change moves each company's lots to the new cost
 //                                              class through the inventory reclass (its own posting per company); a
 //                                              unit change only while no linked item has stock history or a recipe
-//                                              line (409 MASTER_UNIT_IN_USE).
+//                                              line (409 MASTER_UNIT_IN_USE). perishable + shelfLifeDays (use-by,
+//                                              owner B6) = MASTER_EDITORS; mirrored onto linked items at once.
 //   POST   /ingredient-master/:id/merge {intoId}  reviewers only: the duplicate's company items move to the kept
 //                                              row, which it now points at (mergedIntoId — never deleted). A company
 //                                              that already stocks BOTH is never merged automatically: 409
@@ -63,6 +64,9 @@ const createSchema = z.object({
   purchaseUnitFactor: z.number().positive().max(1_000_000).optional(),
   spec: z.string().trim().max(2000).nullable().optional(),
   specFields: specFields.nullable().optional(),
+  // Use-by (owner B6, 2026-10-26): perishable deliveries carry a use-by date; shelf life (days) defaults it.
+  perishable: z.boolean().optional(),
+  shelfLifeDays: z.number().int().min(1).max(3650).nullable().optional(),
 })
 const patchSchema = createSchema.partial().extend({ status: z.enum(['approved', 'needs_review']).optional() })
 
@@ -82,6 +86,7 @@ function shape(m: MasterDb, companyItemId: string | null) {
   return {
     id: m.id, name: m.name, stockUnit: m.stockUnit, category: m.category, allergens: m.allergens, yieldPct: m.yieldPct,
     purchaseUnit: m.purchaseUnit, purchaseUnitFactor: m.purchaseUnitFactor, spec: m.spec, specFields: m.specFields,
+    perishable: m.perishable, shelfLifeDays: m.shelfLifeDays,
     status: m.status, mergedIntoId: m.mergedIntoId, createdAt: m.createdAt, updatedAt: m.updatedAt,
     companyItemId,
   }
@@ -202,6 +207,8 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
           ...(body.spec !== undefined && { spec: body.spec?.trim() || null }),
           ...(body.specFields !== undefined && { specFields: body.specFields === null ? Prisma.DbNull : (body.specFields as Prisma.InputJsonValue) }),
           ...(body.status !== undefined && { status: body.status }),
+          ...(body.perishable !== undefined && { perishable: body.perishable }),
+          ...(body.shelfLifeDays !== undefined && { shelfLifeDays: body.shelfLifeDays }),
         },
       })
       if (linkedIds.length > 0) {
@@ -211,6 +218,9 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
             ...(body.allergens !== undefined && { allergens: body.allergens }),
             ...(body.yieldPct !== undefined && { yieldPct: body.yieldPct }),
             ...(stockUnit !== before.stockUnit && { unit: stockUnit }),
+            // Use-by definition (owner B6): mirrored onto every linked item at once (lots already in keep their date).
+            ...(body.perishable !== undefined && { perishable: body.perishable }),
+            ...(body.shelfLifeDays !== undefined && { shelfLifeDays: body.shelfLifeDays }),
           },
         })
         // The buying unit + factor reach ONLY items that buy in the master's (old) buying unit; the factor is in base
@@ -244,8 +254,8 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     await audit({
       category: 'identity', action: 'ingredient_master.update', entity: 'IngredientMaster', entityId: before.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
-      before: { name: before.name, stockUnit: before.stockUnit, category: before.category, allergens: before.allergens, yieldPct: before.yieldPct, purchaseUnit: before.purchaseUnit, purchaseUnitFactor: before.purchaseUnitFactor, spec: before.spec, status: before.status },
-      after: { name: after.name, stockUnit: after.stockUnit, category: after.category, allergens: after.allergens, yieldPct: after.yieldPct, purchaseUnit: after.purchaseUnit, purchaseUnitFactor: after.purchaseUnitFactor, spec: after.spec, status: after.status, linkedItems: linkedIds.length },
+      before: { name: before.name, stockUnit: before.stockUnit, category: before.category, allergens: before.allergens, yieldPct: before.yieldPct, purchaseUnit: before.purchaseUnit, purchaseUnitFactor: before.purchaseUnitFactor, spec: before.spec, perishable: before.perishable, shelfLifeDays: before.shelfLifeDays, status: before.status },
+      after: { name: after.name, stockUnit: after.stockUnit, category: after.category, allergens: after.allergens, yieldPct: after.yieldPct, purchaseUnit: after.purchaseUnit, purchaseUnitFactor: after.purchaseUnitFactor, spec: after.spec, perishable: after.perishable, shelfLifeDays: after.shelfLifeDays, status: after.status, linkedItems: linkedIds.length },
     })
     const mine = await companyItems(req, [after.id])
     return shape(after, mine.get(after.id) ?? null)
@@ -287,7 +297,8 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
           },
         )
       }
-      const moved = await tx.inventoryItem.updateMany({ where: { masterIngredientId: src.id }, data: { masterIngredientId: dst.id } })
+      // The moved items take the kept row's use-by definition (MASTER_FIELDS mirror; owner B6) — never a posting.
+      const moved = await tx.inventoryItem.updateMany({ where: { masterIngredientId: src.id }, data: { masterIngredientId: dst.id, perishable: dst.perishable, shelfLifeDays: dst.shelfLifeDays } })
       const lines = await repointRecipeLinesTx(tx, src.id, dst.id)
       // A stricter definition never gets lost: the kept row takes the duplicate's spec when it has none.
       await tx.ingredientMaster.update({

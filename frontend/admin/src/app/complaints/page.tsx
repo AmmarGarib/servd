@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import Link from 'next/link'
@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/Select'
 import { useManagerRoles } from '../../lib/roles'
 import { NavIcon } from '../../components/ui/NavIcon'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
+import { AnchoredMenu } from '../../components/ui/AnchoredMenu'
 
 interface Complaint {
   id: string
@@ -262,23 +263,13 @@ export default function ComplaintsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [now, setNow] = useState(Date.now())
   const [templateOpen, setTemplateOpen] = useState<string | null>(null)
-  const templateRef = useRef<HTMLDivElement>(null)
+  const templateRef = useRef<HTMLButtonElement>(null)
+  const closeTemplates = useCallback(() => setTemplateOpen(null), [])
 
   // Refresh age badges every minute
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60000)
     return () => clearInterval(t)
-  }, [])
-
-  // Close template dropdown on outside click
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (templateRef.current && !templateRef.current.contains(e.target as Node)) {
-        setTemplateOpen(null)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
   // Brand list from GET /concepts?view=picker (every staff role, the active
@@ -556,15 +547,18 @@ export default function ComplaintsPage() {
                     <input value={resolution} onChange={(e) => setResolution(e.target.value)}
                       placeholder="Describe the resolution…" className={`${inp} flex-1`} />
                     {/* Templates dropdown */}
-                    <div className="relative" ref={templateRef}>
+                    <div className="relative">
                       <button
+                        ref={templateRef}
                         type="button"
+                        aria-haspopup="menu"
+                        aria-expanded={templateOpen === c.id}
                         onClick={() => setTemplateOpen(templateOpen === c.id ? null : c.id)}
                         className="rounded-lg border border-s-border text-s-muted px-3 py-2 text-xs hover:border-primary hover:text-primary-ink transition-colors whitespace-nowrap">
                         Templates ▾
                       </button>
-                      {templateOpen === c.id && (
-                        <div className="absolute right-0 top-full mt-1 z-30 w-64 rounded-xl border border-s-border bg-s-surface shadow-xl overflow-hidden">
+                      <AnchoredMenu anchor={templateRef} open={templateOpen === c.id} onClose={closeTemplates} align="end" minWidth={256} className="!rounded-xl !bg-s-surface !py-0">
+                        <div>
                           {RESOLUTION_TEMPLATES.map((tpl) => (
                             <button
                               key={tpl}
@@ -575,7 +569,7 @@ export default function ComplaintsPage() {
                             </button>
                           ))}
                         </div>
-                      )}
+                      </AnchoredMenu>
                     </div>
                   </div>
                 </div>

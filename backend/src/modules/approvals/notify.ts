@@ -144,6 +144,8 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   connector_change: spec(() => '/connectors/pos?tab=changes'),
   shift_correction: spec((id) => `/finance/shift-corrections?id=${encodeURIComponent(id)}`),
   location_pin: spec(() => '/configuration/locations'),
+  social_connection: spec(() => '/calendar/social'),
+  station_change: spec(() => '/kds/config'),
 }
 
 /** The inbox, filtered to the type (every login may open it). */
@@ -252,6 +254,19 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
     case 'connector_change': {
       const c = await db.posConnectorChange.findUnique({ where: { id }, select: { kind: true } })
       return c && { ref: `POS connector change (${human(String(c.kind))})` }
+    }
+    case 'social_connection': {
+      const c = await db.socialConnection.findUnique({ where: { id }, select: { conceptId: true, pageName: true } })
+      if (!c) return null
+      const b = c.conceptId ? await db.concept.findUnique({ where: { id: c.conceptId }, select: { name: true } }) : null
+      return { ref: `Facebook / Instagram page${c.pageName ? ` "${c.pageName}"` : ''} for ${b?.name ?? 'a brand'}` }
+    }
+    case 'station_change': {
+      const r = await db.stationChangeRequest.findUnique({ where: { id }, select: { kind: true, conceptId: true, changes: true } })
+      if (!r) return null
+      const b = await db.concept.findUnique({ where: { id: r.conceptId }, select: { name: true } })
+      const name = (r.changes as { name?: string } | null)?.name
+      return { ref: `${r.kind === 'create' ? 'New kitchen station' : 'Kitchen station change'}${name ? ` "${name}"` : ''} — ${b?.name ?? 'a brand'}` }
     }
     case 'location_pin': {
       const l = await db.location.findUnique({ where: { id }, select: { name: true } })

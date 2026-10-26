@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
+import { appendRlsTenantIds } from '../../lib/rlsContext.js'
 import { requireAuth, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, ConflictError, NotFoundError } from '../../lib/errors.js'
 import { TEMPLATES, getTemplate, TEMPLATE_KEYS } from './templates.js'
@@ -758,6 +759,10 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.subAccount, tx.journalLineSubAccount,
     // Shift corrections (2026-10-21): a set and its items follow their shift's company.
     tx.shiftCorrection, tx.shiftCorrectionItem,
+    // Social pages per brand (2026-10-26): follow the brand's company.
+    tx.socialConnection,
+    // Kitchen station changes waiting for the CEO (owner C3, 2026-10-26): follow the brand's company.
+    tx.stationChangeRequest,
     // Sales sessions (2026-10-22): per brand, follow the brand's company.
     tx.menuSession,
     // Customer money.
@@ -841,12 +846,15 @@ export async function tenantRoutes(fastify: FastifyInstance) {
     // lists nothing.
     const ids = req.staffUser!.memberTenantIds
     if (ids.length === 0) return []
+    // serviceClient on purpose: the filter IS the membership set, but under
+    // the company lock (RLS) the request's context holds only the companies
+    // in view (one, outside portfolio mode), which hid the others here.
     const [tenants, memberships] = await Promise.all([
-      prisma.tenant.findMany({
+      serviceClient.tenant.findMany({
         where: { id: { in: ids }, deletedAt: null },
         include: { _count: { select: { concepts: true, users: true } } },
       }),
-      prisma.tenantMember.findMany({
+      serviceClient.tenantMember.findMany({
         where: { userId: req.staffUser!.id, tenantId: { in: ids } },
         select: { tenantId: true, role: true, createdAt: true },
       }),
@@ -891,7 +899,12 @@ export async function tenantRoutes(fastify: FastifyInstance) {
 
     const slug = await uniqueSlug(body.name, 'tenant')
 
-    const tenant = await prisma.$transaction(async (tx) => {
+    // serviceClient on purpose: the new company is in no request's company
+    // set yet, so under the company lock (RLS) tenants_rls' WITH CHECK
+    // refused it. The CEO-only guard above is the authority; the creator
+    // becomes its owner member in the same transaction, and the request may
+    // touch it from here on.
+    const tenant = await serviceClient.$transaction(async (tx) => {
       const t = await tx.tenant.create({
         data: {
           slug, name: body.name,
@@ -915,6 +928,7 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       return { ...t, fiscalRowId: fiscalRow?.id ?? null }
     })
     const { fiscalRowId, ...created } = tenant
+    appendRlsTenantIds([created.id])
     if (isTest) {
       invalidateTestTenants()
       await audit({
@@ -1150,11 +1164,21 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       // Brands whose recipes the source owned are now owned by the target (none left pointing at itself).
       await tx.concept.updateMany({ where: { recipeOwnerTenantId: src }, data: { recipeOwnerTenantId: dst } })
       await tx.$executeRaw`UPDATE concepts SET "recipeOwnerTenantId" = NULL WHERE "recipeOwnerTenantId" = "tenantId"`
+      // Guest tag catalogue (B8, 2026-10-26): a tag name both companies have is ONE tag after the merge — the
+      // source's tag on a guest moves to the target's entry, then the source's twin entry goes.
+      const srcTagTypes = await tx.guestTagType.findMany({ where: { tenantId: src } })
+      for (const t of srcTagTypes) {
+        const twin = await tx.guestTagType.findUnique({ where: { tenantId_nameKey: { tenantId: dst, nameKey: t.nameKey } } })
+        if (!twin) continue
+        await tx.guestTag.updateMany({ where: { tagTypeId: t.id }, data: { tagTypeId: twin.id, tenantId: dst } })
+        await tx.guestTagType.delete({ where: { id: t.id } })
+      }
+      await tx.guestTag.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })
       const repoint: Array<{
         updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<unknown>
       }> = [
         // Kitchen flow: recipe owners and the daily par per outlet.
-        tx.recipe, tx.parTarget,
+        tx.recipe, tx.parTarget, tx.guestTagType,
         tx.location, tx.inventoryItem, tx.supplier, tx.rider, tx.modifierTemplate,
         tx.bankAccount, tx.kdsDevice, tx.webhookSubscription, tx.domain,
         tx.deliveryZone, tx.notificationTemplate, tx.scheduledReport, tx.shift,

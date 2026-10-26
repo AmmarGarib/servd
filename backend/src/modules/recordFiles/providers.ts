@@ -15,7 +15,7 @@
 //     404 for a missing or foreign record. Returns the RECORD's company.
 //
 //   owner type      record           read                         write                          gate
-//   opex_payment    OpexPayment      OPEX_TEAM                    OPEX_TEAM                      'capital' (moduleGateForNewRoles, managers exempt)
+//   opex_payment    OpexPayment      OPEX_TEAM                    OPEX_TEAM                      'capital' (moduleGateForNewRoles; managers too — C2)
 //   supplier_bill   SupplierBill     AP_READERS                   AP_WRITERS (POST /bills)       /procurement/bills (procurement|accounting) + requireApWriterModule on write
 //   goods_receipt   GoodsReceipt     PROCUREMENT_TEAM             MANAGERS (dock receive)        none (the dock page is deliberately ungated, decision 27)
 //   prep_batch      PrepBatch        ALL_STAFF                    the cook who logged it, or a manager   none (as /crosschecks/prep-batches)

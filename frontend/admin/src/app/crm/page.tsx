@@ -17,6 +17,7 @@ import { Select } from '@/components/ui/Select'
 import { Modal } from '@/components/ui/Modal'
 import { NavIcon } from '../../components/ui/NavIcon'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
+import { CorrectContactModal } from '../../components/customer/CorrectContactModal'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
@@ -61,6 +62,8 @@ export default function CRMPage() {
   const isManager = managerRoles.has(me?.role ?? '')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Correct phone / email (owner C20) — managers.
+  const [contactModal, setContactModal] = useState<{ id: string; name: string; phone?: string | null; email?: string | null } | null>(null)
   const [banModal, setBanModal] = useState<{ id: string; name: string; ban: ActiveBan | null; elsewhere?: boolean } | null>(null)
   const [banReason, setBanReason] = useState('')
   const [banError, setBanError] = useState<string | null>(null)
@@ -182,6 +185,8 @@ export default function CRMPage() {
       </header>
 
       {/* Block / unblock modal — raises or lifts this company's ban */}
+      {contactModal && <CorrectContactModal customer={contactModal} onClose={() => setContactModal(null)} />}
+
       {banModal && (
         <Modal title={banModal.ban ? 'Unblock customer' : 'Block customer'}
           dirty={banReason.trim().length > 0}
@@ -392,6 +397,11 @@ export default function CRMPage() {
                       onClick={() => setWalletModal({ id: customerDetail.id, name: customerDetail.name })}
                       className="rounded-lg bg-s-blue/20 text-s-blue text-xs font-bold px-3 py-1.5 hover:bg-s-blue/30 transition-colors">
                       + Top up wallet
+                    </button>
+                    <button
+                      onClick={() => setContactModal({ id: customerDetail.id, name: customerDetail.name, phone: customerDetail.phone, email: customerDetail.email })}
+                      className="rounded-lg border border-s-border text-s-text text-xs font-bold px-3 py-1.5 hover:border-s-border-strong transition-colors">
+                      Correct phone / email
                     </button>
                     <button
                       onClick={() => setBanModal({

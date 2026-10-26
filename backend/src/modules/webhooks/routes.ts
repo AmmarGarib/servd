@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { AppError } from '../../lib/errors.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
+import { setRlsContext } from '../../lib/rlsContext.js'
 import { redis } from '../../lib/redis.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { CONNECTOR_ADMINS } from '../../lib/connectorRoles.js'
@@ -125,6 +126,11 @@ export async function webhookRoutes(fastify: FastifyInstance) {
       // ONE settlement path (paymentGateways/keenuSettle.ts): the same rules
       // as the till and the check split — amount verified, order completed
       // when covered, a failed till card moved to the customer's receivable.
+      // The signed payload names the order: the rest of this request is scoped
+      // to that order's company (the company lock, RLS — an unauthenticated
+      // request otherwise sees no payment and every callback was "unmatched").
+      const owner = await prisma.order.findUnique({ where: { id: payload.order_id }, select: { concept: { select: { tenantId: true } } } })
+      if (owner?.concept?.tenantId) setRlsContext({ tenantIds: [owner.concept.tenantId] })
       const { applyKeenuCallback } = await import('../paymentGateways/keenuSettle.js')
       const out = await applyKeenuCallback(
         { orderId: payload.order_id, transactionId: payload.transaction_id, status: payload.status, amount: payload.amount },

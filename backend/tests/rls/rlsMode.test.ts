@@ -46,4 +46,24 @@ describe.skipIf(!on)('TEST_RLS mode is really on', () => {
     const all = await serviceClient.order.count({ where: { id: { in: [ids.A.orderId, ids.B.orderId] } } })
     expect(all).toBe(2)
   })
+
+  // Every table that holds a company's rows (a tenantId column) carries a
+  // policy — a new company table without one fails here (F13, 2026-10-26).
+  // Platform tables without tenantId are listed in NON_OWNER_SWITCH.md.
+  it('every table with a tenantId column has row-level security and a policy', async () => {
+    const rows = await serviceClient.$queryRawUnsafe<Array<{ t: string }>>(`
+      SELECT c.relname AS t FROM pg_class c
+       WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r'
+         AND EXISTS (SELECT 1 FROM information_schema.columns k
+                      WHERE k.table_schema = 'public' AND k.table_name = c.relname AND k.column_name = 'tenantId')
+         AND (NOT c.relrowsecurity OR NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = c.relname))
+       ORDER BY 1`)
+    expect(rows.map((r) => r.t)).toEqual([])
+  })
+
+  it('group orders: a customer member reads the group without policy recursion (42P17)', async () => {
+    const n = await runWithRlsContext({ customerId: 'no-such-customer' }, async () =>
+      await prisma.groupOrder.count({ where: { id: 'no-such-group' } }))
+    expect(n).toBe(0)
+  })
 })

@@ -243,6 +243,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Conversations', href: '/crm/conversations', sub: true },
     { label: 'Segments', href: '/crm/segments', sub: true },
     { label: 'Naughty list', href: '/crm/naughty-list', sub: true },
+    { label: 'Guest tags', href: '/configuration/guest-tags', sub: true, hint: 'VIP, allergy, birthday — the list staff pick from' },
     { label: 'Waitlist', href: '/crm/waitlist', sub: true },
     { label: 'Loyalty', href: '/configuration/loyalty', sub: true },
   ],
@@ -342,7 +343,7 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   par_sheet: 'The par board counts preps in PORTIONS (portions per recipe on each sub-recipe): the daily par per outlet and weekday, on hand at the outlet, made today. A different "par" from InventoryItem.parLevel (the low-stock alert for bought stock).',
   recipes: 'One plate cost (lib/recipeCost.ts) behind recipes, pricing, food cost, COGS and stock depletion, at the FIFO price of the lots being cooked; modifiers carry their own recipes; till sales book COGS per brand at shift close. Every dish has a Packaging section: it counts on takeaway and delivery, on every order of a brand whose service vessel is packaging (Stackd), and on a dine-in line only when staff tap "Box given". The Q factor is the only plate allowance — menu pricing, never booked. One price per item across channels; no combos.',
   procurement: 'One PO system and one receiving path: each receipt line opens a FIFO lot, held on 2015 until its bill clears it ("Received, not billed" lists what is open; a write-off needs the CEO). A bill\'s stock lines link to their receipt; equipment goes through CapEx, never a bill. One AP aging tied to ledger AP. No requisition step, payment run or WHT certificate.',
-  food_safety: 'Temperature limits with corrective actions and cleaning tasks, per company. No inspection export, no overdue reminders, not yet per outlet in the UI.',
+  food_safety: 'Temperature limits with corrective actions and cleaning tasks, per company, with overdue bell reminders and a PDF printout for inspectors. Not yet per outlet in the UI.',
   reconciliation: 'One expected-cash formula and one shift close; every closed shift posts to the ledger. A Raast QR receipt stays provisional until a bank-statement line matches it. Rider COD not handed in sits on 1351 and blocks the month close until the CEO approves; writing off a rider debt is not built.',
   accounting: 'One ledger feed and one period-close checklist (only the CEO may close over an overridable block, with a reason; reopen: CEO only, audited, raised as an exception). The ledger splits by brand, never by outlet; no transfer pricing or multi-currency. Bad debts are written off directly, each approved by the CEO; there is no doubtful-debt provision. On-account clients pay by QR card at the cash tax class and get monthly statements (not tax invoices). Head-office costs not recharged show as "Company overhead (unallocated)".',
   finance_pl: 'From the ledger. Shared cost reaches a brand only through allocation runs; the rest is one head-office line (decision 22).',
@@ -358,7 +359,7 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   staff_directory: 'A login is access only; one login can be linked to an employee in each company. Team leads add logins for their own roles from My team, and the CEO approves each one. HR adds and offboards logins from the employee record: floor staff are active at once, manager and office logins wait for the CEO.',
   scheduling: 'Generated from the HR roster and approved swaps; managers store only one-off changes. Costed from HR salaries.',
   api_pos: 'Vendors not chosen yet: until the CEO goes live with a fiscal POS driver, every sale is held (visible, never sent). No nightly card-settlement match yet. Raast QR bank-SMS matching is off per company until the CEO switches it on; servd never logs in to internet banking.',
-  integrations: 'No backup or data export screen. Webhooks: one API, but only order events fire. Supplier chat still sends mail through its own env-only SMTP transport. Meta tokens are global settings, so every company shares one Facebook page.',
+  integrations: 'No backup or data export screen. Webhooks: one API, but only order events fire. Supplier chat still sends mail through its own env-only SMTP transport.',
   audit_log: 'Sign-ins (success, failure, OTP, 2FA, sign-out) are audited alongside account, access and on-shift actions, per company.',
 }
 

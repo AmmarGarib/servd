@@ -45,7 +45,7 @@ let A: Company, B: Company
 let cashierA: Who, mgrA: Who, cashierB: Who
 let drawerA: string, drawerB: string, drawerMgrA: string
 const kicked: string[] = []
-const PIN = '5937'
+const PIN = '593741'
 
 async function build(): Promise<FastifyInstance> {
   const a = Fastify()

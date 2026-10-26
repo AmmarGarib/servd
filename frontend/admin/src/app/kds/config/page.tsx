@@ -6,6 +6,8 @@ import { api, deleteWithUndo } from '../../../lib/api'
 import Link from 'next/link'
 import { Select } from '@/components/ui/Select'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
+import { usePermissions } from '../../../hooks/useCan'
+import { useAuthStore } from '../../../store/auth'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +24,31 @@ interface Station {
   isActive: boolean
   conceptId: string
   liveLoad: number
+}
+
+/** A station add / change the F&B manager or the chef raised, waiting for the CEO (owner C3, 2026-10-26). */
+interface StationRequest {
+  id: string
+  kind: 'create' | 'update'
+  changes: { name?: string; displayOrder?: number; isActive?: boolean; conceptId?: string }
+  requestedById: string
+  requestedAt: string
+  brandName: string | null
+  moveToBrandName: string | null
+  station: { name: string } | null
+  requestedByName: string | null
+}
+
+function requestSummary(r: StationRequest): string {
+  const c = r.changes
+  if (r.kind === 'create') return `Add "${c.name ?? ''}" to ${r.brandName ?? 'the brand'}`
+  const parts = [
+    c.name !== undefined ? `rename to "${c.name}"` : null,
+    c.displayOrder !== undefined ? `order ${c.displayOrder}` : null,
+    c.isActive !== undefined ? (c.isActive ? 'switch on' : 'switch off') : null,
+    c.conceptId !== undefined ? `move to ${r.moveToBrandName ?? 'another brand'}` : null,
+  ].filter(Boolean)
+  return `${r.station?.name ?? 'Station'} (${r.brandName ?? 'brand'}): ${parts.join(', ')}`
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -48,6 +75,27 @@ function StationsTab() {
   // Per-concept "new station" draft. Keyed by concept id so opening the form
   // on one brand doesn't lose the typed name on another.
   const [newStationDraft, setNewStationDraft] = useState<Record<string, string>>({})
+  // Owner C3: the CEO's add / change applies at once; the F&B manager's and the chef's waits for the CEO.
+  const { data: me } = usePermissions()
+  const isCeo = me?.role === 'admin'
+  const myId = useAuthStore((st) => st.user?.id)
+  const [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null)
+  const { data: requests } = useQuery({
+    queryKey: ['station-requests', 'pending'],
+    queryFn: () => api.get<{ items: StationRequest[] }>('/stations/requests?status=pending'),
+  })
+  const pending = requests?.items ?? []
+  const cancelRequest = useMutation({
+    mutationFn: (id: string) => api.post(`/stations/requests/${id}/cancel`, {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['station-requests'] }),
+    onError: (e: Error) => setNotice({ text: e.message, error: true }),
+  })
+  const afterSave = (r: unknown) => {
+    if (r && typeof r === 'object' && 'pendingApproval' in r) {
+      setNotice({ text: 'Sent to the CEO for approval — the station changes once it is approved.' })
+      void qc.invalidateQueries({ queryKey: ['station-requests'] })
+    } else setNotice(null)
+  }
 
   const { data: concepts = [] } = useQuery({
     queryKey: ['concepts'],
@@ -93,13 +141,16 @@ function StationsTab() {
   const patchStation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Partial<Station> }) =>
       api.patch<Station>(`/stations/${id}`, body),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['kds-stations'] }),
+    onSuccess: (r) => { afterSave(r); void qc.invalidateQueries({ queryKey: ['kds-stations'] }) },
+    onError: (e: Error) => setNotice({ text: e.message, error: true }),
   })
 
   const createStation = useMutation({
     mutationFn: (body: { conceptId: string; name: string; displayOrder: number }) =>
       api.post<Station>('/stations', body),
-    onSuccess: (_, vars) => {
+    onError: (e: Error) => setNotice({ text: e.message, error: true }),
+    onSuccess: (r, vars) => {
+      afterSave(r)
       setNewStationDraft((d) => ({ ...d, [vars.conceptId]: '' }))
       void qc.invalidateQueries({ queryKey: ['kds-stations'] })
       void qc.invalidateQueries({ queryKey: ['nav-stations'] })
@@ -144,6 +195,30 @@ function StationsTab() {
 
   return (
     <div className="space-y-4">
+      {notice && (
+        <p role={notice.error ? 'alert' : 'status'} className={`rounded-lg border border-kds-border bg-kds-card px-3 py-2 text-sm ${notice.error ? 'text-red-700' : 'text-kds-text'}`}>
+          {notice.text}
+        </p>
+      )}
+      {pending.length > 0 && (
+        <div className="rounded-xl border border-kds-border bg-kds-card px-4 py-3 space-y-2">
+          <p className="text-sm font-bold text-kds-text">Waiting for the CEO ({pending.length})</p>
+          {pending.map((r) => (
+            <div key={r.id} className="flex items-center gap-3 flex-wrap text-sm">
+              <span className="text-kds-text">{requestSummary(r)}</span>
+              <span className="text-xs text-kds-subtext">{r.requestedByName ?? ''}</span>
+              {isCeo ? (
+                <Link href="/ceo/approvals?type=station_change" className="ml-auto text-xs font-bold text-kds-green underline">Decide</Link>
+              ) : r.requestedById === myId ? (
+                <button onClick={() => cancelRequest.mutate(r.id)} disabled={cancelRequest.isPending}
+                  className="ml-auto min-h-11 rounded-lg border border-kds-border px-3 text-xs font-medium text-kds-subtext hover:text-kds-text disabled:opacity-50">
+                  Withdraw
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
       {/* Concept filter */}
       <div className="flex items-center gap-3">
         <label className="text-sm text-kds-subtext">Concept</label>
@@ -273,7 +348,7 @@ function StationsTab() {
                                   className="min-h-11 rounded-lg border border-kds-border px-4 text-sm font-medium text-kds-subtext hover:border-kds-green hover:text-kds-green transition-colors">
                                   Edit
                                 </button>
-                                <button
+                                {isCeo && <button
                                   onClick={() => {
                                     if (s.liveLoad > 0) {
                                       alert('This station has live tickets — bump or reassign them before deleting.')
@@ -286,7 +361,7 @@ function StationsTab() {
                                   disabled={deleteStation.isPending && deleteStation.variables === s.id}
                                   className="min-h-11 rounded-lg border border-red-500/40 px-4 text-sm font-medium text-red-700 hover:bg-red-500/10 transition-colors disabled:opacity-50">
                                   Delete
-                                </button>
+                                </button>}
                               </div>
                             </div>
                           )}

@@ -341,7 +341,7 @@ export interface SimCompany {
   cashier2: SimUser
 }
 
-export const SIM_PIN = { A: '4821', B: '7395' } as const
+export const SIM_PIN = { A: '482175', B: '739526' } as const
 export const MDR_BPS = 200
 export const FEE_TAX_BPS = 1600
 

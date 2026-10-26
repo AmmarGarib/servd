@@ -24,7 +24,12 @@
 
 import { loadLoyaltySettings } from '../../lib/loyaltySettings.js'
 import { lockLoyaltyValueTx, pointValueCentsTx } from '../loyalty/revaluation.js'
-import { prisma } from '../../lib/prisma.js'
+// serviceClient on purpose: a loyalty posting is a system action keyed by the
+// points transaction's id (server-side), booked in the company of that
+// transaction's order / account — and it runs from the CUSTOMER's checkout
+// request too, where the company lock (RLS) admits no ledger write
+// (journal_entries needs a company), so redemptions were never booked.
+import { serviceClient as prisma } from '../../lib/prisma.js'
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { ACCT, postJournalEntry, reverseJournalEntry, withLateNote, type RepostOptions, type JournalLineInput } from './journal.js'
 import { assertMayUndoEntry } from './closedBooks.js'

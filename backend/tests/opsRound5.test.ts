@@ -59,8 +59,8 @@ const DAY = 86_400_000
 let app: FastifyInstance
 let A: Company, B: Company
 let hostA: Who, mgrA: Who, hostB: Who, mgrB: Who, ceoA: Who, ceoB: Who, itA: Who
-const PIN_A = '5172'
-const PIN_B = '9364'
+const PIN_A = '517284'
+const PIN_B = '936417'
 const call = (...args: Parameters<ReturnType<typeof caller>>) => caller(app)(...args)
 const prevSecretKey = process.env['SERVD_SECRET_KEY']
 const prevSmtpPass = process.env['SMTP_PASS']

@@ -13,7 +13,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowRight, Plus } from 'lucide-react'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { api } from '../../lib/api'
@@ -30,6 +30,7 @@ import { Modal } from '@/components/ui/Modal'
 import { NumberField } from '@/components/ui/NumberField'
 import { PasswordInput } from '@/components/ui/PasswordInput'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { AnchoredMenu } from '@/components/ui/AnchoredMenu'
 import { useTrashPrefill } from '../../lib/trash'
 import { unwrapPrefill, pStr, pNum, pBool } from '../../lib/trashPrefill'
 
@@ -383,13 +384,14 @@ function SeatButton({
   onSeat: (tableId: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const btn = useRef<HTMLButtonElement>(null)
+  const closeMenu = useCallback(() => setOpen(false), [])
   return (
     <span className="relative">
-      <button onClick={() => setOpen(!open)} aria-expanded={open} className="min-h-11 text-xs font-bold px-3 rounded bg-secondary text-secondary-on">
+      <button ref={btn} onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu" className="min-h-11 text-xs font-bold px-3 rounded bg-secondary text-secondary-on">
         Seat <ArrowRight size={12} aria-hidden="true" className="inline-block align-[-2px]" />
       </button>
-      {open && (
-        <span className="absolute right-0 top-full mt-1 z-20 bg-s-surface border border-s-border rounded shadow-lg p-1 min-w-[180px]">
+      <AnchoredMenu anchor={btn} open={open} onClose={closeMenu} align="end" minWidth={180} className="!bg-s-surface !p-1">
           {tables.map((t) => (
             <button
               key={t.id}
@@ -402,8 +404,7 @@ function SeatButton({
           {tables.length === 0 && (
             <p className="text-xs text-s-muted px-2 py-2">No tables yet — set up the floor plan first.</p>
           )}
-        </span>
-      )}
+      </AnchoredMenu>
       {void id}
     </span>
   )

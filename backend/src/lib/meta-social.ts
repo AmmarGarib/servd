@@ -1,17 +1,20 @@
 // Meta Graph API client for Instagram Business + Facebook Pages publishing.
 // Requires env vars: FACEBOOK_APP_ID, FACEBOOK_APP_SECRET
-// Tokens stored in Settings table: fb_page_token, fb_page_id, ig_user_id
+// The page connection is PER BRAND and stored (token sealed) in
+// social_connections — modules/socialConnections (owner C18, 2026-10-26). This
+// file only talks to Meta: it never stores anything, and every publish takes the
+// brand's APPROVED connection from the caller.
 
-import { prisma } from './prisma.js'
 import { AppError } from './errors.js'
 import { practiceId, sandboxBlocks } from './sandbox.js'
 
 const GRAPH = 'https://graph.facebook.com/v19.0'
 
-async function getSetting(key: string): Promise<string | null> {
-  const row = await prisma.setting.findUnique({ where: { key } })
-  return row?.value ?? null
-}
+/** A brand's approved page connection (modules/socialConnections approvedConnectionFor). */
+export interface SocialPage { pageId: string; igUserId: string | null; token: string }
+
+/** What a finished OAuth flow found — the caller stores it (sealed) as a PENDING connection. */
+export interface FoundPage { pageId: string; pageName: string; igUserId: string | null; pageToken: string }
 
 // `state` is a one-time CSRF token minted by /integrations/social/connect and
 // verified in the callback. Without it the callback accepted ANY code, so a
@@ -32,7 +35,12 @@ export async function getOAuthUrl(redirectUri: string, state: string): Promise<s
   return `https://www.facebook.com/dialog/oauth?${params}`
 }
 
-export async function exchangeCodeForTokens(code: string, redirectUri: string) {
+/**
+ * Trade the OAuth code for the page token. `preferName` (the brand's name)
+ * picks the page whose name contains it when the account manages several;
+ * otherwise the first page. Stores nothing.
+ */
+export async function exchangeCodeForTokens(code: string, redirectUri: string, preferName?: string | null): Promise<FoundPage> {
   if (sandboxBlocks('social', { summary: 'oauth callback' })) throw new AppError('SANDBOX', 'Practice copy: social pages cannot be connected here', 403)
   const appId     = process.env['FACEBOOK_APP_ID']
   const appSecret = process.env['FACEBOOK_APP_SECRET']
@@ -60,7 +68,8 @@ export async function exchangeCodeForTokens(code: string, redirectUri: string) {
   }
   if (!pagesData.data?.length) throw new Error('No Facebook Pages found for this account')
 
-  const page = pagesData.data[0]!
+  const want = (preferName ?? '').trim().toLowerCase()
+  const page = (want ? pagesData.data.find((p) => p.name.toLowerCase().includes(want)) : undefined) ?? pagesData.data[0]!
 
   // Get connected Instagram business account
   const igRes = await fetch(
@@ -68,28 +77,19 @@ export async function exchangeCodeForTokens(code: string, redirectUri: string) {
   )
   const igData = (await igRes.json()) as { instagram_business_account?: { id: string }; error?: { message: string } }
 
-  // Persist in settings
-  await prisma.$transaction([
-    prisma.setting.upsert({ where: { key: 'fb_page_id' },    create: { key: 'fb_page_id',    value: page.id },           update: { value: page.id } }),
-    prisma.setting.upsert({ where: { key: 'fb_page_name' },  create: { key: 'fb_page_name',  value: page.name },         update: { value: page.name } }),
-    prisma.setting.upsert({ where: { key: 'fb_page_token' }, create: { key: 'fb_page_token', value: page.access_token }, update: { value: page.access_token } }),
-    ...(igData.instagram_business_account ? [
-      prisma.setting.upsert({ where: { key: 'ig_user_id' }, create: { key: 'ig_user_id', value: igData.instagram_business_account.id }, update: { value: igData.instagram_business_account.id } }),
-    ] : []),
-  ])
-
   return {
-    pageId:   page.id,
-    pageName: page.name,
-    igUserId: igData.instagram_business_account?.id ?? null,
+    pageId:    page.id,
+    pageName:  page.name,
+    igUserId:  igData.instagram_business_account?.id ?? null,
+    pageToken: page.access_token,
   }
 }
 
-export async function publishInstagramPost(caption: string, mediaUrls: string[]): Promise<string> {
+export async function publishInstagramPost(caption: string, mediaUrls: string[], page: SocialPage | null): Promise<string> {
   if (sandboxBlocks('social', { summary: 'instagram post' })) return practiceId() // practice copy: the copied page token is live
-  const igUserId = await getSetting('ig_user_id')
-  const pageToken = await getSetting('fb_page_token')
-  if (!igUserId || !pageToken) throw new Error('Instagram not connected — visit Settings > Integrations')
+  const igUserId = page?.igUserId ?? null
+  const pageToken = page?.token ?? null
+  if (!igUserId || !pageToken) throw new Error("Instagram is not connected for this brand (or not approved by the CEO yet) — Calendar → Social pages")
 
   // Create media container
   const containerRes = await fetch(`${GRAPH}/${igUserId}/media`, {
@@ -116,11 +116,11 @@ export async function publishInstagramPost(caption: string, mediaUrls: string[])
   return publish.id
 }
 
-export async function publishFacebookPost(message: string, mediaUrls: string[]): Promise<string> {
+export async function publishFacebookPost(message: string, mediaUrls: string[], page: SocialPage | null): Promise<string> {
   if (sandboxBlocks('social', { summary: 'facebook post' })) return practiceId() // practice copy: the copied page token is live
-  const pageId    = await getSetting('fb_page_id')
-  const pageToken = await getSetting('fb_page_token')
-  if (!pageId || !pageToken) throw new Error('Facebook not connected — visit Settings > Integrations')
+  const pageId    = page?.pageId ?? null
+  const pageToken = page?.token ?? null
+  if (!pageId || !pageToken) throw new Error("Facebook is not connected for this brand (or not approved by the CEO yet) — Calendar → Social pages")
 
   const body: Record<string, unknown> = { message, access_token: pageToken }
   if (mediaUrls[0]) body['link'] = mediaUrls[0]

@@ -4,6 +4,7 @@ import { serviceClient as prisma } from '../lib/prisma.js'
 import { publishInstagramPost, publishFacebookPost } from '../lib/meta-social.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
 import { testCompanyBlocks, externalScope } from '../lib/outboundScope.js'
+import { approvedConnectionFor } from '../modules/socialConnections/service.js'
 
 const QUEUE_NAME = 'social-publish'
 
@@ -19,7 +20,7 @@ export function startSocialPublishWorker() {
       // on the empty data payload.
       if (job.name !== 'publish') return
       const { postId } = job.data as { postId: string }
-      const post = await prisma.socialPost.findUnique({ where: { id: postId }, include: { event: { select: { tenantId: true } } } })
+      const post = await prisma.socialPost.findUnique({ where: { id: postId }, include: { event: { select: { tenantId: true, conceptId: true } } } })
       if (!post || post.status !== 'scheduled') return
 
       // A test company never posts to the real social pages (lib/outboundScope.ts).
@@ -33,11 +34,14 @@ export function startSocialPublishWorker() {
       }
 
       try {
+        // The brand's APPROVED page only (owner C18, 2026-10-26): a page waiting
+        // for the CEO, or an event with no brand, never posts.
+        const page = await approvedConnectionFor(post.event.conceptId)
         let platformPostId: string
         if (post.platform === 'instagram') {
-          platformPostId = await publishInstagramPost(post.caption, post.mediaUrls)
+          platformPostId = await publishInstagramPost(post.caption, post.mediaUrls, page)
         } else if (post.platform === 'facebook') {
-          platformPostId = await publishFacebookPost(post.caption, post.mediaUrls)
+          platformPostId = await publishFacebookPost(post.caption, post.mediaUrls, page)
         } else {
           throw new Error(`Unsupported platform: ${post.platform}`)
         }

@@ -1,9 +1,10 @@
 'use client'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart3, ChevronDown, ChevronRight, Download, Menu, Printer, RotateCcw, Search, Star, ArrowLeft, List } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
+import { AnchoredMenu } from '../../ui/AnchoredMenu'
 import { Select } from '../../ui/Select'
 import { printHtml } from '../tillApi'
 import { flowErrorMessage } from './flowApi'
@@ -98,27 +99,20 @@ function MultiPick({ label, options, value, onChange, allLabel = 'All', required
 }) {
   const [open, setOpen] = useState(false)
   const [filter, setFilter] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', close); document.addEventListener('keydown', close)
-    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close) }
-  }, [open])
+  const btn = useRef<HTMLButtonElement>(null)
+  const closeMenu = useCallback(() => setOpen(false), [])
   const shown = options.filter((o) => o.label.toLowerCase().includes(filter.toLowerCase()))
   const names = value.map((id) => options.find((o) => o.id === id)?.label ?? id)
   const summary = value.length === 0 ? allLabel : value.length <= 2 ? names.join(', ') : `${value.length} selected`
   return (
-    <div ref={ref} className="relative">
+    <div className="relative">
       <span className={labelCls}>{label}{required ? ' *' : ''}</span>
-      <button type="button" aria-label={`${label}: ${summary}`} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}
+      <button ref={btn} type="button" aria-label={`${label}: ${summary}`} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}
         className={`${inputCls} flex items-center justify-between gap-2 text-left`}>
         <span className="truncate">{summary}</span><ChevronDown size={16} aria-hidden="true" className="shrink-0 text-kds-subtext" />
       </button>
-      {open && (
-        <div className="absolute left-0 right-0 z-30 mt-1 rounded-lg border border-kds-border bg-kds-card p-2 shadow-lg">
+      <AnchoredMenu anchor={btn} open={open} onClose={closeMenu} matchWidth role="group" maxHeight={420} className="!border-kds-border !bg-kds-card !p-2">
+        <div>
           {options.length > 6 && (
             <input type="search" aria-label={`Search ${label}`} value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search" className={`${inputCls} mb-2`} />
           )}
@@ -137,7 +131,7 @@ function MultiPick({ label, options, value, onChange, allLabel = 'All', required
           </div>
           {value.length > 0 && <button type="button" onClick={() => onChange([])} className="mt-1 min-h-11 w-full rounded-md text-sm font-semibold text-kds-subtext hover:text-kds-text">Clear</button>}
         </div>
-      )}
+      </AnchoredMenu>
     </div>
   )
 }
@@ -196,7 +190,8 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [dlOpen, setDlOpen] = useState(false)
-  const dlRef = useRef<HTMLDivElement>(null)
+  const dlBtn = useRef<HTMLButtonElement>(null)
+  const closeDl = useCallback(() => setDlOpen(false), [])
 
   const outletQ = useQuery<Lookups>({ queryKey: ['pos', 'till-reports', 'outlets'], queryFn: () => api.get('/reports/till/lookups'), staleTime: 5 * 60_000 })
   const outletList = outletQ.data?.outlets ?? []
@@ -209,14 +204,6 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
   })
   const lookups = lookupQ.data
 
-  useEffect(() => {
-    if (!dlOpen) return
-    const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !dlRef.current?.contains(e.target as Node)) setDlOpen(false)
-    }
-    document.addEventListener('mousedown', close); document.addEventListener('keydown', close)
-    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', close) }
-  }, [dlOpen])
 
   function resetForm(r: CatalogReport | null) {
     setFrom(todayPktIso()); setTo(todayPktIso()); setOutlets(null); setFilters({}); setText(''); setOpts([]); setAllAccounts(true)
@@ -477,17 +464,15 @@ export function TillReports({ conceptId, brands, onMenu }: { conceptId: string |
                   <button type="button" onClick={() => void print()} disabled={!result} className={`${ghostBtn} flex items-center gap-2`}><Printer size={16} aria-hidden="true" />Print</button>
                 )}
                 <button type="button" onClick={() => void run()} disabled={!valid || busy} className={primaryBtn}>{busy ? 'Running…' : 'Report'}</button>
-                <div ref={dlRef} className="relative">
-                  <button type="button" aria-haspopup="menu" aria-expanded={dlOpen} disabled={!valid} onClick={() => setDlOpen((o) => !o)} className={`${ghostBtn} flex items-center gap-2`}>
+                <div className="relative">
+                  <button ref={dlBtn} type="button" aria-haspopup="menu" aria-expanded={dlOpen} disabled={!valid} onClick={() => setDlOpen((o) => !o)} className={`${ghostBtn} flex items-center gap-2`}>
                     <Download size={16} aria-hidden="true" />Download<ChevronDown size={14} aria-hidden="true" />
                   </button>
-                  {dlOpen && (
-                    <div role="menu" className="absolute bottom-full right-0 z-30 mb-1 min-w-[10rem] rounded-lg border border-kds-border bg-kds-card py-1 shadow-lg">
-                      {([['pdf', 'PDF'], ['xlsx', 'Excel (.xlsx)'], ['csv', 'CSV']] as const).map(([f, l]) => (
-                        <button key={f} type="button" role="menuitem" onClick={() => void download(f)} className="block min-h-11 w-full px-4 text-left text-sm text-kds-text hover:bg-kds-border/40">{l}</button>
-                      ))}
-                    </div>
-                  )}
+                  <AnchoredMenu anchor={dlBtn} open={dlOpen} onClose={closeDl} align="end" minWidth={160} className="!border-kds-border !bg-kds-card">
+                    {([['pdf', 'PDF'], ['xlsx', 'Excel (.xlsx)'], ['csv', 'CSV']] as const).map(([f, l]) => (
+                      <button key={f} type="button" role="menuitem" onClick={() => void download(f)} className="block min-h-11 w-full px-4 text-left text-sm text-kds-text hover:bg-kds-border/40">{l}</button>
+                    ))}
+                  </AnchoredMenu>
                 </div>
                 <button type="button" onClick={() => resetForm(report)} className={`${ghostBtn} flex items-center gap-2`}><RotateCcw size={16} aria-hidden="true" />Reset</button>
               </div>

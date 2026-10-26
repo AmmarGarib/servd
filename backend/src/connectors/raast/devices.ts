@@ -14,7 +14,7 @@
 
 import { createHash, randomBytes } from 'node:crypto'
 import type { BankSmsDevice } from '@prisma/client'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
 import { encryptSecret, secretHint } from '../../lib/secretBox.js'
 
 export const DEVICE_TOKEN_RE = /^sms_[0-9a-f]{64}$/
@@ -45,9 +45,12 @@ export function tokenColumns(token: string): { tokenHash: string; tokenEnc: stri
  */
 export async function deviceByToken(token: string | null | undefined): Promise<BankSmsDevice | null> {
   if (!isDeviceTokenShape(token)) return null
-  const d = await prisma.bankSmsDevice.findUnique({ where: { tokenHash: hashDeviceToken(token) } })
+  // serviceClient: a pre-auth lookup by the device's secret (the request has
+  // no company yet — under the company lock (RLS) it would see nothing). The
+  // caller then scopes the request to the device's company.
+  const d = await serviceClient.bankSmsDevice.findUnique({ where: { tokenHash: hashDeviceToken(token) } })
   if (!d || !d.active) return null
-  const conn = await prisma.posConnector.findUnique({ where: { id: d.connectorId }, select: { tenantId: true, kind: true } })
+  const conn = await serviceClient.posConnector.findUnique({ where: { id: d.connectorId }, select: { tenantId: true, kind: true } })
   if (!conn || conn.kind !== 'raast' || conn.tenantId !== d.tenantId) return null
   return d
 }

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, MARKETING_TEAM } from '../auth/middleware.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { AppError } from '../../lib/errors.js'
@@ -169,7 +169,10 @@ export async function discountRoutes(fastify: FastifyInstance) {
       }
       const now = new Date()
       const timeStr = now.toTimeString().substring(0, 5) // "HH:MM"
-      const discounts = await prisma.sectionDiscount.findMany({
+      // serviceClient: a public storefront read (no sign-in, so no company in
+      // the request) of one named brand's live discounts — under the company
+      // lock (RLS) the request's client would see none.
+      const discounts = await serviceClient.sectionDiscount.findMany({
         where: {
           isActive: true,
           startDate: { lte: now },

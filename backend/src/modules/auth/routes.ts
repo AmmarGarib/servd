@@ -11,7 +11,7 @@ import {
   maskPhone,
 } from './twoFactor.js'
 import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, requestSharedCode, verifySharedCode, issueStaffCodeInPerson } from './otp.js'
-import { preparePin, setManagerPin, PIN_FORMAT, isWeakPin } from './managerPin.js'
+import { preparePin, setManagerPin, PIN_FORMAT, isWeakPin, MIN_NEW_PIN_LENGTH, SHORT_PIN_GRACE_HOURS } from './managerPin.js'
 import { accountStateOf, whereAccountState, suspendData, reactivateData, approveData, softDeleteData } from './accountStatus.js'
 import {
   normaliseStaffPhone, normaliseStaffPhoneLenient, assertPhoneForRole, assertPhoneFree, withStaffPhoneLock, findManagedStaff,
@@ -1077,11 +1077,17 @@ export async function authRoutes(fastify: FastifyInstance) {
     const practice = isSandbox()
     const body = z.object({
       name:       z.string().trim().min(1).max(120),
-      email:      practice ? z.string().email().max(200).optional().or(z.literal('')) : z.string().email().max(200),
+      // Floor logins (owner C14, 2026-10-26) sign in with a WhatsApp code to
+      // their own mobile and have no password, so a company email is optional
+      // for them; every other role still needs one.
+      email:      z.string().email().max(200).optional().or(z.literal('')),
       phone:      z.string().min(7).max(20).optional().or(z.literal('')),
       role:       z.string().min(1),
       employeeId: z.string().min(1).optional(),
     }).parse(req.body)
+    if (!practice && !body.email && !usesOtpLogin(body.role)) {
+      throw new AppError('EMAIL_REQUIRED', 'A company email is needed for this login — only floor staff (cashier, FOH, BOH, kitchen, expediter) sign in without one.', 400)
+    }
 
     const allowed = childRolesFor(req.staffUser!.role)
     if (allowed.length === 0) {
@@ -1100,12 +1106,15 @@ export async function authRoutes(fastify: FastifyInstance) {
       throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first — a new login belongs to one company.', 422)
     }
     const typedEmail = body.email || (practice ? await practiceStaffEmail(body.name) : '')
-    if (!isStaffEmail(typedEmail)) {
-      throw new AppError('EMAIL_NOT_COMPANY_DOMAIN', STAFF_EMAIL_MESSAGE, 400)
+    // A floor login with no email typed has none (C14): it signs in with its code.
+    const email = typedEmail ? normaliseStaffEmail(typedEmail) : null
+    if (email !== null) {
+      if (!isStaffEmail(typedEmail)) {
+        throw new AppError('EMAIL_NOT_COMPANY_DOMAIN', STAFF_EMAIL_MESSAGE, 400)
+      }
+      const taken = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+      if (taken) throw (await loginInTrash(req, taken.id)) ?? new AppError('EMAIL_TAKEN', 'A login with that email already exists.', 409)
     }
-    const email = normaliseStaffEmail(typedEmail)
-    const taken = await prisma.user.findUnique({ where: { email }, select: { id: true } })
-    if (taken) throw (await loginInTrash(req, taken.id)) ?? new AppError('EMAIL_TAKEN', 'A login with that email already exists.', 409)
 
     // The employee record, if given, must be this company's and not already
     // linked to a login. It is linked on APPROVAL, not now.
@@ -1502,7 +1511,8 @@ export async function authRoutes(fastify: FastifyInstance) {
     const body = z.object({
       currentPin: z.string().regex(/^\d{4,8}$/).optional(),
       password:   z.string().min(1).max(200).optional(),
-      newPin:     z.string().regex(/^\d{4,8}$/, 'PIN must be 4–8 digits'),
+      // New PINs are 6–8 digits (owner C1); 4–5 digits reach preparePin → 422 PIN_TOO_SHORT.
+      newPin:     z.string().regex(/^\d{4,8}$/, 'PIN must be 6–8 digits'),
     }).parse(req.body)
 
     const me = await prisma.user.findUnique({
@@ -1521,8 +1531,8 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
     // A malformed or guessable new PIN is refused before any bucket is touched
     // — it says nothing about anyone's PIN, so it should not cost an attempt.
-    if (!PIN_FORMAT.test(body.newPin) || isWeakPin(body.newPin)) {
-      await preparePin(body.newPin, { tenantIds: [] }) // throws INVALID_PIN / WEAK_PIN
+    if (!PIN_FORMAT.test(body.newPin) || body.newPin.length < MIN_NEW_PIN_LENGTH || isWeakPin(body.newPin)) {
+      await preparePin(body.newPin, { tenantIds: [] }) // throws INVALID_PIN / PIN_TOO_SHORT / WEAK_PIN
     }
 
     // Every PIN-setting attempt counts, success or not (AUTH-R4). The collision
@@ -2352,6 +2362,7 @@ export async function authRoutes(fastify: FastifyInstance) {
       if (body.pin != null) {
         if (body.pin === '') {
           data.pin = null
+          data.pinChangeRequiredAt = null
         } else {
           // THE setter's rules (managerPin.ts): 4-8 digits, not guessable, and
           // not already held by anyone in the companies this person will
@@ -2366,6 +2377,7 @@ export async function authRoutes(fastify: FastifyInstance) {
           data.pin = await preparePin(body.pin, { tenantIds: companies, excludeUserId: req.params.id })
           data.pinMustReset        = false
           data.pinResetRequestedAt = null
+          data.pinChangeRequiredAt = null
         }
       }
       if (finalPrimary)          data.tenantId  = finalPrimary
@@ -2648,10 +2660,14 @@ export async function authRoutes(fastify: FastifyInstance) {
   fastify.get('/account', { preHandler: requireAuth(...EVERY_LOGIN) }, async (req) => {
     const me = await prisma.user.findUnique({
       where: { id: req.staffUser!.id },
-      select: { id: true, name: true, email: true, role: true, pin: true, mustChangePassword: true },
+      select: { id: true, name: true, email: true, role: true, pin: true, mustChangePassword: true, pinChangeRequiredAt: true },
     })
     if (!me) throw new UnauthorizedError('Account is no longer active')
     const codeLogin = usesOtpLogin(me.role)
+    // Owner C1: a short (4–5 digit) PIN that has been used is on notice.
+    const pinChangeBy = me.pin && me.pinChangeRequiredAt
+      ? new Date(me.pinChangeRequiredAt.getTime() + SHORT_PIN_GRACE_HOURS * 3600_000).toISOString()
+      : null
     return {
       id: me.id,
       name: me.name,
@@ -2661,6 +2677,9 @@ export async function authRoutes(fastify: FastifyInstance) {
       mustChangePassword: !codeLogin && me.mustChangePassword,
       hasPin: !!me.pin,
       canHoldPin: canHoldOverridePin(me.role),
+      pinChangeRequired: !!pinChangeBy,
+      pinChangeBy,
+      minPinLength: MIN_NEW_PIN_LENGTH,
     }
   })
 

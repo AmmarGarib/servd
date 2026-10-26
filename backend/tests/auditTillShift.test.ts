@@ -25,7 +25,7 @@ import { posRoutes } from '../src/modules/pos/routes.js'
 import { orderRoutes } from '../src/modules/orders/routes.js'
 import { addLotTx, fifoCutoverKey } from '../src/lib/stockLedger.js'
 
-const PIN = '5831'
+const PIN = '583192'
 let app: FastifyInstance
 let tenantA: string, tenantB: string
 let conceptA: string

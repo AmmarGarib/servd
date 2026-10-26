@@ -201,6 +201,21 @@ export async function countedContributions<T extends { category: string; sourceT
 }
 
 /** The head_office contributions the setup wizard ended (from the applied setup's summary). */
+/**
+ * The two companies' names on contribution rows the caller can already see.
+ * Read through serviceClient: under the company lock (RLS) a request in one
+ * company cannot read the counterparty's `tenants` row, so a Prisma include
+ * of it came back null and the planning screen answered 500. Only the id and
+ * name are taken, of rows the request's own query returned.
+ */
+async function withContributionTenants<T extends { sourceTenantId: string; destinationTenantId: string }>(rows: T[]) {
+  const ids = [...new Set(rows.flatMap((r) => [r.sourceTenantId, r.destinationTenantId]))]
+  const tenants = ids.length ? await serviceClient.tenant.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : []
+  const byId = new Map(tenants.map((t) => [t.id, t]))
+  const named = (id: string) => byId.get(id) ?? { id, name: '' }
+  return rows.map((r) => ({ ...r, sourceTenant: named(r.sourceTenantId), destinationTenant: named(r.destinationTenantId) }))
+}
+
 async function setupEndedContributionIds(): Promise<string[]> {
   const books = await serviceClient.headOfficeBooks.findMany({
     where: { setupAppliedAt: { not: null }, tenant: { isTest: false } },
@@ -331,10 +346,9 @@ export async function budgetedLabour(tenantIds: string[], opts: LabourBudgetOpti
   }
 
   if (includeContributions && tenantIds.length) {
-    const all = await prisma.tenantContribution.findMany({
+    const all = await withContributionTenants(await prisma.tenantContribution.findMany({
       where: { isActive: true, OR: [{ destinationTenantId: { in: tenantIds } }, { sourceTenantId: { in: tenantIds } }] },
-      include: { sourceTenant: { select: { id: true, name: true } }, destinationTenant: { select: { id: true, name: true } } },
-    })
+    }))
     const rows = await countedContributions(all, applied)
     for (const c of rows) {
       const inbound = tenantIds.includes(c.destinationTenantId)
@@ -357,14 +371,13 @@ export async function budgetedLabour(tenantIds: string[], opts: LabourBudgetOpti
       const counted = new Set(rows.map((c) => c.id))
       const replaced = all.filter((c) => !counted.has(c.id))
       const endedIds = (await setupEndedContributionIds()).filter((id) => !all.some((c) => c.id === id))
-      const endedBySetup = endedIds.length ? await prisma.tenantContribution.findMany({
+      const endedBySetup = endedIds.length ? await withContributionTenants(await prisma.tenantContribution.findMany({
         where: {
           id: { in: endedIds }, isActive: false, category: 'head_office',
           OR: [{ destinationTenantId: { in: tenantIds } }, { sourceTenantId: { in: tenantIds } }],
         },
-        include: { sourceTenant: { select: { id: true, name: true } }, destinationTenant: { select: { id: true, name: true } } },
         orderBy: { startedAt: 'asc' },
-      }) : []
+      })) : []
       for (const c of [...replaced, ...endedBySetup]) {
         out.contributions.push({
           id: c.id, label: c.label, category: c.category, monthlyCents: c.monthlyCents, internalSplit: c.internalSplit,

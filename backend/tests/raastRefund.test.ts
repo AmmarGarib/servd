@@ -48,8 +48,8 @@ let A: Company, B: Company
 let cashierA: Who, mgrA: Who, mgrB: Who, cashierB: Who
 let drawerA: string, drawerB: string
 let acctA: { bankAccountId: string; ledgerCode: string }
-const PIN_A = '7351'
-const PIN_B = '8462'
+const PIN_A = '735168'
+const PIN_B = '846239'
 const CARD_TOTAL = 118_800   // 2 × Kheer at the card / Raast rate
 const CASH_TOTAL = 126_500
 

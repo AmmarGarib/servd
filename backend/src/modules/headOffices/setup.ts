@@ -33,6 +33,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { serviceClient } from '../../lib/prisma.js'
+import { appendRlsTenantIds } from '../../lib/rlsContext.js'
 import { requireAuth, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
@@ -86,6 +87,10 @@ async function companiesFor(req: FastifyRequest, named: string[] | undefined): P
       throw new AppError('TEST_COMPANY_NOT_ALLOWED', 'The head-office setup runs on trading companies only', 422, { companyIds: tests.map((t) => t.id) })
     }
   }
+  // Membership of every company is proven above: the planning reads
+  // (budgetedLabour, on the request's client) may see all of them under the
+  // company lock (RLS), not only the company in view.
+  appendRlsTenantIds(ids)
   return ids
 }
 
@@ -221,6 +226,7 @@ export async function headOfficeSetupRoutes(fastify: FastifyInstance) {
     }, TX_OPTS)
 
     const hoId = result.headOffice.id
+    appendRlsTenantIds([hoId]) // the CEO just created it (company lock, RLS)
     for (const tenantId of [hoId, ...companyIds]) {
       await audit({
         category: 'accounting', action: 'ho.setup.apply', entity: 'Tenant', entityId: hoId,

@@ -25,6 +25,7 @@ import { takeSnapshot } from '../trash/snapshot.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { assertConceptOwned, conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
+import { guestTagTypeRoutes, findTagTypeInScope } from './guestTagTypes.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { verifyCustomerToken } from '../auth/service.js'
 import { isRevoked } from '../../lib/tokenRevocation.js'
@@ -1653,6 +1654,9 @@ export async function reservationRoutes(fastify: FastifyInstance) {
   // pair wrote the same table with a different payload shape (D1).
 
   // ─── Guest tags ─────────────────────────────────────────────────────────
+  // The company's tag list (create / rename / switch off) — B8, guestTagTypes.ts.
+  await guestTagTypeRoutes(fastify)
+
   fastify.get<{ Querystring: { customerId: string } }>(
     '/guest-tags',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -1660,26 +1664,44 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       // Without an id the query would return every company's tags.
       const customerId = requireId(req.query.customerId, 'customerId')
       await assertCustomerInScope(req, customerId, 'read')
+      // A customer is servd-wide; a typed tag shows only to the company that put it there (legacy free-form
+      // tags have no company and stay visible to every company that served the guest).
+      const scope = await scopeTenantWhere(req, 'read')
       return prisma.guestTag.findMany({
-        where: { customerId },
+        where: { customerId, OR: [{ tenantId: null }, scope] },
         orderBy: { createdAt: 'desc' },
       })
     },
   )
 
-  fastify.post<{ Body: { customerId: string; label: string; color?: string } }>(
+  fastify.post<{ Body: { customerId: string; label?: string; color?: string; tagTypeId?: string } }>(
     '/guest-tags',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
       const body = z.object({
         customerId: z.string().uuid(),
-        label:      z.string().min(1).max(40),
+        label:      z.string().min(1).max(40).optional(),
         color:      z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-      }).parse(req.body)
+        tagTypeId:  z.string().uuid().optional(),
+      }).refine((b) => b.label || b.tagTypeId, { message: 'Pick a tag from the list' }).parse(req.body)
       // Only a guest one of the operator's companies has served can be tagged.
       await assertCustomerInScope(req, body.customerId, 'write')
+      let data: { label: string; color: string | null; tagTypeId: string | null; tenantId: string | null }
+      if (body.tagTypeId) {
+        // From the company's list: its entry (other company's → 404), switched on, and stamped with its company.
+        // The tag is the ACTIVE company's, so the entry must belong to it (cross-company attach → 422).
+        const type = await findTagTypeInScope(req, body.tagTypeId, 'write')
+        if (type.tenantId !== req.staffUser?.tenantId) throw new AppError('TAG_NOT_IN_ACTIVE_COMPANY', 'That tag belongs to another company. Switch company first.', 422)
+        if (!type.active) throw new AppError('TAG_SWITCHED_OFF', `"${type.name}" is switched off.`, 422)
+        const dupe = await prisma.guestTag.findFirst({ where: { customerId: body.customerId, tagTypeId: type.id }, select: { id: true } })
+        if (dupe) throw new AppError('TAG_ALREADY_ON_GUEST', `This guest already has "${type.name}".`, 409)
+        data = { label: type.name, color: type.color, tagTypeId: type.id, tenantId: type.tenantId }
+      } else {
+        // Free-form (as before), now stamped with the active company.
+        data = { label: body.label!, color: body.color ?? null, tagTypeId: null, tenantId: req.staffUser?.tenantId ?? null }
+      }
       const created = await prisma.guestTag.create({
-        data: { ...body, createdById: req.staffUser?.id ?? null },
+        data: { customerId: body.customerId, ...data, createdById: req.staffUser?.id ?? null },
       })
       return reply.status(201).send(created)
     },
@@ -1695,6 +1717,7 @@ export async function reservationRoutes(fastify: FastifyInstance) {
       const existing = await prisma.guestTag.findFirst({
         where: {
           id: req.params.id,
+          OR: [{ tenantId: null }, await scopeTenantWhere(req, 'write')],
           customer: {
             OR: [
               { orders:       { some: { concept } } },

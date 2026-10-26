@@ -242,12 +242,12 @@ describe('AUTH-R3: parallel guesses do not get past the caps', () => {
   it('/pin/change: a burst of 20 wrong current PINs gets at most 5 checked', async () => {
     const mgr = await makeUser({ role: 'foh_management', tenantId: tenantA, members: [tenantA], pin: '4826' })
     const burst = await Promise.all(Array.from({ length: 20 }, (_, i) =>
-      call(mgr, 'POST', '/auth/pin/change', { currentPin: String(5000 + i * 37), newPin: '6148' })))
+      call(mgr, 'POST', '/auth/pin/change', { currentPin: String(5000 + i * 37), newPin: '614852' })))
     const checked = burst.filter((r) => r.statusCode === 400).length
     expect(checked).toBeLessThanOrEqual(5)
     expect(burst.filter((r) => r.statusCode === 429).length).toBe(20 - checked)
     // Even the right PIN now waits.
-    expect((await call(mgr, 'POST', '/auth/pin/change', { currentPin: '4826', newPin: '6148' })).statusCode).toBe(429)
+    expect((await call(mgr, 'POST', '/auth/pin/change', { currentPin: '4826', newPin: '614852' })).statusCode).toBe(429)
   })
 
   it('/password/change-authed: a burst of 20 wrong passwords gets at most 8 checked', async () => {
@@ -264,31 +264,31 @@ describe('AUTH-R3: parallel guesses do not get past the caps', () => {
 
 describe('AUTH-R4: the PIN-collision answer cannot be used to sweep colleagues\' PINs', () => {
   it('a collision is refused, audited and counted; every attempt counts toward a small hourly cap', async () => {
-    await makeUser({ role: 'admin', tenantId: tenantB, members: [tenantB], pin: '7392' })   // the CEO's PIN
+    await makeUser({ role: 'admin', tenantId: tenantB, members: [tenantB], pin: '739261' })   // the CEO's PIN
     const mgr = await makeUser({ role: 'foh_management', tenantId: tenantB, members: [tenantB] })
 
-    const hit = await call(mgr, 'POST', '/auth/pin/change', { password: PASSWORD, newPin: '7392' })
+    const hit = await call(mgr, 'POST', '/auth/pin/change', { password: PASSWORD, newPin: '739261' })
     expect(hit.statusCode).toBe(409)
     expect(hit.json().error.code).toBe('PIN_COLLISION')
     expect(await prisma.auditLog.count({ where: { entityId: mgr.id, action: 'user.pin_collision', tenantId: tenantB } })).toBe(1)
 
     // Successful changes count too: 1 collision + 5 changes = 6, then refused.
     let current: string | null = null
-    for (const next of ['8253', '9374', '3517', '6481', '5728']) {
+    for (const next of ['825371', '937462', '351784', '648193', '572846']) {
       const r = await call(mgr, 'POST', '/auth/pin/change', current ? { currentPin: current, newPin: next } : { password: PASSWORD, newPin: next })
       expect(r.statusCode).toBe(200)
       current = next
     }
-    const capped = await call(mgr, 'POST', '/auth/pin/change', { currentPin: current, newPin: '7395' })
+    const capped = await call(mgr, 'POST', '/auth/pin/change', { currentPin: current, newPin: '739518' })
     expect(capped.statusCode).toBe(429)
   })
 
   it('a malformed or guessable new PIN does not spend an attempt', async () => {
     const mgr = await makeUser({ role: 'foh_management', tenantId: tenantB, members: [tenantB] })
     for (let i = 0; i < 8; i++) {
-      expect((await call(mgr, 'POST', '/auth/pin/change', { password: PASSWORD, newPin: '1234' })).json().error.code).toBe('WEAK_PIN')
+      expect((await call(mgr, 'POST', '/auth/pin/change', { password: PASSWORD, newPin: '123456' })).json().error.code).toBe('WEAK_PIN')
     }
-    expect((await call(mgr, 'POST', '/auth/pin/change', { password: PASSWORD, newPin: '4862' })).statusCode).toBe(200)
+    expect((await call(mgr, 'POST', '/auth/pin/change', { password: PASSWORD, newPin: '486257' })).statusCode).toBe(200)
   })
 })
 

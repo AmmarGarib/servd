@@ -1048,6 +1048,8 @@ export async function addLotTx(tx: Tx, a: {
   brandShares?: Array<{ conceptId: string; share: number }>
   /** The lot's cost class when it is not the item's own (a prep lot keeps its inputs' class). */
   costClass?: CostClass
+  /** Use-by day (owner B6, 2026-10-26; a UTC-midnight Date of the Karachi day — lib/useBy.ts). Record only. */
+  useBy?: Date | null
 }): Promise<{ lotId: string; movementId: string; settled?: { valueCents: number }; issued?: { valueCents: number } }> {
   if (!a.lotSourceId || !a.movementSourceType || !a.movementSourceId) {
     throw new AppError('STOCK_MISSING_SOURCE', 'A stock lot needs its source document', 500)
@@ -1095,7 +1097,7 @@ export async function addLotTx(tx: Tx, a: {
       tenantId: item.tenantId, inventoryItemId: item.id, locationId: site,
       sourceType: a.lotSourceType, sourceId: a.lotSourceId, receiptLineId: a.receiptLineId ?? null,
       costClass, receivedAt: a.receivedAt, qtyIn: a.qty, remainingQty: a.qty, unitCostCents: a.unitCostCents,
-      valueInCents: value, remainingValueCents: value,
+      valueInCents: value, remainingValueCents: value, useBy: a.useBy ?? null,
     },
     select: { id: true },
   })
@@ -1312,7 +1314,7 @@ export async function transferInTx(tx: Tx, a: {
   const outs = await tx.stockMovement.findMany({
     where: { tenantId: item.tenantId, inventoryItemId: item.id, kind: 'transfer_out', sourceType: STOCK_SOURCE.transferShip, sourceId: a.transferId },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    select: { lotId: true, lotKey: true, qty: true, valueCents: true, unitCostCents: true, costClass: true, lot: { select: { receivedAt: true } } },
+    select: { lotId: true, lotKey: true, qty: true, valueCents: true, unitCostCents: true, costClass: true, lot: { select: { receivedAt: true, useBy: true } } },
   })
   // Price differences re-priced onto the units in transit (repriceLotTx: lot-less rows, lotKey 'reprice:<lotId>:…').
   const adjBySourceLot = new Map<string, number>()
@@ -1345,6 +1347,8 @@ export async function transferInTx(tx: Tx, a: {
         tenantId: item.tenantId, inventoryItemId: item.id, locationId: site, sourceType: 'transfer_in', sourceId: `${a.transferId}:${o.lotId}`,
         costClass: toClass, receivedAt: o.lot?.receivedAt ?? a.receivedAt, qtyIn: q, remainingQty: q, unitCostCents: unitCost,
         valueInCents: v, remainingValueCents: v,
+        // The use-by travels with the food (owner B6): the arrived lot keeps the shipped lot's day.
+        useBy: o.lot?.useBy ?? null,
       },
       select: { id: true },
     })
@@ -1405,4 +1409,21 @@ export async function transferOutRowsTx(tx: Tx, tenantId: string, transferId: st
     if (target) target.valueCents += toCents(r.valueCents)
   }
   return out
+}
+
+/**
+ * The use-by bell markers (owner B6, 2026-10-26): claim lots for one stage of the expiry notice — 'soon' (expires
+ * tomorrow) or 'expired' — so each lot is announced once per stage. Conditional (marker still null), so two runs never
+ * both claim a lot. Returns the ids claimed. Touches ONLY the marker columns (never quantity, value or use-by).
+ */
+export async function markUseByNotifiedTx(tx: Tx, a: { tenantId: string; lotIds: string[]; stage: 'soon' | 'expired'; at: Date }): Promise<string[]> {
+  if (a.lotIds.length === 0) return []
+  const claimed: string[] = []
+  for (const id of a.lotIds) {
+    const r = a.stage === 'soon'
+      ? await tx.stockLot.updateMany({ where: { id, tenantId: a.tenantId, useByWarnedAt: null }, data: { useByWarnedAt: a.at } })
+      : await tx.stockLot.updateMany({ where: { id, tenantId: a.tenantId, expiredWarnedAt: null }, data: { expiredWarnedAt: a.at } })
+    if (r.count > 0) claimed.push(id)
+  }
+  return claimed
 }

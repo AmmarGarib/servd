@@ -63,7 +63,7 @@ let cashierA: Who, cashierA2: Who, mgrA: Who, cashierB: Who, cashierN: Who
 let drawerA: string, drawerA2: string, drawerB: string, drawerN: string
 let acctA: { bankAccountId: string; ledgerCode: string }
 let acctB: { bankAccountId: string; ledgerCode: string }
-const PIN = '6143'
+const PIN = '614372'
 
 // 2 × Kheer: cash 1,265.00 / card (and Raast) 1,188.00.
 const CASH_TOTAL = 126_500

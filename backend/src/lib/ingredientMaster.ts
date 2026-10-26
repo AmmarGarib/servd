@@ -78,7 +78,8 @@ export function sameUnitFamily(a: string, b: string): boolean {
 }
 
 /** The definition fields a company's stock item takes FROM its master (its unit only needs the master's FAMILY). */
-export const MASTER_FIELDS = ['category', 'allergens', 'yieldPct', 'purchaseUnit', 'purchaseUnitFactor'] as const
+// perishable + shelfLifeDays (owner B6, 2026-10-26): use-by dates on deliveries — the definition is servd's.
+export const MASTER_FIELDS = ['category', 'allergens', 'yieldPct', 'purchaseUnit', 'purchaseUnitFactor', 'perishable', 'shelfLifeDays'] as const
 export type MasterField = (typeof MASTER_FIELDS)[number]
 
 /** A master's buying-unit factor (base units per buying unit) in an item's own stock unit. */
@@ -99,6 +100,8 @@ export interface MasterRow {
   purchaseUnitFactor: number
   spec: string | null
   specFields: Prisma.JsonValue | null
+  perishable: boolean
+  shelfLifeDays: number | null
   status: string
   mergedIntoId: string | null
 }
@@ -125,6 +128,8 @@ export interface NewMasterInput {
   purchaseUnitFactor?: number
   spec?: string | null
   specFields?: Record<string, string> | null
+  perishable?: boolean
+  shelfLifeDays?: number | null
 }
 
 /**
@@ -148,10 +153,11 @@ export async function findOrCreateMasterTx(
   // A buying unit typed against the item's own unit (a case of 24 kg) is kept in base units on the master.
   const factor = (input.purchaseUnitFactor ?? 1) * fam.perUnit
   const inserted = await db.$executeRaw`
-    INSERT INTO ingredient_masters (id, name, "normalizedName", "stockUnit", category, allergens, "yieldPct", "purchaseUnit", "purchaseUnitFactor", spec, "specFields", status, "createdByUserId", "createdInTenantId", "updatedAt")
+    INSERT INTO ingredient_masters (id, name, "normalizedName", "stockUnit", category, allergens, "yieldPct", "purchaseUnit", "purchaseUnitFactor", spec, "specFields", perishable, "shelfLifeDays", status, "createdByUserId", "createdInTenantId", "updatedAt")
     VALUES (${id}, ${name}, ${normalizedName}, ${stockUnit}, ${input.category ?? null}, ${input.allergens ?? []}::text[], ${input.yieldPct ?? 100},
             ${input.purchaseUnit?.trim() || null}, ${factor}, ${input.spec?.trim() || null},
-            ${input.specFields ? JSON.stringify(input.specFields) : null}::jsonb, ${status}, ${actor.userId}, ${actor.tenantId}, now())
+            ${input.specFields ? JSON.stringify(input.specFields) : null}::jsonb, ${input.perishable ?? false}, ${input.shelfLifeDays ?? null}::int,
+            ${status}, ${actor.userId}, ${actor.tenantId}, now())
     ON CONFLICT ("normalizedName", lower("stockUnit")) WHERE "mergedIntoId" IS NULL DO NOTHING`
   const row = inserted > 0
     ? await db.ingredientMaster.findUniqueOrThrow({ where: { id } })
@@ -229,7 +235,8 @@ export async function ensureCompanyItemForMasterTx(db: Db, tenantId: string, mas
   const existing = await findCompanyItemForMaster(db, tenantId, m)
   if (existing?.linked) return { id: existing.id, name: existing.name, unit: existing.unit, tenantId, created: false, linked: false }
   if (existing) {
-    const n = await db.inventoryItem.updateMany({ where: { id: existing.id, masterIngredientId: null }, data: { masterIngredientId: m.id } })
+    // The twin takes the master's use-by definition with the link (MASTER_FIELDS; owner B6).
+    const n = await db.inventoryItem.updateMany({ where: { id: existing.id, masterIngredientId: null }, data: { masterIngredientId: m.id, perishable: m.perishable, shelfLifeDays: m.shelfLifeDays } })
     if (n.count > 0) {
       const twin = await db.inventoryItem.findUniqueOrThrow({ where: { id: existing.id }, select: { category: true } })
       await db.auditLog.create({
@@ -257,8 +264,8 @@ export async function ensureCompanyItemForMasterTx(db: Db, tenantId: string, mas
   const name = base ? cleanIngredientName(m.name).replace(/ \(duplicate \d+\)$/i, '') : m.name
   const id = randomUUID()
   const inserted = await db.$executeRaw`
-    INSERT INTO inventory_items (id, "tenantId", name, unit, category, allergens, "yieldPct", "purchaseUnit", "purchaseUnitFactor", "masterIngredientId", kind, "updatedAt")
-    VALUES (${id}, ${tenantId}, ${name}, ${m.stockUnit}, ${m.category}, ${m.allergens}::text[], ${m.yieldPct}, ${m.purchaseUnit}, ${m.purchaseUnitFactor}, ${m.id}, 'stock', now())
+    INSERT INTO inventory_items (id, "tenantId", name, unit, category, allergens, "yieldPct", "purchaseUnit", "purchaseUnitFactor", "masterIngredientId", perishable, "shelfLifeDays", kind, "updatedAt")
+    VALUES (${id}, ${tenantId}, ${name}, ${m.stockUnit}, ${m.category}, ${m.allergens}::text[], ${m.yieldPct}, ${m.purchaseUnit}, ${m.purchaseUnitFactor}, ${m.id}, ${m.perishable}, ${m.shelfLifeDays}::int, 'stock', now())
     ON CONFLICT ("tenantId", "masterIngredientId") WHERE "deletedAt" IS NULL AND "masterIngredientId" IS NOT NULL DO NOTHING`
   if (inserted > 0) {
     if (base) {
@@ -283,5 +290,6 @@ export function itemFieldsFromMaster(m: MasterRow, itemUnit: string = m.stockUni
   return {
     category: m.category, allergens: m.allergens, yieldPct: m.yieldPct,
     purchaseUnit: m.purchaseUnit, purchaseUnitFactor: factorForItemUnit(m.purchaseUnitFactor, itemUnit),
+    perishable: m.perishable, shelfLifeDays: m.shelfLifeDays,
   }
 }

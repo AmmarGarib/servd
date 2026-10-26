@@ -63,6 +63,7 @@ import { addLotTx, ensureFifoReady, lockItemsTx, STOCK_SOURCE } from '../../lib/
 import { postGoodsReceiptTx } from '../accounting/inventoryPosting.js'
 import { writeRecordFilesTx, type DecodedRecordFile, type RecordFileMeta } from '../../lib/recordFiles.js'
 import { audit } from '../../lib/audit.js'
+import { useByForReceipt } from '../../lib/useBy.js'
 
 /** Line variance above this (either way) raises an exception flag. */
 export const RECEIVING_VARIANCE_THRESHOLD = 0.05   // 5%
@@ -112,7 +113,12 @@ export interface ReceiveGoodsInput {
     poQty?: number | null
     variancePct?: number | null
     notes?: string | null
+    /** Use-by day 'YYYY-MM-DD' (owner B6, 2026-10-26) — stored on the line's lots. See lib/useBy.ts. */
+    useBy?: string | null
   }>
+  /** The dock and the PO receive (owner B6): a perishable line with no shelf life must carry a use-by (422
+   *  USE_BY_REQUIRED). A cash buy (petty cash / cash request) records one only when typed or defaulted. */
+  requireUseBy?: boolean
   settledBy?: SettledBy
   /** Receipt extras the dock / PO routes record. */
   photoUrl?: string | null
@@ -194,7 +200,7 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
   const itemIds = [...new Set(input.lines.map((l) => l.inventoryItemId))]
   const items = await tx.inventoryItem.findMany({
     where: { id: { in: itemIds } },
-    select: { id: true, name: true, unit: true, tenantId: true, category: true, purchaseUnit: true, purchaseUnitFactor: true },
+    select: { id: true, name: true, unit: true, tenantId: true, category: true, purchaseUnit: true, purchaseUnitFactor: true, perishable: true, shelfLifeDays: true },
   })
   const itemById = new Map(items.map((i) => [i.id, i]))
   for (const id of itemIds) {
@@ -210,7 +216,8 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
   })
   const poLineById = new Map(poLines.map((p) => [p.id, p]))
 
-  interface Prepared { line: ReceiveGoodsInput['lines'][number]; item: NonNullable<ReturnType<typeof itemById.get>>; qty: number; unitCost: number | null; poLine: (typeof poLines)[number] | null }
+  interface Prepared { line: ReceiveGoodsInput['lines'][number]; item: NonNullable<ReturnType<typeof itemById.get>>; qty: number; unitCost: number | null; poLine: (typeof poLines)[number] | null; useBy: Date | null }
+  const receivedAtForUseBy = input.receivedAt ?? new Date()
   const prepared: Prepared[] = input.lines.map((l) => {
     const item = itemById.get(l.inventoryItemId)!
     if (!Number.isFinite(l.receivedQty) || l.receivedQty < 0) throw new AppError('INVALID_QTY', 'Received quantity must be zero or more', 400)
@@ -253,13 +260,15 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
       assertMoneyFits(Math.round(unitCost * qty), `${item.name} (quantity × unit cost)`)
     }
     if (exactValue != null) assertMoneyFits(exactValue, `${item.name}'s value`)
-    return { line: exactValue != null ? { ...l, valueCents: exactValue } : l, item, qty, unitCost, poLine }
+    // Use-by (owner B6): only for a line that brings stock in.
+    const useBy = qty > EPS ? useByForReceipt(item, l.useBy, receivedAtForUseBy, input.requireUseBy === true) : null
+    return { line: exactValue != null ? { ...l, valueCents: exactValue } : l, item, qty, unitCost, poLine, useBy }
   })
 
   // Every item's row, locked in id order, before the first lot is written.
   await lockItemsTx(tx, itemIds)
 
-  const receivedAt = input.receivedAt ?? new Date()
+  const receivedAt = receivedAtForUseBy
   let receipt: { id: string }
   try {
     receipt = await tx.goodsReceipt.create({
@@ -315,7 +324,7 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
       const lotArgs = {
         tenantId, inventoryItemId: p.item.id, kind: 'receipt' as const, lotSourceType: 'goods_receipt_line' as const,
         movementSourceType: STOCK_SOURCE.receiptLine, movementSourceId: rl.id, receiptLineId: rl.id,
-        locationId: input.locationId ?? null, receivedAt, createdById: input.receivedById,
+        locationId: input.locationId ?? null, receivedAt, createdById: input.receivedById, useBy: p.useBy,
       }
       // 1. Quantity a bill already charged for (oldest bill first): at the billed price.
       if (p.poLine && !settled) {
@@ -395,6 +404,8 @@ export interface ReceiveGoodsLine {
   notes?:             string | null
   /** No-PO lines: the unit typed — the item's purchase unit (e.g. "case") converts at the dock (quantity × factor). */
   unit?:              string | null
+  /** Use-by day 'YYYY-MM-DD' — required for a perishable item with no shelf life (owner B6, 422 USE_BY_REQUIRED). */
+  useBy?:             string | null
 }
 
 export interface ReceiveGoodsRequest {
@@ -433,6 +444,7 @@ interface PreparedLine {
   discrepancyReason: DiscrepancyReason | null
   notes:            string | null
   variancePct:      number | null
+  useBy:            string | null
 }
 
 export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveGoodsResult> {
@@ -508,6 +520,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
         quantityReceived: l.quantityReceived, unitCostCents: pl.unitCostCents,
         discrepancyReason: l.discrepancyReason ?? null, notes: l.notes ?? null,
         variancePct: outstanding > 0 ? (l.quantityReceived - outstanding) / outstanding : null,
+        useBy: l.useBy ?? null,
       })
     }
   } else {
@@ -540,6 +553,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
         expectedQty: null, orderedQty: null, alreadyReceived: 0,
         quantityReceived: l.quantityReceived, unitCostCents: l.unitCostCents,
         discrepancyReason: l.discrepancyReason ?? null, notes: l.notes ?? null, variancePct: null,
+        useBy: l.useBy ?? null,
       })
     }
   }
@@ -591,6 +605,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
       notes: input.notes ?? null,
       status: flagged.length > 0 ? 'disputed' : 'accepted',
       varianceFlag: flagged.length > 0,
+      requireUseBy: true,
       lines: prepared.map((l) => ({
         inventoryItemId: l.inventoryItemId,
         receivedQty:     l.quantityReceived,
@@ -601,6 +616,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
         poQty:           l.expectedQty,
         variancePct:     l.variancePct,
         notes:           l.notes,
+        useBy:           l.useBy,
       })),
     })
 

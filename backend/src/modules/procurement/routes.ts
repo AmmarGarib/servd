@@ -773,6 +773,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           // `discrepancyNotes` is the older name for the line note.
           discrepancyNotes:   z.string().max(200).optional(),
           notes:              z.string().max(200).nullable().optional(),
+          // Use-by day (owner B6, 2026-10-26): required for a perishable item with no shelf life (422 USE_BY_REQUIRED).
+          useBy:              z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'A use-by date is YYYY-MM-DD').nullable().optional(),
         })).min(1),
       }).parse(req.body)
       const photoFiles = decodeRecordFiles(body.photos ?? [], { allowOffice: false, stem: 'dock-photo' })
@@ -788,6 +790,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           quantityReceived:  l.quantityReceived,
           discrepancyReason: l.discrepancyReason ?? null,
           notes:             l.notes ?? l.discrepancyNotes ?? null,
+          useBy:             l.useBy ?? null,
         })),
       })
       return reply.status(201).send({ ok: true, status: result.poStatus, receipt: result.receipt, flagged: result.flagged, files: result.files })

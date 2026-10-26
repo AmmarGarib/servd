@@ -172,7 +172,8 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
     e.preventDefault()
     setErr(null); setDone(null); setIssued(null)
     if (!name.trim()) return setErr('Type their name.')
-    if (!practice && !email.trim()) return setErr('An email is required — it is how they sign in.')
+    // Floor staff sign in with a WhatsApp code — no email needed (owner C14).
+    if (!practice && !email.trim() && !needsPhone) return setErr('An email is required — it is how they sign in.')
     if (!role || !childRoles.includes(role)) return setErr('Pick a role.')
     if (needsPhone && phone.replace(/\D/g, '').length < 10) {
       return setErr('Add their mobile number — cashiers, servers and kitchen staff sign in with a code sent to it.')

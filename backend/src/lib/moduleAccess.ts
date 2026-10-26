@@ -595,6 +595,11 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // manager tier in, so without these a FOH/BOH manager who holds none of the
   // modules read the capital ledger, projections and tip pools.
   { prefix: '/finance',       anyOf: ['capital'] },
+  // Stock counts (owner C2, 2026-10-26: "Make my Module Access ticks apply to
+  // managers too"): /physical-counts had no module rule, so every manager tier
+  // counted whatever the CEO ticked. Callers: Inventory → Stock count
+  // (inventory) and Accounting → Opening stock count (accounting).
+  { prefix: '/crosschecks/physical-counts', anyOf: ['inventory', 'accounting'] },
   { prefix: '/projections',   anyOf: ['projections'] },
   // Tip pool pay (owner, 2026-10-17: "finance can pay tip pools with CEO's
   // approval"): the pay route admits 'accounting' too — the route itself

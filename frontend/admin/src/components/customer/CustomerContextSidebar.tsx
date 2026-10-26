@@ -14,6 +14,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect } from 'react'
 import { api } from '../../lib/api'
 import { NavIcon } from '../ui/NavIcon'
+import { GuestTagsPanel } from './GuestTagsPanel'
 
 interface CustomerContext {
   id: string
@@ -131,6 +132,8 @@ export function CustomerContextSidebar({ customerId, compact = false }: Props) {
           </div>
         )}
       </div>
+
+      <GuestTagsPanel customerId={customerId} />
 
       {/* ── Risk + flag bar ────────────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-1.5">

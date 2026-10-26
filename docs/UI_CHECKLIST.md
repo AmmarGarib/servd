@@ -26,6 +26,8 @@ screens).
 - [ ] No horizontal scroll of the PAGE at 390 px (wide tables scroll inside their own box).
 - [ ] 16 px side gutter on phone; nothing hidden under the floating menu / search / bell buttons or
       the bottom-left company switcher.
+- [ ] Tab labels stay on one line; a tab row too wide for the phone scrolls sideways (globals.css does
+      this for `border-b-2` tabs — use that pattern for tabs).
 - [ ] Buttons and controls wrap onto the next line instead of overflowing; tap targets ≥ 40 px.
 - [ ] Money right-aligned, tabular figures, never broken across two lines in the middle of a number
       ("PKR" may sit above the figure on phone; the figure itself stays on one line).

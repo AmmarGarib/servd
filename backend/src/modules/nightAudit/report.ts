@@ -12,6 +12,7 @@ import { toCents } from '../../lib/money.js'
 import { drawerExpectation } from '../../lib/drawer.js'
 import { cardDayGrossTx, cardSettlementSettings, dayNum } from '../reconciliation/cardPayouts.js'
 import type { CloseProblem } from './types.js'
+import { orderChannelOf } from '../../lib/orderChannel.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -75,7 +76,7 @@ export async function buildDailyReport(db: Db, tenantId: string, day: string, op
   const orders = await db.order.findMany({
     where: { concept: { tenantId }, deletedAt: null, status: { in: ['completed', 'refunded'] }, completedAt: at },
     select: {
-      id: true, conceptId: true, source: true, fulfilmentType: true, totalCents: true, discountCents: true, promoDiscountCents: true,
+      id: true, conceptId: true, source: true, rawPayload: true, fulfilmentType: true, totalCents: true, discountCents: true, promoDiscountCents: true,
       taxCents: true, serviceChargeCents: true, tipCents: true, deliveryFeeCents: true,
       concept: { select: { name: true } },
     },
@@ -91,7 +92,7 @@ export async function buildDailyReport(db: Db, tenantId: string, day: string, op
     const b = brand.get(o.conceptId) ?? { conceptId: o.conceptId, name: o.concept.name, orders: 0, netSalesCents: 0, taxCents: 0, totalCents: 0 }
     b.orders += 1; b.netSalesCents += n; b.taxCents += o.taxCents; b.totalCents += o.totalCents
     brand.set(o.conceptId, b)
-    bump(channel, o.source, o.totalCents)
+    bump(channel, orderChannelOf(o), o.totalCents)
     bump(fulfil, o.fulfilmentType, o.totalCents)
   }
 

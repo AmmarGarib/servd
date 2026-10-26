@@ -58,6 +58,7 @@ import { fmtPktDate, parsePktStartOfDay, parsePktEndOfDay } from '../accounting/
 import { refundShareOf, giftCardAppliedOf, saleBookingOf, voidSplitOf, netOfVoidRefunds, isSplitVoidRefund, type RefundShare, type SaleOrderFields } from '../accounting/orderPosting.js'
 import { tenderLabel } from '../../lib/tenders.js'
 import { codStatusOf } from '../../lib/cod.js'
+import { orderChannelOf, whatsappOrderWhere, WHATSAPP_CHANNEL } from '../../lib/orderChannel.js'
 
 export interface SalesQuery {
   /** Company scope — scopeTenantWhere(req, 'read'), or `{ tenantId }` in a worker. */
@@ -143,7 +144,8 @@ export function orderScope(q: SalesQuery): Prisma.OrderWhereInput {
     ...(!q.conceptId && q.conceptIds && { conceptId: { in: q.conceptIds } }),
     ...(q.locationId && { locationId: q.locationId }),
     // An unknown channel matches nothing (it used to be a free-text column).
-    ...(q.channel && { source: ORDER_SOURCES.has(q.channel) ? (q.channel as OrderSource) : { in: [] } }),
+    ...(q.channel === WHATSAPP_CHANNEL ? whatsappOrderWhere
+      : q.channel && { source: ORDER_SOURCES.has(q.channel) ? (q.channel as OrderSource) : { in: [] } }),
     ...(q.settlement && q.settlement !== 'all' && { settlementChannel: q.settlement === 'none' ? null : q.settlement }),
     concept: conceptScope(q),
   }
@@ -242,7 +244,7 @@ function legacyCardSaleCheck(): (orderId: string) => Promise<boolean> {
 const pktHour = (d: Date) => String((d.getUTCHours() + 5) % 24)
 
 function keyAt(by: BucketBy, at: Date, source: string): string {
-  if (by === 'channel') return source
+  if (by === 'channel') return source // already the channel (orderChannelOf)
   if (by === 'pktDay') return fmtPktDate(at)
   if (by === 'pktHour') return pktHour(at)
   return 'all'
@@ -287,6 +289,19 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   } else if (by === 'channel') {
     const rows = await prisma.order.groupBy({ by: ['source'], where, _sum: SALE_FIELDS, _count: true })
     for (const r of rows) addSale(slot(r.source), r._count, r._sum)
+    // WhatsApp orders are source 'servd' too: move them to their own bucket (B10).
+    const wa = await prisma.order.aggregate({ where: { AND: [where, whatsappOrderWhere] }, _sum: SALE_FIELDS, _count: true })
+    if (wa._count > 0) {
+      const web = slot('servd')
+      web.orders -= wa._count
+      web.gross -= (wa._sum.totalCents ?? 0) + (wa._sum.walletAmountCents ?? 0)
+      web.tax -= wa._sum.taxCents ?? 0
+      web.tips -= wa._sum.tipCents ?? 0
+      web.deliveryFees -= wa._sum.deliveryFeeCents ?? 0
+      web.discount -= (wa._sum.discountCents ?? 0) + (wa._sum.promoDiscountCents ?? 0)
+      addSale(slot(WHATSAPP_CHANNEL), wa._count, wa._sum)
+      if (web.orders === 0) buckets.delete('servd')
+    }
   } else {
     const rows = await prisma.order.findMany({ where, select: { ...SALE_FIELDS, completedAt: true, placedAt: true, source: true } })
     for (const o of rows) addSale(slot(keyAt(by, soldAt(o), o.source)), 1, o)
@@ -297,11 +312,11 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   //    a sale booked before ONL-05, whose revenue was the post-card total (R6-A).
   const cardsPaid = await prisma.giftCardRedemption.findMany({
     where: { amountCents: { gt: 0 }, order: where },
-    select: { amountCents: true, order: { select: { id: true, completedAt: true, placedAt: true, source: true } } },
+    select: { amountCents: true, order: { select: { id: true, completedAt: true, placedAt: true, source: true, rawPayload: true } } },
   })
   for (const r of cardsPaid) {
     if (!r.order || await isLegacyCardSale(r.order.id)) continue
-    slot(keyAt(by, soldAt(r.order), r.order.source)).gross += r.amountCents
+    slot(keyAt(by, soldAt(r.order), orderChannelOf(r.order))).gross += r.amountCents
   }
 
   // 2. Till comps on those orders — the shift close books them to 7030.
@@ -317,7 +332,7 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   //    the company's point value (lib/loyaltySettings.ts, as loyaltyPosting).
   const redeems = await prisma.loyaltyTransaction.findMany({
     where: { type: 'redeem', pointsDelta: { lt: 0 }, order: where },
-    select: { pointsDelta: true, order: { select: { completedAt: true, placedAt: true, source: true, concept: { select: { tenantId: true } } } } },
+    select: { pointsDelta: true, order: { select: { completedAt: true, placedAt: true, source: true, rawPayload: true, concept: { select: { tenantId: true } } } } },
   })
   const pointValue = new Map<string, number>()
   for (const r of redeems) {
@@ -325,7 +340,7 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
     const tenantId = r.order.concept.tenantId
     if (!tenantId) continue
     if (!pointValue.has(tenantId)) pointValue.set(tenantId, await calculatePointsValue(1, tenantId))
-    slot(keyAt(by, soldAt(r.order), r.order.source)).loyaltyRedeemed += Math.floor(Math.abs(r.pointsDelta)) * pointValue.get(tenantId)!
+    slot(keyAt(by, soldAt(r.order), orderChannelOf(r.order))).loyaltyRedeemed += Math.floor(Math.abs(r.pointsDelta)) * pointValue.get(tenantId)!
   }
 
   // 4. Refunds handed back in the period — each refund row is its own ledger
@@ -339,7 +354,7 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   //    postRefundPayment does.
   const refundOrder = {
     select: {
-      ...SALE_FIELDS, id: true, source: true,
+      ...SALE_FIELDS, id: true, source: true, rawPayload: true,
       payments: { where: { status: 'refunded' as const }, select: { id: true, amountCents: true, createdAt: true, gatewayMeta: true } },
       giftCardRedemptions: { select: { amountCents: true } },
     },
@@ -362,8 +377,8 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
     t.tips    -= share.tipCents
     t.deliveryFees -= share.deliveryFeeCents
   }
-  const addRefund = (at: Date, order: SaleOrderFields & { source: string }, prior: number, amount: number) =>
-    addShare(at, order.source, amount, refundShareOf(order, prior, amount))
+  const addRefund = (at: Date, order: SaleOrderFields & { source: string; rawPayload?: unknown }, prior: number, amount: number) =>
+    addShare(at, orderChannelOf(order), amount, refundShareOf(order, prior, amount))
   /** The order net of its exact void refunds, and the refunded amount that is not one of them. */
   const netOfVoids = <T extends SaleOrderFields & { payments: Array<{ amountCents: number; gatewayMeta: unknown }> }>(o: T) => ({
     order: netOfVoidRefunds(o, o.payments),
@@ -372,7 +387,7 @@ async function salesBuckets(q: SalesQuery, by: BucketBy): Promise<Map<string, Sa
   for (const p of refunds) {
     const at = p.processedAt ?? p.createdAt
     const split = voidSplitOf(p)
-    if (split) { addShare(at, p.order.source, Math.abs(p.amountCents), split); continue }
+    if (split) { addShare(at, orderChannelOf(p.order), Math.abs(p.amountCents), split); continue }
     // "Before this one" exactly as postRefundPayment orders them.
     const before = (r: { id: string; createdAt: Date }) =>
       r.createdAt.getTime() < p.createdAt.getTime() || (r.createdAt.getTime() === p.createdAt.getTime() && r.id < p.id)
@@ -464,7 +479,7 @@ export async function salesBySettlement(q: SalesQuery): Promise<{ rows: Array<Sa
   return { rows, combined }
 }
 
-/** Sales per order channel (pos / servd / cart / manual). */
+/** Sales per order channel (pos / servd / cart / manual / whatsapp — lib/orderChannel.ts). */
 export async function salesByChannel(q: SalesQuery): Promise<Array<SalesTotals & { source: string }>> {
   return Array.from(await salesBuckets(q, 'channel'))
     .map(([source, t]) => ({ source, ...t }))

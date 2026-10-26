@@ -5,11 +5,12 @@
 // its stock item (POST /inventory/from-master — the master's unit, category, allergens, yield and buying unit fill
 // it, K3) and hands that item back. "Add new ingredient" puts a name that is not there yet into servd's master at
 // once, flagged for review (K2), then does the same. Price, supplier and par stay the company's (Sourcing sheet).
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { INVENTORY_CATEGORY_OPTIONS } from '../../lib/stockUi'
 import { stockErrorText } from '../../lib/stockUi'
+import { AnchoredMenu } from '../ui/AnchoredMenu'
 
 export interface MasterRow {
   id: string
@@ -20,6 +21,9 @@ export interface MasterRow {
   yieldPct: number
   purchaseUnit: string | null
   purchaseUnitFactor: number
+  /** Use-by (owner B6, 2026-10-26): deliveries carry a use-by date; shelf life (days) defaults it. */
+  perishable?: boolean
+  shelfLifeDays?: number | null
   spec: string | null
   specFields: Record<string, string> | null
   status: 'approved' | 'needs_review'
@@ -43,15 +47,10 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
   const [adding, setAdding] = useState<{ unit: string; category: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const box = useRef<HTMLDivElement>(null)
+  const btn = useRef<HTMLButtonElement>(null)
+  const closeMenu = useCallback(() => setOpen(false), [])
 
   useEffect(() => { const t = setTimeout(() => setDebounced(q.trim()), 200); return () => clearTimeout(t) }, [q])
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [open])
 
   const { data: rows = [], isFetching } = useQuery<MasterRow[]>({
     queryKey: ['ingredient-master', 'search', debounced],
@@ -85,12 +84,12 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
   const exact = rows.some((r) => r.name.trim().toLowerCase() === q.trim().toLowerCase())
 
   return (
-    <div ref={box} className={`relative ${className}`}>
-      <button type="button" onClick={() => setOpen((o) => !o)} className={`${inputCls} w-full text-left truncate`} aria-haspopup="listbox" aria-expanded={open}>
+    <div className={`relative ${className}`}>
+      <button ref={btn} type="button" onClick={() => setOpen((o) => !o)} className={`${inputCls} w-full text-left truncate`} aria-haspopup="listbox" aria-expanded={open}>
         {label || <span className="text-s-muted">Search servd&rsquo;s ingredients…</span>}
       </button>
-      {open && (
-        <div className="absolute z-30 mt-1 w-[22rem] max-w-[90vw] rounded-lg border border-s-border bg-s-bg p-2 shadow-lg">
+      <AnchoredMenu anchor={btn} open={open} onClose={closeMenu} align="start" minWidth={352} role="group" maxHeight={480} className="!bg-s-bg !p-2">
+        <div>
           <input autoFocus value={q} onChange={(e) => { setQ(e.target.value); setAdding(null) }} placeholder="Type to search…" className={`${inputCls} w-full`} aria-label="Search ingredients" />
           <ul role="listbox" className="mt-2 max-h-64 overflow-y-auto">
             {rows.map((r) => (
@@ -130,7 +129,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
           )}
           {err && <p role="alert" className="mt-2 text-xs text-s-red">{err}</p>}
         </div>
-      )}
+      </AnchoredMenu>
     </div>
   )
 }

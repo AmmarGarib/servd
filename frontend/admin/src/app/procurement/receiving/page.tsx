@@ -44,7 +44,7 @@ interface Supplier { id: string; name: string }
 interface OutletLite { id: string; name: string; isActive?: boolean }
 interface OpenPoLine {
   id: string; inventoryItemId: string; quantityOrdered: number; quantityReceived: number; unitCostCents: number
-  inventoryItem: { id: string; name: string; unit: string }
+  inventoryItem: { id: string; name: string; unit: string; perishable?: boolean; shelfLifeDays?: number | null }
 }
 interface OpenPo {
   id: string; reference: string | null; supplierId: string; status: string; createdAt: string
@@ -52,7 +52,7 @@ interface OpenPo {
   supplier: { id: string; name: string }
   lines: OpenPoLine[]
 }
-interface InventoryItem { id: string; name: string; unit: string; unitCostCents: number | null; purchaseUnit?: string | null; purchaseUnitFactor?: number | null }
+interface InventoryItem { id: string; name: string; unit: string; unitCostCents: number | null; purchaseUnit?: string | null; purchaseUnitFactor?: number | null; perishable?: boolean; shelfLifeDays?: number | null }
 interface Receipt {
   id: string; poId: string | null; supplierId: string; receivedAt: string; status: string; varianceFlag: boolean
   lines: Array<{ id: string; description: string; receivedQty: number; unit: string }>
@@ -72,6 +72,10 @@ interface DraftLine {
   purchaseFactor?: number
   inPurchase?: boolean
   notes: string
+  /** Use-by (owner B6, 2026-10-26): a perishable item's line carries its use-by day (YYYY-MM-DD); a shelf life defaults it. */
+  perishable?: boolean
+  shelfLifeDays?: number | null
+  useBy?: string
 }
 
 const poLabel = (po: Pick<OpenPo, 'id' | 'reference'>) => po.reference ? `PO ${po.reference}` : `PO ${po.id.slice(0, 8).toUpperCase()}`
@@ -146,6 +150,7 @@ export default function ReceivingPage() {
         unitCostPkr: String(l.unitCostCents / 100),
         unit: l.inventoryItem.unit,
         notes: '',
+        perishable: !!l.inventoryItem.perishable, shelfLifeDays: l.inventoryItem.shelfLifeDays ?? null, useBy: '',
       })))
   }
 
@@ -169,6 +174,7 @@ export default function ReceivingPage() {
       description: it?.name ?? '',
       unit: it?.unit ?? '',
       unitCostPkr: it?.unitCostCents != null ? String(it.unitCostCents / 100) : '',
+      perishable: !!it?.perishable, shelfLifeDays: it?.shelfLifeDays ?? null, useBy: '',
     })
   }
   // Unit toggle (no-PO lines): quantity and cost are typed in the chosen unit, so convert what is already typed.
@@ -189,11 +195,14 @@ export default function ReceivingPage() {
 
   const adHocInvalid = !poId && lines.some((l) => !l.inventoryItemId || l.unitCostPkr.trim() === '' || !(Number(l.unitCostPkr) >= 0))
   const nothingArrived = !lines.some((l) => Number(l.receivedQty) > 0)
+  // A perishable line with no shelf life needs its use-by (the API answers 422 USE_BY_REQUIRED otherwise).
+  const useByMissing = lines.some((l) => l.perishable && !l.shelfLifeDays && Number(l.receivedQty) > 0 && !l.useBy)
   // Why Accept can't go through yet — shown once it is pressed (the button stays live).
   const problem = lines.length === 0 ? (poId ? 'Nothing is outstanding on this PO.' : 'Pick a PO or a supplier and add the lines that arrived.')
     : (!supplierId && !poId) ? 'Choose the supplier this delivery came from.'
     : adHocInvalid ? 'Pick an inventory item and enter the unit cost paid on every line.'
     : nothingArrived ? 'Enter the quantity received on at least one line (0 for what did not come).'
+    : useByMissing ? 'Enter the use-by date on every perishable line.'
     : null
 
   // Enter / the phone's Next key moves down the received-quantity boxes.
@@ -227,6 +236,7 @@ export default function ReceivingPage() {
         // Typed in the purchase unit: the server converts quantity × factor and cost ÷ factor. PO lines stay in stock units.
         ...(!l.poLineId && l.inPurchase && l.purchaseUnit ? { unit: l.purchaseUnit } : {}),
         notes: l.notes.trim() || null,
+        useBy: l.perishable && l.useBy ? l.useBy : null,
       })),
     }),
     onSuccess: (r) => {
@@ -436,6 +446,14 @@ export default function ReceivingPage() {
                   <p className="text-xs font-bold" style={{ color: flag ? 'var(--erp-warning)' : 'rgb(var(--fg-rgb) / 0.55)' }}>
                     {variance > 0 ? '+' : ''}{variance.toFixed(1)}% {flag ? '— will flag' : ''}
                   </p>
+                )}
+                {l.perishable && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <FieldLabel htmlFor={`useby-${l.key}`} className="whitespace-nowrap">Use by{l.shelfLifeDays ? '' : ' (required)'}</FieldLabel>
+                    <Input id={`useby-${l.key}`} type="date" value={l.useBy ?? ''} onChange={(e) => patchLine(l.key, { useBy: e.target.value })}
+                      className={fieldCls + ' w-auto'} aria-invalid={tried && !l.shelfLifeDays && Number(l.receivedQty) > 0 && !l.useBy} />
+                    {l.shelfLifeDays ? <span className="text-xs text-s-muted">Blank = today + {l.shelfLifeDays} day{l.shelfLifeDays === 1 ? '' : 's'} (shelf life)</span> : null}
+                  </div>
                 )}
                 <Input value={l.notes} onChange={(e) => patchLine(l.key, { notes: e.target.value })}
                   aria-label={`Note for ${l.description || 'this line'}`}

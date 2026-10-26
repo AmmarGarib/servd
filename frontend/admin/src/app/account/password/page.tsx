@@ -30,6 +30,9 @@ interface Account {
   mustChangePassword: boolean
   hasPin: boolean
   canHoldPin: boolean
+  /** Owner C1: a short (4–5 digit) PIN has been used — set a 6-digit one before `pinChangeBy`. */
+  pinChangeRequired?: boolean
+  pinChangeBy?: string | null
 }
 
 interface Session {
@@ -82,7 +85,7 @@ function AccountPasswordInner() {
           <PasswordSection first={first} onDone={() => { if (first) router.replace('/w') }} />
         ) : null}
 
-        {me?.canHoldPin && <PinSection hasPin={me.hasPin} />}
+        {me?.canHoldPin && <PinSection hasPin={me.hasPin} changeBy={me.pinChangeRequired ? me.pinChangeBy ?? null : null} />}
 
         {first && me?.mustChangePassword && (
           <button type="button" onClick={() => router.replace('/w')}
@@ -154,7 +157,7 @@ function PasswordSection({ first, onDone }: { first: boolean; onDone: () => void
   )
 }
 
-function PinSection({ hasPin }: { hasPin: boolean }) {
+function PinSection({ hasPin, changeBy }: { hasPin: boolean; changeBy: string | null }) {
   const qc = useQueryClient()
   const [proof, setProof] = useState('')     // current PIN, or the password for a first PIN
   const [pin, setPin] = useState('')
@@ -178,7 +181,7 @@ function PinSection({ hasPin }: { hasPin: boolean }) {
   function submit(e: React.FormEvent) {
     e.preventDefault()
     setErr(null); setDone(null)
-    if (!/^\d{4,8}$/.test(pin)) return setErr('A PIN is 4 to 8 digits.')
+    if (!/^\d{6,8}$/.test(pin)) return setErr('A PIN is 6 to 8 digits.')
     if (pin !== pin2) return setErr('The two PINs do not match.')
     save.mutate()
   }
@@ -186,6 +189,11 @@ function PinSection({ hasPin }: { hasPin: boolean }) {
   return (
     <section className="rounded-xl border border-s-border bg-s-surface p-4">
       <p className="text-sm font-bold">Manager-override PIN</p>
+      {changeBy && (
+        <p role="alert" className="mt-2 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-xs font-bold text-red-700">
+          Set a new 6-digit PIN. Your current PIN is shorter than 6 digits and stops working after {new Date(changeBy).toLocaleString()}.
+        </p>
+      )}
       <p className="text-xs text-s-muted mt-1">
         Typed at the till to approve an over-cap discount, void, comp, refund, petty-cash top-up or staff meal.
         {hasPin ? ' Enter your current PIN to change it.' : ' You have not set one yet — confirm with your password to choose it.'}
@@ -201,7 +209,7 @@ function PinSection({ hasPin }: { hasPin: boolean }) {
         )}
         <PasswordInput numeric value={pin} maxLength={8}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-          placeholder="New PIN (4–8 digits)" autoComplete="off" className={inputCls} />
+          placeholder="New PIN (6–8 digits)" autoComplete="off" className={inputCls} />
         <PasswordInput numeric value={pin2} maxLength={8}
           onChange={(e) => setPin2(e.target.value.replace(/\D/g, ''))}
           placeholder="Repeat new PIN" autoComplete="off" className={inputCls} />

@@ -34,8 +34,8 @@ const DAY = 24 * HOUR
 let app: FastifyInstance
 let A: Company, B: Company
 let hostA: Who, mgrA: Who, hostB: Who, mgrB: Who
-const PIN_A = '6143'
-const PIN_B = '8257'
+const PIN_A = '614372'
+const PIN_B = '825794'
 
 const call = (...args: Parameters<ReturnType<typeof caller>>) => caller(app)(...args)
 
@@ -122,10 +122,10 @@ describe('ONL-R2-03 — scheduledFor is bounded', () => {
   it('a past time is "now"', () => {
     expect(orderTime(new Date(now.getTime() - HOUR).toISOString(), now)).toEqual({ at: now, scheduled: false })
   })
-  it('more than 7 days ahead → 422 SCHEDULE_TOO_FAR', () => {
+  it('more than 3 days ahead → 422 SCHEDULE_TOO_FAR', () => {
     const far = new Date(now.getTime() + MAX_PREORDER_AHEAD_MS + MIN).toISOString()
     expect(() => orderTime(far, now)).toThrowError(expect.objectContaining({ code: 'SCHEDULE_TOO_FAR', statusCode: 422 }))
-    expect(() => orderTime(new Date(now.getTime() + 300 * DAY).toISOString(), now)).toThrow(/7 days/)
+    expect(() => orderTime(new Date(now.getTime() + 300 * DAY).toISOString(), now)).toThrow(/3 days/)
   })
   it('not a date → 400 INVALID_SCHEDULE', () => {
     expect(() => orderTime('tomorrow-ish', now)).toThrowError(expect.objectContaining({ code: 'INVALID_SCHEDULE', statusCode: 400 }))
@@ -357,7 +357,7 @@ describe('O-RV-1 / O-RV-2 — capacity: set aside what is already over, named ta
   let C: Company, D: Company
   let hostC: Who, mgrC: Who, hostD: Who, mgrD: Who
   let d4: string, d2: string
-  const PIN_D = '7391'
+  const PIN_D = '739154'
   const at = (days: number, hourUtc = 15) => { const d = new Date(Date.now() + days * DAY); d.setUTCHours(hourUtc, 0, 0, 0); return d.toISOString() }
   const book = (who: Who, co: Company, body: Record<string, unknown>) =>
     call(who, 'POST', '/reservations', { conceptId: co.conceptId, partySize: 4, guestName: 'Guest', ...body })

@@ -222,6 +222,22 @@ cd deploy && docker compose exec api npx prisma studio
 
 ---
 
+## Weekly Docker clean-up
+
+Old images and build cache pile up with every release. `docker-cleanup.ps1`
+removes unused images, stopped containers and build cache older than 7 days —
+never volumes (database / Redis data) and never an image a container uses.
+IT registers it once, in an Administrator PowerShell, from the `deploy` folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\register-docker-cleanup.ps1
+Start-ScheduledTask -TaskName "servd Docker clean-up"   # test it once
+```
+
+It then runs every Sunday at 04:00; the result is in `deploy\docker-cleanup.log`.
+
+---
+
 ## Updating the domain/URL
 
 If you change your domain or public URL:

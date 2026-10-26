@@ -4,7 +4,7 @@
 // category and a starter menu item. Each step writes to the API as the user
 // progresses so partial completion is durable.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -16,6 +16,7 @@ import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { NavIcon } from '../../components/ui/NavIcon'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
+import { AnchoredMenu } from '../../components/ui/AnchoredMenu'
 
 type StepKey = 'company' | 'brand' | 'location' | 'hours' | 'menu' | 'done'
 
@@ -1294,26 +1295,24 @@ function CopyMenu({ onCopyAll, onCopyWeekdays, onCopyWeekends }: {
   onCopyAll: () => void; onCopyWeekdays: () => void; onCopyWeekends: () => void
 }) {
   const [open, setOpen] = useState(false)
+  const btn = useRef<HTMLButtonElement>(null)
+  const closeMenu = useCallback(() => setOpen(false), [])
   return (
     <div className="relative">
-      <button type="button" onClick={() => setOpen((o) => !o)}
+      <button ref={btn} type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}
         className="text-[11px] text-white/55 hover:text-white px-2 py-1 rounded hover:bg-white/[0.05] transition-colors">
         ⎘ Copy to…
       </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-20 rounded-lg overflow-hidden min-w-[170px]"
-            style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.1)', boxShadow: '0 12px 28px rgb(var(--ink-rgb) / 0.18)' }}>
+      <AnchoredMenu anchor={btn} open={open} onClose={closeMenu} align="end" minWidth={170} className="!py-0">
+        <div>
             <button type="button" onClick={() => { onCopyAll(); setOpen(false) }}
               className="w-full text-left px-3 py-2 text-xs text-white/80 hover:bg-white/[0.05]">All days</button>
             <button type="button" onClick={() => { onCopyWeekdays(); setOpen(false) }}
               className="w-full text-left px-3 py-2 text-xs text-white/80 hover:bg-white/[0.05]">Weekdays (Mon–Fri)</button>
             <button type="button" onClick={() => { onCopyWeekends(); setOpen(false) }}
               className="w-full text-left px-3 py-2 text-xs text-white/80 hover:bg-white/[0.05]">Weekends (Sat–Sun)</button>
-          </div>
-        </>
-      )}
+        </div>
+      </AnchoredMenu>
     </div>
   )
 }

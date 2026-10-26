@@ -457,15 +457,17 @@ describe('social pages', () => {
   beforeAll(async () => {
     await setSetting('fb_page_id', 'page-1'); await setSetting('fb_page_token', 'live-token'); await setSetting('ig_user_id', 'ig-1')
   })
+  // The page is now a brand's approved connection (modules/socialConnections), passed in by the caller.
+  const page = { pageId: 'page-1', igUserId: 'ig-1', token: 'live-token' }
 
   it('live: posts to the Graph API; practice copy: a practice id and no call', async () => {
     fetchSpy.mockResolvedValue(new Response('{"id":"fb-post-1"}', { status: 200 }))
-    expect(await publishFacebookPost('hello', [])).toBe('fb-post-1')
+    expect(await publishFacebookPost('hello', [], page)).toBe('fb-post-1')
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     fetchSpy.mockClear()
     practice(true)
-    expect(await publishFacebookPost('hello', [])).toMatch(/^sandbox-/)
-    expect(await publishInstagramPost('hello', ['https://x/y.jpg'])).toMatch(/^sandbox-/)
+    expect(await publishFacebookPost('hello', [], page)).toMatch(/^sandbox-/)
+    expect(await publishInstagramPost('hello', ['https://x/y.jpg'], page)).toMatch(/^sandbox-/)
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 

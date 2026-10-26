@@ -40,7 +40,7 @@ export function activeAtOnce(inviterRole: UserRole | string, role: UserRole | st
  */
 export async function activationSideEffects(
   req: FastifyRequest,
-  user: { id: string; email: string | null; tenantId: string | null },
+  user: { id: string; email: string | null; tenantId: string | null; role?: UserRole | string | null },
   employeeId: string | null | undefined,
   opts: { sendPasswordLink?: boolean } = {},
 ): Promise<{ linkedEmployeeId: string | null; passwordLink: 'sent' | 'unavailable' | 'failed' }> {
@@ -55,7 +55,9 @@ export async function activationSideEffects(
   }
 
   let passwordLink: 'sent' | 'unavailable' | 'failed' = 'unavailable'
-  if (opts.sendPasswordLink !== false && user.email && await deliveryConfigured().catch(() => false)) {
+  // A floor login signs in with a WhatsApp code and never gets a password
+  // (owner C14, 2026-10-26: "Don't give floor staff passwords").
+  if (opts.sendPasswordLink !== false && !usesOtpLogin(user.role) && user.email && await deliveryConfigured().catch(() => false)) {
     try {
       const outcome = await requestPasswordReset(user.email, req.ip ?? null)
       passwordLink = outcome.email === 'sent' || outcome.whatsapp === 'sent' ? 'sent' : 'failed'

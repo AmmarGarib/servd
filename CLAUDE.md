@@ -273,6 +273,14 @@ module id must be placed in a workspace in the same change.
   /hr/letters/:key/word`, `GET /hr/letters/:key/word?employeeId|recordId`
   (filled; none = the blank file), `GET /:key/preview`, `GET /letters/fields`.
   Tests: `tests/hrLetterWord.test.ts`.
+- **Floor staff sign in with a code and use My HR (owner C14, 2026-10-26: "give them accounts for sign in
+  and hr submissions … Like leaves").** Already there: floor roles (`OTP_LOGIN_ROLES`) sign in to the admin
+  with a WhatsApp code; `/hr/me*` (leave, requests, locked payslips — own record only) is `ALL_STAFF`, ungated,
+  a personal page, and HR's floor invite is active at once and links the employee. Added: a floor login
+  needs NO email (`POST /auth/staff/invite` → 400 `EMAIL_REQUIRED` only for other roles; HR / Team /
+  Workforce forms follow), and activation never sends a floor login a password link
+  (`offboarding.ts activationSideEffects`) — floor staff never get a password. Tests:
+  `tests/ownerAuthAnswers.test.ts`.
 - **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
   also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
   (same scope as offboard; never `admin` / `owner` — 403 `REISSUE_CEO_ONLY`,
@@ -323,6 +331,12 @@ module id must be placed in a workspace in the same change.
   approval type is a provider in that module. `/hr/approvals` ("My
   approvals") redirects to `/ceo/approvals?type=hr_request`. Hand-over of
   approval types to head-office HODs comes with head office (after Monday).
+- **Module Access binds managers too (owner C2, 2026-10-26: "Make my Module Access ticks apply to managers
+  too").** `opex/moduleGate.ts moduleGateForNewRoles` exempts nobody (the CEO holds every module): OpEx
+  ('capital'), Positions ('staff_directory' | 'capital'), petty cash + deposit drops ('accounting'), the
+  staff-meal log; stock counts are a GATED_PREFIXES rule (`/crosschecks/physical-counts`: inventory |
+  accounting). No MODULE_GRANTS: defaults are unchanged, and a saved row lacking the module was the CEO's
+  untick (those managers were already refused the page). Box custodians keep their own paths.
 - **The sidebar and the server agree (wave 3, 2026-10-11).** A role whose
   modules include M can use M's pages (every read 200, the workspace's normal
   writes work); a role without M is refused server-side, not just hidden.
@@ -354,6 +368,40 @@ module id must be placed in a workspace in the same change.
   identity trail incl. `auth.login`, `auth.login_failed`, `auth.otp_login`,
   `auth.2fa_failed`, `auth.logout`. The books' trail
   (`/accounting/audit-log`) stays CEO + management only.
+- **Social pages are PER BRAND; Marketing connects, the CEO approves (owner
+  C18, 2026-10-26: "Approval goes thru me, marketing can connect").**
+  `SocialConnection` (`social_connections`, tenantId = the brand's company, RLS,
+  merge repoint; one `approved` + one `pending` per brand, partial uniques).
+  `modules/socialConnections/`: `GET /social-connections`, `POST
+  /:conceptId/connect` (MARKETING_TEAM holding `calendar` or `brands`; another
+  company's brand 404), the CEO's queue `GET /requests?status=pending`, `POST
+  /requests/:id/approve | reject {pageId}` (ADMIN_ONLY, 409
+  `CONNECTION_CHANGED` / `CONNECTION_NOT_PENDING`); approval type
+  `social_connection` (section ceo, never delegable). The OAuth callback keeps
+  its registered address `/integrations/social/callback`; a CEO's own connect is
+  the approval. ONLY an approved row posts (`approvedConnectionFor`, read by
+  `workers/socialPublish.ts` from the event's brand); until approval the brand's
+  previous approved page keeps posting. The page token is sealed with
+  `lib/secretBox.ts` (plain while no key; encrypted on the next read) — /health
+  `socialTokensAtRest`; responses carry `tokenHint` only. The old global
+  `fb_page_*` settings move once at boot to a `legacy` row used for NO brand
+  (the CEO gets a bell notice to reconnect per brand) — or, if servd has exactly
+  one live brand, to that brand's PENDING connection. Admin: Calendar → Social
+  pages (`/calendar/social`). Tests: `tests/socialCampaigns.test.ts`.
+- **Scheduled campaigns send; WhatsApp campaigns are off (owner B9 / C19,
+  2026-10-26: "I'll add per brand numbers as we scale ops").** `POST
+  /crm/campaigns/:id/schedule {scheduledAt}` / `/:id/cancel-schedule` (or
+  `scheduledAt` on create; ≥1 min ahead, ≤1 year; company-scoped 404).
+  `workers/campaignSchedule.ts` (every minute, per company, ≤5 a company a
+  tick) sends due ones through `modules/crm/campaignBroadcast.ts
+  claimAndBroadcast` — THE one sender, also behind "Send now": claim first
+  (exactly once, 409 `CAMPAIGN_ALREADY_SENT`), audience = the segment inside the
+  campaign's company (opt-outs / bans out), one `CampaignSend` per recipient,
+  email through `lib/notify.ts`, paced (`CAMPAIGN_SEND_PAUSE_MS`), practice copy
+  sends nothing. WhatsApp (and legacy 'sms') campaigns are refused to schedule
+  or send — 422 `WHATSAPP_CAMPAIGN_NEEDS_OWN_NUMBER` — and a due one is marked
+  failed: never on the shared sign-in-code number. Re-open only with a separate
+  campaign number.
 
 ## Director logins (owner, 2026-10-18)
 
@@ -667,6 +715,8 @@ Settings → Secrets and variables → Actions:
 | `PUBLIC_WS_URL` | Public WebSocket URL | `wss://api.servd.pk` |
 | `SENTRY_DSN_STOREFRONT` | (optional) Sentry DSN for storefront | |
 | `SENTRY_DSN_ADMIN` | (optional) Sentry DSN for admin | |
+| `GA_MEASUREMENT_ID` | (optional, owner 2026-10-26) The storefront's GA4 id (`G-XXXXXXXXXX`), a repo variable or secret; the workflow passes it as the `NEXT_PUBLIC_GA4_ID` build-arg. Unset = dark: no analytics script, no consent notice. Manual fallback: add `--build-arg NEXT_PUBLIC_GA4_ID=G-…` to the storefront build. | `G-ABC123XYZ9` |
+| `SENTRY_DSN_API` | **Box env, NOT a GitHub secret** (owner 2026-10-26) — put it in the box's `deploy/.env.production` (the API's env_file; not in compose `environment`, an empty value there would override it). Turns on Sentry error tracking in the API (`lib/errorTracking.ts`): 5xx from the Fastify error handler, unhandled rejections / uncaught exceptions; never 4xx, bodies, headers, cookies, phones or emails. Unset = off; never sent from a practice copy. | `https://…@o0.ingest.sentry.io/0` |
 | `GOOGLE_MAPS_API_KEY` | (optional) Maps JavaScript API key — switches the admin location pin picker from OpenStreetMap to Google tiles. Public/build-time: restrict it to the admin origin in Google Cloud. Without it the picker still works (OSM tiles + paste-a-Maps-link resolver). | `AIza…` |
 | `SERVD_SECRET_KEY` | **Box env, NOT a GitHub secret** — set it in the API container's environment on the box. AES-256-GCM key for stored integration secrets (POS connector API keys + webhook secrets, the WhatsApp gateway key), base64 of 32 bytes (`openssl rand -base64 32`). Never in the repo or the image. Without it no connector/WhatsApp key can be saved (503 `SECRET_KEY_MISSING`) and `/health` warns; losing it makes stored secrets unreadable (re-enter them). Once set, the WhatsApp key is encrypted on first read, so rolling the API back to a pre-connector image needs the WhatsApp key re-entered. | `q3J…=` |
 
@@ -842,6 +892,13 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   same-company manager PIN (`MANAGER_OVERRIDE_REQUIRED` /
   `INVALID_MANAGER_PIN`, 403); `approverId` always recorded. A cashier or
   server can never void alone. **Finance approves a whole-ticket cancel too** (owner, 2026-10-24: "Hasnain should also have manager pin to cancel ticket with reason"): `lib/roles.ts TICKET_CANCEL_APPROVERS` (override approvers + finance) on `POST /orders/:id/cancel` only — signed in or by PIN; finance approves no line void, refund, comp, discount or pay-out. Finance may set its own PIN (`canHoldOverridePin`).
+- **Manager PINs are 6–8 digits (owner C1, 2026-10-26: "Managers and CEO need at least 6 digits (short PINs
+  changed at next use)").** Every new override PIN (`managerPin.ts preparePin`: CEO create / edit,
+  `/auth/pin/change`) is 6–8 digits — 422 `PIN_TOO_SHORT`. A stored 4–5 digit PIN still approves: its first use
+  stamps `User.pinChangeRequiredAt` and tells the holder on the bell; `/auth/account` returns
+  `pinChangeRequired` / `pinChangeBy` (account page banner); `SHORT_PIN_GRACE_HOURS` (72) after that first
+  use it is refused (403 `PIN_CHANGE_REQUIRED`) until a new PIN is set. Kiosk PINs (HR) are not affected; the
+  5-tries / 15-minute lock is unchanged.
 - **No skip of real sales.** There is no per-document Skip, no date-range
   skip and no "skip held" at go-live. `skipped` is automatic only
   (prefiled_direct, zero_value per setting, zero_value_unsupported,
@@ -1958,6 +2015,37 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
 - **K7:** the old Component library is gone (`modules/components`, `/par-sheet/components`, module id `components`
   retired); its tables stay.
 - Tests: `ingredientMaster`, `recipeCompanyShare`, `kitchenFlow`.
+- **Kitchen stations: the F&B manager and the chef raise, the CEO approves (owner C3, 2026-10-26: "Approval
+  stays with me").** `POST /stations` / `PATCH /stations/:id` by `fnb_manager` / `boh_management` (with
+  `kds_config`) answer 202 `{ pendingApproval, request }` — a `StationChangeRequest` (tenantId = the brand's
+  company, RLS, merge repoint; one pending per station, 409 `STATION_CHANGE_PENDING`; 409 `NOTHING_TO_CHANGE`);
+  the CEO's own edit applies at once; delete stays the CEO's. Approval type `station_change` (section ceo,
+  never delegable; `stations/changeRequests.ts`, provider `stations/approvalProvider.ts`): approve re-runs the
+  station rules (`stations/rules.ts`) and applies in the claim's transaction; reject needs a note ≥10; the
+  requester may withdraw (`/requests/:id/cancel`). KDS config shows "Waiting for the CEO".
+- **Use-by dates (owner B6, 2026-10-26: "Use-by date on deliveries of perishable items, plus an expiring-soon list
+  and bell notice").** `perishable` + `shelfLifeDays` are the MASTER's definition (`IngredientMaster`), mirrored onto
+  linked items as MASTER_FIELDS (master PATCH, twin link, merge, new items; locked on a linked item — 422
+  `MASTER_FIELD_LOCKED`); an unlinked item (prep, legacy) keeps its own. `StockLot.useBy` (DATE, Karachi day;
+  `lib/useBy.ts`): the dock and PO receive require one on a perishable line with no shelf life (422
+  `USE_BY_REQUIRED`; `receiveGoodsTx requireUseBy`), else received day + shelf life; a cash buy records one only
+  when defaulted; a prep lot = the earliest use-by drawn (capped by the prep item's shelf life); a transfer's arrived
+  lot keeps the shipped lot's. Record + report only — FIFO order and costing never read it. `GET
+  /inventory/expiring?locationId&days=3` (`modules/inventory/expiring.ts`, siteScope, stock readers, no value for
+  the kitchen floor); Inventory → "Use-by" tab. Bell `stock.expiring` (worker `stockExpiry`, 07:10 PKT): once per
+  lot per stage (expires tomorrow / expired — markers written only by `stockLedger.ts markUseByNotifiedTx`), one
+  notice per outlet to the company's kitchen managers holding `inventory`. Migration `20261026170000_stock_use_by`;
+  tests `tests/stockUseBy.test.ts`.
+
+- **Open-items IT answers (owner, 2026-10-26).** Error tracking: `lib/errorTracking.ts`
+  (Sentry, `SENTRY_DSN_API`, scrubbed `beforeSend`, sandbox kind `error_report`; `captureServerError` is called
+  only for the 5xx fall-through of the error handler). **The WhatsApp gateway watchdog is the EXISTING
+  `workers/deliveryWatch.ts`** (never a second one): every 5 min, two confirmed bad runs → the existing WhatsApp /
+  email alert PLUS one bell notice (`integration.alert`, `bellGatewayState`) to every active CEO and IT login (one row
+  each, under the person's own company; dedupe per outage), one "back up" notice on recovery; state in Setting
+  `integrations.delivery.state`; `/health` `whatsappGateway` warn (cause + count only). No exception flag
+  (platform-wide, not a company's). Weekly Docker clean-up: `deploy/docker-cleanup.ps1` +
+  `register-docker-cleanup.ps1` (images / cache older than 7 days, never volumes; see WINDOWS-SETUP.md).
 
 ### Practice copy (owner, 2026-10-14)
 
@@ -2140,6 +2228,12 @@ Briefs: `.handoff/parked/2026-10-14/`.
   "Another servd kitchen" incident — never the details. The mirror columns
   `Customer.strikeCount / bannedAt / isBlacklisted` are not enforced on.
   Customer-facing copy says "your servd account".
+- **Managers correct a guest's phone / email (owner C20, 2026-10-26).** `POST /crm/customers/:id/contact
+  {phone?, email?, reason ≥10}` (`crm/contactCorrection.ts`; MANAGERS + the '/crm' module rule; a guest the
+  manager's companies served — else 404). Refuses a contact another guest holds (409 `PHONE_TAKEN` /
+  `EMAIL_TAKEN`), clears the changed contact's verification, revokes every session of the customer, sends
+  nothing, never touches a staff login; audit `customer.contact_change` (old → new, reason, actorRole). CRM
+  page: "Correct phone / email".
 - **Ban appeals** are an `OrderComplaint` of kind `ban_appeal` on the existing
   Complaints queue (no second table; `complaints/appeals.ts`; one queue, any
   company in the customer's history sees it). Customer routes
@@ -2379,6 +2473,20 @@ person and links there). Full list: `/me/notifications`. No phone push (owner:
   (`NON_WORKING_WEEKDAYS`, no bank-holiday calendar); once per day per
   company and reopen; run by the hourly `nightAuditSettle` worker after it
   settles (`nightAudit/service.ts notifyAwaitingSettlement`).
+- **HR digest and reminders (owner, 2026-10-26, B5a).** `hr/expiryDigest.ts` + worker `workers/hrDigest.ts`:
+  ONE `hr.digest` bell notice per recipient per ISO week per company (Setting `hr.digest.lastWeek:<tenantId>`
+  + dedupeKey; daily 09:00 PKT check so a down box catches up) built from the HR Lifecycle & Dues report
+  (`buildReport('lifecycle_dues')`: probation / contract ending within 30 days, CNIC within 90, overdue
+  included): HR logins holding `staff_hr` get the company list, each HOD (hodDepartmentOf's rule) their
+  department's. `hr.reminder`: an `hr_request` waiting on the same step 2+ days (since `updatedAt`) tells
+  `approverIdsFor`, again every 2 days, max 3 per record per step (dedupeKey `hr.reminder:<id>:<step>:<n>`).
+  Tests: `tests/hrFoodSafetyBell.test.ts`.
+- **Food safety overdue + inspector printout (owner, 2026-10-26, B7a).** `foodSafety/overdue.ts` + worker
+  `workers/foodSafetyOverdue.ts` (hourly): a unit with no reading for 24 h or a cleaning task past its
+  frequency window sends ONE `food_safety.overdue` notice per occurrence (dedupeKey on the last reading / clean)
+  to the company's manager, management, boh_management and fnb_manager logins holding `food_safety`.
+  `GET /food-safety/inspector-report?format=pdf|xlsx|csv&from&to&locationId` (default 30 days, caller's company
+  view, foreign outlet 404) through `lib/reportExport.ts`; "Print for inspector" on the page.
 
 ### Payroll pay basis (owner HR-1 / HR-2, 2026-10-16)
 
@@ -2644,6 +2752,25 @@ change a route only together with that file). Binding rules:
   on live; 34 tables (HR back office, fiscal documents, receivables, wallets…)
   have no policy; `group_orders` / `group_order_members` policies recurse
   (42P17). Fix those before ever switching live to a non-owner role.
+- **Company lock gaps closed (owner F13 (a), 2026-10-26: "Fix those, then
+  switch live to a non-owner login with the lock on").** Migration
+  `20261026140000_rls_gap_close`: every table with `tenantId` has RLS + a
+  policy (the RLS job's `rlsMode.test.ts` fails on a new one without);
+  group-order policies use SECURITY DEFINER helpers (no 42P17); the helpers
+  read `'__service__'` as unset, so the non-owner login MUST carry
+  `ALTER ROLE … SET app.tenant_ids / app.customer_id = '__service__'`.
+  A pre-auth path (webhook, token link) looks its token up with
+  `serviceClient`, then `setRlsContext({ tenantIds: [proven company] })`;
+  a write stamped with another company (exception flags, a new company)
+  goes through `serviceClient`; a system write triggered from a customer's
+  request (the order's stock draw, loyalty postings) runs in the ORDER's
+  company (`runWithRlsContext`) or on `serviceClient`. Under RLS Postgres
+  hides a unique violation's key (Prisma P2002 `target` is null) — never
+  branch on it alone. ~90 policies still admit any staff request of any
+  company (`app_has_any_tenant()`); tightening them is the follow-up.
+  `entrypoint.sh` takes an optional
+  `MIGRATE_DATABASE_URL` (owner) for migrations. IT runbook:
+  `backend/tests/rls/NON_OWNER_SWITCH.md` — live not switched yet.
 - **Look-and-feel (16 Oct answers):** finance pages use the shared parts in
   `components/finance/ui` (`Field`, `Input`, `Select`, `Button`, `Dialog`,
   `SidePanel`, `LinkButton`); `.s-input` is full width, so a toolbar / table
@@ -2652,6 +2779,24 @@ change a route only together with that file). Binding rules:
   emoji; empty states are `CompactEmptyState` (`tone="dark"` on kitchen
   screens). Storefront buttons in ordering / checkout use
   `--servd-btn-radius` (0.5rem) or `.servd-btn-rect`, never pills.
+
+- **Open-items answers (owner, 2026-10-26):** pre-orders at most **3 days** ahead (`MAX_PREORDER_AHEAD_DAYS` in
+  `storefront/serviceHours.ts`, the one constant; 422 `SCHEDULE_TOO_FAR`). Ban appeals are switched ON by migration
+  `20261026150200` only when the platform Setting was never set (the CEO can still switch off). The brand "G's Kitchen"
+  (owner's test kitchen) is hidden from the public site by data migration `20261026150100` (`storefrontVisible` false;
+  not deleted). **WhatsApp is its own sales channel:** `lib/orderChannel.ts orderChannelOf` / `whatsappOrderWhere` is the
+  ONE "channel of an order" (source `servd` + `rawPayload.channel 'whatsapp'`); `salesByChannel`, `/reports/by-source`,
+  the director view, the daily-sales email and the night-audit report read it — never group by `source` alone. **Guest tags
+  are a per-company list** (`GuestTagType`, `tenantId`, unique by normalised name; `/reservations/guest-tag-types`
+  GET any staff / POST+PATCH managers; admin Configuration -> Guest tags; picked on the guest card via
+  `GuestTagsPanel`; `POST /reservations/guest-tags {tagTypeId}` 422 `TAG_SWITCHED_OFF` / `TAG_NOT_IN_ACTIVE_COMPANY`,
+  409 `TAG_NAME_TAKEN` / `TAG_ALREADY_ON_GUEST`; a typed tag is visible only to its company; legacy free-form tags
+  have no company). Tests: `tests/guestTagsChannels.test.ts`. **Dashboard starter numbers (C4):** `GET /dashboards/:id/numbers`
+  (`modules/dashboards/routes.ts`, id ceo | operations | finance | marketing | hr; needs the module of that dashboard's
+  page; company view = `resolveTenantScope`; each number from an existing report / table; money only to
+  FINANCIALS_VIEWERS, others get `hidden`; a failing source = `value: null` + `reason`). Fixed sets, no per-person
+  storage yet; the admin tiles are `components/ui/DashboardTiles.tsx`. Payroll vs budget stays empty (no budget exists).
+  A new number is added in that file's `sets` — read from an existing function. Tests: `tests/dashboardNumbers.test.ts`.
 
 ### Shift corrections (owner, 2026-10-21)
 
@@ -2843,6 +2988,17 @@ token-heavy, so:
   independent tool calls in one message instead.
 - The orchestrator spot-checks all agent output on the critical path;
   verification of money/tax/auth code is never delegated below `opus`.
+
+## UI / UX check on every screen (owner, 2026-10-26)
+
+"This sort of little UI/UX shit was supposed to be solved … put in md file to check UI/UX when we build
+new stuff." **`docs/UI_CHECKLIST.md` is part of done** for every new or changed screen: phone (390 px),
+tablet and laptop screenshots with every dropdown / menu / modal OPENED, long values, empty and error
+states. Every dropdown, menu, pop-over and suggestion list is built on
+`frontend/admin/src/components/ui/AnchoredMenu.tsx` (portal, fixed, kept on screen, flips up) — never an
+`absolute right-0` panel inside the page (the P&L Export menu opened half off the phone screen and under
+the tabs). Agents building UI get the checklist in their brief; the orchestrator screenshots before
+shipping.
 
 ## What NOT to do
 

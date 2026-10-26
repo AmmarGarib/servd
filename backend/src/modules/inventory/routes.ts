@@ -18,6 +18,7 @@ import { audit } from '../../lib/audit.js'
 import { unusedCleanupRoutes } from './unusedCleanup.js'
 import { MASTER_FIELDS, ensureCompanyItemForMasterTx, findOrCreateMasterTx, itemFieldsFromMaster, liveMaster, sameUnitFamily } from '../../lib/ingredientMaster.js'
 import { siteStockRoutes } from './siteStock.js'
+import { expiringRoutes } from './expiring.js'
 
 // ─── One ingredient master, per company (owner decision 30, 2026-09-27) ──────
 //
@@ -240,6 +241,10 @@ const createItemSchema = z.object({
   purchaseUnitFactor: z.number().positive().max(1_000_000).optional(),
   // Count schedule (2026-10-24): daily items appear on the count list every day, weekly ones on Mondays.
   countFrequency: z.enum(['daily', 'weekly']).optional(),
+  // Use-by (owner B6, 2026-10-26): perishable = deliveries carry a use-by date; shelf life (days) defaults it. A
+  // linked item takes both from its master (they seed a NEW master only).
+  perishable: z.boolean().optional(),
+  shelfLifeDays: z.number().int().min(1).max(3650).nullable().optional(),
   // Company the item belongs to. Optional — falls back to the operator's
   // active company. In portfolio view the frontend renders a Company picker
   // and posts the choice; it must be a company the operator belongs to.
@@ -271,6 +276,9 @@ const updateItemSchema = z.object({
   purchaseUnitFactor: z.number().positive().max(1_000_000).optional(),
   // Count schedule (2026-10-24): daily items appear on the count list every day, weekly ones on Mondays.
   countFrequency: z.enum(['daily', 'weekly']).optional(),
+  // Use-by (owner B6): editable here only on an item with no master (a prep item, a legacy row) — MASTER_FIELD_LOCKED.
+  perishable: z.boolean().optional(),
+  shelfLifeDays: z.number().int().min(1).max(3650).nullable().optional(),
   tenantId: z.string().min(1).optional(),
 })
 
@@ -421,6 +429,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       const master = picked ?? (await findOrCreateMasterTx(tx, {
             name: body.name, unit: body.unit, category: body.category ?? null, yieldPct: body.yieldPct,
             purchaseUnit: body.purchaseUnit ?? null, purchaseUnitFactor: body.purchaseUnitFactor,
+            perishable: body.perishable, shelfLifeDays: body.shelfLifeDays ?? null,
           }, { userId: req.staffUser!.id, tenantId }, 'needs_review')).master
       const taken = await tx.inventoryItem.findFirst({ where: { tenantId, masterIngredientId: master.id, deletedAt: null }, select: { id: true, name: true } })
       if (taken) throw new AppError('DUPLICATE_ITEM', `"${taken.name}" already exists in this company.`, 409, { inventoryItemId: taken.id })
@@ -989,4 +998,6 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   await fastify.register(unusedCleanupRoutes)
   // Stock by site (2026-10-24): the open sale shortfalls per site and on hand per site (siteStock.ts).
   await fastify.register(siteStockRoutes, { readers: STOCK_READERS, hideCosts: costsHiddenFor })
+  // Use-by (owner B6, 2026-10-26): GET /inventory/expiring.
+  await fastify.register(expiringRoutes, { readers: STOCK_READERS, hideCosts: costsHiddenFor })
 }

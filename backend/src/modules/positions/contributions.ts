@@ -13,7 +13,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import type { UserRole } from '@prisma/client'
@@ -95,7 +95,7 @@ const contributionSchema = z.object({
 // assertBothSidesOwned below).
 const CONTRIBUTION_READERS = Array.from(new Set([...MANAGERS, 'hr', 'finance'])) as UserRole[]
 // Same module rule as the Positions reads (HR 'staff_directory', finance
-// 'capital'); manager tiers unchanged (W3B-RV-1).
+// 'capital'); manager tiers too (owner C2, 2026-10-26).
 const CONTRIBUTION_READ_GUARD = [requireAuth(...CONTRIBUTION_READERS), moduleGateForNewRoles(['staff_directory', 'capital'])]
 
 /**
@@ -124,19 +124,25 @@ export async function contributionRoutes(fastify: FastifyInstance) {
     const tenants = await readableTenantIds(req)
     if (tenants.length === 0) return { incoming: [], outgoing: [] }
 
-    const all = await prisma.tenantContribution.findMany({
+    const rows = await prisma.tenantContribution.findMany({
       where: {
         OR: [
           { destinationTenantId: { in: tenants } },
           { sourceTenantId:      { in: tenants } },
         ],
       },
-      include: {
-        sourceTenant:      { select: { id: true, name: true, slug: true } },
-        destinationTenant: { select: { id: true, name: true, slug: true } },
-      },
       orderBy: [{ isActive: 'desc' }, { startedAt: 'desc' }],
     })
+    // The counterparty's name through serviceClient: under the company lock
+    // (RLS) a request cannot read another company's `tenants` row, so an
+    // include of it came back null. Only id / name / slug of rows this request
+    // already sees.
+    const partyIds = [...new Set(rows.flatMap((r) => [r.sourceTenantId, r.destinationTenantId]))]
+    const parties = new Map((partyIds.length ? await serviceClient.tenant.findMany({
+      where: { id: { in: partyIds } }, select: { id: true, name: true, slug: true },
+    }) : []).map((t) => [t.id, t]))
+    const party = (id: string) => parties.get(id) ?? { id, name: '', slug: '' }
+    const all = rows.map((r) => ({ ...r, sourceTenant: party(r.sourceTenantId), destinationTenant: party(r.destinationTenantId) }))
 
     // Planning counts only what countedContributions keeps: every active row,
     // except (after the head-office setup) a head_office row whose companies
