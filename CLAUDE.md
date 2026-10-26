@@ -601,12 +601,12 @@ the media (owner, 2026-10-12) — `showTitle` off keeps the title only as an
   first order must be at least PKR 500, and a referrer is capped at 10 payouts
   per 30 days. Held-back referrals stay unstamped so they can pay later.
 
-- **Dependencies (2026-10-23):** both Next.js apps are on 14.2.35, which still
-  carries advisories fixed only in Next 15.5.28+ (image optimizer RCE / DoS,
-  server-action DoS, rewrite SSRF). Mitigation until the Next 15 upgrade: the
-  image optimizer is OFF in both apps (`images: { unoptimized: true }`, nothing
-  uses `next/image`; `/_next/image` answers 404) — never re-add a wildcard
-  `remotePatterns` such as `*.r2.cloudflarestorage.com`. The API is on Fastify 5. Don't
+- **Dependencies (2026-10-23; Next 15 on 2026-10-26, owner F12):** both Next.js apps are on
+  **Next 15.5.28 + React 19.2.8** (pinned exactly; report and rollback in docs/NEXT15_UPGRADE.md —
+  `params` / `searchParams` / `cookies()` / `headers()` are async). The image optimizer stays OFF in
+  both apps (`images: { unoptimized: true }`, nothing uses `next/image`; `/_next/image` answers 404) —
+  never re-add a wildcard `remotePatterns` such as `*.r2.cloudflarestorage.com`; re-enable only for
+  our own media host. The API is on Fastify 5. Don't
   re-add `@fastify/jwt` (auth uses `jsonwebtoken`), `@fastify/multipart`
   (uploads go via the S3 presigner) or `@fastify/websocket` (realtime is
   socket.io) — they were removed as unused, and `@fastify/jwt` was the source

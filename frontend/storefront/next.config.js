@@ -78,11 +78,10 @@ const nextConfig = {
   experimental: {
     serverActions: { allowedOrigins: [SERVD_URL.host], bodySizeLimit: '2mb' },
   },
-  // The image optimizer (/_next/image) is OFF: nothing uses next/image, and
-  // Next 14 has unauthenticated RCE / DoS advisories in that endpoint (fixed
-  // only in 15.5.28+). The old remotePatterns allowed ANY R2 bucket
-  // (*.r2.cloudflarestorage.com), i.e. attacker-hosted files. Re-enable only
-  // after the Next 15 upgrade, and only for our own media host.
+  // The image optimizer (/_next/image) is OFF: nothing uses next/image. The
+  // old remotePatterns allowed ANY R2 bucket (*.r2.cloudflarestorage.com),
+  // i.e. attacker-hosted files. If it is ever needed, allow only our own
+  // media host (Next 15.5.28+ carries the optimizer fixes).
   images: { unoptimized: true },
   // These run before the middleware, the filesystem and the page, so they are
   // real 308s and also cover public files. (A redirect() called inside a page
