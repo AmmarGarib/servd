@@ -25,6 +25,7 @@ import { api } from '../../../lib/api'
 import { RecipeTestLog, type DraftAttempt } from '../../../components/recipe/RecipeTestLog'
 import { fmtPkrWhole } from '../../../lib/money'
 import { useKitchenRole } from '../../inventory/kitchenView'
+import { MasterIngredientPicker } from '../../../components/kitchen/MasterIngredientPicker'
 import { PACKAGING_USED_WHEN } from './KitchenRecipe'
 import { Select } from '@/components/ui/Select'
 import { FIcon } from '../../../components/finance/ui/icons'
@@ -121,6 +122,9 @@ export interface RecipeFormInitial {
   yieldGrams: number | null
   /** A prep's yield unit (g / ml / pcs) — its prep stock item's unit (2026-10-24). */
   yieldUnit?: 'g' | 'ml' | 'pcs'
+  /** A prep's "Portions per recipe" (kitchen flow, 2026-10-26) and what a portion is called. */
+  portionsPerBatch?: number | null
+  portionLabel?: string | null
   category: Category | null
   photoUrl: string | null
   steps: string | null
@@ -241,6 +245,9 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
   const [portions, setPortions]         = useState<number | null>(initial?.servings ?? 1)
   const [yieldGrams, setYieldGrams]     = useState<number | null>(initial?.yieldGrams ?? null)
   const [yieldUnit, setYieldUnit]       = useState<'g' | 'ml' | 'pcs'>(initial?.yieldUnit ?? 'g')
+  // Kitchen flow (owner, 2026-10-26): portions ONE batch of a prep makes — the par and the prep log count in them.
+  const [portionsPerBatch, setPortionsPerBatch] = useState<number | null>(initial?.portionsPerBatch ?? null)
+  const [portionLabel, setPortionLabel] = useState(initial?.portionLabel ?? '')
   // Sub-recipe MOP (free text). Plates use `methodSteps` instead.
   const [method, setMethod]             = useState(initial?.steps ?? '')
   // Finished-plate station-tagged method steps.
@@ -461,7 +468,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
         // none for an add-on (costed per unit).
         yieldGrams: kind === 'modifier' ? null : (yieldGrams ?? (kind === 'component' ? 0 : null)),
         // A prep counts its yield in grams, millilitres or pieces (a bun batch makes 24 pcs) — its stock item's unit.
-        ...(kind === 'component' ? { yieldUnit } : {}),
+        ...(kind === 'component' ? { yieldUnit, portionsPerBatch: portionsPerBatch && portionsPerBatch >= 1 ? Math.round(portionsPerBatch) : null, portionLabel: portionLabel.trim() || null } : {}),
         servings: kind === 'modifier' ? 1 : (portions ?? 1),
         // Recipe-type tag is derived from the picker (no duplicate field): a
         // finished plate is a "main"; a sub-recipe is a "sub_recipe".
@@ -582,13 +589,24 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                           <option value="">— Pick component —</option>
                           {availablePreps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </Select>
-                      ) : (
+                      ) : isPack ? (
                         <Select value={row.inventoryItemId}
                           onChange={(e) => updateRow(row.key, { inventoryItemId: e.target.value })}
                           className={inputCls + ' min-w-[150px]'}>
-                          <option value="">{isPack ? '— Pick packaging —' : '— Pick ingredient —'}</option>
+                          <option value="">— Pick packaging —</option>
                           {options.map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
                         </Select>
+                      ) : (
+                        // Kitchen flow (2026-10-26, K3): search servd's ingredient master; picking one makes sure this
+                        // company stocks it and fills its unit, category, yield and allergens; "Add new" joins the
+                        // master at once for review (K2).
+                        <MasterIngredientPicker className="min-w-[180px]"
+                          label={inventory.find((it) => it.id === row.inventoryItemId)?.name ?? ''}
+                          onPicked={(item) => {
+                            qc.setQueryData<InventoryItem[]>(['recipes', 'inventory'], (prev = []) => prev.some((it) => it.id === item.id) ? prev : [...prev, { ...(item as unknown as InventoryItem) }])
+                            void qc.invalidateQueries({ queryKey: ['recipes', 'inventory'] })
+                            updateRow(row.key, { inventoryItemId: item.id })
+                          }} />
                       )}
                     </div>
                   </td>
@@ -815,6 +833,12 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                       <option value="pcs">Pieces</option>
                     </Select>
                   </Field>
+                  <Field label="Portions per recipe" hint="How many portions one batch makes — the par and the prep log count in portions">
+                    <NumInput value={portionsPerBatch} onChange={setPortionsPerBatch} placeholder="e.g. 20" className={inputCls}/>
+                  </Field>
+                  <Field label="A portion is called" hint="Optional — e.g. bun, cup">
+                    <input value={portionLabel} onChange={(e) => setPortionLabel(e.target.value)} placeholder="portion" className={inputCls} maxLength={30} />
+                  </Field>
                 </>
               ) : null}
             </div>
@@ -842,6 +866,18 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                 <p className="text-s-dim">Total recipe cost</p>
                 <p className="font-mono font-bold text-s-text">{fmtPkrWhole(computed.totalRecipe)}</p>
               </div>
+              {kind === 'component' && (
+                <>
+                  <div className="text-xs">
+                    <p className="text-s-dim">Portions / recipe</p>
+                    <p className="font-mono font-bold text-s-text">{portionsPerBatch && portionsPerBatch >= 1 ? `${portionsPerBatch}${yieldGrams ? ` × ${(yieldGrams / portionsPerBatch).toLocaleString('en', { maximumFractionDigits: 1 })} ${yieldUnit}` : ''}` : '—'}</p>
+                  </div>
+                  <div className="text-xs">
+                    <p className="text-s-dim">Cost / portion</p>
+                    <p className="font-mono font-bold text-s-text">{portionsPerBatch && portionsPerBatch >= 1 ? fmtPkrWhole(Math.round(computed.totalRecipe / portionsPerBatch)) : '—'}</p>
+                  </div>
+                </>
+              )}
             </div>
             {/* The Q factor is the ONE pricing allowance (plate wear, garnish,
                 oil): it goes into menu pricing, never into stock or the books.
@@ -946,7 +982,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
           {previewError && (
             <div className="rounded-xl border p-3 text-xs" style={dangerBox}>{previewError}</div>
           )}
-          <CostPanel computed={computed} kind={kind} yieldGrams={yieldGrams} mc={preview.data ?? null} loading={preview.isFetching} />
+          <CostPanel computed={computed} kind={kind} yieldGrams={yieldGrams} portionsPerBatch={portionsPerBatch} mc={preview.data ?? null} loading={preview.isFetching} />
           {kind === 'plate' && <div className="rounded-xl border border-s-border bg-s-surface p-4 text-xs text-s-muted">
             <strong className="text-s-text">Heads-up:</strong> Live Opex/Portion isn't shown until save.
             The backend reads current OpexLine entries for {activeConcept?.name ?? 'your brand'} and divides by{' '}
@@ -1155,10 +1191,11 @@ export function McBreakdown({ mc, kind }: { mc: McFields; kind: Kind }) {
 
 // Pure cost — no pricing here. Recipes carry cost only; selling price,
 // contribution margin and profitability live on the Menu Engineering page.
-function CostPanel({ computed, kind, yieldGrams, mc, loading }: {
+function CostPanel({ computed, kind, yieldGrams, portionsPerBatch, mc, loading }: {
   computed: ComputedShape
   kind: Kind
   yieldGrams: number | null
+  portionsPerBatch?: number | null
   /** The server's preview of this draft (null until it answers). */
   mc: McFields | null
   loading: boolean
@@ -1182,6 +1219,8 @@ function CostPanel({ computed, kind, yieldGrams, mc, loading }: {
             <Line label="Batch cost" value={fmtPkrWhole(v.totalRecipe)} bold />
             <Line label="Batch yield" value={yieldGrams && yieldGrams > 0 ? `${yieldGrams.toLocaleString('en')} g` : 'set batch yield'} dim />
             <Line label="Cost per gram" value={cpg != null ? fmtPkrPerG(cpg) : '—'} bold highlight />
+            <Line label="Portions / recipe" value={portionsPerBatch && portionsPerBatch >= 1 ? String(portionsPerBatch) : 'not set'} dim />
+            <Line label="Cost / portion" value={portionsPerBatch && portionsPerBatch >= 1 ? fmtPkrWhole(Math.round(v.totalRecipe / portionsPerBatch)) : '—'} bold />
           </div>
           <p className="text-xs text-s-muted">
             This cost-per-gram flows automatically into any plate or sub recipe that uses this component.

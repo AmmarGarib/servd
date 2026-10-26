@@ -121,9 +121,9 @@ describe('module defaults after the CEO section (D2) and the approvals inbox (D3
   // food-cost variance report — fnb_manager, boh_management, finance) and
   // 'emergency_overrides' (the RGM, the chef, the F&B manager).
   const UNCHANGED: Record<string, string[]> = {
-    fnb_manager: ['fnb_dashboard', 'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'procurement', 'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders', 'emergency_overrides', 'complaints', 'reviews', 'staff_directory', 'finance_pl', 'accounting', 'reports', 'food_cost'],
+    fnb_manager: ['fnb_dashboard', 'dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'kds_dashboard', 'expo_station', 'menu', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'procurement', 'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders', 'emergency_overrides', 'complaints', 'reviews', 'staff_directory', 'finance_pl', 'accounting', 'reports', 'food_cost'],
     foh_management: ['dashboard', 'ops', 'orders', 'refunds', 'curbside', 'kds_all', 'expo_station', 'pos', 'reservations', 'reservations_admin', 'scheduling', 'tables', 'dispatch', 'riders', 'emergency_overrides', 'crm', 'complaints', 'reviews', 'campaigns', 'staff_directory', 'reports', 'integrations'],
-    boh_management: ['dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station', 'emergency_overrides', 'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'procurement', 'staff_directory', 'scheduling', 'reports', 'food_cost'],
+    boh_management: ['dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station', 'emergency_overrides', 'menu', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety', 'procurement', 'staff_directory', 'scheduling', 'reports', 'food_cost'],
     foh: ['pos', 'reservations', 'tables', 'dispatch', 'orders', 'curbside'],
     boh: ['kds_all', 'kds_dashboard', 'inventory', 'recipes', 'par_sheet', 'food_safety'],
     kitchen: ['kds_dashboard', 'par_sheet', 'food_safety'],

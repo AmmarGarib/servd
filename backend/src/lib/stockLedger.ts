@@ -391,6 +391,46 @@ export async function latestPurchaseCostCents(db: Db, itemId: string): Promise<n
   return h?.newCostCents ?? null
 }
 
+export interface LatestCost { cents: number | null; at: Date | null; source: 'receipt' | 'purchase' | 'manual' | 'estimate' | null }
+
+/**
+ * The LATEST cost of many items (owner, 2026-10-26: "Recipes cost at the LATEST cost"): the latest purchase price
+ * (latestPurchaseCostCents' rule — the latest receipt lot, re-priced by its bill, else the latest purchase row of
+ * ItemPriceHistory), else the latest manual cost entry, else the typed estimate (InventoryItem.unitCostCents of an
+ * item with neither). Recipe COSTING only (lib/recipeCost.ts withLatestCosts) — stock value, FIFO lots, cost of sales,
+ * food-cost actuals and everything posted stay FIFO at the price paid.
+ */
+export async function latestCostsMany(db: Db, itemIds: string[]): Promise<Map<string, LatestCost>> {
+  const out = new Map<string, LatestCost>()
+  const ids = [...new Set(itemIds)]
+  if (ids.length === 0) return out
+  const lots = await db.$queryRaw<Array<{ inventoryItemId: string; unitCostCents: number; receivedAt: Date }>>`
+    SELECT DISTINCT ON ("inventoryItemId") "inventoryItemId", "unitCostCents", "receivedAt"
+      FROM stock_lots WHERE "inventoryItemId" IN (${Prisma.join(ids)}) AND "sourceType" = 'goods_receipt_line'
+     ORDER BY "inventoryItemId", "receivedAt" DESC, "createdAt" DESC, id DESC`
+  for (const l of lots) out.set(l.inventoryItemId, { cents: Number(l.unitCostCents), at: l.receivedAt, source: 'receipt' })
+  const rest = ids.filter((id) => !out.has(id))
+  if (rest.length > 0) {
+    const hist = await db.$queryRaw<Array<{ inventoryItemId: string; newCostCents: number; recordedAt: Date; source: string }>>`
+      SELECT DISTINCT ON ("inventoryItemId", purchase) "inventoryItemId", "newCostCents", "recordedAt", source, purchase FROM (
+        SELECT h.*, (h.source IN (${Prisma.join([...PURCHASE_PRICE_SOURCES])})) AS purchase FROM item_price_history h
+         WHERE h."inventoryItemId" IN (${Prisma.join(rest)}) AND (h.source IN (${Prisma.join([...PURCHASE_PRICE_SOURCES])}) OR h.source = 'manual_adjust')
+      ) x ORDER BY "inventoryItemId", purchase, "recordedAt" DESC`
+    const purchase = new Map<string, LatestCost>()
+    const manual = new Map<string, LatestCost>()
+    for (const h of hist) {
+      const row: LatestCost = { cents: Number(h.newCostCents), at: h.recordedAt, source: h.source === 'manual_adjust' ? 'manual' : 'purchase' }
+      ;(h.source === 'manual_adjust' ? manual : purchase).set(h.inventoryItemId, row)
+    }
+    const typed = new Map((await db.inventoryItem.findMany({ where: { id: { in: rest } }, select: { id: true, unitCostCents: true } })).map((i) => [i.id, i.unitCostCents]))
+    for (const id of rest) {
+      const t = typed.get(id)
+      out.set(id, purchase.get(id) ?? manual.get(id) ?? { cents: t ?? null, at: null, source: t != null ? 'estimate' : null })
+    }
+  }
+  return out
+}
+
 /**
  * Stock value by class. Now: Σ open lot remainingValueCents. As of a date:
  * Σ movement valueCents with occurredAt ≤ asOf (the lot ledger replayed —

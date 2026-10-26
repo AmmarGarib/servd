@@ -10,12 +10,13 @@ import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { INVENTORY_CATEGORIES, costClassOf, COST_CLASSES } from '../../lib/inventoryClass.js'
 import { assertInt4Fits, sumCents, zInt4Cents } from '../../lib/money.js'
 import { stockSiteForDocument } from '../../lib/stockSite.js'
-import { consumeFifoTx, ensureFifoReady, lockItemsTx, reclassItemLotsTx, STOCK_SOURCE } from '../../lib/stockLedger.js'
+import { consumeFifoTx, ensureFifoReady, latestCostsMany, lockItemsTx, reclassItemLotsTx, STOCK_SOURCE, type LatestCost } from '../../lib/stockLedger.js'
 import { postInventoryDocInSavepoint, postItemReclassTx, WASTE_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
 import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { audit } from '../../lib/audit.js'
 import { unusedCleanupRoutes } from './unusedCleanup.js'
+import { MASTER_FIELDS, ensureCompanyItemForMasterTx, findOrCreateMasterTx, itemFieldsFromMaster, liveMaster, sameUnitFamily } from '../../lib/ingredientMaster.js'
 import { siteStockRoutes } from './siteStock.js'
 
 // ─── One ingredient master, per company (owner decision 30, 2026-09-27) ──────
@@ -243,6 +244,9 @@ const createItemSchema = z.object({
   // active company. In portfolio view the frontend renders a Company picker
   // and posts the choice; it must be a company the operator belongs to.
   tenantId: z.string().min(1).optional(),
+  // Kitchen flow (2026-10-26, K1/K3): the servd-wide master this item is. Absent = the master of the same name (and
+  // unit) — added as 'needs_review' when servd has none yet. The master's definition fills the item.
+  masterIngredientId: z.string().uuid().optional(),
 })
 
 // General partial edit (Sourcing Master Sheet name/unit/category/notes, the
@@ -280,6 +284,49 @@ function rejectStockWrites(body: unknown, { allowZero }: { allowZero: boolean })
   throw new AppError('STOCK_NEEDS_RECORD', STOCK_NEEDS_RECORD, 422)
 }
 
+/**
+ * A category change of an item of a company that moves it to another COST CLASS moves the value of its open lots
+ * with it (caller holds the item lock and has run ensureFifoReady): 'inventory.item_reclass:<itemId>:<auditLogId>'
+ * Dr new class / Cr old, one entry per old class; 409 RECLASS_NOT_POSTED when the ledger did not book what moved.
+ * Same class → nothing. Used by PATCH /inventory/:id and by the ingredient master's category change (each linked
+ * company's item, in its own transaction).
+ */
+export async function moveItemLotsToCategoryTx(tx: Prisma.TransactionClient, a: {
+  itemId: string; itemName: string; tenantId: string; fromCategory: string | null; toCategory: string | null; actor: { id: string; email?: string | null }
+}): Promise<void> {
+  const fromClass = costClassOf(a.fromCategory)
+  const toClass = costClassOf(a.toCategory)
+  if (fromClass === toClass) return
+  const auditRow = await tx.auditLog.create({
+    data: {
+      category: 'accounting', tenantId: a.tenantId, action: 'inventory.category_change', entity: 'InventoryItem', entityId: a.itemId,
+      userId: a.actor.id, userEmail: a.actor.email ?? null,
+      before: { category: a.fromCategory, costClass: fromClass }, after: { category: a.toCategory ?? null, costClass: toClass },
+    },
+    select: { id: true },
+  })
+  const moved = await reclassItemLotsTx(tx, {
+    tenantId: a.tenantId, itemId: a.itemId, toClass, sourceType: 'inventory.item_reclass', sourceId: auditRow.id, createdById: a.actor.id,
+  })
+  // One entry per old class. Lots of more than one class (left by an
+  // earlier race) each get their own key — one shared key made every
+  // class after the first a "replay" that posted nothing while its
+  // lots had already moved (stock-02).
+  const classes = COST_CLASSES.filter((c) => moved.byFromClass[c] !== 0)
+  for (const c of classes) {
+    const auditLogId = classes.length === 1 ? auditRow.id : `${auditRow.id}:${c}`
+    await postItemReclassTx(tx, { itemId: a.itemId, auditLogId, fromClass: c, toClass, valueCents: moved.byFromClass[c] })
+  }
+  if (classes.length > 0) {
+    const posted = await tx.journalEntry.count({
+      where: { tenantId: a.tenantId, reference: { startsWith: `inventory.item_reclass:${a.itemId}:${auditRow.id}` } },
+    })
+    if (posted !== classes.length) {
+      throw new AppError('RECLASS_NOT_POSTED', `${a.itemName}: the class change moved stock that the ledger did not book — nothing was changed`, 409)
+    }
+  }
+}
+
 export async function inventoryRoutes(fastify: FastifyInstance) {
   // GET /inventory — list with low-stock alerts. Scoped to the operator's
   // visible tenants. Items with no tenant assigned (legacy orphan rows)
@@ -298,6 +345,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
           VALUE_VIEWERS.has(req.staffUser!.role) ? onHandValueByItem(ids) : Promise.resolve(new Map<string, number>()),
         ])
     const showValue = !hide && VALUE_VIEWERS.has(req.staffUser!.role)
+    // The cost recipes are priced at (owner, 2026-10-26): the latest purchase / manual / typed cost — not the FIFO head.
+    const latest = hide ? new Map<string, LatestCost>() : await latestCostsMany(prisma, ids)
     // Per-site stock (2026-10-24): on hand at each outlet (currentStock stays the company total).
     const balances = ids.length === 0 ? [] : await prisma.stockBalance.findMany({ where: { inventoryItemId: { in: ids } }, select: { inventoryItemId: true, locationId: true, qty: true } })
     const bySite = new Map<string, Array<{ locationId: string; qty: number }>>()
@@ -306,6 +355,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       const row = {
         ...item,
         bySite: bySite.get(item.id) ?? [],
+        latestCostCents: latest.get(item.id)?.cents ?? null,
+        latestCostAt: latest.get(item.id)?.at ?? null,
         // 'deliveries' = the cost comes from FIFO lots / what deliveries cost;
         // 'opening' = a typed estimate for an item with neither.
         costSource: delivered.has(item.id) || withLots.has(item.id) ? 'deliveries' as const : 'opening' as const,
@@ -359,10 +410,27 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       throw new AppError('DUPLICATE_ITEM', `"${body.name.trim()}" already exists in this company.`, 409)
     }
 
-    const { tenantId: _bodyTenantId, ...rest } = body
+    const { tenantId: _bodyTenantId, masterIngredientId: pickedMaster, ...rest } = body
     const item = await prisma.$transaction(async (tx) => {
+      // K1/K3: every new stock item is a servd master's — the picked one, else the one of this name (new = needs_review).
+      // A picked master must be of the typed unit's family (kg ↔ g, never kg ↔ pcs) — the item keeps ITS unit.
+      const picked = pickedMaster ? await liveMaster(tx, pickedMaster) : null
+      if (picked && !sameUnitFamily(picked.stockUnit, body.unit)) {
+        throw new AppError('MASTER_UNIT_MISMATCH', `${picked.name} is kept in ${picked.stockUnit}; ${body.unit} is not a unit of the same kind`, 409)
+      }
+      const master = picked ?? (await findOrCreateMasterTx(tx, {
+            name: body.name, unit: body.unit, category: body.category ?? null, yieldPct: body.yieldPct,
+            purchaseUnit: body.purchaseUnit ?? null, purchaseUnitFactor: body.purchaseUnitFactor,
+          }, { userId: req.staffUser!.id, tenantId }, 'needs_review')).master
+      const taken = await tx.inventoryItem.findFirst({ where: { tenantId, masterIngredientId: master.id, deletedAt: null }, select: { id: true, name: true } })
+      if (taken) throw new AppError('DUPLICATE_ITEM', `"${taken.name}" already exists in this company.`, 409, { inventoryItemId: taken.id })
       const created = await tx.inventoryItem.create({
-        data: { ...rest, name: body.name.trim(), currentStock: 0, tenantId },
+        // The master fills the definition (K3); the typed unit and cost stay as typed (same family, never rescaled).
+        data: {
+          ...rest, ...itemFieldsFromMaster(master, body.unit),
+          ...(body.purchaseUnit != null && !master.purchaseUnit ? { purchaseUnit: body.purchaseUnit, purchaseUnitFactor: body.purchaseUnitFactor ?? 1 } : {}),
+          unit: body.unit, masterIngredientId: master.id, name: body.name.trim(), currentStock: 0, tenantId,
+        },
         include: { tenant: { select: { id: true, name: true, slug: true } } },
       })
       if (created.unitCostCents != null) {
@@ -373,6 +441,28 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       return created
     })
     return reply.status(201).send(item)
+  })
+
+  // POST /inventory/from-master {masterIngredientId} — the ACTIVE company's stock item for a servd master (kitchen
+  // flow, 2026-10-26, K3): the linked item when it has one (200), else an unlinked item of the same name and unit is
+  // linked, else one is made from the master's definition (201) — no price, supplier, par or stock (the company sets
+  // those on Sourcing / Inventory). Idempotent. Item keepers and recipe editors (picking an ingredient in a recipe).
+  fastify.post('/from-master', { preHandler: requireAuth(...ITEM_MASTER_EDITORS) }, async (req, reply) => {
+    const body = z.object({ masterIngredientId: z.string().uuid() }).parse(req.body)
+    const tenantId = req.staffUser!.tenantId
+    if (!tenantId) throw new AppError('NO_COMPANY', 'Pick the company this ingredient belongs to.', 422)
+    if (!req.staffUser!.memberTenantIds.includes(tenantId)) throw new ForbiddenError('You can only add stock items inside a company you belong to.')
+    const made = await prisma.$transaction((tx) => ensureCompanyItemForMasterTx(tx, tenantId, body.masterIngredientId))
+    // A twin linked here is audited by ensureCompanyItemForMasterTx itself (inventory.link_master, same transaction).
+    if (made.created) {
+      await audit({
+        category: 'identity', action: 'inventory.from_master', entity: 'InventoryItem', entityId: made.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId,
+        after: { masterIngredientId: body.masterIngredientId },
+      })
+    }
+    const item = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: made.id }, include: LIST_INCLUDE })
+    return reply.status(made.created ? 201 : 200).send({ ...(await shapeItems(req, [item]))[0], created: made.created })
   })
 
   // PATCH /inventory/:id — partial edit: name/unit/category/notes/par/yield/
@@ -415,6 +505,12 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         if (!req.staffUser!.memberTenantIds.includes(tenantId)) {
           throw new NotFoundError('Tenant', tenantId)
         }
+        // One live stock item per servd ingredient per company: the company already stocking this ingredient is a
+        // person's merge (the two stock items), never a second linked row (inventory_items_tenant_master_live_key).
+        if (item.masterIngredientId) {
+          const twin = await prisma.inventoryItem.findFirst({ where: { tenantId, masterIngredientId: item.masterIngredientId, deletedAt: null }, select: { id: true, name: true } })
+          if (twin) throw new AppError('MASTER_TWIN_EXISTS', `This company already stocks this ingredient as "${twin.name}" — merge the two stock items instead`, 409, { inventoryItemId: twin.id })
+        }
       }
       const holdsStock = assigning && item.currentStock > STOCK_EPS
       if (assigning) {
@@ -433,6 +529,23 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       }
       const finalTenant = tenantId ?? item.tenantId
       if (data.supplierId && finalTenant) await assertSupplierFits(data.supplierId, finalTenant)
+      // K1: a master-linked item takes its definition FROM the servd master — change it there (Operations → Ingredients).
+      if (item.masterIngredientId) {
+        const master = await prisma.ingredientMaster.findUnique({ where: { id: item.masterIngredientId }, select: { category: true } })
+        const changed = MASTER_FIELDS.filter((f) => {
+          const v = (data as Record<string, unknown>)[f]
+          if (v === undefined) return false
+          const cur = (item as Record<string, unknown>)[f]
+          // Never stuck (owner review N4): aligning the category to servd's is always allowed, and an item already
+          // filed differently from servd's ingredient (a linked twin) may still be re-filed by its company.
+          if (f === 'category' && master && (v === master.category || (item.category ?? null) !== (master.category ?? null))) return false
+          return Array.isArray(v) ? JSON.stringify(v) !== JSON.stringify(cur) : v !== cur
+        })
+        if (data.unit !== undefined && !sameUnitFamily(data.unit, item.unit)) changed.push('unit' as never)
+        if (changed.length > 0) {
+          throw new AppError('MASTER_FIELD_LOCKED', `${changed.join(', ')} come from servd's ingredient master — change ${changed.length === 1 ? 'it' : 'them'} on Operations → Ingredients`, 422, { fields: changed, masterIngredientId: item.masterIngredientId })
+        }
+      }
 
       // On an assignment with stock, unitCostCents is the opening unit cost
       // (the lot sets the item's cost) — never a typed estimate.
@@ -474,38 +587,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         const fresh = await tx.inventoryItem.findUniqueOrThrow({ where: { id: item.id }, select: { tenantId: true, category: true } })
         if (assigning && fresh.tenantId) throw new AppError('ITEM_HAS_COMPANY', 'This ingredient already belongs to a company.', 422)
         // A category change across cost classes on an item of a company: its lots move class.
-        const fromClass = costClassOf(fresh.category)
-        const toClass = data.category !== undefined ? costClassOf(data.category) : fromClass
-        const reclass = !!fresh.tenantId && fromClass !== toClass
-        if (reclass) {
-          const auditRow = await tx.auditLog.create({
-            data: {
-              category: 'accounting', tenantId: fresh.tenantId, action: 'inventory.category_change', entity: 'InventoryItem', entityId: item.id,
-              userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null,
-              before: { category: fresh.category, costClass: fromClass }, after: { category: data.category ?? null, costClass: toClass },
-            },
-            select: { id: true },
-          })
-          const moved = await reclassItemLotsTx(tx, {
-            tenantId: fresh.tenantId!, itemId: item.id, toClass, sourceType: 'inventory.item_reclass', sourceId: auditRow.id, createdById: req.staffUser!.id,
-          })
-          // One entry per old class. Lots of more than one class (left by an
-          // earlier race) each get their own key — one shared key made every
-          // class after the first a "replay" that posted nothing while its
-          // lots had already moved (stock-02).
-          const classes = COST_CLASSES.filter((c) => moved.byFromClass[c] !== 0)
-          for (const c of classes) {
-            const auditLogId = classes.length === 1 ? auditRow.id : `${auditRow.id}:${c}`
-            await postItemReclassTx(tx, { itemId: item.id, auditLogId, fromClass: c, toClass, valueCents: moved.byFromClass[c] })
-          }
-          if (classes.length > 0) {
-            const posted = await tx.journalEntry.count({
-              where: { tenantId: fresh.tenantId!, reference: { startsWith: `inventory.item_reclass:${item.id}:${auditRow.id}` } },
-            })
-            if (posted !== classes.length) {
-              throw new AppError('RECLASS_NOT_POSTED', `${item.name}: the class change moved stock that the ledger did not book — nothing was changed`, 409)
-            }
-          }
+        if (data.category !== undefined && fresh.tenantId) {
+          await moveItemLotsToCategoryTx(tx, { itemId: item.id, itemName: item.name, tenantId: fresh.tenantId, fromCategory: fresh.category, toCategory: data.category, actor: req.staffUser! })
         }
         const row = await tx.inventoryItem.update({
           where: { id: item.id },
@@ -555,6 +638,35 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       return opening ? { ...updated, openingCount: { id: opening.count.id, ledger: opening.ledger } } : updated
     },
   )
+
+  // GET /inventory/:id/price-history — the item's price history (owner, 2026-10-26: "the ingredient sheet shows price
+  // history"): the ONE store ItemPriceHistory, newest first — date, old → new cost per stock unit, % change, source
+  // (receipt / bill / manual cost edit) and supplier — plus the cost recipes use (latestCostsMany). The inventory
+  // route's own auth and company scope (another company's item 404); a kitchen floor role (costs hidden) gets none.
+  fastify.get<{ Params: { id: string }; Querystring: { limit?: string } }>('/:id/price-history', { preHandler: requireAuth(...ITEM_READERS) }, async (req) => {
+    const item = await prisma.inventoryItem.findFirst({
+      where: { id: req.params.id, deletedAt: null, ...(await inventoryTenantWhere(req)) },
+      select: { id: true, name: true, unit: true, masterIngredient: { select: { name: true } } },
+    })
+    if (!item) throw new NotFoundError('InventoryItem', req.params.id)
+    if (costsHiddenFor(req)) return { item: { id: item.id, name: item.name, unit: item.unit }, costsHidden: true, latest: null, rows: [] }
+    const limit = Math.min(Math.max(parseInt(req.query.limit ?? '100', 10) || 100, 1), 500)
+    const rows = await prisma.itemPriceHistory.findMany({
+      where: { inventoryItemId: item.id }, orderBy: { recordedAt: 'desc' }, take: limit,
+      select: { id: true, oldCostCents: true, newCostCents: true, source: true, recordedAt: true, supplier: { select: { id: true, name: true } } },
+    })
+    const latest = (await latestCostsMany(prisma, [item.id])).get(item.id) ?? null
+    const SOURCE: Record<string, string> = { po_receive: 'Receipt', dock_receive: 'Receipt', bill_match: 'Bill', manual_adjust: 'Manual cost edit' }
+    return {
+      item: { id: item.id, name: item.name, unit: item.unit, masterName: item.masterIngredient?.name ?? null },
+      latest: latest ? { costCents: latest.cents, at: latest.at, source: latest.source } : null,
+      rows: rows.map((r) => ({
+        id: r.id, at: r.recordedAt, oldCostCents: r.oldCostCents, newCostCents: r.newCostCents,
+        changePct: r.oldCostCents && r.oldCostCents > 0 ? Math.round(((r.newCostCents - r.oldCostCents) / r.oldCostCents) * 1000) / 10 : null,
+        source: r.source, sourceLabel: SOURCE[r.source] ?? r.source, supplier: r.supplier,
+      })),
+    }
+  })
 
   // GET /inventory/:id — one item, same shape as the list (404 for another
   // company's; company-less rows to managers only).

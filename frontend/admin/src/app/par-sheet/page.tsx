@@ -1,169 +1,202 @@
 'use client'
-import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
-import { useMemo, useState } from 'react'
+// Par board (owner, 2026-10-26 — kitchen flow K5: "Par = one count shown in PORTIONS"). Per outlet, per prep:
+// target portions (the day's par, or what the forecast needs if more), on hand (the prep's stock at this outlet —
+// counts down as sales deduct), made today, still to prep. "Log" records the prep shift's batch IN PORTIONS — that
+// entry IS the prep batch log (POST /crosschecks/prep-batches with actualPortions): its ingredients leave stock and
+// the prep comes in. "Set par" edits the daily par per weekday (kitchen managers), with the forecast's suggestion.
+// Every number: GET /kitchen/par-board and /kitchen/par-targets (modules/kitchen/prepPlan.ts — one engine).
+import { useState } from 'react'
 import Link from 'next/link'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { todayPktIso } from '../../lib/money'
+import { useManagerRoles } from '../../lib/roles'
+import { useAuthStore } from '../../store/auth'
+import { stockErrorText } from '../../lib/stockUi'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
+import { OutletPicker, todayIso, useOutlet } from '../../components/kitchen/useOutlet'
 
-/**
- * Master par sheet — the day's prep, per company.
- *
- * Lists the recipe library's sub-recipes that this company's brands use (owner
- * decision 29, 2026-09-27) and what was made of each today. "Made" comes from
- * prep batches: logging a batch on Inventory → Prep deducts its ingredients,
- * records the yield and shows up here — prep is recorded once, not typed onto
- * this sheet as well. The Component library (hero / supporting / trim-waste
- * matrix) is a read-only planning reference, linked below.
- */
-
-interface ParRow {
-  recipeId:        string
-  name:            string
-  category:        string | null
-  batchYieldGrams: number | null
-  batches:         number
-  madeGrams:       number
-  lastBatchAt:     string | null
+interface BoardRow {
+  recipeId: string; name: string; unit: string; portionLabel: string | null; portionSize: number | null
+  targetPortions: number | null; parPortions: number | null; needPortions: number | null
+  onHandPortions: number | null; madeTodayPortions: number | null; stillToPrepPortions: number | null
+  targetQty: number; onHandQty: number; madeTodayQty: number; stillToPrepQty: number
+  batchesMadeToday: number; lastBatchAt: string | null
 }
-
-function todayISO(): string {
-  return todayPktIso() // the Karachi day, not the UTC day
+interface TargetRow {
+  recipeId: string; name: string; unit: string; portionLabel: string | null; portionSize: number | null
+  targets: Array<number | null>; suggested: Array<number | null>
 }
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const n = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleString('en', { maximumFractionDigits: 1 }))
 
-function grams(g: number | null): string {
-  if (g == null) return '—'
-  return g >= 1000 ? `${(g / 1000).toLocaleString('en-PK', { maximumFractionDigits: 2 })} kg` : `${Math.round(g)} g`
-}
-
-export default function ParSheetPage() {
-  const [date, setDate]     = useState(todayISO())
-  const [filter, setFilter] = useState('')
-  const [madeFilter, setMadeFilter] = useState<'all' | 'made' | 'not-made'>('all')
-
-  const { data: rows = [], isLoading } = useQuery<ParRow[]>({
-    queryKey: ['par-sheet', date],
-    queryFn:  () => api.get<ParRow[]>(`/par-sheet?date=${date}`),
-    refetchInterval: 30_000,
-  })
-
-  const filtered = useMemo(() => rows.filter((r) => {
-    if (madeFilter === 'made' && r.batches === 0) return false
-    if (madeFilter === 'not-made' && r.batches > 0) return false
-    return !filter || r.name.toLowerCase().includes(filter.toLowerCase())
-  }), [rows, filter, madeFilter])
-
-  const notMade = rows.filter((r) => r.batches === 0).length
+export default function ParBoardPage() {
+  const { outlets, locationId, setLocationId } = useOutlet()
+  const [date, setDate] = useState(todayIso())
+  const [tab, setTab] = useState<'board' | 'par'>('board')
+  const role = useAuthStore((s) => s.user?.role) ?? ''
+  const canSetPar = useManagerRoles().has(role)
 
   return (
-    <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
-      <header className="px-6 py-4 border-b" style={{ borderColor: 'rgb(var(--fg-rgb) / 0.05)' }}>
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-white/95">Master Par Sheet</h1>
-            <p className="text-xs text-white/45 mt-0.5 max-w-2xl">
-              Sub-recipes your brands use and what was made today. Made comes from prep batches — log a batch on{' '}
-              <Link href="/inventory/prep" className="text-primary-ink underline">Prep</Link> and it shows here.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-              className="rounded-xl px-3 py-2 text-xs font-bold focus:outline-none"
-              style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }} />
-            <Link href="/inventory/prep"
-              className="rounded-xl px-3 py-2 text-xs font-bold"
-              style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.25)' }}>
-              Log a batch
-            </Link>
-            {rows.length > 0 && (
-              <div className="rounded-xl px-3 py-2 text-center"
-                style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
-                <p className="text-xs uppercase tracking-wider font-black text-s-red">Not made</p>
-                <p className="text-xl font-black text-s-red leading-none mt-0.5">{notMade}</p>
-              </div>
-            )}
-          </div>
+    <div className="min-h-screen bg-s-bg">
+      <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-success">Operations</p>
+          <h1 className="text-xl font-bold text-s-text">Par board</h1>
+          <p className="text-xs text-s-muted">Preps in portions — what to have, what is on hand, what is still to prep. See also the <Link href="/kitchen/prep-list" className="text-primary-ink underline">prep list</Link>.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <OutletPicker outlets={outlets} value={locationId} onChange={setLocationId} />
+          {tab === 'board' && <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="s-input w-auto" aria-label="Date" />}
         </div>
       </header>
-
-      <div className="px-6 py-4 flex items-center gap-3 flex-wrap">
-        <input value={filter} onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search sub-recipe…"
-          className="flex-1 min-w-[200px] max-w-sm rounded-xl px-4 py-2.5 text-sm font-semibold focus:outline-none"
-          style={{ background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', color: 'rgb(var(--fg-rgb) / 0.85)' }} />
-        <div className="flex gap-1 flex-wrap">
-          {([['all', `All (${rows.length})`], ['not-made', 'Not made'], ['made', 'Made']] as const).map(([k, label]) => (
-            <button key={k} onClick={() => setMadeFilter(k)}
-              className="rounded-full px-3 py-1 text-xs font-bold transition-colors"
-              style={madeFilter === k
-                ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', boxShadow: 'inset 0 0 0 1px var(--erp-accent)' }
-                : { background: 'rgb(var(--fg-rgb) / 0.04)', color: 'rgb(var(--fg-rgb) / 0.55)' }}>
-              {label}
-            </button>
-          ))}
-        </div>
+      <div className="px-6 pt-3 flex gap-1 text-sm" role="tablist">
+        {(['board', 'par'] as const).map((t) => (
+          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
+            className={`px-3 py-1.5 border-b-2 ${tab === t ? 'border-accent font-semibold text-s-text' : 'border-transparent text-s-muted'}`}>
+            {t === 'board' ? 'Today' : 'Set par'}
+          </button>
+        ))}
       </div>
+      <div className="p-6 max-w-6xl mx-auto">
+        {!locationId ? <CompactEmptyState message="No outlet yet. Add one under Locations." />
+          : tab === 'board' ? <Board locationId={locationId} date={date} /> : <ParTargets locationId={locationId} canEdit={canSetPar} />}
+      </div>
+    </div>
+  )
+}
 
-      <div className="px-6 pb-8">
-        {isLoading && <p className="text-sm text-white/40">Loading…</p>}
-
-        {!isLoading && filtered.length === 0 && (
-          <CompactEmptyState
-            message={rows.length === 0 ? 'No sub-recipes in use yet. They appear once a plate of one of your brands uses one.' : 'Nothing matches the filter.'}
-            action={rows.length === 0 ? { label: 'Open recipe library', href: '/accounting/recipes' } : undefined}
-          />
-        )}
-
-        {filtered.length > 0 && (
-          <div className="rounded-2xl overflow-x-auto"
-            style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-            <table className="w-full text-sm border-collapse min-w-[640px]">
-              <thead>
-                <tr style={{ background: 'var(--elevated)' }}>
-                  {['Sub-recipe', 'One batch', 'Made', 'Batches', 'Last batch', ''].map((h, i) => (
-                    <th key={i} className={`${i === 0 ? 'text-left px-4' : 'text-center px-3'} py-3 text-xs font-black uppercase tracking-[0.2em] text-white/45`}
-                      style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>{h}</th>
-                  ))}
+function Board({ locationId, date }: { locationId: string; date: string }) {
+  const qc = useQueryClient()
+  const { data, isLoading, error } = useQuery<{ rows: BoardRow[] }>({
+    queryKey: ['kitchen', 'par-board', locationId, date],
+    queryFn: () => api.get(`/kitchen/par-board?locationId=${locationId}&date=${date}`),
+    refetchInterval: 30_000,
+  })
+  const [made, setMade] = useState<Record<string, string>>({})
+  // Batches cooked — required with portions (the server never assumes 1: 400 BATCHES_REQUIRED).
+  const [batches, setBatches] = useState<Record<string, string>>({})
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const log = useMutation({
+    mutationFn: (r: BoardRow) => api.post('/crosschecks/prep-batches', { recipeId: r.recipeId, itemName: r.name, actualPortions: Number(made[r.recipeId]), batches: Number(batches[r.recipeId]), locationId }),
+    onSuccess: (_d, r) => {
+      setMsg({ ok: true, text: `${made[r.recipeId]} ${r.portionLabel ?? 'portions'} of ${r.name} logged.` })
+      setMade((m) => ({ ...m, [r.recipeId]: '' }))
+      setBatches((m) => ({ ...m, [r.recipeId]: '' }))
+      void qc.invalidateQueries({ queryKey: ['kitchen'] })
+    },
+    onError: (e) => setMsg({ ok: false, text: stockErrorText(e) }),
+  })
+  if (isLoading) return <p className="text-sm text-s-muted">Loading…</p>
+  if (error) return <p className="text-sm text-s-red">{stockErrorText(error)}</p>
+  const rows = data?.rows ?? []
+  if (rows.length === 0) return <CompactEmptyState message="No preps for this outlet's dishes yet." />
+  return (
+    <div className="space-y-3">
+      {msg && <p role="status" className={`text-sm ${msg.ok ? 'text-success' : 'text-s-red'}`}>{msg.text}</p>}
+      <div className="s-card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-xs text-s-muted">
+            <tr>
+              <th className="px-3 py-2 text-left">Prep</th>
+              <th className="px-3 py-2 text-right">Target</th>
+              <th className="px-3 py-2 text-right">On hand</th>
+              <th className="px-3 py-2 text-right">Made today</th>
+              <th className="px-3 py-2 text-right">Still to prep</th>
+              <th className="px-3 py-2 text-left">Log what the shift made</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const unitLabel = r.portionLabel ?? 'portions'
+              const noPortions = r.portionSize == null
+              return (
+                <tr key={r.recipeId} className="border-t border-s-border">
+                  <td className="px-3 py-2 text-s-text">
+                    {r.name}
+                    <span className="block text-[11px] text-s-muted">{noPortions ? 'No portions per recipe set' : `1 ${r.portionLabel ?? 'portion'} = ${n(r.portionSize)} ${r.unit}`}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono">{noPortions ? `${n(r.targetQty)} ${r.unit}` : n(r.targetPortions)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{noPortions ? `${n(r.onHandQty)} ${r.unit}` : n(r.onHandPortions)}</td>
+                  <td className="px-3 py-2 text-right font-mono">{noPortions ? `${n(r.madeTodayQty)} ${r.unit}` : n(r.madeTodayPortions)}</td>
+                  <td className={`px-3 py-2 text-right font-mono font-bold ${(r.stillToPrepQty ?? 0) > 0 ? 'text-s-text' : 'text-success'}`}>
+                    {noPortions ? `${n(r.stillToPrepQty)} ${r.unit}` : n(r.stillToPrepPortions)}
+                  </td>
+                  <td className="px-3 py-2">
+                    {noPortions ? <Link href={`/accounting/recipes/${r.recipeId}`} className="text-xs text-primary-ink underline">Set portions per recipe</Link> : (
+                      <div className="flex items-center gap-2">
+                        <input inputMode="decimal" value={batches[r.recipeId] ?? ''} onChange={(e) => setBatches((m) => ({ ...m, [r.recipeId]: e.target.value }))}
+                          placeholder="batches" className="s-input w-20" aria-label={`${r.name} batches cooked`} />
+                        <input inputMode="decimal" value={made[r.recipeId] ?? ''} onChange={(e) => setMade((m) => ({ ...m, [r.recipeId]: e.target.value }))}
+                          placeholder={unitLabel} className="s-input w-24" aria-label={`${r.name} made, in ${unitLabel}`} />
+                        <button type="button" disabled={!(Number(made[r.recipeId]) > 0) || !(Number(batches[r.recipeId]) > 0) || log.isPending} onClick={() => { setMsg(null); log.mutate(r) }}
+                          className="s-btn-primary px-3 py-1 text-xs font-bold disabled:opacity-40">Log</button>
+                      </div>
+                    )}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r) => (
-                  <tr key={r.recipeId} className="hover:bg-white/[0.02] transition-colors"
-                    style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.03)' }}>
-                    <td className="px-4 py-2.5">
-                      <p className="font-semibold text-white/90">{r.name}</p>
-                      {r.category && <p className="text-xs text-white/40 capitalize">{r.category.replace('_', ' ')}</p>}
-                    </td>
-                    <td className="px-3 py-2.5 text-center text-white/60 tabular-nums">{grams(r.batchYieldGrams)}</td>
-                    <td className="px-3 py-2.5 text-center font-bold tabular-nums"
-                      style={{ color: r.batches > 0 ? 'var(--erp-success)' : 'var(--erp-danger)' }}>
-                      {r.batches > 0 ? grams(r.madeGrams) : 'Nothing made'}
-                    </td>
-                    <td className="px-3 py-2.5 text-center text-white/60 tabular-nums">{r.batches}</td>
-                    <td className="px-3 py-2.5 text-center text-xs text-white/40">
-                      {r.lastBatchAt ? new Date(r.lastBatchAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' }) : '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      <Link href={`/inventory/prep?recipeId=${r.recipeId}`}
-                        className="text-xs font-bold px-2 py-1 rounded"
-                        style={{ background: 'rgb(var(--erp-primary-rgb) / 0.1)', color: 'var(--erp-primary-ink)' }}>
-                        Log batch
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="rounded-xl p-4 mt-4 text-xs text-white/45 leading-relaxed"
-          style={{ background: 'rgb(var(--ink-rgb) / 0.05)', border: '1px solid rgb(var(--ink-rgb) / 0.15)' }}>
-          Planning which trims and by-products each base ingredient can feed? The{' '}
-          <Link href="/par-sheet/components" className="text-primary-ink underline">component matrix</Link>{' '}
-          (hero / supporting / trim-waste per ingredient) is kept as a read-only reference.
-        </div>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
+      <p className="text-xs text-s-muted">Target is the day&rsquo;s par, or what the forecast needs when that is more. On hand counts down as dishes sell.</p>
+    </div>
+  )
+}
+
+function ParTargets({ locationId, canEdit }: { locationId: string; canEdit: boolean }) {
+  const qc = useQueryClient()
+  const { data, isLoading } = useQuery<{ rows: TargetRow[] }>({
+    queryKey: ['kitchen', 'par-targets', locationId],
+    queryFn: () => api.get(`/kitchen/par-targets?locationId=${locationId}`),
+  })
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const save = useMutation({
+    mutationFn: () => api.put('/kitchen/par-targets', {
+      locationId,
+      targets: Object.entries(draft).map(([k, v]) => {
+        const [recipeId, wd] = k.split('|')
+        return { recipeId, weekday: Number(wd), portions: v.trim() === '' ? null : Number(v) }
+      }),
+    }),
+    onSuccess: () => { setDraft({}); void qc.invalidateQueries({ queryKey: ['kitchen'] }) },
+  })
+  if (isLoading) return <p className="text-sm text-s-muted">Loading…</p>
+  const rows = data?.rows ?? []
+  if (rows.length === 0) return <CompactEmptyState message="No preps for this outlet's dishes yet." />
+  return (
+    <div className="space-y-3">
+      <div className="s-card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="text-xs text-s-muted">
+            <tr>
+              <th className="px-3 py-2 text-left">Prep (portions)</th>
+              {DAYS.map((d) => <th key={d} className="px-2 py-2 text-center">{d}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.recipeId} className="border-t border-s-border">
+                <td className="px-3 py-2 text-s-text">{r.name}<span className="block text-[11px] text-s-muted">{r.portionSize ? `1 ${r.portionLabel ?? 'portion'} = ${n(r.portionSize)} ${r.unit}` : 'No portions per recipe set'}</span></td>
+                {DAYS.map((_, wd) => {
+                  const k = `${r.recipeId}|${wd}`
+                  const v = draft[k] ?? (r.targets[wd] != null ? String(r.targets[wd]) : '')
+                  return (
+                    <td key={wd} className="px-1 py-2 text-center">
+                      <input value={v} disabled={!canEdit || !r.portionSize} inputMode="decimal" onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))}
+                        placeholder={r.suggested[wd] != null ? String(r.suggested[wd]) : ''} title={r.suggested[wd] != null ? `Forecast suggests ${r.suggested[wd]}` : undefined}
+                        className="s-input w-16 text-center" aria-label={`${r.name} par on ${DAYS[wd]}`} />
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-s-muted">Faint numbers are the forecast&rsquo;s suggestion for the coming week. Leave a day empty for no par.</p>
+      {save.error && <p role="alert" className="text-sm text-s-red">{stockErrorText(save.error)}</p>}
+      {canEdit && <button type="button" disabled={Object.keys(draft).length === 0 || save.isPending} onClick={() => save.mutate()} className="s-btn-primary px-5 py-2 font-bold disabled:opacity-40">Save par</button>}
     </div>
   )
 }

@@ -30,6 +30,7 @@ import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { inventoryRoutes } from '../src/modules/inventory/routes.js'
 import { recipeRoutes } from '../src/modules/recipes/routes.js'
 import { parSheetRoutes } from '../src/modules/par-sheet/routes.js'
+import { kitchenRoutes } from '../src/modules/kitchen/routes.js'
 import { foodSafetyRoutes } from '../src/modules/foodSafety/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
 import foodCostRoutes from '../src/modules/reports/foodCostRoutes.js'
@@ -38,6 +39,7 @@ let app: FastifyInstance
 let tenantA: string
 let tenantB: string
 let conceptA: string
+let locA: string
 let conceptB: string
 let beefA: string
 let beefB: string
@@ -79,6 +81,7 @@ beforeAll(async () => {
   invalidateSetupCache()
 
   conceptA = (await prisma.concept.create({ data: { name: 'W3 Diner A', slug: 'w3k-diner-a', type: 'restaurant', tenantId: tenantA } })).id
+  locA = (await prisma.location.create({ data: { slug: 'w3k-loc-a', name: 'W3 Outlet A', tenantId: tenantA } })).id
   conceptB = (await prisma.concept.create({ data: { name: 'W3 Diner B', slug: 'w3k-diner-b', type: 'restaurant', tenantId: tenantB } })).id
   const catA = (await prisma.category.create({ data: { conceptId: conceptA, name: 'Mains' } })).id
   const catB = (await prisma.category.create({ data: { conceptId: conceptB, name: 'Mains' } })).id
@@ -121,6 +124,7 @@ beforeAll(async () => {
   await app.register(inventoryRoutes, { prefix: '/inventory' })
   await app.register(recipeRoutes, { prefix: '/recipes' })
   await app.register(parSheetRoutes, { prefix: '/par-sheet' })
+  await app.register(kitchenRoutes, { prefix: '/kitchen' })
   await app.register(foodSafetyRoutes, { prefix: '/food-safety' })
   await app.register(crosschecksRoutes, { prefix: '/crosschecks' })
   await app.register(foodCostRoutes, { prefix: '/reports/food-cost' })
@@ -227,7 +231,8 @@ describe('kitchen / expediter / cashier: no inventory module, no stock; their ow
 
   it('par sheet and food safety (their default modules) answer 200', async () => {
     for (const who of ['lineA', 'expoA', 'cookA']) {
-      expect((await call(who, 'GET', '/par-sheet')).statusCode, who).toBe(200)
+      // The par board (kitchen flow, 2026-10-26) replaced the par sheet's list.
+      expect((await call(who, 'GET', `/kitchen/par-board?locationId=${locA}`)).statusCode, who).toBe(200)
       expect((await call(who, 'GET', '/food-safety/summary')).statusCode, who).toBe(200)
     }
   })

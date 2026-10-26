@@ -20,6 +20,8 @@ interface ExistingRecipe {
   servings: number
   yieldGrams: number | null
   yieldUnit?: 'g' | 'ml' | 'pcs'
+  portionsPerBatch?: number | null
+  portionLabel?: string | null
   portionSizeG: number | null
   category: string | null
   photoUrl: string | null
@@ -98,6 +100,8 @@ export default function EditRecipePage() {
     servings: data.servings,
     yieldGrams: data.yieldGrams,
     yieldUnit: data.yieldUnit,
+    portionsPerBatch: data.portionsPerBatch ?? null,
+    portionLabel: data.portionLabel ?? null,
     category: (data.category as RecipeFormInitial['category']) ?? null,
     photoUrl: data.photoUrl,
     steps: data.steps,

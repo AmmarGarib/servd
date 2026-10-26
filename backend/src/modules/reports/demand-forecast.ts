@@ -169,3 +169,52 @@ export async function getDemandForecast(opts: {
   // Sort by total predicted descending
   return forecasts.sort((a, b) => b.totalPredicted - a.totalPredicted)
 }
+
+// ─── One day, one outlet (kitchen flow, owner 2026-10-26) ────────────────────
+//
+// The prep list's demand (modules/kitchen/prepPlan.ts): per dish, the average sold on the SAME weekday (Karachi) over
+// the last 4 weeks — the rule getDemandForecast uses per day-of-week, without the weather overlay (the prep list must
+// be the same number every time it is opened). `locationId` narrows to orders rung at that outlet (a brand cooked at
+// more than one outlet); null = all the brand's orders.
+
+const PKT_MS = 5 * 3_600_000
+
+/** Karachi weekday (0 = Sunday) of a YYYY-MM-DD date. */
+export function pktWeekdayOf(date: string): number {
+  const [y, m, d] = date.split('-').map(Number)
+  return new Date(Date.UTC(y!, (m ?? 1) - 1, d ?? 1)).getUTCDay()
+}
+
+export async function forecastDishesForDay(o: {
+  conceptId: string
+  locationId?: string | null
+  weekday: number
+  /** End of the history window (default now). */
+  asOf?: Date
+}): Promise<Map<string, { name: string; qty: number }>> {
+  const asOf = o.asOf ?? new Date()
+  const historyDays = 28
+  const items = await prisma.orderItem.findMany({
+    where: {
+      status: { not: 'voided' },
+      menuItemId: { not: null },
+      order: {
+        conceptId: o.conceptId,
+        status: 'completed',
+        placedAt: { gte: new Date(asOf.getTime() - historyDays * 86_400_000), lte: asOf },
+        ...(o.locationId ? { locationId: o.locationId } : {}),
+      },
+    },
+    select: { menuItemId: true, name: true, quantity: true, order: { select: { placedAt: true } } },
+  })
+  const out = new Map<string, { name: string; qty: number }>()
+  for (const it of items) {
+    const dow = new Date(it.order.placedAt.getTime() + PKT_MS).getUTCDay()
+    if (dow !== o.weekday) continue
+    const cur = out.get(it.menuItemId!) ?? { name: it.name ?? '', qty: 0 }
+    cur.qty += it.quantity
+    out.set(it.menuItemId!, cur)
+  }
+  for (const v of out.values()) v.qty = v.qty / (historyDays / 7)
+  return out
+}

@@ -98,6 +98,8 @@ export const BRAND_CEO_FIELDS: readonly string[] = [
   'taxRate', 'taxRateCash', 'taxRateCard', 'province',
   'strn', 'ntn', 'invoiceLegalName', 'invoiceAddress', 'invoicePrefix', 'fbrPosId', 'srbPosId',
   'isActive', 'serviceVessel', 'forecastPortionsPerMonth', 'storefrontLayout',
+  // Kitchen flow (owner, 2026-10-26, K4): which company OWNS the brand's recipes (Flipd → GS Foods).
+  'recipeOwnerTenantId',
   ...KIT_CONCEPT_FIELDS,
 ]
 
@@ -315,6 +317,8 @@ const createConceptSchema = z.object({
 // every order is charged at taxRateCash / taxRateCard.
 const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).extend({
   isActive: z.boolean().optional(),
+  // K4: the company that owns this brand's recipes when it is not the brand's own (null = its own). CEO only.
+  recipeOwnerTenantId: z.string().min(1).nullable().optional(),
   storefrontLayout: z.array(z.record(z.string(), z.unknown())).optional().nullable(),
   // Public-facing contact — per brand (decision 18). Surfaces on the
   // storefront /visit page, schema.org Restaurant JSON-LD, the brand
@@ -549,6 +553,17 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your companies' } })
     assertNoCeoFieldChange(req, body as Record<string, unknown>, owned as unknown as Record<string, unknown>)
+    // K4: a recipe owner is one of the CEO's live trading companies; the brand's own company means "none".
+    if (body.recipeOwnerTenantId !== undefined) {
+      if (body.recipeOwnerTenantId === owned.tenantId) body.recipeOwnerTenantId = null
+      if (body.recipeOwnerTenantId) {
+        const t = await prisma.tenant.findFirst({ where: { id: body.recipeOwnerTenantId, deletedAt: null, kind: 'company' }, select: { id: true } })
+        if (!t || !req.staffUser!.memberTenantIds.includes(t.id)) {
+          throw new AppError('RECIPE_OWNER_NOT_IN_COMPANIES', 'The recipe owner must be one of your trading companies', 422)
+        }
+      }
+    }
+    const ownerChanges = body.recipeOwnerTenantId !== undefined && body.recipeOwnerTenantId !== owned.recipeOwnerTenantId
     const { storefrontLayout, ...rest } = body
     const data: Prisma.ConceptUpdateInput = { ...rest }
     if (storefrontLayout !== undefined) {
@@ -562,6 +577,19 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       // Kit row first, then the Concept — the publish path's order (fr-6).
       if (kitFieldsSent.length > 0) await lockKitRowTx(tx, { slug: owned.slug, tenantId: owned.tenantId })
       const c = await tx.concept.update({ where: { id: req.params.id }, data })
+      if (ownerChanges) {
+        // The brand's dish and add-on recipes move to the new owner (its own company when cleared). Sub-recipes keep
+        // their owner; stock and sales stay the brand's company's.
+        const newOwner = c.recipeOwnerTenantId ?? c.tenantId
+        await tx.recipe.updateMany({
+          where: { OR: [
+            { kind: 'plate', menuItem: { conceptId: c.id } },
+            { kind: 'plate', menuItemId: null, pendingMenuItem: { path: ['conceptId'], equals: c.id } },
+            { kind: 'modifier', modifier: { group: { menuItem: { conceptId: c.id } } } },
+          ] },
+          data: { tenantId: newOwner },
+        })
+      }
       if (kitFieldsSent.length > 0) {
         await refreshKitSnapshotTx(tx, { slug: owned.slug, tenantId: owned.tenantId },
           Object.fromEntries(kitFieldsSent.map((f) => [f, c[f]])))
@@ -582,6 +610,13 @@ export async function conceptRoutes(fastify: FastifyInstance) {
         metadata: {
           note: 'Applies to order lines rung up from now on. Lines already rung up keep the vessel snapshotted on them, so past food cost is not restated.',
         },
+      })
+    }
+    if (ownerChanges) {
+      await audit({
+        category: 'identity', action: 'concept.recipe_owner', entity: 'Concept', entityId: owned.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: owned.tenantId,
+        before: { recipeOwnerTenantId: owned.recipeOwnerTenantId }, after: { recipeOwnerTenantId: concept.recipeOwnerTenantId },
       })
     }
     const changedKeys = Object.keys(rest).filter((k) => (rest as Record<string, unknown>)[k] !== undefined)

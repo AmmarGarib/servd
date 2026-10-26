@@ -483,7 +483,7 @@ async function companyBlock(db: Db, tenantId: string, a: FoodCostQuery): Promise
     }
   }
   const soldMenuItemIds = [...new Set(orders.flatMap((o) => o.items.filter((i) => i.status !== 'voided' && i.menuItemId).map((i) => i.menuItemId!)))]
-  const plateCosts: Map<string, RecipeCost> = soldMenuItemIds.length ? await menuItemPlateCosts(soldMenuItemIds, db) : new Map()
+  const plateCosts: Map<string, RecipeCost> = soldMenuItemIds.length ? await menuItemPlateCosts(soldMenuItemIds, db, { tenantId }) : new Map()   // the SELLING company's own items (K4)
   const recipeRows = soldMenuItemIds.length === 0 ? [] : await db.recipe.findMany({
     where: { menuItemId: { in: soldMenuItemIds } },
     select: { id: true, menuItemId: true, status: true, targetFoodCostPct: true, menuItem: { select: { name: true } } },

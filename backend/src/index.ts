@@ -161,7 +161,8 @@ import { tenantRoutes } from './modules/tenants/routes.js'
 import { domainRoutes } from './modules/domains/routes.js'
 import { financePlanningRoutes } from './modules/financePlanning/routes.js'
 import { projectionsRoutes } from './modules/projections/routes.js'
-import { componentRoutes } from './modules/components/routes.js'
+import { ingredientMasterRoutes } from './modules/ingredientMaster/routes.js'
+import { kitchenRoutes } from './modules/kitchen/routes.js'
 import { setupRoutes } from './modules/setup/routes.js'
 import { crosschecksRoutes } from './modules/crosschecks/routes.js'
 import { trustopsRoutes } from './modules/trustops/routes.js'
@@ -527,7 +528,10 @@ async function build() {
       await api.register(domainRoutes,            { prefix: '/domains' })
       await api.register(financePlanningRoutes,   { prefix: '/finance' })
       await api.register(projectionsRoutes,       { prefix: '/projections' })
-      await api.register(componentRoutes,         { prefix: '/components' })
+      // Kitchen flow (owner, 2026-10-26): servd's one ingredient master (K1). The old Component library is gone (K7).
+      await api.register(ingredientMasterRoutes,  { prefix: '/ingredient-master' })
+      // The ONE prep list, par board, daily par, shopping list and spec list (modules/kitchen/prepPlan.ts).
+      await api.register(kitchenRoutes,           { prefix: '/kitchen' })
       await api.register(setupRoutes,             { prefix: '/setup' })
       await api.register(crosschecksRoutes,       { prefix: '/crosschecks' })
       await api.register(trustopsRoutes,          { prefix: '/trustops' })
@@ -1249,6 +1253,9 @@ async function build() {
   try {
     const { ensureAllPrepItems } = await import('./modules/inventory/prepItems.js')
     for (const r of await ensureAllPrepItems()) if (r.created) fastify.log.info(`[prep] ${r.tenantId}: ${r.created} prep item(s) created`)
+    const { flagRecipesWithoutCompany } = await import('./modules/inventory/prepItems.js')
+    const flagged = await flagRecipesWithoutCompany()
+    if (flagged) fastify.log.info(`[recipes] ${flagged} recipe(s) with no owner company flagged`)
   } catch (err) {
     fastify.log.warn(`[prep] prep items skipped: ${(err as Error).message}`)
   }

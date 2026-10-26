@@ -849,12 +849,14 @@ async function recipeCompanies(id: string, db: Db): Promise<string[] | null> {
   const r = await db.recipe.findUnique({
     where: { id },
     select: {
-      id: true, kind: true, pendingMenuItem: true,
+      id: true, kind: true, pendingMenuItem: true, tenantId: true,
       menuItem: { select: { concept: { select: { tenantId: true } } } },
       modifier: { select: { group: { select: { menuItem: { select: { concept: { select: { tenantId: true } } } } } } } },
     },
   })
   if (!r) return null
+  // Kitchen flow (K4): a recipe with an OWNER company is that company's to approve (Flipd's dishes → GS Foods).
+  if (r.tenantId) return [r.tenantId]
   const out = new Set<string>()
   const pendingTenant = async (p: unknown) => {
     const cid = (p as { conceptId?: string } | null)?.conceptId

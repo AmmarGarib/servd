@@ -92,7 +92,7 @@ export type ModuleId =
   | 'pos' | 'reservations' | 'reservations_admin' | 'scheduling' | 'tables' | 'dispatch' | 'riders'
   | 'emergency_overrides'
   // Kitchen
-  | 'menu' | 'components' | 'recipes' | 'inventory' | 'kds_config' | 'par_sheet' | 'food_safety'
+  | 'menu' | 'recipes' | 'inventory' | 'kds_config' | 'par_sheet' | 'food_safety'
   // Marketing
   | 'marketing_workspace' | 'crm' | 'campaigns' | 'complaints' | 'reviews' | 'calendar' | 'media' | 'promos' | 'brands' | 'storefront' | 'analytics'
   // Finance
@@ -150,7 +150,6 @@ export const MODULES: ModuleMeta[] = [
   { id: 'emergency_overrides', label: 'Emergency overrides', section: 'Service' },
 
   { id: 'menu',               label: 'Menu',                section: 'Kitchen' },
-  { id: 'components',         label: 'Components',          section: 'Kitchen' },
   { id: 'recipes',            label: 'Recipes',             section: 'Kitchen' },
   { id: 'inventory',          label: 'Inventory',           section: 'Kitchen' },
   { id: 'par_sheet',          label: 'Par Sheet',           section: 'Kitchen' },

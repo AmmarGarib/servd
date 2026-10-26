@@ -54,6 +54,8 @@ const nextConfig = {
       // Food cost is one variance report under Reports (owner, 2026-10-13: no
       // duplicates). The old Accounting page is gone for good; links forward.
       { source: '/accounting/food-cost', destination: '/reports/food-cost', permanent: true },
+      // One prep list (kitchen flow, owner 2026-10-26): the old per-brand /ops/prep-list forwards to it.
+      { source: '/ops/prep-list', destination: '/kitchen/prep-list', permanent: true },
     ]
   },
   async rewrites() {

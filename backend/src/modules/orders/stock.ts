@@ -331,7 +331,7 @@ async function depleteLinesTx(tx: Tx, tenantId: string, orderId: string, onlyLin
     // Per-site stock (2026-10-24): the site that cooks the order (lib/stockSite.ts — the one rule); its live prep items
     // are drawn as stock, every other sub-recipe explodes raw.
     const site = await stockSiteOf(tx, { orderLocationId: order.locationId, conceptId: order.conceptId, tenantId })
-    const opts = { tenantId, fulfilmentType: order.fulfilmentType, serviceVessel: order.concept.serviceVessel, prepStockAt: { siteId: site } }
+    const opts = { tenantId, fulfilmentType: order.fulfilmentType, serviceVessel: order.concept.serviceVessel, prepStockAt: { siteId: site }, createMissingItems: true }
     // Box-given packaging is drawn under its own key (so an undo can give it back): the sale itself is costed as if not boxed.
     const per = await consumptionPerLine(order.items.map((l) => soldLine(l, { boxGiven: false })), tx, opts)
     const plans: Array<{ line: OrderLine; sale: Map<string, NeedRow>; box: Map<string, NeedRow> }> = []
@@ -1088,7 +1088,7 @@ export async function markBoxGiven(
     })
     const site = await stockSiteOf(tx, { orderLocationId: order.locationId, conceptId: order.conceptId, tenantId })
     const [per] = await consumptionPerLine([soldLine(cur, { boxGiven: false })], tx, {
-      tenantId, fulfilmentType: order.fulfilmentType, serviceVessel: order.concept.serviceVessel, prepStockAt: { siteId: site },
+      tenantId, fulfilmentType: order.fulfilmentType, serviceVessel: order.concept.serviceVessel, prepStockAt: { siteId: site }, createMissingItems: true,
     })
     const pack = per?.packaging ?? new Map<string, NeedRow>()
     await lockItemsTx(tx, [...pack.keys()])
@@ -1154,7 +1154,7 @@ export async function bookRemakeWaste(orderItemId: string, actorId: string | nul
     // The cooked food only: as a dine-in plate, never boxed.
     const site = await stockSiteOf(tx, { orderLocationId: line.order.locationId, conceptId: line.order.conceptId, tenantId })
     const [per] = await consumptionPerLine([{ ...soldLine(line, { boxGiven: false }), status: 'pending', serviceVessel: 'plate' }], tx, {
-      tenantId, fulfilmentType: 'dine_in', serviceVessel: 'plate', prepStockAt: { siteId: site },
+      tenantId, fulfilmentType: 'dine_in', serviceVessel: 'plate', prepStockAt: { siteId: site }, createMissingItems: true,
     })
     const need = per?.need ?? new Map<string, NeedRow>()
     const ids = [...need.keys()].sort()
@@ -1205,16 +1205,20 @@ export async function bookRemakeWaste(orderItemId: string, actorId: string | nul
 export async function autoEightySixDepletedItems(ingredientIds: string[]) {
   const depleted = await prisma.inventoryItem.findMany({
     where: { id: { in: ingredientIds }, currentStock: { lte: 0 } },
-    select: { id: true },
+    select: { id: true, tenantId: true, masterIngredientId: true },
   })
   if (depleted.length === 0) return
+  // Kitchen flow (K4): a shared recipe names the OWNER company's item; the using company's dish runs on its own item of
+  // the same master. So lines are found by item OR master, and only dishes of the depleted items' companies go off.
+  const depletedTenants = new Set(depleted.map((d) => d.tenantId).filter((t): t is string => !!t))
+  const depletedMasters = depleted.map((d) => d.masterIngredientId).filter((m): m is string => !!m)
 
   // Every plate that uses a depleted ingredient — directly, or through a
   // sub-recipe at any depth (the depletion explodes sub-recipes, so the 86
   // has to follow them too).
   const recipeIds = new Set<string>()
   let frontier = (await prisma.recipeIngredient.findMany({
-    where: { inventoryItemId: { in: depleted.map((d) => d.id) } },
+    where: { OR: [{ inventoryItemId: { in: depleted.map((d) => d.id) } }, ...(depletedMasters.length ? [{ masterIngredientId: { in: depletedMasters }, recipe: { tenantId: { notIn: [...depletedTenants] } } }] : [])] },
     select: { recipeId: true },
   })).map((r) => r.recipeId)
   while (frontier.length > 0) {
@@ -1231,7 +1235,8 @@ export async function autoEightySixDepletedItems(ingredientIds: string[]) {
     select: { menuItemId: true, menuItem: { select: { id: true, conceptId: true, isAvailable: true, concept: { select: { tenantId: true } } } } },
   })
   const toDisable = recipes
-    .filter((r): r is typeof r & { menuItem: NonNullable<typeof r.menuItem> } => r.menuItem !== null && r.menuItem.isAvailable)
+    .filter((r): r is typeof r & { menuItem: NonNullable<typeof r.menuItem> } => r.menuItem !== null && r.menuItem.isAvailable
+      && (!r.menuItem.concept.tenantId || depletedTenants.size === 0 || depletedTenants.has(r.menuItem.concept.tenantId)))
     .map((r) => ({ id: r.menuItem.id, conceptId: r.menuItem.conceptId, tenantId: r.menuItem.concept.tenantId }))
 
   if (toDisable.length === 0) return

@@ -163,7 +163,7 @@ describe('a sub-recipe batch and two companies', () => {
     expect(res.json()).toMatchObject({ recipeId: sauceA, drawValueCents: 200, ledger: null, made: { qty: 1000, unit: 'g', valueCents: 200 } })
     expect(await stockOf(flourA)).toBeCloseTo(4.9)
     expect(await prisma.stockMovement.count({ where: { sourceType: 'prep_batch.input', sourceId: res.json().id, kind: 'prep_draw' } })).toBe(1)
-    const sauce = await prisma.inventoryItem.findUniqueOrThrow({ where: { prepRecipeId: sauceA } })
+    const sauce = await prisma.inventoryItem.findFirstOrThrow({ where: { prepRecipeId: sauceA } })
     expect(sauce).toMatchObject({ kind: 'prep', tenantId: A.tenantId, currentStock: 1000 })
     expect(await prisma.journalEntry.count({ where: { reference: `inventory.prep_draw:${res.json().id}` } })).toBe(0)
   })

@@ -1,4 +1,6 @@
-// Par-sheet routes — the daily prep view.
+// Par-sheet routes. Since the kitchen flow (owner, 2026-10-26) the daily view is the par board (GET /kitchen/par-board)
+// and this file keeps only the prep pickers (GET /par-sheet/preps) and THE company sub-recipe set
+// (subRecipeIdsForCompany). Older history of the par sheet below.
 //
 // Owner decision 29 (2026-09-27): the par sheet lists the recipe library's
 // sub-recipes (Recipe kind='component') that the active company's brands
@@ -20,15 +22,7 @@ import type { FastifyInstance } from 'fastify'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { ForbiddenError } from '../../lib/errors.js'
-import { costPerMeasureCents, loadRecipeGraph, recipeCost, type RecipeCost } from '../../lib/recipeCost.js'
-
-// Midnight UTC of the requested service day (or today if none).
-function dayKey(input?: string): Date {
-  const d = input ? new Date(input) : new Date()
-  if (Number.isNaN(d.getTime())) return dayKey()
-  d.setUTCHours(0, 0, 0, 0)
-  return d
-}
+import { costPerMeasureCents, loadRecipeGraph, localiseGraph, recipeCost, withLatestCosts, type RecipeCost } from '../../lib/recipeCost.js'
 
 /**
  * Sub-recipe ids used by the company's brands: every component recipe that a
@@ -42,7 +36,6 @@ export async function subRecipeIdsForCompany(tenantId: string): Promise<Set<stri
     select: { id: true },
   })
   const conceptIds = concepts.map((c) => c.id)
-  if (conceptIds.length === 0) return new Set()
 
   const plates = await prisma.recipe.findMany({
     where: {
@@ -79,7 +72,9 @@ export async function subRecipeIdsForCompany(tenantId: string): Promise<Set<stri
   const children = new Map(components.map((c) => [c.id, c.ingredients.map((i) => i.prepRecipeId).filter((x): x is string => !!x)]))
 
   const used = new Set<string>()
-  const queue = [...plates, ...addOns].flatMap((p) => p.ingredients.map((i) => i.prepRecipeId).filter((x): x is string => !!x))
+  // Kitchen flow (K4): the sub-recipes the company OWNS are its too (GS Foods preps what Flipd's dishes use).
+  const owned = (await prisma.recipe.findMany({ where: { kind: 'component', tenantId, isActive: true }, select: { id: true } })).map((r) => r.id)
+  const queue = [...owned, ...[...plates, ...addOns].flatMap((p) => p.ingredients.map((i) => i.prepRecipeId).filter((x): x is string => !!x))]
   while (queue.length) {
     const id = queue.pop()!
     if (used.has(id)) continue
@@ -89,83 +84,12 @@ export async function subRecipeIdsForCompany(tenantId: string): Promise<Set<stri
   return used
 }
 
-/** Grams in one batch-yield unit. Prep batches record yield in `unit`. */
-function toGrams(qty: number, unit: string): number | null {
-  const u = unit.trim().toLowerCase()
-  if (u === 'g' || u === 'ml') return qty
-  if (u === 'kg' || u === 'l' || u === 'litres') return qty * 1000
-  return null
-}
-
-/**
- * Prep batches of `recipeIds` made on `date` by `tenantId`. PrepBatch has no
- * company column yet, so a batch is the company's when the stock it drew came
- * from that company's items. Replace with `where: { tenantId }` once
- * PrepBatch.tenantId exists.
- */
-async function batchesForDay(tenantId: string, recipeIds: string[], date: Date) {
-  if (recipeIds.length === 0) return []
-  const next = new Date(date); next.setUTCDate(next.getUTCDate() + 1)
-  const batches = await prisma.prepBatch.findMany({
-    where: { recipeId: { in: recipeIds }, createdAt: { gte: date, lt: next } },
-    orderBy: { createdAt: 'asc' },
-  })
-  const inputIds = new Set<string>()
-  for (const b of batches) {
-    for (const i of (Array.isArray(b.inputs) ? b.inputs : []) as Array<{ inventoryItemId?: string }>) {
-      if (i?.inventoryItemId) inputIds.add(i.inventoryItemId)
-    }
-  }
-  const items = await prisma.inventoryItem.findMany({
-    where: { id: { in: [...inputIds] } },
-    select: { id: true, tenantId: true },
-  })
-  const ownerOf = new Map(items.map((i) => [i.id, i.tenantId]))
-  return batches.filter((b) =>
-    ((Array.isArray(b.inputs) ? b.inputs : []) as Array<{ inventoryItemId?: string }>)
-      .some((i) => i?.inventoryItemId && ownerOf.get(i.inventoryItemId) === tenantId),
-  )
-}
-
 // The par sheet is one kitchen's day: the active company only.
 
 export async function parSheetRoutes(fastify: FastifyInstance) {
 
-  // GET /par-sheet?date=YYYY-MM-DD
-  // The active company's sub-recipes with what was made that day, from prep
-  // batches. `madeGrams` sums batches recorded in g/kg/ml/l.
-  fastify.get<{ Querystring: { date?: string } }>(
-    '/',
-    { preHandler: requireAuth(...ALL_STAFF) },
-    async (req) => {
-      const tenantId = req.staffUser?.tenantId ?? null
-      if (!tenantId) return []
-      const date = dayKey(req.query.date)
-
-      const ids = await subRecipeIdsForCompany(tenantId)
-      const recipes = await prisma.recipe.findMany({
-        where: { id: { in: [...ids] }, kind: 'component', isActive: true },
-        select: { id: true, name: true, category: true, yieldGrams: true },
-        orderBy: { name: 'asc' },
-      })
-      const batches = await batchesForDay(tenantId, recipes.map((r) => r.id), date)
-
-      return recipes.map((r) => {
-        const mine = batches.filter((b) => b.recipeId === r.id)
-        const madeGrams = mine.reduce((s, b) => s + (toGrams(b.actualYieldQty, b.unit) ?? 0), 0)
-        const last = mine[mine.length - 1]
-        return {
-          recipeId:    r.id,
-          name:        r.name ?? '—',
-          category:    r.category ?? null,
-          batchYieldGrams: r.yieldGrams ?? null,
-          batches:     mine.length,
-          madeGrams:   Math.round(madeGrams * 10) / 10,
-          lastBatchAt: last?.createdAt ?? null,
-        }
-      })
-    },
-  )
+  // GET /par-sheet (the "made today" list) was REPLACED by the par board, GET /kitchen/par-board (kitchen flow, owner
+  // 2026-10-26: target, on hand, made today and still to prep, in portions — modules/kitchen/prepPlan.ts).
 
   // GET /par-sheet/preps — the prep-batch form's picker: the active company's
   // sub-recipes with one batch's raw inputs, converted to each item's stock
@@ -207,7 +131,8 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
         const owners = new Set(p.ingredients.map((i) => i.inventoryItem?.tenantId).filter((t): t is string => !!t))
         return owners.size === 0 || owners.has(tenantId)
       })
-      const { graph } = await loadRecipeGraph({ id: { in: preps.map((p) => p.id) } })
+      // A cost screen: the company's own items (K4) at their LATEST cost (owner, 2026-10-26), never the FIFO head.
+      const graph = await withLatestCosts(await localiseGraph((await loadRecipeGraph({ id: { in: preps.map((p) => p.id) } })).graph, tenantId, prisma, { strict: true }))
       const memo = new Map<string, RecipeCost>()
       return preps.map((p) => {
         const cost = recipeCost(graph, p.id, memo)
@@ -228,7 +153,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
         ingredients: {
           select: {
             quantity: true, unit: true, yieldPct: true,
-            inventoryItem: { select: { id: true, name: true, unit: true, tenantId: true, deletedAt: true } },
+            inventoryItem: { select: { id: true, name: true, unit: true, tenantId: true, deletedAt: true, masterIngredientId: true } },
             prepRecipe:    { select: { id: true, name: true } },
           },
         },
@@ -238,9 +163,11 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
 
     const own = await prisma.inventoryItem.findMany({
       where: { tenantId, deletedAt: null },
-      select: { id: true, name: true, unit: true },
+      select: { id: true, name: true, unit: true, masterIngredientId: true },
     })
     const ownByName = new Map(own.map((i) => [i.name.trim().toLowerCase(), i]))
+    // K4: a shared sub-recipe's line is this company's item of the same servd master (then the same name).
+    const ownByMaster = new Map(own.filter((i) => i.masterIngredientId).map((i) => [i.masterIngredientId!, i]))
 
     return recipes.map((r) => ({
       id: r.id,
@@ -252,7 +179,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
         const src = i.inventoryItem!
         const item = (src.tenantId === tenantId || src.tenantId == null) && !src.deletedAt
           ? src
-          : ownByName.get(src.name.trim().toLowerCase()) ?? null
+          : (src.masterIngredientId ? ownByMaster.get(src.masterIngredientId) : undefined) ?? ownByName.get(src.name.trim().toLowerCase()) ?? null
         // RecipeIngredient.quantity is the usable (post-yield) measure; the
         // raw draw is quantity ÷ yield. yieldPct is a 0–1 fraction.
         const y = i.yieldPct > 1 ? i.yieldPct / 100 : i.yieldPct

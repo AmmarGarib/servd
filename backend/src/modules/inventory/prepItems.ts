@@ -5,8 +5,10 @@
 // sells").
 //
 // A prep (sub-recipe, RecipeKind 'component') recipe gets ONE stock item of
-// its own: InventoryItem.kind 'prep', prepRecipeId = the recipe (@unique — one
-// item per recipe, in ONE company: the company whose brands use it), unit = the
+// its own PER COMPANY that makes it: InventoryItem.kind 'prep', prepRecipeId =
+// the recipe (@@unique([tenantId, prepRecipeId]) — kitchen flow, owner
+// 2026-10-26, K4: a recipe GS Foods owns and Flipd uses is prepped as Flipd's
+// stock at Flipd's outlet, in Flipd's books), unit = the
 // recipe's yield unit (Recipe.yieldUnit g / ml / pcs — yieldGrams counts in
 // it; fixed once the item exists, 409 PREP_UNIT_LOCKED), cost class from its inputs'
 // dominant class by cost (food unless its inputs are mostly drinks or
@@ -56,10 +58,18 @@ export async function prepRecipeClass(db: Db, recipeId: string, tenantId: string
  * Race-safe: a concurrent create keeps the first row (ON CONFLICT).
  */
 export async function ensurePrepItemTx(db: Db, recipeId: string, tenantId: string): Promise<PrepItem> {
-  const recipe = await db.recipe.findUnique({ where: { id: recipeId }, select: { id: true, kind: true, name: true, yieldUnit: true } })
+  const recipe = await db.recipe.findUnique({ where: { id: recipeId }, select: { id: true, kind: true, name: true, yieldUnit: true, tenantId: true } })
   if (!recipe || recipe.kind !== 'component') throw new AppError('RECIPE_NOT_PREP', 'Only a prep (sub-recipe) has a prep stock item', 422)
+  // A prep is stock only in the companies that make it: its owner and the companies whose brands use it (K4 —
+  // GS Foods and Flipd). Any other company is refused, as before (sub-recipes are not shared beyond that).
+  if (recipe.tenantId !== tenantId) {
+    const { subRecipeIdsForCompany } = await import('../par-sheet/routes.js')
+    if (!(await subRecipeIdsForCompany(tenantId)).has(recipeId)) {
+      throw new AppError('RECIPE_NOT_IN_COMPANY', 'That prep recipe is not one this company makes — it is another company\'s', 422)
+    }
+  }
   const read = () => db.inventoryItem.findUnique({
-    where: { prepRecipeId: recipeId }, select: { id: true, name: true, unit: true, tenantId: true, category: true, deletedAt: true },
+    where: { tenantId_prepRecipeId: { tenantId, prepRecipeId: recipeId } }, select: { id: true, name: true, unit: true, tenantId: true, category: true, deletedAt: true },
   })
   let row = await read()
   if (!row) {
@@ -68,24 +78,23 @@ export async function ensurePrepItemTx(db: Db, recipeId: string, tenantId: strin
     await db.$executeRaw`
       INSERT INTO inventory_items (id, "tenantId", name, unit, category, kind, "prepRecipeId", "yieldPct", "countFrequency", "updatedAt")
       VALUES (${randomUUID()}, ${tenantId}, ${name}, ${recipe.yieldUnit || 'g'}, ${CATEGORY_FOR_CLASS[cls]}, 'prep', ${recipeId}, 100, 'daily', now())
-      ON CONFLICT ("prepRecipeId") DO NOTHING`
+      ON CONFLICT ("tenantId", "prepRecipeId") DO NOTHING`
     row = await read()
     if (!row) throw new AppError('PREP_ITEM_MISSING', 'The prep item could not be created', 500)
-  }
-  if (row.tenantId !== tenantId) {
-    throw new AppError('RECIPE_NOT_IN_COMPANY', 'That prep recipe\'s stock belongs to another company — sub-recipes are never shared across companies', 422)
   }
   if (row.deletedAt) throw new AppError('PREP_ITEM_IN_TRASH', `${row.name} is in the Trash — restore it before making a batch`, 422)
   return { id: row.id, name: row.name, unit: row.unit, tenantId, category: row.category }
 }
 
-/** The company a prep recipe belongs to: the one whose brands use it (null when none, or more than one). */
-export async function prepRecipeCompany(recipeId: string): Promise<string | null> {
+/** The companies that make a prep recipe: its owner (Recipe.tenantId) and every company whose brands use it. */
+export async function prepRecipeCompanies(recipeId: string): Promise<string[]> {
   const { subRecipeIdsForCompany } = await import('../par-sheet/routes.js')
   const tenants = await prisma.tenant.findMany({ where: { kind: 'company', deletedAt: null }, select: { id: true } })
-  const owners: string[] = []
-  for (const t of tenants) if ((await subRecipeIdsForCompany(t.id)).has(recipeId)) owners.push(t.id)
-  return owners.length === 1 ? owners[0]! : null
+  const out = new Set<string>()
+  const owner = (await prisma.recipe.findUnique({ where: { id: recipeId }, select: { tenantId: true } }))?.tenantId
+  if (owner) out.add(owner)
+  for (const t of tenants) if ((await subRecipeIdsForCompany(t.id)).has(recipeId)) out.add(t.id)
+  return [...out]
 }
 
 /** Every production prep recipe of a company gets its prep item (idempotent). Returns how many were created. */
@@ -93,7 +102,7 @@ export async function ensurePrepItemsForCompany(tenantId: string): Promise<numbe
   const { subRecipeIdsForCompany } = await import('../par-sheet/routes.js')
   const ids = [...(await subRecipeIdsForCompany(tenantId))]
   if (ids.length === 0) return 0
-  const recipes = await prisma.recipe.findMany({ where: { id: { in: ids }, kind: 'component', status: 'production', prepItem: null }, select: { id: true } })
+  const recipes = await prisma.recipe.findMany({ where: { id: { in: ids }, kind: 'component', status: 'production', prepItems: { none: { tenantId } } }, select: { id: true } })
   let made = 0
   for (const r of recipes) {
     try {
@@ -114,14 +123,51 @@ export async function ensureAllPrepItems(): Promise<Array<{ tenantId: string; cr
   return out
 }
 
-/** After a recipe's approval (never throws): a production prep recipe of one company gets its prep item. */
+/** After a recipe's approval (never throws): a production prep recipe gets its prep item in every company that makes it. */
 export async function prepItemOnApproval(recipeId: string, companyIds: string[]): Promise<void> {
   try {
     const r = await prisma.recipe.findUnique({ where: { id: recipeId }, select: { kind: true, status: true } })
     if (!r || r.kind !== 'component' || r.status !== 'production') return
-    const tenantId = companyIds.length === 1 ? companyIds[0]! : await prepRecipeCompany(recipeId)
-    if (tenantId) await ensurePrepItemTx(prisma, recipeId, tenantId)
+    const companies = new Set([...companyIds, ...(await prepRecipeCompanies(recipeId))])
+    for (const tenantId of companies) {
+      try { await ensurePrepItemTx(prisma, recipeId, tenantId) } catch (err) { console.warn(`[prepItems] ${recipeId} in ${tenantId}: ${(err as Error).message}`) }
+    }
   } catch (err) {
     console.warn(`[prepItems] approval of ${recipeId}: ${(err as Error).message}`)
+  }
+}
+
+/**
+ * Kitchen flow (owner, 2026-10-26, K4): a sub-recipe whose OWNER company the migration could not decide (used by
+ * several companies, no creator among them) is flagged once for the CEO — "recipe_company_unknown" — naming the
+ * companies that use it. Until a person sets it, the old derived rule applies to it. Boot step; never throws.
+ */
+export async function flagRecipesWithoutCompany(): Promise<number> {
+  try {
+    const rows = await prisma.recipe.findMany({ where: { tenantId: null }, select: { id: true, kind: true, name: true } })
+    if (rows.length === 0) return 0
+    const already = new Set((await prisma.exceptionFlag.findMany({
+      where: { kind: 'recipe_company_unknown', entityId: { in: rows.map((r) => r.id) } }, select: { entityId: true },
+    })).map((f) => f.entityId))
+    const { flagException } = await import('../../lib/exceptions.js')
+    const { subRecipeIdsForCompany } = await import('../par-sheet/routes.js')
+    const tenants = await prisma.tenant.findMany({ where: { kind: 'company', deletedAt: null }, select: { id: true, name: true } })
+    const usedBy = new Map<string, string[]>()
+    for (const t of tenants) for (const id of await subRecipeIdsForCompany(t.id)) usedBy.set(id, [...(usedBy.get(id) ?? []), t.name])
+    let n = 0
+    for (const r of rows) {
+      if (already.has(r.id)) continue
+      await flagException({
+        tenantId: null, kind: 'recipe_company_unknown', severity: 'low',
+        title: `Recipe with no owner company: ${r.name ?? r.id}`,
+        description: `servd could not tell which company owns this ${r.kind === 'component' ? 'sub-recipe' : 'recipe'}${usedBy.get(r.id)?.length ? ` (used by ${usedBy.get(r.id)!.join(', ')})` : ''}. Until one is set, every company that uses it may edit it.`,
+        entityType: 'Recipe', entityId: r.id, metadata: { usedBy: usedBy.get(r.id) ?? [] },
+      })
+      n += 1
+    }
+    return n
+  } catch (err) {
+    console.warn(`[recipes] owner flags skipped: ${(err as Error).message}`)
+    return 0
   }
 }

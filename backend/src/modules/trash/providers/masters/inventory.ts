@@ -48,10 +48,28 @@ const inventoryItem: TrashProvider = {
   },
   async restore(tx, _ctx, entry, opts) {
     const name = opts.rename?.name?.trim()
+    // Kitchen flow (2026-10-26): one live stock item per servd ingredient per company. When the company already
+    // stocks this ingredient (another live item linked to the same master — also on a "(restored)" rename), the item
+    // comes back UNLINKED and is flagged for a reviewer (ingredient_master_unlinked) — never a unique-key 500.
+    const item = await tx.inventoryItem.findUnique({ where: { id: entry.entityId }, select: { name: true, tenantId: true, masterIngredientId: true } })
+    const twin = item?.masterIngredientId
+      ? await tx.inventoryItem.findFirst({ where: { id: { not: entry.entityId }, tenantId: item.tenantId, masterIngredientId: item.masterIngredientId, deletedAt: null }, select: { id: true, name: true } })
+      : null
     await tx.inventoryItem.update({
       where: { id: entry.entityId },
-      data: { deletedAt: null, ...(name ? { name: name.slice(0, 200) } : {}) },
+      data: { deletedAt: null, ...(name ? { name: name.slice(0, 200) } : {}), ...(twin ? { masterIngredientId: null } : {}) },
     })
+    if (twin && item) {
+      await tx.exceptionFlag.create({
+        data: {
+          tenantId: item.tenantId, kind: 'ingredient_master_unlinked', severity: 'low',
+          title: `Restored ingredient not linked: ${name ?? item.name}`,
+          description: `"${name ?? item.name}" came back from the Trash, but this company already stocks the same servd ingredient as "${twin.name}". It was restored without its servd ingredient — merge the two stock items, or link it on Operations → Ingredients.`,
+          entityType: 'InventoryItem', entityId: entry.entityId,
+          metadata: { masterIngredientId: item.masterIngredientId, twinItemId: twin.id },
+        },
+      })
+    }
     return { id: entry.entityId, link: '/sourcing' }
   },
   async references(tx, entry) {

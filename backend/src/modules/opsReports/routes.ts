@@ -1,6 +1,6 @@
 // Operational efficiency reports — read-only endpoints that surface things a
 // manager would otherwise have to compute by hand:
-//   - prep-list:    per-station prep checklist for tomorrow (from forecast)
+//   - (the prep list moved to GET /kitchen/prep-list — modules/kitchen)
 //   - anomalies:    ticket-time spikes, comp/void patterns, supplier price drift
 //
 // The end-of-shift summary is the Z-report (GET /pos/shifts/:id/zreport) —
@@ -19,142 +19,9 @@ import { assertConceptOwned, conceptIdsInScope, scopeTenantWhere } from '../../l
 
 export async function opsReportRoutes(fastify: FastifyInstance) {
 
-  // ─── /ops/prep-list ────────────────────────────────────────────────────────
-  // Tomorrow's prep checklist per station, derived from demand forecast +
-  // recipe ingredients. Output groups required ingredient quantities by station
-  // so each cook gets a focused list at end-of-shift.
-  // Owner 2026-10-16 ("In inventory, prep batch log is incorrect. Its needs to
-  // be prep list."): Inventory's "Prep list" link opens this page, so any
-  // login holding ops, inventory or par_sheet reads it (quantities only, no
-  // costs); the brand is still checked against the caller's companies.
-  fastify.get<{ Querystring: { conceptId: string; days?: string } }>(
-    '/prep-list',
-    { preHandler: [requireAuth(...ALL_STAFF), requireModule('ops', 'inventory', 'par_sheet')] },
-    async (req, reply) => {
-      const { conceptId } = req.query
-      const days = Math.min(parseInt(req.query.days ?? '1', 10), 7)
+  // /ops/prep-list was REPLACED by the ONE prep list, GET /kitchen/prep-list (modules/kitchen/prepPlan.ts — kitchen
+  // flow, owner 2026-10-26: one engine, per outlet, preps in portions). The admin's /ops/prep-list redirects there.
 
-      // Company scope: the brand must be one the caller can see (404 if not).
-      // Never a bare tenantFilter — undefined there is "no filter".
-      if (!conceptId) return reply.status(400).send({ error: { code: 'CONCEPT_REQUIRED', message: 'conceptId is required' } })
-      await assertConceptOwned(req, conceptId, 'read')
-
-      const forecast = await getDemandForecast({ conceptId, days })
-
-      // Map menuItemId → forecast quantity for the requested window
-      const forecastQty = new Map<string, { name: string; qty: number; confidence: string }>()
-      for (const item of forecast) {
-        const total = item.forecasts.reduce((s, f) => s + f.predictedQty, 0)
-        if (total > 0) {
-          forecastQty.set(item.menuItemId, { name: item.name, qty: total, confidence: item.confidence })
-        }
-      }
-      if (forecastQty.size === 0) {
-        return { byStation: [], unmappedItems: [], generatedAt: new Date().toISOString() }
-      }
-
-      // Fetch recipes + station + current stock for each item we'll need
-      const menuItemIds = Array.from(forecastQty.keys())
-      // MenuItem has `stationId` but no `station` relation back, so we
-      // separately fetch the stations referenced.
-      const items = await prisma.menuItem.findMany({
-        where: { id: { in: menuItemIds } },
-        select: { id: true, name: true, stationId: true, recipe: { select: { id: true } } },
-      })
-      // THE recipe explosion (lib/recipeCost.ts) — purchase units, sub-recipes
-      // at any depth — the same one that depletes stock at sale. The inline
-      // copy here summed recipe GRAMS and compared them with stock held in
-      // KILOS, so every weighed ingredient showed a ~1000x shortfall, and it
-      // left out everything that goes in through a sub-recipe.
-      const { graph } = await loadRecipeGraph({ menuItemId: { in: menuItemIds } })
-      const needed = new Map<string, Map<string, number>>()   // menuItemId → item → qty
-      const allIngredientIds = new Set<string>()
-      for (const item of items) {
-        const fc = forecastQty.get(item.id)
-        if (!fc || !item.recipe) continue
-        const q = explodeRecipe(graph, item.recipe.id, fc.qty, 'portion')
-        needed.set(item.id, q)
-        for (const id of q.keys()) allIngredientIds.add(id)
-      }
-      const invRows = await prisma.inventoryItem.findMany({
-        where: { id: { in: [...allIngredientIds] } },
-        select: { id: true, name: true, currentStock: true, unit: true },
-      })
-      const invById = new Map(invRows.map((r) => [r.id, r]))
-      const stationIds = Array.from(new Set(items.map((i) => i.stationId).filter((x): x is string => !!x)))
-      const stations = stationIds.length > 0
-        ? await prisma.station.findMany({ where: { id: { in: stationIds } }, select: { id: true, name: true } })
-        : []
-      const stationMap = new Map(stations.map((s) => [s.id, s]))
-
-      // Aggregate by station → ingredient id → required qty
-      type StationLine = {
-        ingredientId: string
-        ingredientName: string
-        unit: string
-        requiredQty: number
-        currentStock: number
-        shortfall: number     // positive = need to prep / order more
-      }
-      const byStation = new Map<string, { stationId: string; stationName: string; lines: Map<string, StationLine>; itemNames: string[] }>()
-      const unmapped: Array<{ menuItemId: string; name: string; qty: number; reason: string }> = []
-
-      for (const item of items) {
-        const fc = forecastQty.get(item.id)
-        if (!fc) continue
-        const station = item.stationId ? stationMap.get(item.stationId) : null
-        const recipe  = item.recipe
-        if (!station || !recipe) {
-          unmapped.push({
-            menuItemId: item.id, name: item.name, qty: fc.qty,
-            reason: !station ? 'No station assigned' : 'No recipe configured',
-          })
-          continue
-        }
-
-        if (!byStation.has(station.id)) {
-          byStation.set(station.id, { stationId: station.id, stationName: station.name, lines: new Map(), itemNames: [] })
-        }
-        const bucket = byStation.get(station.id)!
-        bucket.itemNames.push(`${fc.qty}× ${item.name}`)
-
-        // Raw purchase-unit quantities needed for the forecast volume
-        for (const [id, rawNeeded] of needed.get(item.id) ?? []) {
-          const inv = invById.get(id)
-          if (!inv) continue
-
-          const existing = bucket.lines.get(id)
-          if (existing) {
-            existing.requiredQty += rawNeeded
-            existing.shortfall = Math.max(0, existing.requiredQty - existing.currentStock)
-          } else {
-            bucket.lines.set(id, {
-              ingredientId: id,
-              ingredientName: inv.name,
-              unit: inv.unit,
-              requiredQty: rawNeeded,
-              currentStock: inv.currentStock,
-              shortfall: Math.max(0, rawNeeded - inv.currentStock),
-            })
-          }
-        }
-      }
-
-      // Materialise the maps
-      const out = Array.from(byStation.values()).map((s) => ({
-        stationId:   s.stationId,
-        stationName: s.stationName,
-        forecastedItems: s.itemNames.sort(),
-        lines: Array.from(s.lines.values())
-          .map((l) => ({ ...l, requiredQty: round2(l.requiredQty), shortfall: round2(l.shortfall) }))
-          .sort((a, b) => b.shortfall - a.shortfall || a.ingredientName.localeCompare(b.ingredientName)),
-      })).sort((a, b) => a.stationName.localeCompare(b.stationName))
-
-      return { byStation: out, unmappedItems: unmapped, generatedAt: new Date().toISOString() }
-    },
-  )
-
-  // ─── /ops/anomalies ────────────────────────────────────────────────────────
   // Looks at the last 24 hours and flags things worth a manager's attention.
   fastify.get<{ Querystring: { conceptId?: string; hours?: string } }>(
     '/anomalies',

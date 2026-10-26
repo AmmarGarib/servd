@@ -25,7 +25,9 @@ import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { useKitchenView } from '../inventory/kitchenView'
 import { useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
-import { INVENTORY_CATEGORY_OPTIONS, categoryOptionText, categoryValueOf, stockErrorText } from '../../lib/stockUi'
+import { INVENTORY_CATEGORY_OPTIONS, categoryLabel, categoryOptionText, categoryValueOf, stockErrorText } from '../../lib/stockUi'
+import { SidePanel } from '../../components/finance/ui'
+import { ItemPriceHistory } from '../../components/kitchen/ItemPriceHistory'
 import { Select } from '@/components/ui/Select'
 import { UnusedCleanupModal } from './UnusedCleanupModal'
 
@@ -39,6 +41,10 @@ interface Item {
   costsHidden?: boolean
   tenantId?: string | null
   tenant?: { id: string; name: string; slug: string } | null
+  /** servd's master ingredient (kitchen flow, 2026-10-26): unit and category come from it (Operations → Ingredients). */
+  masterIngredientId?: string | null
+  /** The cost recipes use: the latest purchase / manual / typed cost (not the FIFO head shown as "paid"). */
+  latestCostCents?: number | null
 }
 
 // 'dozen' is not offered: recipe costing treats every non-kg/litre unit as
@@ -70,6 +76,7 @@ export default function SourcingPage() {
   // The CEO's clean-up: move every ingredient that is in no recipe to the Trash.
   const isCeo = me?.role === 'admin'
   const [cleaning, setCleaning] = useState(false)
+  const [historyOf, setHistoryOf] = useState<Item | null>(null)
 
   const { data: items = [], isLoading } = useQuery<Item[]>({
     queryKey: ['inventory'],
@@ -284,10 +291,14 @@ export default function SourcingPage() {
                         onBlur={(e) => saveField(it, 'name', e.target.value)} className={fi + ' w-full min-w-[180px]'} />
                     </td>
                     <td className="px-3 py-1.5">
-                      <Select key={`u${it.id}${it.unit}`} defaultValue={it.unit}
-                        onChange={(e) => saveField(it, 'unit', e.target.value)} className={fi + ' w-full'}>
-                        {(UNITS.includes(it.unit) ? UNITS : [it.unit, ...UNITS]).map((u) => <option key={u} value={u}>{u}</option>)}
-                      </Select>
+                      {it.masterIngredientId ? (
+                        <Link href="/kitchen/ingredients" className="text-s-text" title="Set on servd's ingredient (Operations → Ingredients)">{it.unit}</Link>
+                      ) : (
+                        <Select key={`u${it.id}${it.unit}`} defaultValue={it.unit}
+                          onChange={(e) => saveField(it, 'unit', e.target.value)} className={fi + ' w-full'}>
+                          {(UNITS.includes(it.unit) ? UNITS : [it.unit, ...UNITS]).map((u) => <option key={u} value={u}>{u}</option>)}
+                        </Select>
+                      )}
                     </td>
                     <td className="px-3 py-1.5">
                       {it.costSource === 'deliveries' ? (
@@ -301,13 +312,21 @@ export default function SourcingPage() {
                           onBlur={(e) => savePrice(it, e.target.value)}
                           className={fi + ' w-full text-right font-mono'} />
                       )}
+                      {it.latestCostCents != null && it.latestCostCents !== it.unitCostCents && (
+                        <span className="block text-right text-[10px] text-s-muted" title="Recipes are costed at the latest cost">recipes: {pkr(it.latestCostCents)}</span>
+                      )}
+                      <button type="button" onClick={() => setHistoryOf(it)} className="block w-full text-right text-[10px] font-semibold text-primary-ink hover:underline">Price history</button>
                     </td>
                     <td className="px-3 py-1.5">
-                      <Select key={`c${it.id}${it.category}`} defaultValue={categoryValueOf(it.category)}
-                        onChange={(e) => saveCategory(it, e.target.value)} className={fi + ' w-full'} aria-label={`${it.name} category`}>
-                        <option value="">— none —</option>
-                        {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
-                      </Select>
+                      {it.masterIngredientId ? (
+                        <Link href="/kitchen/ingredients" className="text-s-text" title="Set on servd's ingredient (Operations → Ingredients)">{categoryLabel(it.category)}</Link>
+                      ) : (
+                        <Select key={`c${it.id}${it.category}`} defaultValue={categoryValueOf(it.category)}
+                          onChange={(e) => saveCategory(it, e.target.value)} className={fi + ' w-full'} aria-label={`${it.name} category`}>
+                          <option value="">— none —</option>
+                          {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{categoryOptionText(o)}</option>)}
+                        </Select>
+                      )}
                     </td>
                     {canSetIssueOnReceipt && (
                       <td className="px-3 py-1.5">
@@ -348,6 +367,11 @@ export default function SourcingPage() {
         )}
         {patch.isError && <p role="alert" className="mt-2 text-xs text-s-red">{stockErrorText(patch.error)}</p>}
       </main>
+      {historyOf && (
+        <SidePanel title={historyOf.name} subtitle="Price history" onClose={() => setHistoryOf(null)}>
+          <ItemPriceHistory itemId={historyOf.id} />
+        </SidePanel>
+      )}
     </div>
   )
 }

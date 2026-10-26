@@ -147,7 +147,7 @@ describe('prep batches make prep stock', () => {
     expect(await onHand(I.flour)).toBeCloseTo(3)
     expect(await onHand(I.butter)).toBeCloseTo(0.8)
     expect(await onHand(I.eggs)).toBe(26)
-    const bun = await prisma.inventoryItem.findUniqueOrThrow({ where: { prepRecipeId: bunRecipe } })
+    const bun = await prisma.inventoryItem.findFirstOrThrow({ where: { prepRecipeId: bunRecipe, tenantId: A.tenantId } })
     expect(bun).toMatchObject({ kind: 'prep', unit: 'pcs', tenantId: A.tenantId })
     expect(await onHand(bun.id)).toBe(19)
     const lots = await prisma.stockLot.findMany({ where: { inventoryItemId: bun.id } })
@@ -162,8 +162,8 @@ describe('prep batches make prep stock', () => {
   it('selling one smash burger lowers beef 167 g, a bun, cheese 20 g and sauce 30 g at that site — raw bun/sauce inputs untouched', async () => {
     await lot(I.beef, 10, 120_000)
     await lot(I.cheese, 2, 150_000)
-    const bun = (await prisma.inventoryItem.findUniqueOrThrow({ where: { prepRecipeId: bunRecipe } })).id
-    const sauce = (await prisma.inventoryItem.findUniqueOrThrow({ where: { prepRecipeId: sauceRecipe } })).id
+    const bun = (await prisma.inventoryItem.findFirstOrThrow({ where: { prepRecipeId: bunRecipe, tenantId: A.tenantId } })).id
+    const sauce = (await prisma.inventoryItem.findFirstOrThrow({ where: { prepRecipeId: sauceRecipe, tenantId: A.tenantId } })).id
     const before = { beef: await onHand(I.beef), cheese: await onHand(I.cheese), bun: await onHand(bun), sauce: await onHand(sauce), flour: await onHand(I.flour), mayo: await onHand(I.mayo) }
     await sell(burger)
     expect(before.beef - await onHand(I.beef)).toBeCloseTo(0.16667, 4)
@@ -297,7 +297,7 @@ describe('review fixes (2026-10-24)', () => {
     const A2 = (await prisma.location.create({ data: { slug: 'loc-pas-a2', name: 'A2', tenantId: A.tenantId } })).id
     const line = { menuItemId: burger, quantity: 1, status: 'pending', serviceVessel: 'plate', boxGiven: false }
     const opts = { tenantId: A.tenantId, fulfilmentType: 'dine_in', serviceVessel: 'plate' }
-    const bun = (await prisma.inventoryItem.findUniqueOrThrow({ where: { prepRecipeId: bunRecipe } })).id
+    const bun = (await prisma.inventoryItem.findFirstOrThrow({ where: { prepRecipeId: bunRecipe, tenantId: A.tenantId } })).id
     const [atA] = await prisma.$transaction((tx) => consumptionPerLine([line], tx, { ...opts, prepStockAt: { siteId: A.locationId } }))
     expect(atA!.need.has(bun)).toBe(true)
     expect(atA!.need.has(I.flour)).toBe(false)

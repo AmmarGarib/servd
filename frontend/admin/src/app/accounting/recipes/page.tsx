@@ -30,6 +30,8 @@ interface MenuItem      { id: string; name: string; priceCents: number; concept:
 interface InventoryItem { id: string; name: string; unit: string; unitCostCents: number | null }
 
 interface RecipeIngredient {
+  /** Kitchen flow: the viewing company does not stock this ingredient — no price shown (never another company's). */
+  notStockedBy?: string | null
   id: string
   // Disjoint: one of (inventoryItemId, prepRecipeId) is non-null. Backend
   // enforces this; the UI picker enforces it at the source.
@@ -63,6 +65,8 @@ interface ConceptWithTenant { name: string; tenantId?: string | null; tenant?: {
 // the cost fields typed as numbers here.
 interface Recipe {
   id: string
+  /** A prep's portions per batch (kitchen flow, 2026-10-26). */
+  portionsPerBatch?: number | null
   costsHidden?: boolean
   kind: 'plate' | 'component' | 'modifier'
   status: 'iteration' | 'pending_approval' | 'production'
@@ -657,7 +661,7 @@ export default function RecipesPage() {
                     <div className="border-t border-s-border">
 
                       {/* Spreadsheet header strip */}
-                      <div className="grid grid-cols-6 gap-4 text-center px-6 py-3 border-b border-s-border/40"
+                      <div className="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-8 gap-4 text-center px-6 py-3 border-b border-s-border/40"
                         style={{ background: 'rgb(var(--erp-primary-rgb) / 0.04)' }}>
                         {[
                           // For plate recipes the "PORTIONS" + "PORTION COST"
@@ -675,6 +679,8 @@ export default function RecipesPage() {
                             ? [{ label: 'PER', value: 'one add-on' }]
                             : [
                                 { label: 'BATCH YIELD',  value: r.yieldGrams ? `${r.yieldGrams}g` : '—' },
+                                { label: 'PORTIONS / RECIPE', value: r.portionsPerBatch ? String(r.portionsPerBatch) : '—' },
+                                { label: 'COST / PORTION', value: r.portionsPerBatch ? fmtPkr(Math.round(r.totalCostCents / r.portionsPerBatch)) : '—' },
                               ]),
                           { label: `Q FACTOR (${r.qFactorPct ?? 10}%)`, value: fmtPkr(r.qFactorCents)                },
                           { label: 'TOTAL RECIPE COST', value: fmtPkr(r.totalCostCents)                              },
@@ -733,6 +739,7 @@ export default function RecipesPage() {
                                     )}
                                     {ing.quantity < 0 && <span className="mr-1 text-xs font-black uppercase tracking-wider text-s-red">Removes</span>}
                                     {sourceName}
+                                    {ing.notStockedBy && <span className="ml-2 text-xs font-normal text-s-muted">Not stocked by {ing.notStockedBy}</span>}
                                   </td>
                                   <td className="px-4 py-2.5 text-s-muted">
                                     {purchaseQty.toLocaleString('en', { maximumFractionDigits: 3 })} {ing.unit}
@@ -1299,6 +1306,7 @@ function KitchenSheet({ r }: { r: Recipe }) {
       ]
     : [
         { label: 'BATCH YIELD',  value: r.yieldGrams ? fmtG(r.yieldGrams) : '—' },
+        { label: 'PORTIONS / RECIPE', value: r.portionsPerBatch ? String(r.portionsPerBatch) : '—' },
       ]
   return (
     <div className="border-t border-s-border">

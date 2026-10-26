@@ -91,6 +91,15 @@ async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: st
       { sourceIsTest: testOf(src), targetIsTest: testOf(dst) },
     )
   }
+  // Kitchen flow (2026-10-26): a prep (sub-recipe) is ONE stock item per company — both companies holding one for the
+  // same recipe would leave two after the merge (inventory_items_tenantId_prepRecipeId_key). A person merges those
+  // stock items first (count one to zero), then the companies.
+  const prepClash = await db.$queryRaw<Array<{ n: bigint }>>`
+    SELECT COUNT(*)::bigint AS n FROM inventory_items a JOIN inventory_items b ON a."prepRecipeId" = b."prepRecipeId"
+     WHERE a."tenantId" = ${src} AND b."tenantId" = ${dst} AND a."prepRecipeId" IS NOT NULL`
+  if (Number(prepClash[0]?.n ?? 0) > 0) {
+    throw new AppError('PREP_ITEM_CLASH', 'Both companies keep stock of the same prep — move one company\'s prep stock out first', 422, { count: Number(prepClash[0]!.n) })
+  }
   // Head office (D1 §6.7): never merged, and a company it serves is not either.
   const [hoTenants, hoLinks, splitLines, runLines, delegations] = await Promise.all([
     db.tenant.count({ where: { id: { in: pair }, kind: 'head_office' } }),
@@ -1132,9 +1141,20 @@ export async function tenantRoutes(fastify: FastifyInstance) {
           FROM s LEFT JOIN mx ON mx.k = s.k
          WHERE e.id = s.id`
 
+      // Kitchen flow (2026-10-26): one live stock item per servd master per company — a source item whose ingredient
+      // the target already stocks is unlinked (kept, never merged: a person merges the two stock items), then moves.
+      await tx.$executeRaw`
+        UPDATE inventory_items s SET "masterIngredientId" = NULL
+         WHERE s."tenantId" = ${src} AND s."masterIngredientId" IS NOT NULL AND s."deletedAt" IS NULL
+           AND EXISTS (SELECT 1 FROM inventory_items d WHERE d."tenantId" = ${dst} AND d."deletedAt" IS NULL AND d."masterIngredientId" = s."masterIngredientId")`
+      // Brands whose recipes the source owned are now owned by the target (none left pointing at itself).
+      await tx.concept.updateMany({ where: { recipeOwnerTenantId: src }, data: { recipeOwnerTenantId: dst } })
+      await tx.$executeRaw`UPDATE concepts SET "recipeOwnerTenantId" = NULL WHERE "recipeOwnerTenantId" = "tenantId"`
       const repoint: Array<{
         updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<unknown>
       }> = [
+        // Kitchen flow: recipe owners and the daily par per outlet.
+        tx.recipe, tx.parTarget,
         tx.location, tx.inventoryItem, tx.supplier, tx.rider, tx.modifierTemplate,
         tx.bankAccount, tx.kdsDevice, tx.webhookSubscription, tx.domain,
         tx.deliveryZone, tx.notificationTemplate, tx.scheduledReport, tx.shift,

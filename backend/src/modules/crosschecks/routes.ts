@@ -21,7 +21,8 @@ import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { receiveGoods } from '../procurement/receiving.js'
 import { decodeRecordFiles, zRecordFile, RECORD_FILES_BODY_LIMIT, RECORD_FILES_MAX_PER_UPLOAD } from '../../lib/recordFiles.js'
 import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors.js'
-import { explodeForPrepBatch, livePrepItems, loadRecipeGraph, toPurchaseUnits } from '../../lib/recipeCost.js'
+import { portionSizeOf } from '../../lib/portions.js'
+import { explodeForPrepBatch, livePrepItems, loadRecipeGraph, localiseGraph, toPurchaseUnits } from '../../lib/recipeCost.js'
 import { COST_CLASSES, costClassOf, zeroByClass } from '../../lib/inventoryClass.js'
 import { ensurePrepItemTx } from '../inventory/prepItems.js'
 import { activeTenantId, resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
@@ -68,6 +69,7 @@ function pktBound(v: string | undefined, end: boolean): Date | undefined {
 // Variance thresholds. Hardcoded for now; later config-driven.
 const PRICE_DRIFT_THRESHOLD        = 0.03    // 3%
 const YIELD_LOW_THRESHOLD          = 0.85    // < 85% of expected = leak
+const YIELD_HIGH_THRESHOLD         = 1.15    // > 115% of expected = mis-weighed, or inputs not drawn (owner review)
 const SHRINKAGE_THRESHOLD          = 0.02    // > 2% physical vs system = flag
 
 export async function crosschecksRoutes(fastify: FastifyInstance) {
@@ -217,7 +219,10 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
       // Recipe batches: how many whole recipe batches were made (default: expected yield ÷ the recipe's yield, else 1).
       batches:          z.number().positive().max(10_000).optional(),
       expectedYieldQty: z.number().min(0).nullable().optional(),
-      actualYieldQty:   z.number().min(0),
+      // Recipe batches may give the yield in PORTIONS instead (kitchen flow, K5: "the par entry after the prep shift
+      // IS the prep batch log, entered in portions"): actualYieldQty = portions × the recipe's portion size.
+      actualYieldQty:   z.number().min(0).optional(),
+      actualPortions:   z.number().positive().max(1_000_000).optional(),
       unit:             z.string().max(20).default('g'),
       // The outlet the batch was made at (per-site stock, 2026-10-24): its inputs leave, and the prep item lands, there.
       locationId:       z.string().uuid().nullable().optional(),
@@ -234,11 +239,11 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     // The recipe is resolved inside the ACTIVE company (BOH-R2-04): a batch may
     // cite only a sub-recipe the company's brands use — the list the par sheet
     // and the prep page offer (subRecipeIdsForCompany). Any other id is 422.
-    let subRecipe: { id: string; yieldGrams: number | null; yieldUnit: string } | null = null
+    let subRecipe: { id: string; yieldGrams: number | null; yieldUnit: string; portionsPerBatch: number | null } | null = null
     if (body.recipeId) {
       const companySubRecipes = await subRecipeIdsForCompany(tenantId)
       subRecipe = companySubRecipes.has(body.recipeId)
-        ? await prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' }, select: { id: true, yieldGrams: true, yieldUnit: true } })
+        ? await prisma.recipe.findFirst({ where: { id: body.recipeId, kind: 'component' }, select: { id: true, yieldGrams: true, yieldUnit: true, portionsPerBatch: true } })
         : null
       if (!subRecipe) {
         throw new AppError('RECIPE_NOT_IN_COMPANY', 'That sub-recipe is not one of this company\'s — pick one from the prep list, or log the batch without a recipe', 422)
@@ -246,6 +251,21 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     } else if (body.inputs.length === 0) {
       throw new AppError('INPUTS_REQUIRED', 'A batch without a recipe lists what it drew (inputs)', 400)
     }
+    if (body.actualPortions != null) {
+      if (!subRecipe) throw new AppError('PORTIONS_NEED_RECIPE', 'Portions are counted for a prep recipe — pick the recipe', 422)
+      const size = portionSizeOf(subRecipe)
+      if (!size) throw new AppError('NO_PORTION_SIZE', 'This prep has no portions per recipe yet — set "Portions / recipe" (and its batch yield) on the recipe first', 422)
+      // Owner review (2026-10-26): portions are what CAME OUT; the draw is by whole recipe batches (body.batches,
+      // default 1). Expected = batches × the recipe's yield, actual = portions × portion size — so the yield
+      // variance (and the yield_low / yield_high flags) see a short or long batch, never a smaller draw.
+      // The batches drawn are never guessed (owner review): the cook says how many whole batches were made.
+      if (body.batches == null) throw new AppError('BATCHES_REQUIRED', 'Say how many whole batches you made with the portions', 400)
+      body.actualYieldQty = body.actualPortions * size
+      body.unit = subRecipe.yieldUnit
+      body.expectedYieldQty = body.batches * subRecipe.yieldGrams!
+    }
+    if (body.actualYieldQty == null) throw new AppError('YIELD_REQUIRED', 'Give what the batch made (actualYieldQty or actualPortions)', 400)
+    const actualYieldQty = body.actualYieldQty
 
     // ── What the batch draws, per item, in PURCHASE units ──
     // Ad-hoc: the typed inputs (weighed in grams by default; converted through
@@ -267,13 +287,14 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
         if (back != null) expectedYieldQty = back
       }
       prep = await ensurePrepItemTx(prisma, subRecipe.id, tenantId)
-      const y = toPurchaseUnits(body.actualYieldQty, body.unit, prep.unit)
+      const y = toPurchaseUnits(actualYieldQty, body.unit, prep.unit)
       if (y == null) throw new AppError('UNIT_MISMATCH', `${prep.name} is kept in ${prep.unit}; ${body.unit} can't be converted to it`, 422)
       if (!(y > STOCK_EPS)) {
         throw new AppError('INVALID_QTY', 'A recipe batch must yield something — log a batch that came to nothing as waste of its ingredients', 422)
       }
       yieldQty = y
-      const { graph } = await loadRecipeGraph({ id: subRecipe.id })
+      // Kitchen flow (K4): a sub-recipe another company owns (GS Foods → Flipd) draws THIS company's own items.
+      const graph = await localiseGraph((await loadRecipeGraph({ id: subRecipe.id })).graph, tenantId, prisma, { create: true })
       // A prep inside this prep draws its prep item only where this site has held it (per-site liveness), else raw.
       const live = await livePrepItems(prisma, graph, { siteId: site })
       for (const [id, q] of explodeForPrepBatch(graph, subRecipe.id, batches, { tenantId, live })) {
@@ -308,7 +329,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     }
 
     let yieldVariancePct: number | null = null
-    if (expectedYieldQty && expectedYieldQty > 0) yieldVariancePct = body.actualYieldQty / expectedYieldQty
+    if (expectedYieldQty && expectedYieldQty > 0) yieldVariancePct = actualYieldQty / expectedYieldQty
     if (drawByItem.size > 0 || prep) await ensureFifoReady(tenantId)
 
     const { batch, ledger, failure, made } = await prisma.$transaction(async (tx) => {
@@ -336,7 +357,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
           itemName: body.itemName,
           inputs: inputs as Prisma.InputJsonValue,
           expectedYieldQty,
-          actualYieldQty: body.actualYieldQty,
+          actualYieldQty,
           unit: body.unit,
           yieldVariancePct,
           staffId: req.staffUser!.id,
@@ -394,7 +415,22 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
         kind: 'yield_low',
         severity: yieldVariancePct < 0.7 ? 'high' : 'medium',
         title: `Low yield: ${body.itemName}`,
-        description: `Expected ${body.expectedYieldQty}${body.unit}, actual ${body.actualYieldQty}${body.unit} (${(yieldVariancePct * 100).toFixed(0)}% yield) — chef ${staffUser?.name ?? req.staffUser!.id}.`,
+        description: `Expected ${expectedYieldQty}${body.unit}, actual ${actualYieldQty}${body.unit} (${(yieldVariancePct * 100).toFixed(0)}% yield) — chef ${staffUser?.name ?? req.staffUser!.id}.`,
+        entityType: 'PrepBatch',
+        entityId: batch.id,
+        actorId: req.staffUser!.id,
+        metadata: { yieldPct: yieldVariancePct, inputs: body.inputs },
+      })
+    }
+
+    // …and suspiciously HIGH (more came out than the recipe can make: mis-weighed, or inputs not drawn) — same mechanism.
+    if (yieldVariancePct != null && yieldVariancePct > YIELD_HIGH_THRESHOLD) {
+      await flagException({
+        tenantId,
+        kind: 'yield_high',
+        severity: yieldVariancePct > 1.3 ? 'high' : 'medium',
+        title: `High yield: ${body.itemName}`,
+        description: `Expected ${expectedYieldQty}${body.unit}, actual ${actualYieldQty}${body.unit} (${(yieldVariancePct * 100).toFixed(0)}% yield) — check the weighing and that every input was drawn.`,
         entityType: 'PrepBatch',
         entityId: batch.id,
         actorId: req.staffUser!.id,

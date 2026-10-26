@@ -317,7 +317,8 @@ function assertSendable(status: string) {
 export async function sendPoToSupplier(poId: string, userId: string) {
   const po = await prisma.purchaseOrder.findUnique({
     where: { id: poId },
-    include: { supplier: true, lines: { include: { inventoryItem: true } } },
+    // Each line carries its servd ingredient's SPEC (K6 — what we buy, e.g. "80/20, coarse ground").
+    include: { supplier: true, lines: { include: { inventoryItem: { include: { masterIngredient: { select: { spec: true } } } } } } },
   })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
   assertSendable(po.status)
@@ -348,9 +349,11 @@ export async function sendPoToSupplier(poId: string, userId: string) {
 
   const fmt = (c: number) => `PKR ${(c / 100).toLocaleString()}`
   const ref = po.reference ? `#${po.reference}` : `#${po.id.slice(0, 8).toUpperCase()}`
+  const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
+  const specOf = (l: (typeof po.lines)[number]) => l.inventoryItem.masterIngredient?.spec?.trim() || null
   const linesHtml = po.lines.map((l) => `
     <tr>
-      <td style="padding:6px;border-bottom:1px solid #eee;">${l.inventoryItem.name}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee;">${esc(l.inventoryItem.name)}${specOf(l) ? `<div style="color:#666;font-size:12px;">Spec: ${esc(specOf(l)!)}</div>` : ''}</td>
       <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${l.quantityOrdered} ${l.inventoryItem.unit}</td>
       <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${fmt(l.unitCostCents)}</td>
       <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${fmt(l.unitCostCents * l.quantityOrdered)}</td>
@@ -385,7 +388,7 @@ export async function sendPoToSupplier(poId: string, userId: string) {
     `Purchase Order ${ref}`,
     `Hi ${po.supplier.name}, please supply:`,
     '',
-    ...po.lines.map((l) => `- ${l.inventoryItem.name}: ${l.quantityOrdered} ${l.inventoryItem.unit} @ ${fmt(l.unitCostCents)}`),
+    ...po.lines.map((l) => `- ${l.inventoryItem.name}: ${l.quantityOrdered} ${l.inventoryItem.unit} @ ${fmt(l.unitCostCents)}${specOf(l) ? ` (spec: ${specOf(l)})` : ''}`),
     '',
     `Total: ${fmt(toCents(po.totalCents))}`,
     ...(po.expectedDate ? [`Expected delivery: ${po.expectedDate.toDateString()}`] : []),
@@ -1452,18 +1455,31 @@ export async function supplierAging(supplierId: string, asOf = new Date()): Prom
  * Items below par level, grouped by their primary supplier. Each group is a
  * draft PO ready to fire. Considers in-flight POs to avoid double-ordering.
  */
-export async function reorderSuggestions(tenantIds: string[]) {
+/**
+ * Kitchen flow (owner, 2026-10-26, part E): the ONE suggester. Without `demand` — the par rule (below par → up to
+ * par). With `demand` (the shopping list: what the prep list and the forecast dishes will draw, per item, in stock
+ * units) — those items only, suggested = demand − on hand (the OUTLET's stock when `locationId`, else the company
+ * total) − on order. Every line carries its servd ingredient's SPEC (K6) for the PO.
+ */
+export async function reorderSuggestions(tenantIds: string[], opts: { demand?: Map<string, number>; locationId?: string | null } = {}) {
   // Items are company master data: scope by the item's own company. Fails
   // closed — an empty scope (staff with no company) suggests nothing, never
   // every company's par sheet.
   if (tenantIds.length === 0) return []
+  const demand = opts.demand
   const items = await prisma.inventoryItem.findMany({
     where:   {
       deletedAt: null,
       tenantId: { in: tenantIds },
+      ...(demand ? { id: { in: [...demand.keys()] } } : {}),
     },
-    include: { supplier: { select: { id: true, name: true, tenantId: true } } },
+    include: {
+      supplier: { select: { id: true, name: true, tenantId: true } },
+      masterIngredient: { select: { spec: true, specFields: true } },
+    },
   })
+  const { siteOnHandMany } = await import('../../lib/stockLedger.js')
+  const siteStock = demand && opts.locationId ? await siteOnHandMany(prisma, items.map((i) => i.id), opts.locationId) : null
 
   // In-flight: not yet fully received, not cancelled — on these items only.
   const openLines = await prisma.purchaseOrderLine.findMany({
@@ -1491,15 +1507,25 @@ export async function reorderSuggestions(tenantIds: string[]) {
       onOrder: number
       suggestedQty: number
       unitCostCents: number
+      /** The shopping list's need for the item (demand mode only). */
+      neededQty?: number
+      spec: string | null
+      specFields: Prisma.JsonValue | null
     }>
   }>()
 
   for (const item of items) {
     const incoming = onOrder.get(item.id) ?? 0
-    const projected = item.currentStock + incoming
-    if (!isBelowPar(item, incoming)) continue
-
-    const suggestedQty = Math.ceil(item.parLevel - projected)
+    const have = siteStock ? Math.max(0, siteStock.get(item.id) ?? 0) : item.currentStock
+    const projected = have + incoming
+    let suggestedQty: number
+    if (demand) {
+      // Whole stock units, never below what is needed (3 decimals of slack so 2.0000001 kg is not 3).
+      suggestedQty = Math.ceil(Math.round(((demand.get(item.id) ?? 0) - projected) * 1000) / 1000)
+    } else {
+      if (!isBelowPar(item, incoming)) continue
+      suggestedQty = Math.ceil(item.parLevel - projected)
+    }
     if (suggestedQty <= 0) continue
 
     // A default supplier from another company is not a supplier this item's
@@ -1520,6 +1546,9 @@ export async function reorderSuggestions(tenantIds: string[]) {
       onOrder:         incoming,
       suggestedQty,
       unitCostCents:   item.unitCostCents ?? 0,
+      ...(demand ? { neededQty: Math.round((demand.get(item.id) ?? 0) * 1000) / 1000, currentStock: have } : {}),
+      spec:            item.masterIngredient?.spec ?? null,
+      specFields:      item.masterIngredient?.specFields ?? null,
     })
     groups.set(key, group)
   }

@@ -75,7 +75,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
 
   // ── Dashboards (one per workspace, blank until the owner picks the numbers)
   dashboard:      [{ label: 'Operations dashboard', href: '/dashboard/operations', icon: 'dashboard', lead: true }],
-  ops:            [{ label: 'Prep list', href: '/ops/prep-list', hint: 'Per station, from the demand forecast' }],
+  ops:            [{ label: 'Prep list', href: '/kitchen/prep-list', hint: 'Per outlet, in portions — from the forecast and the par' }],
 
   // ── Kitchen
   kds_dashboard:  [{ label: 'Kitchen view', href: '/kds', icon: 'flame' }],
@@ -91,6 +91,8 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   ],
   recipes:        [
     { label: 'Recipes', href: '/accounting/recipes', icon: 'ruler' },
+    // Kitchen flow (owner, 2026-10-26): servd's ONE ingredient master (K1) — definitions and specs.
+    { label: 'Ingredients', href: '/kitchen/ingredients', sub: true, hint: "servd's ingredients and what we buy (specs)" },
     { label: 'Menu engineering', href: '/menu-engineering', icon: 'trend', hint: 'Plate cost to selling price and margin' },
     { label: 'Recipe approvals', href: '/accounting/recipes/approvals', sub: true },
   ],
@@ -100,7 +102,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Inventory', href: '/inventory', icon: 'box', hint: 'Includes the waste log' },
     { label: 'Stock count', href: '/inventory/count', sub: true },
     { label: 'Low stock', href: '/inventory/alerts', sub: true },
-    { label: 'Prep list', href: '/ops/prep-list', sub: true },
+    { label: 'Prep list', href: '/kitchen/prep-list', sub: true },
   ],
   // The par sheet's "Log a batch" / per-row "Log batch" open the prep batch
   // logger, so par_sheet holders (kitchen, expediter) open /inventory/prep too
@@ -108,7 +110,8 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   // POST are ALL_STAFF, and the par sheet's "Made" column is filled only by
   // these batches.
   par_sheet:      [
-    { label: 'Par sheet', href: '/par-sheet', icon: 'clipboard' },
+    { label: 'Par board', href: '/par-sheet', icon: 'clipboard', hint: 'Preps in portions: target, on hand, made today, still to prep' },
+    { label: 'Prep list', href: '/kitchen/prep-list', sub: true },
     { label: 'Log a prep batch', href: '/inventory/prep', sub: true },
   ],
   procurement:    [
@@ -116,6 +119,9 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Receiving', href: '/procurement/receiving', sub: true },
     // Owner 2026-10-16: "Move sourcing sheet inside procurement section".
     { label: 'Sourcing sheet', href: '/sourcing', sub: true, hint: 'Ingredient catalogue and supplier prices' },
+    // Kitchen flow (owner, 2026-10-26, part E): what the prep list needs → draft POs; what we buy and how (K6).
+    { label: 'Shopping list', href: '/kitchen/shopping-list', sub: true, hint: 'What the prep list needs, less stock and orders — by supplier, with specs' },
+    { label: 'Spec list', href: '/kitchen/spec-list', sub: true, hint: 'What we buy and how it must come, by supplier' },
     // Also an Accounting page: the API gate on /procurement/grni admits
     // procurement and accounting (finance asks for a write-off, the CEO approves).
     { label: 'Received, not billed', href: '/procurement/grni', sub: true },
@@ -332,7 +338,7 @@ export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
   dashboard: 'The four workspace dashboards (Operations, Finance, Marketing, HR) are blank until the owner picks their numbers.',
   ops: 'The prep list forecasts for the first brand only; it has no brand picker.',
   inventory: 'Stock is held as FIFO lots, costed at the price paid: lib/stockLedger.ts is the only writer and every change leaves a stock movement. Sales deplete through the one recipe explosion; unfired voids and cancels go back to their lots, fired ones are booked as waste. Counts and prep batches are company-scoped. One stock pool per company: lots carry their outlet, but per-outlet pools are the next build, so a transfer moves no quantity (a short receipt is booked as transit loss). Lots have no expiry dates.',
-  par_sheet: 'A different "par" from InventoryItem.parLevel (which drives low-stock alerts): this sheet lists the sub-recipes the company\'s brands use.',
+  par_sheet: 'The par board counts preps in PORTIONS (portions per recipe on each sub-recipe): the daily par per outlet and weekday, on hand at the outlet, made today. A different "par" from InventoryItem.parLevel (the low-stock alert for bought stock).',
   recipes: 'One plate cost (lib/recipeCost.ts) behind recipes, pricing, food cost, COGS and stock depletion, at the FIFO price of the lots being cooked; modifiers carry their own recipes; till sales book COGS per brand at shift close. Every dish has a Packaging section: it counts on takeaway and delivery, on every order of a brand whose service vessel is packaging (Stackd), and on a dine-in line only when staff tap "Box given". The Q factor is the only plate allowance — menu pricing, never booked. One price per item across channels; no combos.',
   procurement: 'One PO system and one receiving path: each receipt line opens a FIFO lot, held on 2015 until its bill clears it ("Received, not billed" lists what is open; a write-off needs the CEO). A bill\'s stock lines link to their receipt; equipment goes through CapEx, never a bill. One AP aging tied to ledger AP. No requisition step, payment run or WHT certificate.',
   food_safety: 'Temperature limits with corrective actions and cleaning tasks, per company. No inspection export, no overdue reminders, not yet per outlet in the UI.',

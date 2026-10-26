@@ -142,6 +142,16 @@ export interface CostItem {
   tenantId?: string | null
   /** InventoryItem.category — its cost class (lib/inventoryClass.ts costClassOf). */
   category?: string | null
+  /** The servd ingredient master it is (kitchen flow K1) — how a shared recipe's line finds another company's item. */
+  masterIngredientId?: string | null
+  /** Set by withLatestCosts: the latest cost (unitCostCents then carries it) and when it was paid / typed. */
+  latestCostCents?: number | null
+  latestCostAt?: Date | null
+  /**
+   * Set by localiseGraph `strict`: the viewing / selling company does not stock this ingredient — the line shows
+   * no price (never another company's) and the item here is still the other company's (do not draw it).
+   */
+  notStocked?: boolean
 }
 
 /** RecipeIngredient.section. */
@@ -158,6 +168,8 @@ export interface CostLine {
   inventoryItem: CostItem | null
   /** 'ingredients' (default) | 'packaging' — packaging lines only on plate recipes. */
   section?: string | null
+  /** RecipeIngredient.masterIngredientId (kitchen flow K4); falls back to the item's own master. */
+  masterIngredientId?: string | null
 }
 
 export interface CostRecipe {
@@ -178,6 +190,21 @@ export interface CostRecipe {
    * no yield gross-up) — never its raw ingredients again: they left stock when the batch was made.
    */
   prepItem?: CostItem | null
+  /**
+   * Kitchen flow (2026-10-26): a sub-recipe's prep items, one per company that has made it (InventoryItem
+   * @@unique([tenantId, prepRecipeId])) — only those that hold (or held) a lot. The explosion draws the one of the
+   * consuming company (prepItemFor); `prepItem` is kept as the first of them for old readers.
+   */
+  prepItems?: CostItem[]
+  /** Recipe.tenantId — the OWNER company (K4). A shared recipe's owner-company lines resolve per company (localiseGraph). */
+  tenantId?: string | null
+}
+
+/** The prep item a sub-recipe draws in `tenantId` (null = explode raw). */
+export function prepItemFor(r: CostRecipe | undefined, tenantId: string): CostItem | null {
+  if (!r) return null
+  const list = r.prepItems ?? (r.prepItem ? [r.prepItem] : [])
+  return list.find((p) => p.tenantId === tenantId) ?? null
 }
 
 /** Every recipe a costing or explosion may need, by id (plates + their sub-recipes). */
@@ -223,7 +250,7 @@ export interface PrepStock { tenantId: string; live: Set<string> }
  * anywhere (company-level readers).
  */
 export async function livePrepItems(db: Db, graph: RecipeGraph, at: 'any' | { siteId: string | null }): Promise<Set<string>> {
-  const ids = [...new Set([...graph.values()].map((r) => r.prepItem?.id).filter((x): x is string => !!x))]
+  const ids = [...new Set([...graph.values()].flatMap((r) => (r.prepItems ?? (r.prepItem ? [r.prepItem] : [])).map((p) => p.id)))]
   if (ids.length === 0 || at === 'any') return new Set(ids)
   const rows = await db.stockLot.findMany({
     where: { inventoryItemId: { in: ids }, locationId: at.siteId }, select: { inventoryItemId: true }, distinct: ['inventoryItemId'],
@@ -244,10 +271,11 @@ function explodeBatches(
     if (line.quantity < 0 && !top?.allowNegative) continue
     if (line.prepRecipeId) {
       const sub = graph.get(line.prepRecipeId)
-      if (prepAsStock && sub?.prepItem && sub.prepItem.tenantId === prepAsStock.tenantId && prepAsStock.live.has(sub.prepItem.id)) {
+      const own = prepAsStock ? prepItemFor(sub, prepAsStock.tenantId) : null
+      if (prepAsStock && own && prepAsStock.live.has(own.id)) {
         // Prep as stock (D3): the prep ITEM, in its own unit, the quantity on the plate (no yield gross-up — the
         // batch's actual yield already carries the loss). A 'removes' line takes it back out (negative).
-        const item = sub.prepItem
+        const item = own
         out.set(item.id, (out.get(item.id) ?? 0) + batches * measureToPurchaseUnits(line.quantity, item.unit))
         continue
       }
@@ -479,17 +507,19 @@ export function belowParWhere(): Prisma.InventoryItemWhereInput {
 
 type Db = Prisma.TransactionClient
 
+const COST_ITEM_SELECT = { id: true, unit: true, unitCostCents: true, tenantId: true, category: true, masterIngredientId: true } as const
+
 const COST_RECIPE_SELECT = {
-  id: true, kind: true, menuItemId: true, modifierId: true, servings: true, yieldGrams: true, qFactorPct: true,
+  id: true, kind: true, menuItemId: true, modifierId: true, servings: true, yieldGrams: true, qFactorPct: true, tenantId: true,
   menuItem: { select: { concept: { select: { serviceVessel: true } } } },
   // `lots` (one row): the prep item switches on only once a batch has made stock — until then the dish explodes its
   // prep to raw ingredients as before, so a kitchen that has not logged a batch yet never runs short (owner card:
   // "run it in the family kitchen first, then Flipd").
-  prepItem: { select: { id: true, unit: true, unitCostCents: true, tenantId: true, category: true, deletedAt: true, lots: { select: { id: true }, take: 1 } } },
+  prepItems: { where: { deletedAt: null }, select: { ...COST_ITEM_SELECT, lots: { select: { id: true }, take: 1 } } },
   ingredients: {
     select: {
-      id: true, inventoryItemId: true, prepRecipeId: true, quantity: true, yieldPct: true, section: true,
-      inventoryItem: { select: { id: true, unit: true, unitCostCents: true, tenantId: true, category: true } },
+      id: true, inventoryItemId: true, prepRecipeId: true, quantity: true, yieldPct: true, section: true, masterIngredientId: true,
+      inventoryItem: { select: COST_ITEM_SELECT },
     },
   },
 } satisfies Prisma.RecipeSelect
@@ -497,9 +527,101 @@ const COST_RECIPE_SELECT = {
 type LoadedRecipe = Prisma.RecipeGetPayload<{ select: typeof COST_RECIPE_SELECT }>
 
 function toCostRecipe(r: LoadedRecipe): CostRecipe {
-  const { menuItem, prepItem, ...rest } = r
-  const live = prepItem && !prepItem.deletedAt && prepItem.lots.length > 0 ? { id: prepItem.id, unit: prepItem.unit, unitCostCents: prepItem.unitCostCents, tenantId: prepItem.tenantId, category: prepItem.category } : null
-  return { ...rest, serviceVessel: menuItem?.concept.serviceVessel ?? null, prepItem: live }
+  const { menuItem, prepItems, ...rest } = r
+  const live = prepItems.filter((p) => p.lots.length > 0).map(({ lots: _lots, ...p }) => p)
+  return { ...rest, serviceVessel: menuItem?.concept.serviceVessel ?? null, prepItems: live, prepItem: live[0] ?? null }
+}
+
+/**
+ * Kitchen flow (owner, 2026-10-26, K4): a SHARED recipe (Recipe.tenantId = the owner company, e.g. GS Foods) resolves
+ * each of its owner-company stock lines to `tenantId`'s OWN item for the same servd master — so a Flipd sale draws
+ * Flipd's stock (in Flipd's books) and Flipd sees the dish costed at Flipd's prices. The company's item is the one
+ * linked to the master, else its unlinked TWIN (same normalised name, a unit of the master's family — e.g. Flipd's
+ * chicken in g for GS Foods' chicken in kg; lib/ingredientMaster.ts findCompanyItemForMaster).
+ *   • `create`: a company with neither gets its item made from the master on the spot (ensureCompanyItemForMasterTx
+ *     — lot-less, so the sale records a shortfall and is never blocked); a twin found is linked.
+ *   • `strict` (cost screens, the prep / shopping lists): EVERY line whose item is not `tenantId`'s is resolved the
+ *     same way, and a line still not resolved is marked `notStocked` with NO price — a viewing company never sees
+ *     another company's price. Without `strict` only the recipe OWNER's lines move (a genuinely foreign item stays
+ *     foreign and is excluded / flagged by the sale as before).
+ * A recipe of `tenantId` itself is untouched (unless `strict` finds a foreign line). Returns a NEW graph.
+ */
+export async function localiseGraph(graph: RecipeGraph, tenantId: string, db: Db, o: {
+  create?: boolean
+  strict?: boolean
+  /** strict only: an unresolved line whose item's company passes this keeps its own item and price (the viewer belongs to it; null = company-less legacy). */
+  keep?: (itemTenantId: string | null) => boolean
+} = {}): Promise<RecipeGraph> {
+  const movable = (r: CostRecipe, l: CostLine): boolean => {
+    const t = l.inventoryItem?.tenantId
+    if (!l.inventoryItem || t === tenantId) return false
+    if (o.strict) return true
+    return !!r.tenantId && r.tenantId !== tenantId && t === r.tenantId
+  }
+  const masterOf = (l: CostLine): string | null => l.masterIngredientId ?? l.inventoryItem?.masterIngredientId ?? null
+  const wanted = new Set<string>()
+  for (const r of graph.values()) for (const l of r.ingredients) { const m = movable(r, l) ? masterOf(l) : null; if (m) wanted.add(m) }
+  let anyMovable = false
+  for (const r of graph.values()) for (const l of r.ingredients) if (movable(r, l)) anyMovable = true
+  if (!anyMovable) return graph
+  const local = new Map<string, CostItem>()
+  if (wanted.size > 0) {
+    const { ensureCompanyItemForMasterTx, findCompanyItemForMaster, liveMaster } = await import('./ingredientMaster.js')
+    const ids = new Map<string, string>()   // master id → the company's item id
+    for (const m of wanted) {
+      if (o.create) { ids.set(m, (await ensureCompanyItemForMasterTx(db, tenantId, m)).id); continue }
+      const master = await liveMaster(db, m).catch(() => null)
+      const hit = master ? await findCompanyItemForMaster(db, tenantId, master) : null
+      if (hit) ids.set(m, hit.id)
+    }
+    const rows = ids.size ? await db.inventoryItem.findMany({ where: { id: { in: [...ids.values()] } }, select: COST_ITEM_SELECT }) : []
+    const byId = new Map(rows.map((i) => [i.id, i as CostItem]))
+    for (const [m, id] of ids) { const it = byId.get(id); if (it) local.set(m, it) }
+  }
+  const out: RecipeGraph = new Map()
+  for (const [id, r] of graph) {
+    let changed = false
+    const ingredients = r.ingredients.map((l) => {
+      if (!movable(r, l)) return l
+      const m = masterOf(l)
+      const item = m ? local.get(m) : undefined
+      if (item) { changed = true; return { ...l, inventoryItemId: item.id, inventoryItem: item } }
+      if (!o.strict || o.keep?.(l.inventoryItem!.tenantId ?? null)) return l
+      changed = true
+      return { ...l, inventoryItem: { ...l.inventoryItem!, unitCostCents: null, notStocked: true } }
+    })
+    out.set(id, changed ? { ...r, ingredients } : r)
+  }
+  return out
+}
+
+/**
+ * Recipes cost at the LATEST cost (owner, 2026-10-26): every raw line of the graph priced at its item's latest cost
+ * (lib/stockLedger.ts latestCostsMany — the latest purchase price, else the latest manual cost, else the typed
+ * estimate) instead of the FIFO head (InventoryItem.unitCostCents). For the recipe / sub-recipe costing screens, the
+ * pricing and target price, and menu engineering — call it AFTER localiseGraph so each company prices at its own
+ * latest cost. NEVER for stock value, FIFO lots, cost of sales, food-cost actuals or anything posted (those stay FIFO
+ * at the price paid). Returns a new graph; prep items keep their own (made) cost.
+ */
+export async function withLatestCosts(graph: RecipeGraph, db: Db = prisma): Promise<RecipeGraph> {
+  const ids = new Set<string>()
+  for (const r of graph.values()) for (const l of r.ingredients) if (l.inventoryItem && !l.inventoryItem.notStocked) ids.add(l.inventoryItem.id)
+  if (ids.size === 0) return graph
+  const { latestCostsMany } = await import('./stockLedger.js')
+  const latest = await latestCostsMany(db, [...ids])
+  const out: RecipeGraph = new Map()
+  for (const [id, r] of graph) {
+    out.set(id, {
+      ...r,
+      ingredients: r.ingredients.map((l) => {
+        if (!l.inventoryItem || l.inventoryItem.notStocked) return l
+        const c = latest.get(l.inventoryItem.id)
+        if (!c) return l
+        return { ...l, inventoryItem: { ...l.inventoryItem, unitCostCents: c.cents, latestCostCents: c.cents, latestCostAt: c.at } }
+      }),
+    })
+  }
+  return out
 }
 
 /**
@@ -522,11 +644,18 @@ export async function loadRecipeGraph(where: Prisma.RecipeWhereInput, db: Db = p
   return { graph, roots }
 }
 
-/** Plate cost per menu item (only items that have a recipe appear). */
-export async function menuItemPlateCosts(menuItemIds: string[], db: Db = prisma): Promise<Map<string, RecipeCost>> {
+/**
+ * Plate cost per menu item (only items that have a recipe appear). `latest`: priced at the latest cost (menu
+ * engineering / pricing); default FIFO head (the food-cost report, the legacy theoretical COGS).
+ */
+export async function menuItemPlateCosts(menuItemIds: string[], db: Db = prisma, o: { latest?: boolean; tenantId?: string | null } = {}): Promise<Map<string, RecipeCost>> {
   const out = new Map<string, RecipeCost>()
   if (menuItemIds.length === 0) return out
-  const { graph, roots } = await loadRecipeGraph({ menuItemId: { in: menuItemIds } }, db)
+  const loaded = await loadRecipeGraph({ menuItemId: { in: menuItemIds } }, db)
+  const roots = loaded.roots
+  // `tenantId`: the selling company — priced at that company's OWN items only (K4); a line it does not stock costs nothing.
+  const local = o.tenantId ? await localiseGraph(loaded.graph, o.tenantId, db, { strict: true }) : loaded.graph
+  const graph = o.latest ? await withLatestCosts(local, db) : local
   const memo = new Map<string, RecipeCost>()
   for (const r of roots) if (r.menuItemId) out.set(r.menuItemId, recipeCost(graph, r.id, memo))
   return out
@@ -615,6 +744,11 @@ export interface ConsumptionOpts {
    * other sub-recipes explode raw. 'any' = live at any site (company readers). Absent = raw (pre-cut-over paths).
    */
   prepStockAt?: 'any' | { siteId: string | null }
+  /**
+   * Kitchen flow (K4): a shared recipe's lines resolve to the ORDER company's own items (localiseGraph); true = make
+   * the company's item from the servd master when it has none (the sale paths — lot-less, a shortfall, never a block).
+   */
+  createMissingItems?: boolean
 }
 
 /**
@@ -632,19 +766,21 @@ export async function consumptionPerLine(lines: SoldLine[], db: Db, o: Consumpti
   const empty = (line: SoldLine): LineConsumption => ({ line, need: new Map(), packaging: new Map(), packagingApplies: false, excluded: [] })
   if (menuItemIds.length === 0) return lines.map(empty)
 
-  const { graph, roots } = await loadRecipeGraph({
+  const loaded = await loadRecipeGraph({
     OR: [
       { menuItemId: { in: menuItemIds } },
       ...(modifierIds.length > 0 ? [{ modifierId: { in: modifierIds }, kind: 'modifier' as const }] : []),
     ],
   }, db)
+  const roots = loaded.roots
+  const graph = await localiseGraph(loaded.graph, o.tenantId, db, { create: !!o.createMissingItems })
   const byMenuItem = new Map(roots.filter((r) => r.menuItemId && r.kind !== 'modifier').map((r) => [r.menuItemId!, r]))
   const byModifier = new Map(roots.filter((r) => r.modifierId && r.kind === 'modifier').map((r) => [r.modifierId!, r]))
   const prep: PrepStock | false = o.prepStockAt ? { tenantId: o.tenantId, live: await livePrepItems(db, graph, o.prepStockAt) } : false
   const items = new Map<string, CostItem>()
   for (const r of graph.values()) {
     for (const l of r.ingredients) if (l.inventoryItem) items.set(l.inventoryItem.id, l.inventoryItem)
-    if (r.prepItem) items.set(r.prepItem.id, r.prepItem)
+    for (const p of r.prepItems ?? (r.prepItem ? [r.prepItem] : [])) items.set(p.id, p)
   }
 
   return lines.map((line) => {

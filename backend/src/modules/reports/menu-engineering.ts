@@ -51,7 +51,9 @@ export async function getMenuEngineering(opts: {
       where: { id: { in: menuItemIds } },
       select: { id: true, name: true, priceCents: true },
     }),
-    menuItemPlateCosts(menuItemIds),
+    // Menu pricing reads recipes at the LATEST cost, in the brand's own company (owner, 2026-10-26).
+    prisma.concept.findUnique({ where: { id: conceptId }, select: { tenantId: true } })
+      .then((c) => menuItemPlateCosts(menuItemIds, prisma, { latest: true, tenantId: c?.tenantId ?? null })),
   ])
 
   const itemMap = new Map(menuItems.map((m) => [m.id, m]))

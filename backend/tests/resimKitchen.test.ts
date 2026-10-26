@@ -376,7 +376,7 @@ describe('BOH-R2-04 — a prep batch cites only the active company\'s sub-recipe
     expect(own.statusCode, own.body).toBe(201)
     expect(own.json()).toMatchObject({ recipeId: doughB, tenantId: tenantB })
     expect(await stock()).toBe(69)                    // one recipe batch: 1000 g of atta, whatever was typed
-    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { prepRecipeId: doughB } })).currentStock).toBe(3000)
+    expect((await prisma.inventoryItem.findFirstOrThrow({ where: { prepRecipeId: doughB, tenantId: tenantB } })).currentStock).toBe(3000)
 
     const adHoc = await call('cookB', 'POST', '/crosschecks/prep-batches', batch(null))
     expect(adHoc.statusCode, adHoc.body).toBe(201)

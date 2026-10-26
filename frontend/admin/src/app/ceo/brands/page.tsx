@@ -22,6 +22,8 @@ interface Concept {
   reservationsEnabled: boolean
   /** The brand's primary service vessel: 'plate' or 'packaging' (the packaging IS the serving vessel). */
   serviceVessel?: 'plate' | 'packaging'
+  /** Kitchen flow (2026-10-26): the company that owns this brand's recipes when not its own (Flipd → GS Foods). */
+  recipeOwnerTenantId?: string | null
   heroTagline: string | null
   // Brand microsite artwork. Null = the storefront falls back to the file
   // bundled in its build, which is how every brand behaved before these
@@ -280,6 +282,8 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   const [description, setDescription] = useState(concept.description ?? '')
   const [isActive, setIsActive] = useState(concept.isActive)
   const [serviceVessel, setServiceVessel] = useState<'plate' | 'packaging' | ''>(concept.serviceVessel ?? '')
+  const [recipeOwner, setRecipeOwner] = useState(concept.recipeOwnerTenantId ?? '')
+  const { data: myTenants = [] } = useMyTenants()
 
   const [phone, setPhone] = useState(concept.phone ?? '')
   const [whatsapp, setWhatsapp] = useState(concept.whatsapp ?? '')
@@ -327,6 +331,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
     mutationFn: () => api.patch(`/concepts/${concept.id}`, {
       name, description: description || null, isActive,
       ...(serviceVessel ? { serviceVessel } : {}),
+      ...(ceo ? { recipeOwnerTenantId: recipeOwner || null } : {}),
       phone: phone.trim() || null,
       // wa.me wants digits only — strip what people paste (+, spaces, dashes).
       whatsapp: whatsapp.replace(/[^\d]/g, '') || null,
@@ -472,6 +477,21 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
                 Applies to orders from now on. Orders already rung up keep the vessel they were sold with, so past food cost is not restated.
               </p>
             )}
+            </fieldset>
+            {ceoNote}
+          </Section>
+
+          <Section title="Recipes owned by" subtitle="The company whose kitchen team writes and approves this brand's recipes. Stock and sales stay this brand's company's.">
+            <fieldset disabled={!ceo} className="disabled:opacity-60">
+              <Field label="Recipe owner" hint="Leave as the brand's own company unless another company owns its recipes (e.g. Flipd's recipes are GS Foods').">
+                <Select value={recipeOwner} onChange={(e) => setRecipeOwner(e.target.value)} className="s-input w-full max-w-md" aria-label="Recipe owner">
+                  <option value="">The brand&rsquo;s own company</option>
+                  {myTenants.filter((t) => t.id !== concept.tenantId).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </Select>
+              </Field>
+              {(concept.recipeOwnerTenantId ?? '') !== recipeOwner && (
+                <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>On save, this brand&rsquo;s dish and add-on recipes move to the new owner. Its own kitchen can still read them.</p>
+              )}
             </fieldset>
             {ceoNote}
           </Section>

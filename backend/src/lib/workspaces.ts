@@ -75,7 +75,7 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     ],
     sections: [
       { key: 'kitchen',       title: 'Kitchen',          modules: ['kds_all', 'kds_dashboard', 'expo_station', 'kds_config'] },
-      { key: 'menu',          title: 'Menu & recipes',   modules: ['menu', 'components', 'recipes'] },
+      { key: 'menu',          title: 'Menu & recipes',   modules: ['menu', 'recipes'] },
       { key: 'stock',         title: 'Stock & buying',   modules: ['inventory', 'par_sheet', 'procurement'] },
       { key: 'food_safety',   title: 'Food safety',      modules: ['food_safety'] },
       { key: 'front',         title: 'Front of house',   modules: ['pos', 'orders', 'refunds', 'curbside', 'reservations', 'reservations_admin', 'tables', 'dispatch', 'riders'] },

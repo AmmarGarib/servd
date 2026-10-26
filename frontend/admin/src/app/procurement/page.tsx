@@ -1,4 +1,5 @@
 'use client'
+import { fmtUnitCost, priceSourceLabel } from '../../lib/unitCost'
 import { Button, CheckLabel, FieldLabel, Input, LinkButton } from '@/components/finance/ui'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { PaymentClassificationFields, ClassificationChip, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue, type PaymentClassification } from '@/components/finance/PaymentClassificationFields'
@@ -168,7 +169,7 @@ interface PriceHistoryRow {
   id: string; inventoryItemId: string; supplierId?: string | null
   oldCostCents?: number | null; newCostCents: number; source: string
   recordedAt: string
-  inventoryItem?: { name: string; unit: string } | null
+  inventoryItem?: { name: string; unit: string; masterIngredient?: { name: string } | null } | null
   supplier?: { name: string } | null
 }
 
@@ -2702,10 +2703,15 @@ function PriceHistoryTab() {
                 const up = pct && Number(pct) > 0
                 return (
                   <tr key={row.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
-                    <td className="px-4 py-3 text-s-text font-medium">{row.inventoryItem?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-s-muted hidden md:table-cell">{row.supplier?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-right text-s-muted hidden md:table-cell">{row.oldCostCents != null ? fmtPkrWhole(row.oldCostCents) : '—'}</td>
-                    <td className="px-4 py-3 text-right text-s-text font-semibold">{fmtPkrWhole(row.newCostCents)}</td>
+                    <td className="px-4 py-3 text-s-text font-medium">
+                      {row.inventoryItem?.name ?? '—'}
+                      {row.inventoryItem?.masterIngredient && row.inventoryItem.masterIngredient.name.trim().toLowerCase() !== row.inventoryItem.name.trim().toLowerCase() && (
+                        <span className="block text-[11px] font-normal text-s-muted">servd ingredient: {row.inventoryItem.masterIngredient.name}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-s-muted hidden md:table-cell">{row.supplier?.name ?? (row.supplierId ? '—' : 'Manual cost edit')}</td>
+                    <td className="px-4 py-3 text-right text-s-muted hidden md:table-cell whitespace-nowrap">{fmtUnitCost(row.oldCostCents, row.inventoryItem?.unit)}</td>
+                    <td className="px-4 py-3 text-right text-s-text font-semibold whitespace-nowrap">{fmtUnitCost(row.newCostCents, row.inventoryItem?.unit)}</td>
                     <td className="px-4 py-3 text-right hidden md:table-cell">
                       {pct ? (
                         <span className={`text-xs font-bold ${up ? 'text-s-red' : 'text-success'}`}>
@@ -2713,7 +2719,7 @@ function PriceHistoryTab() {
                         </span>
                       ) : <span className="text-s-muted text-xs">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-s-muted text-xs hidden md:table-cell capitalize">{row.source.replace(/_/g, ' ')}</td>
+                    <td className="px-4 py-3 text-s-muted text-xs hidden md:table-cell">{priceSourceLabel(row.source, !!row.supplierId)}</td>
                     <td className="px-4 py-3 text-s-muted text-xs">{fmt(row.recordedAt)}</td>
                   </tr>
                 )

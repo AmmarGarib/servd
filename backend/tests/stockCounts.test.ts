@@ -24,7 +24,7 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { inventoryRoutes } from '../src/modules/inventory/routes.js'
 import { parSheetRoutes } from '../src/modules/par-sheet/routes.js'
-import { componentRoutes } from '../src/modules/components/routes.js'
+import { kitchenRoutes } from '../src/modules/kitchen/routes.js'
 
 let app: FastifyInstance
 let tenantA: string
@@ -56,7 +56,7 @@ beforeAll(async () => {
   })
   await app.register(inventoryRoutes, { prefix: '/inventory' })
   await app.register(parSheetRoutes, { prefix: '/par-sheet' })
-  await app.register(componentRoutes, { prefix: '/components' })
+  await app.register(kitchenRoutes, { prefix: '/kitchen' })
   await app.ready()
 })
 
@@ -183,7 +183,9 @@ describe('ingredient master', () => {
 // ─── Decision 29: par sheet = the company's sub-recipes, made from batches ───
 
 describe('par sheet and prep', () => {
-  let subX: string
+  let locParA: string
+let locParB: string
+let subX: string
   let subY: string
   let subZ: string
   let flourA: string
@@ -196,6 +198,10 @@ describe('par sheet and prep', () => {
     }
     const a = await mkBrand(tenantA, 'stock-brand-a')
     const b = await mkBrand(tenantB, 'stock-brand-b')
+    locParA = (await prisma.location.create({ data: { slug: 'stock-loc-a', name: 'Stock outlet A', tenantId: tenantA } })).id
+    locParB = (await prisma.location.create({ data: { slug: 'stock-loc-b', name: 'Stock outlet B', tenantId: tenantB } })).id
+    await prisma.conceptLocation.create({ data: { conceptId: a.concept.id, locationId: locParA, isPrimary: true } })
+    await prisma.conceptLocation.create({ data: { conceptId: b.concept.id, locationId: locParB, isPrimary: true } })
 
     flourA = (await prisma.inventoryItem.create({ data: { name: 'Par Flour', unit: 'kg', currentStock: 10, tenantId: tenantA } })).id
     const flourB = (await prisma.inventoryItem.create({ data: { name: 'Par Flour', unit: 'kg', currentStock: 10, tenantId: tenantB } })).id
@@ -221,26 +227,29 @@ describe('par sheet and prep', () => {
     await prisma.recipe.create({ data: { kind: 'plate', menuItemId: plateB.id, ingredients: { create: [{ prepRecipeId: subZ, quantity: 80, unit: 'g' }] } } })
 
     // Today's batches: one of A's, one drawn from B's stock (not A's prep).
-    await prisma.prepBatch.create({ data: { recipeId: subX, itemName: 'Bechamel', inputs: [{ inventoryItemId: flourA, qtyDrawn: 0.25, unit: 'kg' }], actualYieldQty: 950, unit: 'g', staffId: users['mgrA']!.id } })
-    await prisma.prepBatch.create({ data: { recipeId: subX, itemName: 'Bechamel', inputs: [{ inventoryItemId: flourB, qtyDrawn: 0.25, unit: 'kg' }], actualYieldQty: 1000, unit: 'g', staffId: users['mgrB']!.id } })
+    await prisma.prepBatch.create({ data: { tenantId: tenantA, locationId: locParA, recipeId: subX, itemName: 'Bechamel', inputs: [{ inventoryItemId: flourA, qtyDrawn: 0.25, unit: 'kg' }], actualYieldQty: 950, unit: 'g', staffId: users['mgrA']!.id } })
+    await prisma.prepBatch.create({ data: { tenantId: tenantB, locationId: locParB, recipeId: subX, itemName: 'Bechamel', inputs: [{ inventoryItemId: flourB, qtyDrawn: 0.25, unit: 'kg' }], actualYieldQty: 1000, unit: 'g', staffId: users['mgrB']!.id } })
   })
 
-  it('lists only the sub-recipes the company’s brands use, transitively', async () => {
-    const res = await call('mgrA', 'GET', '/par-sheet')
+  it('the par board lists only the sub-recipes the company’s brands use, transitively; another company’s outlet 404', async () => {
+    const res = await call('mgrA', 'GET', `/kitchen/par-board?locationId=${locParA}`)
     expect(res.statusCode).toBe(200)
-    const ids = res.json().map((r: { recipeId: string }) => r.recipeId).sort()
+    const ids = res.json().rows.map((r: { recipeId: string }) => r.recipeId).sort()
     expect(ids).toEqual([subX, subY].sort())
 
-    const idsB = (await call('mgrB', 'GET', '/par-sheet')).json().map((r: { recipeId: string }) => r.recipeId)
+    const idsB = (await call('mgrB', 'GET', `/kitchen/par-board?locationId=${locParB}`)).json().rows.map((r: { recipeId: string }) => r.recipeId)
     expect(idsB).toEqual([subZ])
+    expect((await call('mgrB', 'GET', `/kitchen/par-board?locationId=${locParA}`)).statusCode).toBe(404)
+    // The old "made today" list is gone (one board).
+    expect((await call('mgrA', 'GET', '/par-sheet')).statusCode).toBe(404)
   })
 
-  it('reads "made" from the company’s prep batches', async () => {
-    const rows = (await call('mgrA', 'GET', '/par-sheet')).json() as Array<{ recipeId: string; madeGrams: number; batches: number }>
+  it('reads "made today" from the outlet’s prep batches', async () => {
+    const rows = (await call('mgrA', 'GET', `/kitchen/par-board?locationId=${locParA}`)).json().rows as Array<{ recipeId: string; madeTodayQty: number; batchesMadeToday: number }>
     const x = rows.find((r) => r.recipeId === subX)!
-    expect(x.batches).toBe(1)
-    expect(x.madeGrams).toBe(950)
-    expect(rows.find((r) => r.recipeId === subY)!.batches).toBe(0)
+    expect(x.batchesMadeToday).toBe(1)
+    expect(x.madeTodayQty).toBe(950)
+    expect(rows.find((r) => r.recipeId === subY)!.batchesMadeToday).toBe(0)
   })
 
   it('the prep form gets inputs in each item’s stock unit, from the company’s own items', async () => {
@@ -251,25 +260,12 @@ describe('par sheet and prep', () => {
     expect(x.subPreps.map((s) => s.id)).toEqual([subY])
   })
 
-  it('the hand-typed par writers and the component library writers are gone', async () => {
+  it('the hand-typed par writers and the Component library are gone (K7: tables kept, no API)', async () => {
     const comp = await prisma.component.create({ data: { name: 'Chicken skin crisp', type: 'trim_waste' } })
     expect((await call('mgrA', 'PUT', `/par-sheet/${comp.id}`, { actual: 5 })).statusCode).toBe(404)
     expect((await call('mgrA', 'POST', `/par-sheet/${comp.id}/adjust`, { delta: 1 })).statusCode).toBe(404)
     expect((await call('mgrA', 'POST', '/par-sheet/rollover', {})).statusCode).toBe(404)
     expect((await call('mgrA', 'POST', '/components', { name: 'x', type: 'hero' })).statusCode).toBe(404)
-    expect((await call('mgrA', 'PATCH', `/components/${comp.id}`, { name: 'y' })).statusCode).toBe(404)
-    // Still readable as a reference.
-    expect((await call('mgrA', 'GET', `/components/${comp.id}`)).statusCode).toBe(200)
-  })
-
-  it('component brand chips show only the operator’s own brands', async () => {
-    const brandA = await prisma.concept.findFirstOrThrow({ where: { slug: 'stock-brand-a' } })
-    const brandB = await prisma.concept.findFirstOrThrow({ where: { slug: 'stock-brand-b' } })
-    const comp = await prisma.component.create({
-      data: { name: 'Herb oil', type: 'supporting', brands: { create: [{ conceptId: brandA.id }, { conceptId: brandB.id }] } },
-    })
-    const res = await call('mgrA', 'GET', `/components/${comp.id}`)
-    expect(res.json().brands.map((b: { conceptId: string }) => b.conceptId)).toEqual([brandA.id])
-    expect((await call('mgrA', 'GET', `/components?brandConceptId=${brandB.id}`)).statusCode).toBe(404)
+    expect((await call('mgrA', 'GET', `/components/${comp.id}`)).statusCode).toBe(404)
   })
 })

@@ -58,7 +58,7 @@ export const MODULE_IDS = [
   // code to the rider's number when the customer cannot receive it; log food
   // a rider brought back as waste. The RGM, the chef and the F&B manager.
   'emergency_overrides',
-  'menu', 'components', 'recipes', 'inventory', 'kds_config', 'par_sheet', 'food_safety',
+  'menu', 'recipes', 'inventory', 'kds_config', 'par_sheet', 'food_safety',
   'marketing_workspace', 'crm', 'campaigns', 'complaints', 'reviews', 'calendar', 'media', 'promos', 'brands', 'analytics',
   // Storefront content module (decision 41): pages, pop-ups, library, drafts.
   // Publishing still needs the CEO (role admin) — this only lets you draft.
@@ -89,6 +89,8 @@ const ALL_MODULES = [...MODULE_IDS] as string[]
 export const RETIRED_MODULE_IDS = [
   'staff_management', 'staff_foh', 'staff_boh', 'staff_procurement',
   'staff_marketing', 'staff_finance', 'kitchen_staff',
+  // The old Component library (owner, 2026-10-26, K7): its page and API are gone; its tables stay.
+  'components',
 ] as const
 const RETIRED_SET = new Set<string>(RETIRED_MODULE_IDS)
 
@@ -207,7 +209,7 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
   boh_management: [
     'dashboard', 'ops', 'orders', 'kds_all', 'kds_dashboard', 'expo_station',
     'emergency_overrides',
-    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
+    'menu', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
     'procurement', 'staff_directory', 'scheduling',
     'reports', 'food_cost',
   ],
@@ -231,7 +233,7 @@ export const DEFAULT_MODULE_ACCESS: Record<UserRole, string[]> = {
     'fnb_dashboard',
     'dashboard', 'ops', 'orders', 'refunds', 'curbside',
     'kds_all', 'kds_dashboard', 'expo_station',
-    'menu', 'components', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
+    'menu', 'recipes', 'par_sheet', 'inventory', 'kds_config', 'food_safety',
     // Buying (owner decision 47: the F&B manager owns Operations — "all BOH and
     // FOH, menu, stock, buying"); missing until the 2026-10-17 simulation.
     'procurement',

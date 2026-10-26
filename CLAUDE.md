@@ -1782,7 +1782,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
 - **Stock, after the W3 fixes:** a sub-recipe's stock lines and stations
   belong to the companies of the dishes and add-ons that use it (an unused one
   to the active company); sub-recipes are never shared across companies (422
-  `INGREDIENT_NOT_IN_COMPANY`). `PATCH /inventory/:id` re-reads the category
+  `INGREDIENT_NOT_IN_COMPANY`) — EXCEPT the owner → user share of the kitchen
+  flow (2026-10-26, below): a company's recipes may be used by the brands whose
+  `Concept.recipeOwnerTenantId` is that company. `PATCH /inventory/:id` re-reads the category
   under the item lock, gives each extra cost class its own reclass key
   (`<audit>:<class>`) and answers 409 `RECLASS_NOT_POSTED` if the ledger did not
   book what moved. An opening count is blocked only by lots and lot-carrying
@@ -1839,8 +1841,8 @@ per-site stock now (D4).
   company valuation (`lotValuation` adds `inTransitByClass`). Two companies:
   422 `TRANSFER_CROSS_COMPANY`. Inter-company supply is a later build.
 - **Prep as stock** (`modules/inventory/prepItems.ts`): a prep (component)
-  recipe gets ONE stock item (`InventoryItem.kind 'prep'`, `prepRecipeId`
-  @unique, unit = `Recipe.yieldUnit` g / ml / pcs — locked once the item exists,
+  recipe gets ONE stock item PER COMPANY (kitchen flow 2026-10-26) (`InventoryItem.kind 'prep'`, `prepRecipeId`
+  @@unique([tenantId, prepRecipeId]), unit = `Recipe.yieldUnit` g / ml / pcs — locked once the item exists,
   409 `PREP_UNIT_LOCKED`), created on approval, on its first batch and at boot
   for every production prep. A recipe batch (`POST /prep-batches` with
   `recipeId`, `batches`) draws its recipe × batches FIFO at the site
@@ -1888,6 +1890,74 @@ per-site stock now (D4).
   one for every outlet).
 - Migration `20261024140000_stock_by_site`; tests `tests/stockBySite.test.ts`,
   `tests/prepAsStock.test.ts`.
+
+### Kitchen flow (owner, 2026-10-26)
+
+"servd kitchen module basic flow is from master data --> recipe --> prep list --> spec list --> procurement -->
+inventory --> par level set --> sales --> deduction basis plate recipe." Binding: K1–K7 (below). FIFO lots, the draw
+at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
+
+- **Ingredient master is SERVD-WIDE (K1)** — `IngredientMaster`, deliberately NO `tenantId` (platform data). It is
+  the DEFINITION only: name, stock unit, category, allergens, yield %, buying unit + factor and the SPEC (`spec` +
+  `specFields`, K6: what we BUY — "burger meat = 80/20, coarse ground"). Each company's `InventoryItem`
+  (`masterIngredientId`) keeps its price, supplier, par, stock, notes; ONE live item per master per company
+  (partial unique `inventory_items_tenant_master_live_key`). `lib/ingredientMaster.ts` is the one helper:
+  `findOrCreateMasterTx` (dedupe by normalised name), `ensureCompanyItemForMasterTx` (THE way a company's item for
+  a master is found / linked / made — the linked item, else the company's TWIN, else a new one). ONE normalise rule
+  (`cleanIngredientName` / `normalizeIngredientName`: JS `\s` trimmed + collapsed, lower case — mirrored exactly by the
+  backfill SQL). **Units are FAMILIES** (`unitFamily`: mass g, volume ml, count pcs; any other unit its own): a
+  master is kept in the family's BASE unit, kg / g (l / ml) twins are ONE master, kg vs pcs are two; a company item
+  keeps its own unit of the master's family (recipe quantities convert via `measureToPurchaseUnits`);
+  `findOrCreateMasterTx` never returns an incompatible unit; a picked master of another family is 409
+  `MASTER_UNIT_MISMATCH`; `POST /inventory` keeps the typed unit and cost. API `/ingredient-master` (GET search
+  server-side, any staff with recipes / inventory / procurement / par_sheet; POST → `needs_review` at once (K2),
+  recipe editors + buyer; PATCH name / spec / allergens / yield = MANAGERS; category, unit and marking reviewed = CEO /
+  fnb_manager only; a category change needs the editor in EVERY company that stocks it (409
+  `MASTER_CATEGORY_NEEDS_MEMBERSHIP`) and moves each company's lots through `moveItemLotsToCategoryTx`, its own
+  posting; a unit change once anything is stocked / bought / cooked is 409 `MASTER_UNIT_IN_USE`). `POST /:id/merge
+  {intoId}` (CEO / fnb_manager) only RE-POINTS links and NEVER posts: a company stocking both is 409
+  `MERGE_NEEDS_STOCK_MERGE`, units of different families 409 `MERGE_UNIT_MISMATCH`, different categories 409
+  `MERGE_CATEGORY_MISMATCH` (fix the category first with the reviewer PATCH, which reclasses). On a linked item the
+  definition fields are locked (422 `MASTER_FIELD_LOCKED`; its unit may change within the family). A Trash restore
+  whose ingredient the company already stocks comes back UNLINKED (flag `ingredient_master_unlinked`); giving a
+  company-less item a company that already stocks its ingredient is 409 `MASTER_TWIN_EXISTS`. `POST /inventory/from-master` = the active company's
+  item (K3 auto-fill); `POST /inventory` links to a master too. Admin: Operations → Ingredients (`/kitchen/ingredients`),
+  the recipe form's ingredient picker searches the master and adds a new one inline. Backfill (migration
+  `20261026120000`): every non-prep item (live, company-less, or in the Trash but on a recipe) and every recipe line
+  linked, grouped by normalised name + unit family; a second live item of one name and family in one company gets its
+  own master "<name> (duplicate n)", needs_review.
+- **Recipes belong to a COMPANY (K4)** — `Recipe.tenantId` = the OWNER; `Concept.recipeOwnerTenantId` (CEO field,
+  BRAND_CEO_FIELDS) = who owns a brand's recipes when not its own company (Flipd → GS Foods); setting it re-owns the
+  brand's dish and add-on recipes. The owner's editors create / edit / approve / delete (approvals: the owner
+  company) — writing such a brand's recipes needs the OWNER as the ACTIVE company (422 `RECIPE_OWNER_NOT_ACTIVE`;
+  stock items are never made in another company); a company USING it reads it at its OWN prices only (cost screens
+  localise `strict`: a line it does not stock shows "Not stocked by <company>", no price) and never edits (403
+  `RECIPE_OWNED_BY_OTHER_COMPANY`); a third company 404. A recipe with no owner (ambiguous at backfill) keeps the old derived rule and is flagged
+  `recipe_company_unknown` at boot. Lines carry `masterIngredientId`; `lib/recipeCost.ts localiseGraph` resolves a
+  shared recipe's owner-company lines to the SELLING / VIEWING company's item for that master (the sale makes one
+  when missing — lot-less, a shortfall, never a block). Prep items are one per (company, recipe)
+  (`@@unique([tenantId, prepRecipeId])`). A Flipd sale deducts Flipd's outlet stock, in Flipd's books — its existing
+  twin (chicken in g for GS Foods' kg) before anything is created.
+- **Recipes cost at the LATEST cost (owner, 2026-10-26)** — every recipe / sub-recipe cost screen, the pricing and
+  menu engineering price each line at `lib/stockLedger.ts latestCostsMany` (latest purchase price, else latest
+  manual cost, else the typed estimate) through `lib/recipeCost.ts withLatestCosts`. NEVER stock value, FIFO lots,
+  cost of sales, food-cost actuals or anything posted — those stay FIFO at the price paid. Items and recipe lines
+  expose `latestCostCents` / `latestCostAt`; price history: `GET /inventory/:id/price-history` (the one store,
+  ItemPriceHistory; inventory auth).
+- **Par in PORTIONS (K5)** — `Recipe.portionsPerBatch` (portions one batch makes; size = yield ÷ it,
+  `lib/portions.ts`, never stored) + `portionLabel`. A prep batch may be logged in portions (`actualPortions`; 422
+  `NO_PORTION_SIZE` without). Portions are what CAME OUT: the draw is whole batches (`batches`, default 1), expected =
+  batches × yield, so the variance and `yield_low` see a short batch. Daily par per outlet: `ParTarget` (tenantId = the outlet's company, RLS, merge
+  repoint; `PUT /kitchen/par-targets`, managers).
+- **ONE engine** `modules/kitchen/prepPlan.ts buildPrepPlan` (forecast = `forecastDishesForDay`, same weekday, last 4
+  weeks) behind `GET /kitchen/prep-list`, `/kitchen/par-board`, `/kitchen/par-targets` and `/kitchen/shopping-list`
+  (→ procurement's ONE suggester `reorderSuggestions(…, {demand, locationId})`; `POST …/draft-pos` through
+  `createPo`; an ingredient the company has never stocked is listed as `notStocked` — "Not stocked yet — create" —
+  never dropped, never ordered). `/ops/prep-list` and `GET /par-sheet` are removed (admin redirects). Spec list `GET /kitchen/spec-list`
+  (+ `?format=`); PO email and detail carry each line's spec.
+- **K7:** the old Component library is gone (`modules/components`, `/par-sheet/components`, module id `components`
+  retired); its tables stay.
+- Tests: `ingredientMaster`, `recipeCompanyShare`, `kitchenFlow`.
 
 ### Practice copy (owner, 2026-10-14)
 

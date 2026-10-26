@@ -598,7 +598,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         where: { id: req.params.id, supplier: await supplierScopeWhere(req, 'read') },
         include: {
           supplier:    { include: { tenant: { select: { id: true, name: true, slug: true } } } },
-          lines:       { include: { inventoryItem: true, discrepancies: true } },
+          // Each line's servd ingredient spec (K6) — printed with the PO.
+          lines:       { include: { inventoryItem: { include: { masterIngredient: { select: { name: true, spec: true, specFields: true } } } }, discrepancies: true } },
           activityLog: { include: { user: { select: { name: true } } }, orderBy: { createdAt: 'desc' } },
           bills:       true,
         },
@@ -1180,7 +1181,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           ...(req.query.supplierId && { supplierId: req.query.supplierId }),
         },
         include: {
-          inventoryItem: { select: { name: true, unit: true } },
+          // The servd master's name too, when the company's item is named differently (kitchen flow, 2026-10-26).
+          inventoryItem: { select: { name: true, unit: true, masterIngredient: { select: { name: true } } } },
           supplier:      { select: { name: true } },
         },
         orderBy: { recordedAt: 'desc' },

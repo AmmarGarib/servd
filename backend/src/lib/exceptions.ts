@@ -27,6 +27,10 @@ export type ExceptionKind =
   | 'price_drift'           // supplier invoice unit cost differs from PO above threshold
   | 'short_shipment'        // received qty < ordered qty (subset of receiving_variance, urgent)
   | 'yield_low'             // PrepBatch actual yield << expected
+  | 'ingredient_master_category_mismatch' // kitchen flow: a twin auto-linked to a servd ingredient of another category
+  | 'yield_high'            // PrepBatch actual yield well above expected (> 1.15)
+  | 'ingredient_master_unlinked' // kitchen flow: a restored stock item whose servd ingredient the company already stocks
+  | 'recipe_company_unknown' // kitchen flow (2026-10-26): a sub-recipe several companies use whose owner company could not be decided
   | 'shrinkage'             // PhysicalCount variance > threshold
   | 'shrinkage_trend'       // cumulative shrinkage on an item over weeks
   | 'consecutive_voids'     // same cashier voided 3+ orders in last hour
