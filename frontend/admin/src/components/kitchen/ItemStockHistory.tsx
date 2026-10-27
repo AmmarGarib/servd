@@ -33,8 +33,26 @@ export function ItemStockHistory({ itemId, locationId }: { itemId: string; locat
   const unit = first.item.unit
   return (
     <div className="space-y-2">
+      {rows.length > 0 && (
+        // Phone: one compact row per movement, nothing to swipe (owner, 2026-10-27).
+        <ul className="sm:hidden divide-y divide-s-border text-xs">
+          {rows.map((r) => (
+            <li key={r.id} className="py-2 min-w-0">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-semibold text-s-text">{r.kindLabel}</span>
+                <span className={`font-mono whitespace-nowrap ${r.qty < 0 ? 'text-s-red' : 'text-success'}`}>{fmtQty(r.qty)} {unit}</span>
+              </div>
+              {(r.detail || r.orderRef) && <p className="text-s-muted break-words">{[r.detail, r.orderRef ? `Order ${r.orderRef}` : null].filter(Boolean).join(' · ')}</p>}
+              <p className="text-s-muted break-words">
+                {[fmtWhen(r.at), [r.location, r.brand].filter(Boolean).join(' · ') || null, r.by,
+                  !first.costsHidden && r.valueCents != null ? `PKR ${Math.round(r.valueCents / 100).toLocaleString('en-PK')}` : null].filter(Boolean).join(' · ')}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
       {rows.length === 0 ? <p className="text-xs text-s-muted">No stock movements yet.</p> : (
-        <div className="overflow-x-auto">
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="text-s-muted">
               <tr>
