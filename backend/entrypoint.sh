@@ -44,6 +44,11 @@ echo "[entrypoint] resolving 0_init baseline (idempotent)…"
 migrate_prisma migrate resolve --applied 0_init 2>&1 || \
   echo "[entrypoint] migrate resolve returned non-zero (often expected if already applied), continuing"
 
+# Hotfix 2026-10-27: the first live run of 20261027200000_work_location_pins stopped at a CHECK; mark it rolled back
+# so the corrected (re-runnable) file runs again. Errors harmlessly when that migration is not in a failed state.
+migrate_prisma migrate resolve --rolled-back 20261027200000_work_location_pins 2>&1 || \
+  echo "[entrypoint] work_location_pins not in a failed state — nothing to resolve"
+
 echo "[entrypoint] applying any new migrations…"
 if ! migrate_prisma migrate deploy 2>&1; then
   echo "[entrypoint] FATAL: prisma migrate deploy failed — refusing to boot against a stale schema. Roll back or fix the migration."
