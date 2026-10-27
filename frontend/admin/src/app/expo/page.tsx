@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { formatDistanceToNowStrict } from 'date-fns'
@@ -8,7 +8,9 @@ import { fmtPkrWhole } from '../../lib/money'
 import { orderRef } from '../../lib/orderRef'
 import { FIRE_ALL_EXTRA_ROLES, useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
-import { ArrowLeft, ArrowRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bell, BellOff } from 'lucide-react'
+import { enableKdsSound, playNewOrderBeep, useKdsAudioState } from '../../hooks/useKdsSocket'
+import { useKdsStore } from '../../store/kds'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { BacklogStat, ReadyPrintControls, StickerSizeMenu, UnstartedAlert, stationQueueOf, useKitchenStatus } from '../../components/kds/ExpoKitchen'
 
@@ -209,6 +211,20 @@ export default function ExpoPage() {
   // Backlog counter + the 60-second "not started" alert (owner B12).
   const { data: kitchen } = useKitchenStatus()
 
+  // The new-order chime lives on expo only (owner 2026-10-27: "kitchen chime is ok, but expo only").
+  // An order id not seen in the previous poll chimes once; the first load only sets the baseline.
+  const soundEnabled = useKdsStore((s) => s.soundEnabled)
+  const setSoundEnabled = useKdsStore((s) => s.setSoundEnabled)
+  const audio = useKdsAudioState()
+  const seenOrders = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    if (!data) return
+    const ids = [...data.awaitingFire, ...data.inProgress, ...data.ready].map((o) => o.id)
+    const seen = seenOrders.current
+    if (seen && soundEnabled && ids.some((id) => !seen.has(id))) playNewOrderBeep()
+    seenOrders.current = new Set([...(seen ?? []), ...ids])
+  }, [data, soundEnabled])
+
   // Toast for items that fired but have no live station (none assigned, or
   // the station was retired). Surfaces the 'I clicked Fire and nothing
   // happened at the line' confusion — the order DID fire, those specific
@@ -376,6 +392,12 @@ export default function ExpoPage() {
             className="absolute top-0 right-0 flex h-11 w-11 items-center justify-center text-kds-subtext hover:text-kds-text"><CloseIcon /></button>
         </div>
       )}
+      {soundEnabled && audio === 'suspended' && (
+        <button type="button" onClick={enableKdsSound}
+          className="flex min-h-11 w-full items-center justify-center gap-2 border-b border-kds-amber/40 bg-kds-amber/15 px-4 text-sm font-bold text-kds-amber">
+          Tap to enable sound. New-order chimes stay silent until you do.
+        </button>
+      )}
       <header className="px-6 py-4 border-b border-white/5">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
@@ -394,6 +416,13 @@ export default function ExpoPage() {
             <Stat label="Ready" count={ready.length} tone="green" />
             {upcoming.length > 0 && <Stat label="Pre-orders" count={upcoming.length} tone="neutral" />}
             <StickerSizeMenu />
+            <button type="button" onClick={() => setSoundEnabled(!soundEnabled)}
+              title={soundEnabled ? 'Mute new-order chime' : 'Unmute new-order chime'}
+              aria-label="New-order chime" aria-pressed={soundEnabled}
+              className={`flex min-h-11 min-w-11 items-center justify-center rounded-lg border px-3 transition-colors ${
+                soundEnabled ? 'border-kds-green bg-kds-green text-primary-on' : 'border-kds-border text-kds-subtext hover:text-kds-text'}`}>
+              {soundEnabled ? <Bell size={20} aria-hidden="true" /> : <BellOff size={20} aria-hidden="true" />}
+            </button>
           </div>
         </div>
       </header>

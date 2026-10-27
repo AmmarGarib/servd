@@ -72,6 +72,7 @@ async function mkRecords(tag: string, tenantId: string, cook: string): Promise<C
   const emp = await prisma.hrEmployee.create({ data: { tenantId, employeeCode: `E-${tag}-${RUN}`, fullName: `Person ${tag}` } })
   const doc = await prisma.hrDocument.create({ data: { tenantId, employeeId: emp.id, docType: 'cnic_front' } })
   const asset = await prisma.fixedAsset.create({ data: { tenantId, name: 'Oven', category: 'kitchen_equipment', acquiredAt: new Date('2026-01-01'), costCents: 500_000, usefulLifeMonths: 60 } })
+  const rider = await prisma.rider.create({ data: { tenantId, name: `Rider ${tag}`, phone: `92300${Math.floor(Math.random() * 1e7).toString().padStart(7, '0')}${tag === 'A' ? '1' : '2'}`.slice(0, 12) } })
   const proj = await prisma.capexProject.create({ data: { tenantId, name: `Buildout ${tag}` } })
   const cline = await prisma.capexLine.create({ data: { projectId: proj.id, scope: 'Equipment', item: 'Oven', unitCostCents: 100_000 } })
   const quote = await prisma.capexQuote.create({ data: { lineId: cline.id, vendor: `Vendor ${tag}`, totalCents: 100_000 } })
@@ -88,7 +89,7 @@ async function mkRecords(tag: string, tenantId: string, cook: string): Promise<C
       // The same entry is a manual journal entry (reference 'manual:…'): its supporting documents (2026-10-20).
       [RECORD_OWNER.journal_entry]: paid.entryId,
       [RECORD_OWNER.opex_payment]: pay.id, [RECORD_OWNER.supplier_bill]: bill.id, [RECORD_OWNER.goods_receipt]: grn.id,
-      [RECORD_OWNER.prep_batch]: prep.id, [RECORD_OWNER.hr_document]: doc.id, [RECORD_OWNER.fixed_asset]: asset.id,
+      [RECORD_OWNER.prep_batch]: prep.id, [RECORD_OWNER.hr_document]: doc.id, [RECORD_OWNER.rider_document]: rider.id, [RECORD_OWNER.fixed_asset]: asset.id,
     },
   }
 }
@@ -110,6 +111,7 @@ const ACTOR: Record<string, [string, string]> = {
   [RECORD_OWNER.capex_quote]:   ['finA', 'finB'],
   [RECORD_OWNER.payment]:       ['finA', 'finB'],
   [RECORD_OWNER.journal_entry]: ['finA', 'finB'],
+  [RECORD_OWNER.rider_document]: ['fohA', 'fohB'],
 }
 
 beforeAll(async () => {
@@ -117,7 +119,7 @@ beforeAll(async () => {
   const tB = (await prisma.tenant.create({ data: { name: 'RecFiles B', slug: `recfiles-b-${RUN}` } })).id
   await ensureChartOfAccounts(tA)
   await ensureChartOfAccounts(tB)
-  for (const [k, role] of [['ceo', 'admin'], ['fin', 'finance'], ['mgr', 'boh_management'], ['cook', 'boh'], ['hr', 'hr']] as const) {
+  for (const [k, role] of [['ceo', 'admin'], ['fin', 'finance'], ['mgr', 'boh_management'], ['cook', 'boh'], ['hr', 'hr'], ['foh', 'foh_management']] as const) {
     await mkUser(`${k}A`, role, tA)
     await mkUser(`${k}B`, role, tB)
   }
@@ -150,7 +152,7 @@ beforeAll(async () => {
 afterAll(async () => { invalidateSetupCache(); await app?.close() })
 
 describe('record files: every owner type, two companies', () => {
-  it('registers exactly the nine owner types', () => {
+  it('registers exactly the ten owner types', () => {
     expect(recordFileOwnerTypes()).toEqual(Object.values(RECORD_OWNER).sort())
   })
 
@@ -189,6 +191,17 @@ describe('record files: every owner type, two companies', () => {
       expect((await filesOf(ownerType, idA)).length).toBe(rows.length)
     })
   }
+
+  it('rider documents: images + PDF only, roles without rider access refused, module gate holds', async () => {
+    const id = A.ids[RECORD_OWNER.rider_document]!
+    const t = RECORD_OWNER.rider_document
+    expect((await call('fohA', 'POST', `/record-files/${t}/${id}`, { files: [docx] })).statusCode).toBe(400)
+    // A manager role whose Module Access has no 'riders' (boh_management) is refused like /riders.
+    expect((await call('mgrA', 'GET', `/record-files/${t}/${id}`)).statusCode).toBe(403)
+    expect((await call('cashierA', 'GET', `/record-files/${t}/${id}`)).statusCode).toBe(403)
+    expect((await call('cookA', 'POST', `/record-files/${t}/${id}`, { files: [png()] })).statusCode).toBe(403)
+    expect((await call('fohA', 'GET', `/record-files/${t}/${id}`)).statusCode).toBe(200)
+  })
 
   it('a member of both companies uploads to the OTHER company\'s record with no company chosen: stamped with the record\'s company', async () => {
     const idB = B.ids[RECORD_OWNER.opex_payment]!

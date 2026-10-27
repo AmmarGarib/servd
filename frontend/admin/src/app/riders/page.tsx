@@ -2,6 +2,7 @@
 
 import {  } from 'lucide-react'
 import { useState } from 'react'
+import { RecordFiles } from '@/components/files/RecordFiles'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -754,6 +755,14 @@ export default function RidersPage() {
                       Remove
                     </button>
                   </div>
+                </div>
+
+                {/* Private documents (owner C16, 2026-10-27) */}
+                <div className="mt-4 border-t border-s-border pt-4">
+                  <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Documents (private)</p>
+                  <p className="text-xs text-s-muted mb-2">Only rider managers of this company can open these.</p>
+                  <RecordFiles ownerType="rider_document" ownerId={rider.id} tenantId={rider.tenantId ?? undefined}
+                    canUpload compact lazy emptyText="No documents yet (CNIC, licence, bike papers)." />
                 </div>
 
                 {/* Delivery history inline */}

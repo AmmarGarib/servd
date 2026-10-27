@@ -8,7 +8,7 @@ import { api } from '../../lib/api'
 import { preparePhoto, prepareReceiptFile } from '../../lib/photoPrep'
 
 /** The record types the API knows (backend modules/recordFiles/providers.ts). */
-export type RecordOwnerType = 'opex_payment' | 'supplier_bill' | 'goods_receipt' | 'prep_batch' | 'hr_document' | 'fixed_asset' | 'capex_quote' | 'payment' | 'journal_entry'
+export type RecordOwnerType = 'opex_payment' | 'supplier_bill' | 'goods_receipt' | 'prep_batch' | 'hr_document' | 'fixed_asset' | 'capex_quote' | 'payment' | 'journal_entry' | 'rider_document'
 
 /** Types that also take Office / CSV / text documents (the server decides; this only shapes the picker). */
 export const OFFICE_OWNER_TYPES: ReadonlySet<RecordOwnerType> = new Set(['supplier_bill', 'hr_document', 'fixed_asset', 'capex_quote', 'payment', 'journal_entry'])

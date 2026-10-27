@@ -9,9 +9,11 @@ interface KdsHeaderProps {
   stationId?: string
   /** The page's own queue count; when given it replaces the socket-store count so the two can never disagree. */
   count?: number
+  /** False on station screens: the new-order chime is expo's only (owner 2026-10-27). */
+  chime?: boolean
 }
 
-export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
+export function KdsHeader({ title, stationId, count, chime = true }: KdsHeaderProps) {
   const audio = useKdsAudioState()
   const orders = useKdsStore((s) => s.orders)
   const lang = useKdsStore((s) => s.lang)
@@ -39,7 +41,7 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
 
   return (
     <>
-    {soundEnabled && audio === 'suspended' && (
+    {chime && soundEnabled && audio === 'suspended' && (
       <button type="button" onClick={enableKdsSound}
         className="flex min-h-11 w-full items-center justify-center gap-2 border-b border-kds-amber/40 bg-kds-amber/15 px-4 text-sm font-bold text-kds-amber">
         Tap to enable sound. New-order chimes stay silent until you do.
@@ -107,8 +109,8 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
           <ImageIcon size={20} aria-hidden="true" />
         </button>
 
-        {/* Sound toggle */}
-        <button
+        {/* Sound toggle (not on station screens — the chime is expo's) */}
+        {chime && <button
           onClick={() => setSoundEnabled(!soundEnabled)}
           title={soundEnabled ? 'Mute new-order chime' : 'Unmute new-order chime'}
           aria-label="New-order chime" aria-pressed={soundEnabled}
@@ -119,7 +121,7 @@ export function KdsHeader({ title, stationId, count }: KdsHeaderProps) {
           }`}
         >
           {soundEnabled ? <Bell size={20} aria-hidden="true" /> : <BellOff size={20} aria-hidden="true" />}
-        </button>
+        </button>}
 
         {/* Voice control toggle */}
         <button

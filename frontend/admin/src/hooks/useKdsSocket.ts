@@ -68,7 +68,7 @@ export function useKdsAudioState(): KdsAudioState {
 
 // Louder, longer 4-tone alert chime designed to cut through kitchen noise.
 // Two repeats of an ascending C-E-G-C arpeggio at 0.7 gain.
-function playNewOrderBeep() {
+export function playNewOrderBeep() {
   try {
     const ctx = getAudioContext()
     if (!ctx) return
@@ -101,6 +101,8 @@ interface UseKdsSocketOptions {
   stationId?: string
   conceptId?: string
   role?: string
+  /** Owner 2026-10-27: "kitchen chime is ok, but expo only" — station screens pass false. */
+  chime?: boolean
 }
 
 export interface KdsSocketState {
@@ -150,7 +152,7 @@ export function useKdsSocket(options: UseKdsSocketOptions = {}): KdsSocketState 
       setStoreLastOrder(now)
       // Sound + visual flash, both gated by user prefs (read live from store)
       const { soundEnabled } = useKdsStore.getState()
-      if (soundEnabled) playNewOrderBeep()
+      if (soundEnabled && options.chime !== false) playNewOrderBeep()
       handlersRef.current.triggerNewOrderPulse()
       try {
         const order = await ordersApi.get(data.orderId)

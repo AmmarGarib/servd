@@ -119,7 +119,7 @@ function errorText(e: unknown): string {
 export default function StationKdsPage() {
   const { station } = useParams<{ station: string }>()
   const qc = useQueryClient()
-  useKdsSocket({ stationId: station, role: 'kitchen' })
+  useKdsSocket({ stationId: station, role: 'kitchen', chime: false })
   const lang = useKdsStore((s) => s.lang)
   const showImages = useKdsStore((s) => s.showImages)
   const isUrdu = lang === 'ur'
@@ -217,7 +217,7 @@ export default function StationKdsPage() {
           )}
         </div>
       </div>
-      <KdsHeader title={data?.station.name ?? 'Station'} stationId={station} count={cards.length} />
+      <KdsHeader title={data?.station.name ?? 'Station'} stationId={station} count={cards.length} chime={false} />
 
       <div className="flex-1 p-3 sm:p-4 space-y-5">
         {(actionError || lineActions.error) && (

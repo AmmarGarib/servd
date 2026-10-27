@@ -30,6 +30,8 @@
 //   journal_entry   JournalEntry (a MANUAL entry, reference 'manual:…')   FINANCIALS_VIEWERS (GET /accounting/ledger)   JOURNAL_POSTERS   /accounting/ledger (read) · /accounting/journal (write)
 //                   — the supporting documents of a manual journal entry (owner, 2026-10-20)
 //
+//   rider_document  Rider          MANAGERS (riders admin)      MANAGERS (riders admin)        /riders (riders) — private rider documents (CNIC, licence, bike papers; owner C16, 2026-10-27); rider tokens never reach /record-files
+//
 // The Purchase-order screen's "Attachment URL" is the SUPPLIER BILL form's
 // (POST /procurement/bills stores attachmentUrl on SupplierBill), hence
 // 'supplier_bill'.
@@ -64,6 +66,7 @@ export const RECORD_OWNER = {
   capex_quote: 'capex_quote',
   payment: 'payment',
   journal_entry: 'journal_entry',
+  rider_document: 'rider_document',
 } as const
 
 /** 403 unless the caller's role is in the module's array for this mode. */
@@ -266,5 +269,25 @@ const journalEntry: RecordFileProvider = {
   },
 }
 
+const riderDocument: RecordFileProvider = {
+  ownerType: RECORD_OWNER.rider_document,
+  label: 'rider document',
+  allowOffice: false, // images + PDF only
+  auditCategory: 'identity',
+  fileStem: 'rider-document',
+  async resolve(req, ownerId, mode) {
+    // The roles that manage the roster (modules/riders/routes.ts) and its 'riders' module gate.
+    assertRole(req, MANAGERS, this.label)
+    await gateAs(req, '/riders', mode)
+    const r = await prisma.rider.findFirst({
+      where: { id: ownerId, deletedAt: null, ...(await scopeTenantWhere(req, scopeMode(mode))) },
+      select: { tenantId: true },
+    })
+    // A rider always belongs to a company for this purpose; a company-less legacy row is not reachable.
+    if (!r?.tenantId) throw new NotFoundError('Rider', ownerId)
+    return { tenantId: r.tenantId }
+  },
+}
+
 /** Registered once, at import (routes.ts imports this file). */
-for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote, payment, journalEntry]) registerRecordFileProvider(p)
+for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote, payment, journalEntry, riderDocument]) registerRecordFileProvider(p)
