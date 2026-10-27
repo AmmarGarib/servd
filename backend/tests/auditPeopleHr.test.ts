@@ -119,8 +119,8 @@ describe('PPL-07 pay inputs are never negative, and payroll pays exactly what it
     // …whatever a company's own format says: a money field with no minimum.
     expect(negativeMoney('employees', [{ key: 'x', label: 'Custom pay', type: 'money' }], { x: -1 })).toEqual(['Custom pay'])
     expect(negativeMoney('final_settlement', [{ key: 'otherAdjustments', label: 'Other', type: 'money' }], { otherAdjustments: -1 })).toEqual([])
-    // A good edit still goes through.
-    expect((await call('hr', 'PATCH', `/hr/employees/${emps['Bilal Ahmed']}`, { data: { grossSalaryCents: RS(65000) } })).statusCode).toBe(200)
+    // A good edit is accepted — HR's goes to the CEO for final approval (wage change, owner 2026-10-27).
+    expect((await call('hr', 'PATCH', `/hr/employees/${emps['Bilal Ahmed']}`, { data: { grossSalaryCents: RS(65000) } })).statusCode).toBe(202)
   })
 
   let runId: string
@@ -147,7 +147,8 @@ describe('PPL-07 pay inputs are never negative, and payroll pays exactly what it
   })
 
   it('once corrected: approve, lock and pay, and Wages Payable clears to exactly zero', async () => {
-    expect((await call('hr', 'PATCH', `/hr/employees/${emps['Typo Salary']}`, { data: { grossSalaryCents: RS(30000) } })).statusCode).toBe(200)
+    // The CEO's own wage change applies at once (HR's would wait for the CEO).
+    expect((await call('ceo', 'PATCH', `/hr/employees/${emps['Typo Salary']}`, { data: { grossSalaryCents: RS(30000) } })).statusCode).toBe(200)
     expect((await call('hr', 'POST', `/hr/payroll/runs/${runId}/recalculate`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/hr/payroll/runs/${runId}/approve`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/hr/payroll/runs/${runId}/lock`)).statusCode).toBe(200)
