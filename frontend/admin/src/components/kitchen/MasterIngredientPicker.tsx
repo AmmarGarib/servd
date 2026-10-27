@@ -5,7 +5,7 @@
 // its stock item (POST /inventory/from-master — the master's unit, category, allergens, yield and buying unit fill
 // it, K3) and hands that item back. "Add new ingredient" puts a name that is not there yet into servd's master at
 // once, flagged for review (K2), then does the same. Price, supplier and par stay the company's (Sourcing sheet).
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { INVENTORY_CATEGORY_OPTIONS } from '../../lib/stockUi'
@@ -47,7 +47,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
   const [adding, setAdding] = useState<{ unit: string; category: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const btn = useRef<HTMLButtonElement>(null)
+  const btn = useRef<HTMLInputElement>(null)
   const closeMenu = useCallback(() => setOpen(false), [])
 
   useEffect(() => { const t = setTimeout(() => setDebounced(q.trim()), 200); return () => clearTimeout(t) }, [q])
@@ -83,18 +83,32 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
 
   const exact = rows.some((r) => r.name.trim().toLowerCase() === q.trim().toLowerCase())
 
+  // Type straight into the field (owner, 2026-10-27): matches drop down under it; Enter picks the first,
+  // arrows move, Escape closes. The closed field shows the line's current ingredient.
+  const [active, setActive] = useState(0)
+  useEffect(() => { setActive(0) }, [debounced])
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setActive((a) => Math.min(a + 1, Math.max(rows.length - 1, 0))) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)) }
+    else if (e.key === 'Enter') { e.preventDefault(); const r = rows[active]; if (open && r && !busy) void pick(r.id) }
+    else if (e.key === 'Escape') { setOpen(false); setQ('') }
+  }
+
   return (
     <div className={`relative ${className}`}>
-      <button ref={btn} type="button" onClick={() => setOpen((o) => !o)} className={`${inputCls} w-full text-left truncate`} aria-haspopup="listbox" aria-expanded={open}>
-        {label || <span className="text-s-muted">Search servd&rsquo;s ingredients…</span>}
-      </button>
+      <input ref={btn} value={open ? q : label} placeholder="Type an ingredient…" aria-label="Ingredient"
+        role="combobox" aria-expanded={open} aria-autocomplete="list"
+        onFocus={() => { setOpen(true); setQ('') }}
+        onChange={(e) => { setQ(e.target.value); setAdding(null); setOpen(true) }}
+        onKeyDown={onKey}
+        className={`${inputCls} w-full truncate`} />
       <AnchoredMenu anchor={btn} open={open} onClose={closeMenu} align="start" minWidth={352} role="group" maxHeight={480} className="!bg-s-bg !p-2">
         <div>
-          <input autoFocus value={q} onChange={(e) => { setQ(e.target.value); setAdding(null) }} placeholder="Type to search…" className={`${inputCls} w-full`} aria-label="Search ingredients" />
-          <ul role="listbox" className="mt-2 max-h-64 overflow-y-auto">
-            {rows.map((r) => (
+          <ul role="listbox" className="max-h-64 overflow-y-auto">
+            {rows.map((r, i) => (
               <li key={r.id}>
-                <button type="button" disabled={busy} onClick={() => void pick(r.id)} className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-s-bg-soft disabled:opacity-50">
+                <button type="button" disabled={busy} onMouseDown={(e) => e.preventDefault()} onMouseEnter={() => setActive(i)} onClick={() => void pick(r.id)}
+                  className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-s-bg-soft disabled:opacity-50 ${i === active ? 'bg-s-bg-soft' : ''}`}>
                   <span className="truncate text-s-text">{r.name} <span className="text-xs text-s-muted">({r.stockUnit})</span></span>
                   <span className="shrink-0 text-[11px] text-s-muted">
                     {r.status === 'needs_review' ? 'needs review' : r.companyItemId ? 'in stock list' : 'not stocked yet'}
