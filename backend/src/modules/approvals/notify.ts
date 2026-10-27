@@ -148,6 +148,11 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   station_change: spec(() => '/kds/config'),
   reservation_overbook: spec(() => '/reservations'),
   stock_brand_move: spec(() => '/inventory/transfers'),
+  // Owner, 2026-10-27: the CEO's final step on a wage change; the employee hears the outcome, as for HR requests.
+  wage_change: spec(() => '/hr/me', {
+    async extraRecipients(id) { return hrEmployeeLogin(id) },
+  }),
+  customer_export: spec(() => '/crm?exports=1'),
 }
 
 /** The inbox, filtered to the type (every login may open it). */
@@ -195,6 +200,18 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       const emp = h.employeeId ? await db.hrEmployee.findFirst({ where: { id: h.employeeId, tenantId: h.tenantId }, select: { fullName: true } }) : null
       const title = sectionByKey(h.section)?.title ?? human(h.section)
       return { ref: `${title}${emp?.fullName ? ` — ${emp.fullName}` : ''}` }
+    }
+    case 'wage_change': {
+      const h = await db.hrRecord.findUnique({ where: { id }, select: { section: true, employeeId: true, tenantId: true, amountCents: true } })
+      if (!h) return null
+      const emp = h.employeeId ? await db.hrEmployee.findFirst({ where: { id: h.employeeId, tenantId: h.tenantId }, select: { fullName: true } }) : null
+      return { ref: `${h.section === 'promotion' ? 'Promotion pay' : 'Wage change'}${emp?.fullName ? ` — ${emp.fullName}` : ''}`, amountCents: h.amountCents ?? null, detail: 'New gross monthly salary' }
+    }
+    case 'customer_export': {
+      const r = await db.customerExportRequest.findUnique({ where: { id }, select: { kind: true, requestedById: true } })
+      if (!r) return null
+      const u = await db.user.findUnique({ where: { id: r.requestedById }, select: { name: true } })
+      return { ref: `${r.kind === 'waitlist' ? 'Waitlist download' : 'Guest-list download'} with phones and emails`, detail: u?.name ? `Asked by ${u.name}` : null }
     }
     case 'payroll_run': {
       const p = await db.hrPayrollRun.findUnique({ where: { id }, select: { period: true } })
@@ -452,7 +469,7 @@ async function nextStepLabel(type: ApprovalType, id: string): Promise<string | n
   if (type === 'cash_request_finance') return 'the CEO'
   if (type !== 'hr_request') return null
   try {
-    const rec = await serviceClient.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, formVersion: true, currentStep: true, status: true, data: true } })
+    const rec = await serviceClient.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, formVersion: true, currentStep: true, status: true, data: true, amountCents: true } })
     if (!rec || rec.status !== 'submitted') return null
     const { runWithRlsContext } = await import('../../lib/rlsContext.js')
     return await runWithRlsContext({ tenantIds: [rec.tenantId], customerId: null, staffUserId: null }, async () => {

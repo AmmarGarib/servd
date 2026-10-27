@@ -50,6 +50,11 @@
 //     Recipe.modifierId): what ONE unit of the add-on uses, per unit of the
 //     dish. Only a modifier recipe may carry negative lines ('removes', e.g.
 //     "no cheese"); a line's total per ingredient is clamped at zero.
+//   • Removals (owner, 2026-10-27): an order line may name ingredients the
+//     customer asked to leave out (OrderItem.removedIngredients,
+//     lib/lineRemovals.ts). The sale explosion skips those TOP-level lines of
+//     the dish's plate recipe (a sub-recipe line with its whole explosion) for
+//     that line only — never negative, nothing else changes.
 //   • Prep as stock (owner, 2026-10-24, D3): a sub-recipe with a PREP ITEM
 //     (InventoryItem.prepRecipeId) is stock of its own — a prep batch takes
 //     its raw ingredients out and adds the prep item. A sale (and a prep batch
@@ -66,6 +71,7 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { costClassOf, COST_CLASSES, zeroByClass, type CostClass } from './inventoryClass.js'
+import { isLineRemoved, type LineRemoval } from './lineRemovals.js'
 
 // ─── Units ────────────────────────────────────────────────────────────────────
 
@@ -234,6 +240,8 @@ interface TopFilter {
   sections: 'all' | RecipeSection
   /** Negative ('removes') lines count — modifier recipes only. Elsewhere they are skipped. */
   allowNegative: boolean
+  /** Removals on the order line (lib/lineRemovals.ts): these TOP-level lines are left out, with their whole explosion. */
+  removed?: LineRemoval[] | null
 }
 
 /**
@@ -269,6 +277,7 @@ function explodeBatches(
   for (const line of r.ingredients) {
     if (top && top.sections !== 'all' && (isPackagingLine(line) ? 'packaging' : 'ingredients') !== top.sections) continue
     if (line.quantity < 0 && !top?.allowNegative) continue
+    if (top?.removed && isLineRemoved(line, top.removed)) continue
     if (line.prepRecipeId) {
       const sub = graph.get(line.prepRecipeId)
       const own = prepAsStock ? prepItemFor(sub, prepAsStock.tenantId) : null
@@ -711,6 +720,12 @@ export interface SoldLine {
   /** OrderItem.serviceVessel (null on legacy lines → the brand's current vessel). */
   serviceVessel?: string | null
   boxGiven?: boolean
+  /**
+   * OrderItem.removedIngredients — what the customer asked to leave out ("No onions", lib/lineRemovals.ts): those
+   * top-level lines of the dish's plate recipe (a sub-recipe line with its whole explosion) are not drawn for this
+   * line. Add-ons are not affected.
+   */
+  removedIngredients?: LineRemoval[] | null
 }
 
 export interface NeedRow { qty: number; costClass: CostClass }
@@ -790,7 +805,7 @@ export async function consumptionPerLine(lines: SoldLine[], db: Db, o: Consumpti
     const pack = new Map<string, number>()
     if (dish) {
       const batches = batchesOf(dish, line.quantity, 'portion')
-      explodeBatches(graph, dish.id, batches, base, new Set(), { sections: 'ingredients', allowNegative: false }, prep)
+      explodeBatches(graph, dish.id, batches, base, new Set(), { sections: 'ingredients', allowNegative: false, removed: line.removedIngredients }, prep)
       explodeBatches(graph, dish.id, batches, pack, new Set(), { sections: 'packaging', allowNegative: false }, prep)
     }
     for (const mid of line.modifierIds ?? []) {

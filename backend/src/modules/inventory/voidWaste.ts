@@ -50,6 +50,7 @@ import { withSavepoint } from '../../lib/savepoint.js'
 import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, costClassOf, type CostClass } from '../../lib/inventoryClass.js'
 import { relabelToWasteTx, STOCK_EPS, STOCK_SOURCE, type MovementRow } from '../../lib/stockLedger.js'
 import { consumptionPerLine } from '../../lib/recipeCost.js'
+import { lineRemovalsOf } from '../../lib/lineRemovals.js'
 import { postJournalEntry, withLateNote, ACCT, type JournalLineInput, type RepostOptions } from '../accounting/journal.js'
 import { orderCostBookedAt } from '../accounting/cogs.js'
 // Called inside postVoidWaste only (never at module load), so the
@@ -183,7 +184,7 @@ export async function wasteSoldLineTx(tx: Tx, a: {
   const line = await tx.orderItem.findUnique({
     where: { id: a.line.id },
     select: {
-      id: true, orderId: true, name: true, quantity: true, menuItemId: true, serviceVessel: true, boxGiven: true,
+      id: true, orderId: true, name: true, quantity: true, menuItemId: true, serviceVessel: true, boxGiven: true, removedIngredients: true,
       modifiers: { select: { modifierId: true } },
       order: { select: { locationId: true, fulfilmentType: true, concept: { select: { serviceVessel: true } } } },
     },
@@ -211,6 +212,7 @@ export async function wasteSoldLineTx(tx: Tx, a: {
     const [per] = await consumptionPerLine([{
       id: line.id, menuItemId: line.menuItemId, quantity: line.quantity, status: 'pending',
       modifierIds: line.modifiers.map((m) => m.modifierId), serviceVessel: line.serviceVessel, boxGiven: line.boxGiven,
+      removedIngredients: lineRemovalsOf(line.removedIngredients),
     }], tx, { tenantId, fulfilmentType: line.order.fulfilmentType, serviceVessel: line.order.concept.serviceVessel })
     const taken = { ...(legacy.taken ?? {}) }
     const wasted: Record<string, number> = {}

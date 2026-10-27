@@ -47,6 +47,7 @@ export type ExceptionKind =
   | 'manager_pin_failed'    // a sender (or one order) hit the wrong-manager-PIN limit — overrides locked
   | 'discount_above_cap'    // a POS discount above the cashier's cap (authorised or not, always reviewed)
   | 'price_override'        // POS line items priced away from the menu
+  | 'compensation_flagged'  // the CEO flagged a compensation ticket (complaints/compensation.ts) — names the approving manager
   | 'ghost_employee'        // payroll line for user with zero clock logs
   | 'manual_journal'        // manual JE entry posted (every one is reviewable)
   | 'sub_account_backfill_mismatch' // a payroll / F&F entry whose payslip figures do not match its lines — left untagged (2026-10-23)

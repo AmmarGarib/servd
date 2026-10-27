@@ -678,8 +678,9 @@ describe('HR through the API', () => {
   it('holds a future-dated salary revision until its effective date', async () => {
     const rev = (await call('hr', 'POST', '/records/salary_revision', { data: { employee: cookEmp, revisedGross: RS(60000), effectiveDate: '2099-01-01' } })).json()
     expect(rev.data.increaseAmount).toBe(RS(8000))
-    // HR raised it, so its HR step is signed by raising; management has the last.
-    expect((await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
+    // HR raised it, so its HR step is signed by raising; management next, and the CEO has the last (owner, 2026-10-27).
+    expect((await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
+    expect((await call('ceo', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
     const e = (await call('hr', 'GET', `/employees/${cookEmp}`)).json().employee
     expect(e.grossSalaryCents).toBe(RS(52000)) // not yet
   })
@@ -855,9 +856,12 @@ describe('HR through the API', () => {
     const twice = await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })
     expect(twice.statusCode).toBe(403)
     expect(twice.json().error.message).toMatch(/earlier step/)
+    const mid = (await call('ceo', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json()
+    expect(mid.approvals[1].override).toBeUndefined()
+    // A wage change ends with the CEO (owner, 2026-10-27).
+    expect(mid.status).toBe('submitted')
     const done = (await call('ceo', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json()
     expect(done.status).toBe('approved')
-    expect(done.approvals[1].override).toBeUndefined()
 
     // Raised by HR (owner, 2026-10-21): the HR step is signed by raising (auto entry) and the record is at management.
     const hrRaised = (await call('hr', 'POST', '/records/salary_revision', { data: { employee: bossEmp, revisedGross: RS(170000), effectiveDate: '2099-02-01' } })).json()
@@ -1114,7 +1118,9 @@ describe('HR through the API', () => {
   }
   const approvedRevision = async (employee: string, grossRs: number, effectiveDate: string) => {
     const rev = (await call('hr', 'POST', '/records/salary_revision', { data: { employee, revisedGross: RS(grossRs), effectiveDate } })).json()
-    expect((await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
+    expect((await call('mgmt', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
+    // The CEO gives the final approval of a wage change (owner, 2026-10-27).
+    expect((await call('ceo', 'POST', `/records/salary_revision/${rev.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
     return rev.id as string
   }
 

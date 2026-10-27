@@ -12,6 +12,14 @@ export interface OrderItemDTO {
     modifiers: OrderModifierDTO[];
     notes?: string;
     course?: number;
+    removedIngredients?: OrderLineRemovalDTO[];
+}
+export interface OrderLineRemovalDTO {
+    masterIngredientId?: string | null;
+    inventoryItemId?: string | null;
+    prepRecipeId?: string | null;
+    key?: string | null;
+    name?: string | null;
 }
 export interface OrderPaymentDTO {
     provider: 'keenu' | 'jazzcash' | 'easypaisa' | 'platform' | 'cash' | 'wallet' | null;

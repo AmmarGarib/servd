@@ -33,6 +33,7 @@ import {
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
   salaryForPeriod, availableOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
   otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime, ATTENDANCE_DAY_TAKEN, workflowOf, isOutOfAreaHold,
+  isWageChange, wageAtCeoStep, WAGE_SECTIONS,
 } from './service.js'
 import {
   mergeSettings, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
@@ -878,7 +879,17 @@ async function auditShiftsRemoved(req: FastifyRequest, rec: HrRecord) {
 // copy for HR and the accountant exports (D16). Re-exported for existing callers.
 export { csv }
 
-async function createRecord(req: FastifyRequest, tenantId: string, section: string, input: Record<string, unknown>, opts: { submit: boolean; forEmployeeId?: string; viaHeadOfficeId?: string | null }) {
+/**
+ * The bell for a submitted HR record (queued, after the commit; never throws): a wage change at its CEO step
+ * is approval type wage_change (owner, 2026-10-27), every other step hr_request.
+ */
+function hrWaiting(rec: HrRecord, actorId: string, round: string): void {
+  void wageAtCeoStep(rec)
+    .then((atCeo) => approvalWaiting(atCeo ? 'wage_change' : 'hr_request', rec.id, { round, actorId }))
+    .catch(() => approvalWaiting('hr_request', rec.id, { round, actorId }))
+}
+
+async function createRecord(req: FastifyRequest, tenantId: string, section: string, input: Record<string, unknown>, opts: { submit: boolean; forEmployeeId?: string; viaHeadOfficeId?: string | null; extraData?: Record<string, unknown> }) {
   const sec = recordSection(section)
   // A section whose work moved (eobi_challan → Accounting → Statutory
   // payments): its old rows stay readable, no new ones — here once, for
@@ -904,7 +915,8 @@ async function createRecord(req: FastifyRequest, tenantId: string, section: stri
   if (selfService && section === 'shift_swap' && cols.startDate && cols.startDate < pktToday()) {
     throw new AppError('BAD_SWAP', 'Pick today or a day still to come', 400)
   }
-  const hasWorkflow = fmt.workflow.length > 0
+  // A promotion carrying a new gross waits for the CEO even under a format with no steps (owner, 2026-10-27).
+  const hasWorkflow = workflowOf({ section, data: v.data, amountCents: (cols.amountCents as number | null | undefined) ?? null }, fmt).length > 0
   const created = await prisma.$transaction(async (tx) => {
     await prepareRecord(tx, tenantId, section, fmt.fields, cols, v.data)
     const r = await tx.hrRecord.create({
@@ -913,7 +925,7 @@ async function createRecord(req: FastifyRequest, tenantId: string, section: stri
         status: hasWorkflow ? (opts.submit ? 'submitted' : 'draft') : 'approved',
         stage: fmt.stages[0] ?? null,
         // A day keyed by hand (owner, 2026-10-20): marked manual, HR's (a punch never rewrites it), waits for the CEO.
-        data: (section === 'attendance' ? { ...v.data, _source: 'hr', _manual: true } : v.data) as Prisma.InputJsonValue,
+        data: (section === 'attendance' ? { ...v.data, _source: 'hr', _manual: true } : { ...v.data, ...(opts.extraData ?? {}) }) as Prisma.InputJsonValue,
         createdById: req.staffUser!.id,
         ...(opts.viaHeadOfficeId && { viaHeadOfficeId: opts.viaHeadOfficeId }),
       },
@@ -935,7 +947,7 @@ async function createRecord(req: FastifyRequest, tenantId: string, section: stri
   // The bell (queued, after the commit): a submitted record waits on its first step
   // (covers /records/:section and self-service /me/records/:section).
   const out = rec.status === 'submitted' ? (await signHrStepRaisedByHr(rec.id)) ?? rec : rec
-  if (out.status === 'submitted') approvalWaiting('hr_request', out.id, { round: `step:${out.currentStep}:${out.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
+  if (out.status === 'submitted') hrWaiting(out, req.staffUser!.id, `step:${out.currentStep}:${out.updatedAt.toISOString()}`)
   return out
 }
 
@@ -1361,10 +1373,27 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const salaryHistory = records
       .filter((r) => (r.section === 'salary_revision' || r.section === 'promotion') && r.status === 'approved' && r.amountCents)
       .map((r) => ({ section: r.section, effectiveDate: r.effectiveDate, grossCents: r.amountCents, applied: !!r.appliedAt }))
+    // A pay change waiting for approval (owner, 2026-10-27): the master salary above stays until the CEO approves.
+    const openWage = records.find((r) => isWageChange(r) && (r.status === 'submitted' || r.status === 'draft'))
+    let pendingWageChange = null
+    if (openWage) {
+      const wf = await getFormat(openWage.tenantId, openWage.section, openWage.formVersion).catch(() => getFormat(openWage.tenantId, openWage.section))
+      const steps = workflowOf(openWage, wf)
+      const step = openWage.status === 'submitted' ? steps[openWage.currentStep] ?? null : null
+      const d = (openWage.data ?? {}) as Record<string, unknown>
+      pendingWageChange = {
+        id: openWage.id, section: openWage.section, status: openWage.status,
+        grossCents: openWage.amountCents, basicCents: typeof d['revisedBasic'] === 'number' ? d['revisedBasic'] : null,
+        effectiveDate: openWage.effectiveDate, requestedAt: openWage.createdAt,
+        waitingFor: step ? (step.role === 'ceo' ? 'the CEO' : step.label) : null,
+        atCeoStep: !!step && step.role === 'ceo' && openWage.currentStep === steps.length - 1,
+        canWithdraw: openWage.createdById === req.staffUser!.id,
+      }
+    }
     return {
       employee: fresh,
       labels: { department: label(fresh.departmentId), designation: label(fresh.designationId), grade: label(fresh.gradeId), branch: label(fresh.locationId), manager: managerLabelOf(label, fresh) },
-      documents: emp.documents, records, leaveBalances: balances, loans, salaryHistory, user, kioskPinSet,
+      documents: emp.documents, records, leaveBalances: balances, loans, salaryHistory, pendingWageChange, user, kioskPinSet,
     }
   })
 
@@ -1439,7 +1468,21 @@ export async function hrRoutes(fastify: FastifyInstance) {
         await prisma.hrEmployee.findFirst({ where: { tenantId, employeeCode: String(cols['employeeCode']), NOT: { id } } })) {
       throw new AppError('DUPLICATE_CODE', `Employee ID ${cols['employeeCode']} is already used`, 409)
     }
-    // Salary on the master can be corrected by HR, but a change is recorded —
+    // A wage change by anyone but the CEO waits for the CEO (owner, 2026-10-27): the salary columns are taken
+    // out of this save and raised as a salary revision through the HR request engine (the format's steps — the
+    // manager channel — then the CEO last; hr/service.ts workflowOf). Everything else in the save applies now.
+    // The CEO's own change applies at once, as before.
+    const wageAsk = req.staffUser!.role !== 'admin' ? wageChangeAsked(cols, cur) : null
+    if (wageAsk) {
+      const open = await prisma.hrRecord.findFirst({
+        where: { tenantId, employeeId: id, section: { in: [...WAGE_SECTIONS] }, status: { in: ['draft', 'submitted'] } },
+        select: { id: true, section: true, amountCents: true },
+      })
+      if (open && isWageChange(open)) throw new AppError('WAGE_CHANGE_PENDING', 'A pay change for this employee is already waiting for approval — withdraw it or wait for the decision first.', 409)
+      delete cols['basicSalaryCents']
+      delete cols['grossSalaryCents']
+    }
+    // Salary on the master can be corrected by the CEO, but a change is recorded —
     // the salary history should not have silent gaps.
     const salaryChanged = (cols['grossSalaryCents'] !== undefined && cols['grossSalaryCents'] !== cur.grossSalaryCents)
     const emp = await prisma.hrEmployee.update({
@@ -1454,11 +1497,50 @@ export async function hrRoutes(fastify: FastifyInstance) {
       before: salaryChanged ? { grossSalaryCents: cur.grossSalaryCents } : undefined,
       after: { ...(salaryChanged ? { grossSalaryCents: emp.grossSalaryCents } : { fields: Object.keys(v.data) }), ...(selfEdit && { selfEdit: true }) },
     })
-    return emp
+    if (!wageAsk) return emp
+    const request = await raiseWageChange(req, tenantId, emp, wageAsk)
+    return { pendingApproval: true as const, request, employee: emp }
+  }
+
+  /** The pay a non-CEO save asks for, or null when the salary columns do not change. */
+  function wageChangeAsked(cols: Record<string, unknown>, cur: { basicSalaryCents: number; grossSalaryCents: number }): { grossCents: number; basicCents: number } | null {
+    const gross = typeof cols['grossSalaryCents'] === 'number' ? cols['grossSalaryCents'] as number : cur.grossSalaryCents
+    const basic = typeof cols['basicSalaryCents'] === 'number' ? cols['basicSalaryCents'] as number : cur.basicSalaryCents
+    if (gross === cur.grossSalaryCents && basic === cur.basicSalaryCents) return null
+    return { grossCents: gross, basicCents: basic }
+  }
+
+  /** The salary revision a non-CEO edit raises, effective today (Karachi), through the HR request engine. */
+  async function raiseWageChange(req: FastifyRequest, tenantId: string, emp: { id: string }, ask: { grossCents: number; basicCents: number }) {
+    if (ask.grossCents <= 0) throw new AppError('GROSS_REQUIRED', 'A pay change needs a gross salary above zero', 422)
+    const fmt = await getFormat(tenantId, 'salary_revision')
+    const keyOf = (bind: string) => fmt.fields.find((f) => f.bind === bind)?.key
+    const [empKey, amountKey, dateKey] = [keyOf('employeeId'), keyOf('amountCents'), keyOf('effectiveDate')]
+    if (!empKey || !amountKey || !dateKey) throw new AppError('BAD_FORMAT', 'The salary revision format has no employee, gross or effective-date field — ask HR to fix its format', 422)
+    const reasonKey = fmt.fields.find((f) => f.key === 'reason' && !f.bind)?.key
+    const input: Record<string, unknown> = {
+      [empKey]: emp.id, [amountKey]: ask.grossCents, [dateKey]: pktToday().toISOString().slice(0, 10),
+      ...(reasonKey && { [reasonKey]: 'Pay changed on the employee record' }),
+    }
+    const via = await viaFor(req, tenantId)
+    const rec = await createRecord(req, tenantId, 'salary_revision', input, {
+      submit: true, viaHeadOfficeId: via,
+      extraData: { revisedBasic: ask.basicCents, _fromEmployeeEdit: true },
+    })
+    await audit({
+      category: 'identity', action: 'hr.employee.wage_change_requested', entity: 'HrRecord', entityId: rec.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+      after: { employeeId: emp.id, grossSalaryCents: ask.grossCents, basicSalaryCents: ask.basicCents, actorRole: req.staffUser!.role },
+    })
+    return rec
   }
 
   fastify.post('/employees', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => reply.status(201).send(await saveEmployee(req, null)))
-  fastify.patch<{ Params: { id: string } }>('/employees/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => saveEmployee(req, req.params.id))
+  // A non-CEO pay change answers 202 { pendingApproval, request, employee } (owner, 2026-10-27).
+  fastify.patch<{ Params: { id: string } }>('/employees/:id', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+    const out = await saveEmployee(req, req.params.id)
+    return 'pendingApproval' in out ? reply.status(202).send(out) : out
+  })
 
   // Link a servd login to an employee — unlocks self-service and HOD approvals.
   fastify.post<{ Params: { id: string } }>('/employees/:id/link-user', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -1955,7 +2037,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }).then((updated) => {
       // The bell: a hand-edited attendance day waits on the CEO.
       if (updated.section === 'attendance' && updated.status === 'submitted') {
-        approvalWaiting('hr_request', updated.id, { round: `step:0:${updated.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
+        hrWaiting(updated, req.staffUser!.id, `step:0:${updated.updatedAt.toISOString()}`)
       }
       return updated
     })
@@ -1993,7 +2075,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const after = (await signHrStepRaisedByHr(rec.id)) ?? await prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
     await auditShiftsRemoved(req, after)
     // The bell (queued, after the commit): the first approval step has an item to decide.
-    if (after.status === 'submitted') approvalWaiting('hr_request', after.id, { round: `step:${after.currentStep}:${after.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
+    if (after.status === 'submitted') hrWaiting(after, req.staffUser!.id, `step:${after.currentStep}:${after.updatedAt.toISOString()}`)
     return after
   })
 
@@ -2026,6 +2108,17 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const right = await decideRight(req, rec, step, isLast, { subject, decision: body.decision })
     if (!right.ok) throw right.status === 404 ? new NotFoundError('HR record', id) : new AppError(right.code, right.message, right.status)
     const who = { ok: true, override: right.override }
+    // A wage change at its CEO step (owner, 2026-10-27) is approval type wage_change: the registry decides
+    // (lib/approvalRights.ts — the CEO of the record's company), and a rejection says why (≥10 characters).
+    const wageCeo = isLast && step.role === 'ceo' && isWageChange(rec)
+    if (wageCeo) {
+      if (body.decision === 'rejected' && (body.note?.trim().length ?? 0) < 10) {
+        throw new AppError('NOTE_REQUIRED', 'Give a reason of at least 10 characters', 422)
+      }
+      const ws = await approvalSubjectOf('wage_change', rec.id)
+      if (!ws) throw new NotFoundError('HR record', id)
+      await assertCanApprove(req, approvalInputOf('wage_change', rec.id, ws))
+    }
     // HR's step (or HR standing in for a missing HOD) is the back office: the
     // CEO's untick of 'staff_hr' closes it (PPL-R2-01). A reporting manager's
     // own step and a management step stay with their approvers.
@@ -2096,12 +2189,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
     {
       const grant: ApprovalGrant = right.via === 'delegation' && right.delegationId ? { via: 'delegation', delegationId: right.delegationId } : { via: 'role' }
       await auditApproval(req, {
-        type: 'hr_request', id: rec.id, tenantId: rec.tenantId, decision: body.decision === 'approved' ? 'approve' : 'reject', grant, entity: 'HrRecord',
+        type: wageCeo ? 'wage_change' : 'hr_request', id: rec.id, tenantId: rec.tenantId, decision: body.decision === 'approved' ? 'approve' : 'reject', grant, entity: 'HrRecord',
         metadata: { section: rec.section, step: step.key, path: right.via, final: nextStatus === 'approved', decidedAt: entry.at, ...(body.note && { note: body.note }), ...(rec.viaHeadOfficeId && { viaHeadOfficeId: rec.viaHeadOfficeId }) },
       })
     }
     // The bell: an approved step that has a next step is now waiting on its approver(s).
-    if (updated.status === 'submitted') approvalWaiting('hr_request', updated.id, { round: `step:${updated.currentStep}:${updated.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
+    if (updated.status === 'submitted') hrWaiting(updated, req.staffUser!.id, `step:${updated.currentStep}:${updated.updatedAt.toISOString()}`)
     return updated
   }
 
@@ -3065,7 +3158,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
         if (staffHr === null) staffHr = await holdsStaffHr(req)
         if (!staffHr) continue
       }
-      out.push({ ...rec, label: recordLabel(rec, fmt.fields), sectionTitle: isOutOfAreaHold(rec) ? 'Punch outside the work location' : (sectionByKey(rec.section)?.title ?? rec.section), step, format: { ...fmt, workflow: workflowOf(rec, fmt) }, waitingOnPartner: swapAwaitsPartner(rec) })
+      out.push({ ...rec, label: recordLabel(rec, fmt.fields), sectionTitle: isOutOfAreaHold(rec) ? 'Punch outside the work location' : (sectionByKey(rec.section)?.title ?? rec.section), step, format: { ...fmt, workflow: workflowOf(rec, fmt) }, waitingOnPartner: swapAwaitsPartner(rec),
+        // The CEO's last step of a wage change: approval type wage_change in the inbox (owner, 2026-10-27).
+        wageCeoStep: isLast && step.role === 'ceo' && isWageChange(rec) })
     }
     return out
   }
@@ -3203,7 +3298,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       })
       if (claimed.count) {
         out = await prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
-        approvalWaiting('hr_request', out.id, { round: `step:${out.currentStep}:${out.updatedAt.toISOString()}`, actorId: req.staffUser!.id })
+        hrWaiting(out, req.staffUser!.id, `step:${out.currentStep}:${out.updatedAt.toISOString()}`)
       }
     }
     return reply.status(201).send(out)

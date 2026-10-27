@@ -551,6 +551,8 @@ export interface OrderItem {
   boxGiven?: boolean
   boxGivenAt?: string | null
   modifiers: OrderItemModifier[]
+  /** Ingredients the customer asked to leave out ("No onions", 2026-10-27) — printed "No <name>". Price unchanged. */
+  removedIngredients?: Array<{ name: string }> | null
   menuItem: { imageUrl: string | null; nameUrdu: string | null; instructions: string | null; instructionsUrdu: string | null } | null
 }
 

@@ -64,9 +64,46 @@ export function defaultFormat(sec: HrSection): ActiveFormat {
   }
 }
 
-/** Steps a saved format may not change (owner, 2026-10-20): a hand-keyed attendance day always waits for the CEO. */
+/** Steps a saved format may not change (owner, 2026-10-20): a hand-keyed attendance day always waits for the CEO.
+ *  A salary revision always ENDS with the CEO (owner, 2026-10-27 — see wageWorkflow). */
 function enforcedWorkflow(section: string, wf: WorkflowStep[]): WorkflowStep[] {
-  return section === 'attendance' ? [CEO_STEP] : wf
+  if (section === 'attendance') return [CEO_STEP]
+  if (section === 'salary_revision') return withCeoLast(wf)
+  return wf
+}
+
+// ─── Wage changes go to the CEO (owner, 2026-10-27) ─────────────────────────
+//
+// "These go through the manager channel first, and the CEO gives FINAL
+// approval." A wage change is a salary_revision record, or a promotion that
+// carries a new gross (effectUpdate writes grossSalaryCents from either). Its
+// steps are the format's (HR, management — the manager channel) with the CEO
+// appended as the LAST step whatever a saved format says. Nothing touches the
+// employee's salary until that last step approves (applyEffect), and payroll
+// reads the master salary + APPROVED revisions only (salaryForPeriod). At the
+// CEO step the item is approval type wage_change (lib/approvalRights.ts), not
+// hr_request. A non-CEO edit of the salary on the employee master raises such a
+// record (hr/routes.ts saveEmployee → 202).
+
+/** The sections whose approval changes pay. */
+export const WAGE_SECTIONS = ['salary_revision', 'promotion'] as const
+
+/** Is this record a wage change (a salary revision, or a promotion carrying a new gross)? */
+export function isWageChange(rec: { section: string; amountCents?: number | null }): boolean {
+  return rec.section === 'salary_revision' || (rec.section === 'promotion' && (rec.amountCents ?? 0) > 0)
+}
+
+/** The steps with the CEO last (kept as is when the last step already is the CEO's — no index ever moves). */
+function withCeoLast(wf: WorkflowStep[]): WorkflowStep[] {
+  return wf.length > 0 && wf[wf.length - 1]!.role === 'ceo' ? wf : [...wf, CEO_STEP]
+}
+
+/** Is this submitted wage record at its last (CEO) step? Reads the record's format. */
+export async function wageAtCeoStep(rec: { tenantId: string; section: string; status: string; amountCents?: number | null; currentStep: number; formVersion: number; data: unknown }): Promise<boolean> {
+  if (rec.status !== 'submitted' || !isWageChange(rec)) return false
+  const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
+  const steps = workflowOf(rec, fmt)
+  return rec.currentStep === steps.length - 1 && steps[rec.currentStep]?.role === 'ceo'
 }
 
 export async function getFormat(tenantId: string, section: string, version?: number): Promise<ActiveFormat> {
@@ -666,8 +703,10 @@ export const OUT_OF_AREA_WORKFLOW: WorkflowStep[] = [{ key: 'hod_location', labe
 
 /** The approval steps of a record: its format's, except an out-of-area punch day, which waits on the HOD only. Every
  *  reader of a record's steps (decide, the waiting list, the bell, approvalRights) goes through this. */
-export function workflowOf(rec: { section: string; data: unknown }, fmt: { workflow: WorkflowStep[] }): WorkflowStep[] {
-  return isOutOfAreaHold(rec) ? OUT_OF_AREA_WORKFLOW : fmt.workflow
+export function workflowOf(rec: { section: string; data: unknown; amountCents?: number | null }, fmt: { workflow: WorkflowStep[] }): WorkflowStep[] {
+  if (isOutOfAreaHold(rec)) return OUT_OF_AREA_WORKFLOW
+  // A wage change ends with the CEO (owner, 2026-10-27).
+  return isWageChange(rec) ? withCeoLast(fmt.workflow) : fmt.workflow
 }
 
 /** Attendance entries that stand. Draft, rejected and cancelled entries never

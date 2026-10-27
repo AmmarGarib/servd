@@ -24,7 +24,7 @@ import { wasteSoldLineTx } from '../inventory/voidWaste.js'
 import { ensureOrderDepleted, returnVoidedLineStockTx, deductInventoryForAddedLines } from '../orders/stock.js'
 import { orderStockCostCents } from '../accounting/cogs.js'
 import { MANAGERS } from '../auth/middleware.js'
-import type { OrderDTO } from '@servd/types'
+import type { OrderDTO, OrderLineRemovalDTO } from '@servd/types'
 import type { Order, Payment, PaymentGateway, PaymentMethod, Prisma, TerminalChargeStatus, UserRole } from '@prisma/client'
 // Manager-override PIN: the ONE verifier (company-scoped, active accounts,
 // owner-decision-7 approvers) and the approver tier that rings at manager caps.
@@ -85,6 +85,8 @@ export interface PosOrderInput {
     notes?: string
     course?: number
     modifiers: Array<{ name: string; priceDeltaCents: number; modifierId?: string }>
+    /** "No onions" (lib/lineRemovals.ts) — checked in prepareOrderLines; the price is unchanged. */
+    removedIngredients?: OrderLineRemovalDTO[]
   }>
   discountCents?: number
   discountReason?: string
@@ -217,8 +219,11 @@ async function gatePriceOverrides(
   // a dish BELOW the menu (a negative delta) never needed a PIN — and it
   // only applied to role 'cashier', so the waiter role skipped it.
   const overrideMagnitude = overrides.reduce((s, o) => s + Math.abs(o.deltaCents), 0)
+  // Who approved it — on the review flag, so the compensation ticket names the manager (owner 2026-10-27).
+  let approverId: string | null = isOverrideApprover(input.role) ? input.staffId : null
   if (!isOverrideApprover(input.role) && overrideMagnitude > cashierPriceOverrideCap) {
     const approved = await verifyManagerPin(input.managerOverridePin ?? undefined, tenantId, undefined, { actorId: input.staffId, action: 'price_override' })
+    if (approved) approverId = approved.id
     if (!approved && input.managerOverridePin?.trim()) throw invalidManagerPin()
     if (!approved) {
       throw new AppError(
@@ -239,7 +244,7 @@ async function gatePriceOverrides(
     conceptId: input.conceptId,
     actorId: input.staffId,
     amountCents: overrideMagnitude,
-    metadata: { overrides, role: input.role, conceptId: input.conceptId },
+    metadata: { overrides, role: input.role, conceptId: input.conceptId, approverId },
   }
 }
 
@@ -317,8 +322,10 @@ export async function createPosOrder(input: PosOrderInput) {
     // Discount %
     const discountPct = itemTotal > 0 ? discount / itemTotal : 0
     const cap = isOverrideApprover(role) ? managerDiscountCap : cashierDiscountCap
+    let discountApproverId: string | null = isOverrideApprover(role) ? input.staffId : null
     if (discountPct > cap) {
       const approved = await verifyManagerPin(input.managerOverridePin, tenantId, undefined, { actorId: input.staffId, action: 'discount' })
+      if (approved) discountApproverId = approved.id
       // FOH-R2-03: a PIN that was sent and is wrong (or another company's) is
       // a wrong PIN — not "PIN required".
       if (!approved && input.managerOverridePin?.trim()) throw invalidManagerPin()
@@ -351,7 +358,7 @@ export async function createPosOrder(input: PosOrderInput) {
         conceptId: input.conceptId,
         actorId: input.staffId,
         amountCents: discount,
-        metadata: { realKind: 'discount_above_cap', discountPct, itemTotal, discount, role, reason: input.discountReason },
+        metadata: { realKind: 'discount_above_cap', discountPct, itemTotal, discount, role, reason: input.discountReason, approverId: discountApproverId },
       })
     }
   }
@@ -399,7 +406,8 @@ export async function createPosOrder(input: PosOrderInput) {
       name: item.name,
       quantity: item.quantity,
       unitPriceCents: item.unitPriceCents,
-      modifiers: item.modifiers.map((m) => ({ name: m.name, priceDeltaCents: m.priceDeltaCents })),
+      modifiers: item.modifiers.map((m) => ({ modifierId: m.modifierId, name: m.name, priceDeltaCents: m.priceDeltaCents })), // keep the id: the add-on recipe draws stock (was dropped before 2026-10-27)
+      ...(item.removedIngredients?.length && { removedIngredients: item.removedIngredients }),
       notes: item.notes,
       course: item.course,
     })),
@@ -512,6 +520,7 @@ export async function addItemsToPosOrder(input: AddItemsInput) {
     quantity: item.quantity,
     unitPriceCents: item.unitPriceCents,
     modifiers: item.modifiers.map((m) => ({ modifierId: m.modifierId, name: m.name, priceDeltaCents: m.priceDeltaCents })),
+    ...(item.removedIngredients?.length && { removedIngredients: item.removedIngredients }),
     notes: item.notes,
     course: item.course,
   }))
@@ -560,7 +569,7 @@ export async function addItemsToPosOrder(input: AddItemsInput) {
 
     const createdIds: string[] = []
     const stationIds = new Set<string>()
-    for (const item of dtoItems) {
+    for (const [idx, item] of dtoItems.entries()) {
       const stationId = item.menuItemId ? (lines.stationMap.get(item.menuItemId) ?? null) : lines.fallbackStationId
       const row = await tx.orderItem.create({
         data: {
@@ -575,6 +584,7 @@ export async function addItemsToPosOrder(input: AddItemsInput) {
           notes: item.notes ?? null,
           course: item.course ?? null,
           serviceVessel: lines.serviceVessel,
+          ...lines.removalsJson(idx),
           modifiers: {
             create: item.modifiers.map((mod) => ({
               modifierId: lines.modifierIdFor(item.menuItemId, mod.modifierId),

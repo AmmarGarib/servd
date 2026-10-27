@@ -115,6 +115,7 @@ interface OrderDetail {
     serviceVessel?: 'plate' | 'packaging' | null
     /** Staff boxed this dine-in line's leftovers — its packaging counts. */
     boxGiven?: boolean
+    removedIngredients?: Array<{ name: string }> | null
     modifiers: Array<{ id: string; name: string; priceDeltaCents: number }>
     station: { name: string } | null
     menuItem: { imageUrl: string | null; nameUrdu: string | null } | null
@@ -1263,6 +1264,9 @@ export default function OrderDetailPage() {
                                 `${m.name}${m.priceDeltaCents !== 0 ? ` (${m.priceDeltaCents > 0 ? '+' : ''}${fmtPkrWhole(m.priceDeltaCents)})` : ''}`
                               ).join(', ')}
                             </p>
+                          )}
+                          {(item.removedIngredients?.length ?? 0) > 0 && (
+                            <p className="text-xs text-s-muted mt-0.5">{item.removedIngredients!.map((r) => `No ${r.name}`).join(', ')}</p>
                           )}
                           {item.notes && (
                             <p className="text-xs text-s-amber mt-0.5 italic">{item.notes}</p>

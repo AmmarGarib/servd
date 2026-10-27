@@ -93,6 +93,9 @@ export const APPROVAL_TYPES = [
   'reservation_overbook',  // a booking (or a change of one) past capacity a manager raised, waiting for the CEO
   // Brand stock moves (owner, 2026-10-27).
   'stock_brand_move',      // stock moved between two brands of a company (a StockTransfer with brandMove), waiting for the CEO
+  // Wage changes and guest-list downloads (owner, 2026-10-27).
+  'wage_change',           // an HR salary revision / promotion with a new gross, at its last (CEO) step
+  'customer_export',       // a download of the guest list with phones / emails a non-CEO asked for
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 
@@ -270,6 +273,22 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // POST /stock-transfers/:id/brand-move/approve | reject — the CEO only, never handed over (owner, 2026-10-27:
     // "moving stock between brands needs my approval").
     label: 'Stock moves between brands', section: 'ceo', queueModule: 'inventory', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  wage_change: {
+    // An HrRecord (section salary_revision, or a promotion carrying a new gross) at its LAST step, the CEO
+    // (hr/service.ts workflowOf appends it): POST /hr/records/:section/:id/decide — the HR engine's own route.
+    // Owner, 2026-10-27: a wage change goes through the manager channel first (the format's HR / management
+    // steps) and the CEO gives the FINAL approval. The owner will hand these over later: until then section
+    // ceo and never delegable (decideRight refuses every non-CEO on a 'ceo' step — flip both together).
+    label: 'Wage changes', section: 'ceo', queueModule: 'staff_hr', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  customer_export: {
+    // POST /crm/exports/:id/approve | reject (modules/crm/customerExports.ts): the CEO only. Owner, 2026-10-27:
+    // a guest-list download with phones / emails by anyone but the CEO waits for the CEO; approved = one
+    // download by the requester within 24 hours. The owner will hand these over later: not delegable for now.
+    label: 'Guest-list downloads', section: 'ceo', queueModule: 'crm', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   reservation_overbook: {
@@ -1077,6 +1096,20 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const r = await db.stationChangeRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, requestedAt: true, kind: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.requestedAt, kind: r.kind })
     }
+    case 'wage_change': {
+      const r = await db.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, status: true, amountCents: true, currentStep: true, formVersion: true, data: true, createdById: true, updatedAt: true } })
+      if (!r) return null
+      const { isWageChange, wageAtCeoStep } = await import('../modules/hr/service.js')
+      if (!isWageChange(r)) return null
+      const atCeo = r.status === 'submitted' && await runWithRlsContext({ tenantIds: [r.tenantId], customerId: null, staffUserId: null }, () => wageAtCeoStep(r))
+      // 'pending' = waiting for the CEO; a record still with HR / management reads as 'with_managers'.
+      const status = r.status === 'submitted' ? (atCeo ? 'pending' : 'with_managers') : r.status
+      return subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.createdById], viaHeadOfficeId: null, status, submittedAt: r.updatedAt })
+    }
+    case 'customer_export': {
+      const r = await db.customerExportRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, requestedAt: true, kind: true } })
+      return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.requestedAt, kind: r.kind })
+    }
     case 'reservation_overbook': {
       const r = await db.reservationOverbookRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, requestedAt: true, kind: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.requestedAt, kind: r.kind })
@@ -1190,6 +1223,8 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   social_connection: ['pending'],
   station_change: ['pending'],
   reservation_overbook: ['pending'],
+  wage_change: ['pending'],
+  customer_export: ['pending'],
 }
 
 /**
@@ -1344,13 +1379,15 @@ async function hrStepApprovers(id: string): Promise<string[]> {
   if (!rec || rec.status !== 'submitted') return []
   // The record's company only: getFormat / the HR helpers read through it.
   return runWithRlsContext({ tenantIds: [rec.tenantId], customerId: null, staffUserId: null }, async () => {
-    const { getFormat, managerUserIdOfEmployee, workflowOf } = await import('../modules/hr/service.js')
+    const { getFormat, managerUserIdOfEmployee, workflowOf, isWageChange } = await import('../modules/hr/service.js')
     const { decideRight } = await import('../modules/hr/logic.js')
     const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
     const steps = workflowOf(rec, fmt)
     const step = steps[rec.currentStep]
     if (!step) return []
     const isLast = rec.currentStep >= steps.length - 1
+    // A wage change at its CEO step is approval type wage_change (owner, 2026-10-27) — its own notice.
+    if (isLast && step.role === 'ceo' && isWageChange(rec)) return []
     const [emp, managerUserId] = rec.employeeId
       ? await Promise.all([
         serviceClient.hrEmployee.findFirst({ where: { id: rec.employeeId, tenantId: rec.tenantId }, select: { userId: true } }),

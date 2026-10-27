@@ -7,6 +7,7 @@ import { assertConceptOwned, resolveTenantScope, scopeTenantWhere } from '../../
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { emitItem86d } from '../../lib/ws.js'
 import { seedAvailability } from '../../lib/reservation.js'
+import { removableIngredients } from '../../lib/lineRemovals.js'
 
 const createItemSchema = z.object({
   conceptId: z.string().uuid(),
@@ -316,6 +317,21 @@ export async function menuRoutes(fastify: FastifyInstance) {
       select: { id: true, name: true, conceptId: true, concept: { select: { name: true } }, recipe: { select: { id: true, status: true } } },
       orderBy: [{ conceptId: 'asc' }, { name: 'asc' }],
     })
+  })
+
+  // GET /menu/items/:id/removable — what a customer may ask to leave out of this dish ("No onions", owner
+  // 2026-10-27): the top-level ingredient lines (raw ingredients, sub-recipes / prep items) of its APPROVED plate
+  // recipe, packaging never (lib/lineRemovals.ts — the same list the ring-up checks against). Any staff of the
+  // brand's company (the till); another company's dish 404. Names only — no quantities or prices.
+  fastify.get<{ Params: { id: string } }>('/items/:id/removable', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const id = z.string().uuid().safeParse(req.params.id)
+    if (!id.success) throw new NotFoundError('MenuItem', req.params.id)
+    const item = await prisma.menuItem.findFirst({
+      where: { id: id.data, deletedAt: null, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'read')) } },
+      select: { id: true },
+    })
+    if (!item) throw new NotFoundError('MenuItem', req.params.id)
+    return { menuItemId: item.id, removable: await removableIngredients(prisma, item.id) }
   })
 
   // PATCH /menu/items/:id/availability — 86 an item

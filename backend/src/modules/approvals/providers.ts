@@ -352,6 +352,7 @@ const hrRequests: ApprovalProvider = {
       employee: { id: string; fullName: string; employeeCode: string } | null
       step: { key: string; label: string; role: string }
       waitingOnPartner?: boolean
+      wageCeoStep?: boolean
       data?: Record<string, unknown> | null
       currentStep?: number
       format?: { workflow?: unknown[] } | null
@@ -359,7 +360,8 @@ const hrRequests: ApprovalProvider = {
     }
     const rows = await ctx.read<Row[]>('/hr/approvals')
     if (rows === null) return null
-    return rows.map((r): ApprovalItem => {
+    // A wage change at its CEO step is listed as wage_change (wageChanges, below), never twice.
+    return rows.filter((r) => !r.wageCeoStep).map((r): ApprovalItem => {
       const base = `/hr/records/${encodeURIComponent(r.section)}/${r.id}/decide`
       // A loan's last approval pays it out: where from (bank account or
       // cash) is picked on the request itself, which the inbox cannot do.
@@ -395,6 +397,109 @@ const hrRequests: ApprovalProvider = {
             ...(r.section === 'overtime' && { confirm: 'Approve the hours as claimed? To change the hours, open the request.' }) },
           { kind: 'reject', label: 'Reject', method: 'POST', path: base, body: { decision: 'rejected' },
             input: { field: 'note', label: 'Note (optional)', required: false } },
+        ],
+      }
+    })
+  },
+}
+
+// ── Wage changes at the CEO's step (owner, 2026-10-27) ───────────────────────
+// The same GET /hr/approvals rows, flagged wageCeoStep: a salary revision (or a
+// promotion with a new gross) the manager channel already approved, waiting
+// for the CEO's final approval. Approve / Reject call the HR engine's own
+// decide route; a rejection needs a reason (≥10). Never handed over yet.
+const wageChanges: ApprovalProvider = {
+  type: 'wage_change',
+  label: APPROVAL_RIGHTS.wage_change.label,
+  module: APPROVAL_RIGHTS.wage_change.queueModule,
+  link: '/ceo/approvals?type=wage_change',
+  ...rightsOf('wage_change'),
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; section: string; createdAt: string; updatedAt: string; effectiveDate: string | null
+      amountCents: number | null; createdById: string | null; wageCeoStep?: boolean
+      employee: { id: string; fullName: string; employeeCode: string } | null
+      data?: Record<string, unknown> | null
+    }
+    const rows = await ctx.read<Row[]>('/hr/approvals')
+    if (rows === null) return null
+    return rows.filter((r) => r.wageCeoStep).map((r): ApprovalItem => {
+      const base = `/hr/records/${encodeURIComponent(r.section)}/${r.id}/decide`
+      const d = r.data ?? {}
+      const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+      const was = num(d['currentGross'])
+      const basic = num(d['revisedBasic'])
+      return {
+        type: 'wage_change',
+        id: r.id,
+        tenantId: r.tenantId,
+        section: APPROVAL_RIGHTS.wage_change.section,
+        submittedByIds: idList(r.createdById),
+        title: `${r.section === 'promotion' ? 'Promotion pay' : 'Wage change'} — ${r.employee?.fullName ?? 'employee'}`,
+        subtitle: r.employee?.employeeCode ?? undefined,
+        facts: facts([
+          ['Employee', r.employee ? `${r.employee.fullName} (${r.employee.employeeCode})` : null],
+          ['Gross now', was != null ? pkr(was) : null],
+          ['New gross', r.amountCents != null ? pkr(r.amountCents) : null],
+          ['New basic', basic != null ? pkr(basic) : null],
+          ['From', r.effectiveDate ? ymd(r.effectiveDate) : null],
+        ]),
+        amountCents: r.amountCents ?? null,
+        waitingSince: iso(r.updatedAt),
+        link: r.employee ? `/hr/employees/${r.employee.id}?tab=pay` : null,
+        actions: [
+          { kind: 'approve', label: 'Approve', method: 'POST', path: base, body: { decision: 'approved' },
+            confirm: 'Approve this pay change? The new salary applies from its effective date.' },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: base, body: { decision: 'rejected' },
+            input: { field: 'note', label: 'Reason (at least 10 characters)', required: true } },
+        ],
+      }
+    })
+  },
+}
+
+// ── Guest-list downloads (owner, 2026-10-27) ─────────────────────────────────
+// GET /crm/exports?status=pending (modules/crm/customerExports.ts). Approve /
+// Reject call the module's own routes; approved = one download by the requester
+// within 24 hours. The CEO only, never handed over yet.
+const customerExports: ApprovalProvider = {
+  type: 'customer_export',
+  label: APPROVAL_RIGHTS.customer_export.label,
+  module: APPROVAL_RIGHTS.customer_export.queueModule,
+  link: '/crm',
+  ...rightsOf('customer_export'),
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; kind: string; reason: string; filters: Record<string, unknown> | null
+      requestedById: string; requestedAt: string; requestedByName: string | null; brandName: string | null
+    }
+    const res = await ctx.read<{ items: Row[] }>('/crm/exports?status=pending')
+    if (res === null) return null
+    return (res.items ?? []).map((r): ApprovalItem => {
+      const f = r.filters ?? {}
+      const filter = typeof f['search'] === 'string' && f['search'] ? `Search "${String(f['search'])}"` : typeof f['q'] === 'string' && f['q'] ? `Search "${String(f['q'])}"` : null
+      return {
+        type: 'customer_export',
+        id: r.id,
+        tenantId: r.tenantId,
+        section: APPROVAL_RIGHTS.customer_export.section,
+        submittedByIds: [r.requestedById],
+        title: r.kind === 'waitlist' ? 'Waitlist download (phones and emails)' : 'Guest-list download (phones and emails)',
+        subtitle: r.requestedByName ?? undefined,
+        facts: facts([
+          ['Asked by', r.requestedByName],
+          ['Why', r.reason],
+          ['Brand', r.brandName],
+          ['Filter', filter],
+        ]),
+        amountCents: null,
+        waitingSince: iso(r.requestedAt),
+        link: '/crm',
+        actions: [
+          { kind: 'approve', label: 'Approve', method: 'POST', path: `/crm/exports/${r.id}/approve`, body: {},
+            confirm: 'Let them download this list once in the next 24 hours?' },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `/crm/exports/${r.id}/reject`, body: {},
+            input: { field: 'note', label: 'Reason (at least 10 characters)', required: true } },
         ],
       }
     })
@@ -1306,6 +1411,8 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   socialConnections,
   stationChanges,
   reservationOverbooks,
+  wageChanges,
+  customerExports,
 ]
 
 export type { ProviderContext }

@@ -97,6 +97,7 @@ import { startShiftCorrectionSweepWorker, runShiftCorrectionSweepOnce } from './
 import { startTillClearingSweepWorker } from './workers/tillClearingSweep.js'
 import { startOnAccountDailyWorker } from './workers/onAccountDaily.js'
 import { startStaffNotificationsWorker } from './workers/staffNotifications.js'
+import { startCompensationTicketsWorker } from './workers/compensationTickets.js'
 import { startHrDigestWorker } from './workers/hrDigest.js'
 import { startShiftSessionWorker } from './workers/shiftSessions.js'
 import { startDatabaseBackupWorker } from './workers/databaseBackup.js'
@@ -1367,6 +1368,7 @@ async function build() {
     startTillClearingSweepWorker()
     startOnAccountDailyWorker()
     startStaffNotificationsWorker()   // the bell: exception claim-poller + retention
+    startCompensationTicketsWorker()  // compensation tickets from void / comp / refund / discount / price-override rows (owner 2026-10-27)
     startHrDigestWorker()             // weekly HR expiry digest + 2-day waiting-request reminders (bell)
     startShiftSessionWorker()         // sign-in = one shift: drawers closed by any path end their cashier's sessions (owner B1)
     startDatabaseBackupWorker()       // weekly encrypted database backup, Sunday 03:00 PKT (owner S13; never on the practice copy)

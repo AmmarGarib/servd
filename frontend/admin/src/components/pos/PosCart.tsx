@@ -7,6 +7,7 @@ import { fmtPkr, fmtPkrWhole } from '../../lib/money'
 import { orderRef } from '../../lib/orderRef'
 import { boxGiven, boxGivenErrorMessage, boxGivenOffer, useOpenTickets, type TillOrder, type TillOrderItem, tableName } from './tillApi'
 import { useCartTotals } from './flow/flowApi'
+import { RemoveIngredientsButton } from './RemoveIngredients'
 
 interface PosCartProps {
   conceptId: string | null
@@ -16,7 +17,7 @@ interface PosCartProps {
 // line total, then Amount, Tax and Total(n). Every figure is the SERVER's (POST /pos/quote with the
 // fulfilment and delivery zone) — the cart never works out GST itself (FOH-02).
 export function PosCart({ conceptId }: PosCartProps) {
-  const { cart, removeItem, updateItemQty, updateItemNotes, discountCents } = usePosStore()
+  const { cart, removeItem, updateItemQty, updateItemNotes, updateItemRemovals, discountCents } = usePosStore()
   const { cash: cashQuote, card: cardQuote } = useCartTotals(conceptId)
   const cash = cashQuote.data ?? null
   const card = cardQuote.data ?? null
@@ -39,6 +40,7 @@ export function PosCart({ conceptId }: PosCartProps) {
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold leading-tight text-kds-text">{item.name}</p>
                       {item.modifiers.map((m, i) => <p key={i} className="text-xs text-kds-subtext">+ {m.name}</p>)}
+                      {(item.removedIngredients ?? []).map((r) => <p key={r.key} className="text-xs font-semibold text-kds-amber">No {r.name}</p>)}
                       <p className="text-xs text-kds-subtext">{fmtPkrWhole(unit)} each</p>
                     </div>
                     <div className="text-right text-sm font-bold text-kds-green">{fmtPkrWhole(unit * item.quantity)}</div>
@@ -52,6 +54,8 @@ export function PosCart({ conceptId }: PosCartProps) {
                       className="h-11 w-11 shrink-0 rounded-lg bg-kds-border text-lg font-bold text-kds-text active:bg-kds-border/70">+</button>
                     <input type="text" placeholder="Note…" aria-label={`Note for ${item.name}`} value={item.notes} onChange={(e) => updateItemNotes(item.id, e.target.value)}
                       className="min-h-11 min-w-0 flex-1 rounded border border-kds-border bg-transparent px-2 text-xs text-kds-text placeholder:text-kds-subtext" />
+                    <RemoveIngredientsButton menuItemId={item.menuItemId} itemName={item.name} value={item.removedIngredients ?? []}
+                      onChange={(next) => updateItemRemovals(item.id, next)} />
                     <button type="button" onClick={() => removeItem(item.id)} aria-label={`Remove ${item.name} from the order`}
                       className="h-11 w-11 shrink-0 rounded-lg bg-kds-red/20 font-bold text-kds-red active:bg-kds-red/30"><X size={18} aria-hidden="true" className="mx-auto" /></button>
                   </div>

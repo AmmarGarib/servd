@@ -387,10 +387,13 @@ function TicketItem({ item, compact, isUrdu, showImages, onBump, onHold, onRecal
               </span>
             )}
           </div>
-          {item.modifiers.length > 0 && (
+          {(item.modifiers.length > 0 || (item.removedIngredients?.length ?? 0) > 0) && (
             <div className="mt-0.5 space-y-0.5" style={{ marginInlineStart: '1.5rem' }}>
               {item.modifiers.map((mod) => (
                 <div key={mod.id} className="text-sm text-kds-subtext">+ {mod.name}</div>
+              ))}
+              {(item.removedIngredients ?? []).map((r, i) => (
+                <div key={`rm-${i}`} className="text-sm font-bold text-kds-amber">No {r.name}</div>
               ))}
             </div>
           )}

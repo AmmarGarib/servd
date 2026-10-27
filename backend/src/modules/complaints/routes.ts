@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
 import type { FastifyRequest } from 'fastify'
 import type { Prisma } from '@prisma/client'
 import { requireAuth, requireCustomerAuth, ALL_STAFF, MANAGERS, ADMIN_ONLY } from '../auth/middleware.js'
@@ -11,6 +11,9 @@ import { customerScope } from '../../lib/outboundScope.js'
 import { sendEmail, sendPhoneMessage } from '../../lib/notify.js'
 import { audit } from '../../lib/audit.js'
 import { readBanAppealsSetting, writeBanAppealsSetting } from './appeals.js'
+import { COMPENSATION_TYPES, COMPENSATION_LABEL, FLAG_ROLES, syncCompensationTickets, type CompensationType } from './compensation.js'
+import { flagException } from '../../lib/exceptions.js'
+import { orderRefOf } from '../../lib/orderRef.js'
 
 const createSchema = z.object({
   orderId: z.string().uuid().optional(),
@@ -144,7 +147,8 @@ export async function complaintRoutes(fastify: FastifyInstance) {
     const baseWhere: Prisma.OrderComplaintWhereInput = {
       // Company scope (read): see complaintScopeWhere.
       AND: [await complaintScopeWhere(req, 'read')],
-      ...(kind && { kind }),
+      // Compensation tickets have their own list (GET /complaints/compensation).
+      kind: kind ?? { in: ['complaint', 'ban_appeal'] },
       ...(conceptId && { conceptId }),
       ...(dateFrom || dateTo ? {
         createdAt: {
@@ -205,9 +209,166 @@ export async function complaintRoutes(fastify: FastifyInstance) {
     return { complaints: rows, stats: { total, open, resolved, inProgress: total - open - resolved } }
   })
 
+  // ─── Compensation tickets (owner, 2026-10-27; complaints/compensation.ts) ───
+  //
+  // GET /complaints/compensation — managers (and the CEO) of the companies in
+  // view; scoped by the ticket's brand (the order's). Filters: type, status,
+  // flagged (1 | 0), dateFrom / dateTo, conceptId; cursor-paged by id.
+  fastify.get<{
+    Querystring: { type?: string; status?: string; flagged?: string; dateFrom?: string; dateTo?: string; conceptId?: string; limit?: string; cursor?: string }
+  }>('/compensation', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const q = z.object({
+      type: z.enum(COMPENSATION_TYPES).optional(),
+      status: STATUS.optional(),
+      flagged: z.enum(['1', '0', 'true', 'false']).optional(),
+      dateFrom: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional(),
+      dateTo: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional(),
+      conceptId: z.string().uuid().optional(),
+      limit: z.coerce.number().int().min(1).max(200).optional(),
+      cursor: z.string().uuid().optional(),
+    }).parse(req.query)
+    const t = await scopeTenantWhere(req, 'read')
+    const scope = tenantIdsOf(t)
+    // Bring the caller's companies up to date first (the worker does the rest).
+    if (scope.length > 0) await syncCompensationTickets(scope, { throttleMs: 15_000 })
+    const flagged = q.flagged === '1' || q.flagged === 'true' ? true : q.flagged ? false : undefined
+    // A bare date is the Karachi day: from 00:00 PKT / to 23:59:59.999 PKT.
+    const from = q.dateFrom ? new Date(q.dateFrom.length === 10 ? `${q.dateFrom}T00:00:00+05:00` : q.dateFrom) : undefined
+    const to = q.dateTo ? new Date(q.dateTo.length === 10 ? `${q.dateTo}T23:59:59.999+05:00` : q.dateTo) : undefined
+    const where: Prisma.OrderComplaintWhereInput = {
+      kind: 'compensation',
+      concept: { ...t },
+      ...(q.type && { compType: q.type }),
+      ...(q.status && { status: q.status }),
+      ...(flagged === true && { compFlaggedAt: { not: null } }),
+      ...(flagged === false && { compFlaggedAt: null }),
+      ...(q.conceptId && { conceptId: q.conceptId }),
+      ...((from || to) && { createdAt: { ...(from && { gte: from }), ...(to && { lte: to }) } }),
+    }
+    const take = q.limit ?? 50
+    const [rows, totals, flaggedCount] = await Promise.all([
+      prisma.orderComplaint.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: take + 1,
+        ...(q.cursor && { cursor: { id: q.cursor }, skip: 1 }),
+        select: {
+          id: true, orderId: true, conceptId: true, status: true, description: true, createdAt: true,
+          compType: true, compValueCents: true, compApproverId: true, compActorId: true,
+          compFlaggedAt: true, compFlaggedById: true, compFlagNote: true,
+          concept: { select: { name: true, tenantId: true } },
+        },
+      }),
+      prisma.orderComplaint.aggregate({ where, _count: { _all: true }, _sum: { compValueCents: true } }),
+      prisma.orderComplaint.count({ where: { ...where, compFlaggedAt: { not: null } } }),
+    ])
+    const page = rows.slice(0, take)
+    const userIds = [...new Set(page.flatMap((r) => [r.compApproverId, r.compActorId, r.compFlaggedById]).filter((x): x is string => !!x))]
+    const users = new Map((userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, role: true } }) : []).map((u) => [u.id, u]))
+    const person = (id: string | null) => (id ? { id, name: users.get(id)?.name ?? 'Unknown login', role: users.get(id)?.role ?? null } : null)
+    return {
+      tickets: page.map((r) => ({
+        id: r.id,
+        type: r.compType as CompensationType,
+        typeLabel: COMPENSATION_LABEL[r.compType as CompensationType] ?? r.compType,
+        valueCents: r.compValueCents ?? 0,
+        orderId: r.orderId,
+        orderRef: r.orderId ? orderRefOf(r.orderId) : null,
+        brand: { id: r.conceptId, name: r.concept.name },
+        tenantId: r.concept.tenantId,
+        reason: r.description,
+        status: r.status,
+        createdAt: r.createdAt,
+        approver: person(r.compApproverId),
+        actor: person(r.compActorId),
+        flagged: r.compFlaggedAt ? { at: r.compFlaggedAt, by: person(r.compFlaggedById), note: r.compFlagNote } : null,
+      })),
+      nextCursor: rows.length > take ? page[page.length - 1]!.id : null,
+      stats: { total: totals._count._all, valueCents: totals._sum.compValueCents ?? 0, flagged: flaggedCount },
+      canFlag: (FLAG_ROLES as readonly string[]).includes(req.staffUser!.role),
+    }
+  })
+
+  // POST /complaints/:id/flag { note ≥10 } — the CEO only (FLAG_ROLES). Raises
+  // an ExceptionFlag 'compensation_flagged' in the ticket's company naming the
+  // approving manager (actorId = that manager; the bell tells the CEO(s)).
+  fastify.post<{ Params: { id: string } }>('/:id/flag', { preHandler: requireAuth(...(FLAG_ROLES as unknown as typeof ADMIN_ONLY)) }, async (req) => {
+    const { note } = z.object({ note: z.string().trim().min(10).max(1000) }).parse(req.body)
+    const t = await scopeTenantWhere(req, 'write')
+    const ticket = await prisma.orderComplaint.findFirst({
+      where: { id: req.params.id, kind: 'compensation', concept: { ...t } },
+      select: {
+        id: true, orderId: true, conceptId: true, description: true, compType: true, compValueCents: true,
+        compApproverId: true, compActorId: true, compFlaggedAt: true, concept: { select: { tenantId: true, name: true } },
+      },
+    })
+    if (!ticket) throw new NotFoundError('Compensation ticket', req.params.id)
+    if (ticket.compFlaggedAt) throw new AppError('ALREADY_FLAGGED', 'This ticket is already flagged.', 409)
+    const now = new Date()
+    const claimed = await prisma.orderComplaint.updateMany({
+      where: { id: ticket.id, compFlaggedAt: null },
+      data: { compFlaggedAt: now, compFlaggedById: req.staffUser!.id, compFlagNote: note },
+    })
+    if (claimed.count === 0) throw new AppError('ALREADY_FLAGGED', 'This ticket is already flagged.', 409)
+    const manager = ticket.compApproverId ?? ticket.compActorId
+    const managerName = manager ? (await prisma.user.findUnique({ where: { id: manager }, select: { name: true } }))?.name ?? 'Unknown login' : 'a manager PIN (not recorded)'
+    const label = COMPENSATION_LABEL[ticket.compType as CompensationType] ?? ticket.compType
+    const ref = ticket.orderId ? orderRefOf(ticket.orderId) : '—'
+    const flag = await flagException({
+      tenantId: ticket.concept.tenantId,
+      kind: 'compensation_flagged',
+      severity: 'medium',
+      title: `${label} on order #${ref} flagged — approved by ${managerName}`,
+      description: `The CEO flagged a ${label.toLowerCase()} of PKR ${((ticket.compValueCents ?? 0) / 100).toFixed(0)} at ${ticket.concept.name} (order #${ref}), approved by ${managerName}. Note: ${note}. Reason given at the till: ${ticket.description}`.slice(0, 2000),
+      entityType: 'OrderComplaint',
+      entityId: ticket.id,
+      conceptId: ticket.conceptId,
+      actorId: manager,
+      amountCents: ticket.compValueCents ?? 0,
+      metadata: { ticketId: ticket.id, orderId: ticket.orderId, type: ticket.compType, approverId: ticket.compApproverId, actorId: ticket.compActorId, flaggedById: req.staffUser!.id, note },
+    })
+    if (flag) await prisma.orderComplaint.update({ where: { id: ticket.id }, data: { compFlagExceptionId: flag.id } })
+    await audit({
+      category: 'identity', action: 'compensation.flag', entity: 'OrderComplaint', entityId: ticket.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: ticket.concept.tenantId,
+      metadata: { note, exceptionFlagId: flag?.id ?? null, approverId: ticket.compApproverId, type: ticket.compType, valueCents: ticket.compValueCents },
+    })
+    return { ok: true, flaggedAt: now, exceptionFlagId: flag?.id ?? null }
+  })
+
+  // POST /complaints/:id/unflag { note? } — the CEO only. Clears the mark and
+  // resolves the exception flag it raised.
+  fastify.post<{ Params: { id: string } }>('/:id/unflag', { preHandler: requireAuth(...(FLAG_ROLES as unknown as typeof ADMIN_ONLY)) }, async (req) => {
+    const { note } = z.object({ note: z.string().trim().max(1000).optional() }).parse(req.body ?? {})
+    const t = await scopeTenantWhere(req, 'write')
+    const ticket = await prisma.orderComplaint.findFirst({
+      where: { id: req.params.id, kind: 'compensation', concept: { ...t } },
+      select: { id: true, compFlaggedAt: true, compFlagExceptionId: true, compFlagNote: true, concept: { select: { tenantId: true } } },
+    })
+    if (!ticket) throw new NotFoundError('Compensation ticket', req.params.id)
+    if (!ticket.compFlaggedAt) throw new AppError('NOT_FLAGGED', 'This ticket is not flagged.', 409)
+    const cleared = await prisma.orderComplaint.updateMany({
+      where: { id: ticket.id, compFlaggedAt: { not: null } },
+      data: { compFlaggedAt: null, compFlaggedById: null, compFlagNote: null, compFlagExceptionId: null },
+    })
+    if (cleared.count === 0) throw new AppError('NOT_FLAGGED', 'This ticket is not flagged.', 409)
+    if (ticket.compFlagExceptionId) {
+      await serviceClient.exceptionFlag.updateMany({
+        where: { id: ticket.compFlagExceptionId, status: { in: ['open', 'acknowledged'] } },
+        data: { status: 'resolved', resolvedById: req.staffUser!.id, resolvedAt: new Date(), resolution: note?.trim() || 'Unflagged by the CEO' },
+      })
+    }
+    await audit({
+      category: 'identity', action: 'compensation.unflag', entity: 'OrderComplaint', entityId: ticket.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: ticket.concept.tenantId,
+      metadata: { note: note ?? null, previousNote: ticket.compFlagNote, exceptionFlagId: ticket.compFlagExceptionId },
+    })
+    return { ok: true }
+  })
+
   // GET /complaints/stats — quick summary for dashboard badge
   fastify.get('/stats', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const tenantWhere: Prisma.OrderComplaintWhereInput = { AND: [await complaintScopeWhere(req, 'read')] }
+    const tenantWhere: Prisma.OrderComplaintWhereInput = { AND: [await complaintScopeWhere(req, 'read')], kind: { in: ['complaint', 'ban_appeal'] } }
     const [open, inProgress] = await Promise.all([
       prisma.orderComplaint.count({ where: { ...tenantWhere, status: 'open' } }),
       prisma.orderComplaint.count({ where: { ...tenantWhere, status: 'in_progress' } }),
@@ -312,6 +473,9 @@ export async function complaintRoutes(fastify: FastifyInstance) {
         },
       })
       if (!complaint) throw new NotFoundError('Complaint', req.params.id)
+      if (complaint.kind === 'compensation') {
+        throw new AppError('COMPENSATION_TICKET_READ_ONLY', 'A compensation ticket records what happened at the till — it is not edited. The CEO may flag it.', 409)
+      }
 
       // A ban appeal is decided by the company that raised the block (a legacy
       // NULL-company block: the CEO only, as liftBanTx).

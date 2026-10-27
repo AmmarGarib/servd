@@ -12,6 +12,8 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { todayPktIso } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
+import { usePermissions } from '../../../hooks/useCan'
+import { GuestListExport } from '../../../components/crm/GuestListExport'
 
 // The public link people are sent to. Production storefront on purpose: this
 // is what gets shared, so a dev STOREFRONT_URL (localhost) must never leak in.
@@ -262,6 +264,8 @@ function SignupsTable({ sources }: { sources: string[] }) {
   const [page, setPage] = useState(1)
   const [exportError, setExportError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
+  const { data: me } = usePermissions()
+  const isCeo = me?.role === 'admin'
 
   const filterQs = useMemo(() => {
     const p = new URLSearchParams()
@@ -313,9 +317,15 @@ function SignupsTable({ sources }: { sources: string[] }) {
         <label className="text-xs text-s-muted">To
           <input type="date" value={to} onChange={(e) => resetPage(setTo)(e.target.value)} className="s-input !w-36 mt-0.5" />
         </label>
-        <button type="button" onClick={() => void exportCsv()} disabled={exporting} className="s-btn-secondary">
-          {exporting ? 'Exporting…' : 'Export CSV'}
-        </button>
+        {/* Phones and emails: the CEO downloads at once, anyone else asks the CEO (owner, 2026-10-27). */}
+        {isCeo ? (
+          <button type="button" onClick={() => void exportCsv()} disabled={exporting} className="s-btn-secondary">
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+        ) : (
+          <GuestListExport kind="waitlist" ceoExport={null}
+            filters={Object.fromEntries([...filterQs.entries()])} />
+        )}
       </div>
       {(error || exportError) && (
         <p className="m-4 rounded-lg bg-s-red-dim border border-s-red/30 px-3 py-2 text-sm text-s-red">

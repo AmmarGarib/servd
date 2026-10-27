@@ -31,6 +31,8 @@ interface Profile {
   leaveBalances: Array<{ leaveTypeId: string; name: string; paid: boolean; entitlement: number; carriedForward: number; adjustments: number; taken: number; pending: number; balance: number }>
   loans: Array<{ id: string; type: string | null; amountCents: number; installments: number; recoveredCents: number; outstandingCents: number; firstPeriod: string }>
   salaryHistory: Array<{ section: string; effectiveDate: string | null; grossCents: number; applied: boolean }>
+  /** A pay change waiting for approval (owner, 2026-10-27: the CEO gives the final approval). */
+  pendingWageChange: { id: string; section: string; status: string; grossCents: number | null; basicCents: number | null; effectiveDate: string | null; waitingFor: string | null; atCeoStep: boolean; canWithdraw: boolean } | null
   user: { id: string; name: string; email: string; role: string; status?: 'pending' | 'active' | 'suspended' } | null
   kioskPinSet: boolean
 }
@@ -106,7 +108,7 @@ function EmployeeProfile() {
       {p && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-            <Stat label="Gross salary" value={rs(e!.grossSalaryCents)} />
+            <Stat label="Gross salary" value={p.pendingWageChange ? `${rs(e!.grossSalaryCents)} · ${rs(p.pendingWageChange.grossCents ?? 0)} waiting` : rs(e!.grossSalaryCents)} />
             <Stat label="Type" value={human(e!.employmentType)} />
             <Stat label="Joined" value={day(e!['joiningDate'] as string)} />
             <Stat label="Manager" value={p.labels.manager ?? '—'} />
@@ -154,11 +156,19 @@ function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void 
   const [ok, setOk] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const formRef = useRef<HTMLFormElement>(null)
+  const [sentForApproval, setSentForApproval] = useState(false)
   const save = useMutation({
-    mutationFn: () => api.patch(`/hr/employees/${p.employee.id}`, { data: value }),
-    onSuccess: () => { setOk(true); setErr(''); setValue(null); void qc.invalidateQueries() },
+    // A pay change by anyone but the CEO comes back 202 { pendingApproval } — the rest of the save applied.
+    mutationFn: () => api.patch<{ pendingApproval?: boolean }>(`/hr/employees/${p.employee.id}`, { data: value }),
+    onSuccess: (r) => { setOk(true); setSentForApproval(!!r?.pendingApproval); setErr(''); setValue(null); void qc.invalidateQueries() },
     onError: (e: Error) => { setErr(e.message); setOk(false) },
   })
+  const withdraw = useMutation({
+    mutationFn: (w: { id: string; section: string }) => api.post(`/hr/records/${w.section}/${w.id}/cancel`, {}),
+    onSuccess: () => { setSentForApproval(false); void qc.invalidateQueries() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  const pw = p.pendingWageChange
   useEffect(() => { onDirty(value !== null) }, [value, onDirty])
   useEffect(() => () => onDirty(false), [onDirty])
   if (!form) return <p className="text-sm text-white/40">Loading format…</p>
@@ -173,6 +183,20 @@ function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void 
   }
   return (
     <form ref={formRef} onSubmit={submit} noValidate className="rounded-2xl p-5" style={card}>
+      {pw && (
+        <div role="status" className="mb-4 rounded-xl border border-s-amber/40 bg-s-amber/10 px-4 py-3 text-sm">
+          <p className="font-bold text-white/85">{pw.atCeoStep ? 'Waiting for the CEO' : `Pay change waiting for ${pw.waitingFor ?? 'approval'}`}</p>
+          <p className="text-xs text-white/60 mt-1">
+            New gross {rs(pw.grossCents ?? 0)}{pw.basicCents != null ? ` · basic ${rs(pw.basicCents)}` : ''}{pw.effectiveDate ? ` from ${day(pw.effectiveDate)}` : ''}.
+            {' '}The salary shown here and payroll stay as they are until the CEO approves.
+          </p>
+          {pw.canWithdraw && (
+            <button type="button" className={`${btnGhost} mt-2`} disabled={withdraw.isPending} onClick={() => withdraw.mutate({ id: pw.id, section: pw.section })}>
+              {withdraw.isPending ? 'Withdrawing…' : 'Withdraw'}
+            </button>
+          )}
+        </div>
+      )}
       <FormRenderer fields={form.current.fields} value={v} errors={errors}
         onChange={(x) => { setValue(x); setOk(false); if (Object.keys(errors).length) setErrors(validate(form.current.fields, x)) }} ctx={{ lookups, org }} />
       <div className="flex flex-wrap items-center gap-2 mt-5">
@@ -181,8 +205,8 @@ function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void 
         {value && <span className="text-xs text-white/50">Unsaved changes</span>}
       </div>
       {err && <p className="text-xs text-s-red mt-3" role="alert">{err}</p>}
-      <p className="text-xs text-primary-ink mt-3" role="status" aria-live="polite">{ok ? 'Saved.' : ''}</p>
-      <p className="text-xs text-white/50 mt-3">Promotions, transfers and salary revisions should go through their own sections so they are approved and appear in the history. Editing salary here is recorded in the audit trail.</p>
+      <p className="text-xs text-primary-ink mt-3" role="status" aria-live="polite">{ok ? (sentForApproval ? 'Saved. The pay change was sent for approval — the CEO gives the final approval.' : 'Saved.') : ''}</p>
+      <p className="text-xs text-white/50 mt-3">A change of salary here goes for approval (management, then the CEO) before it applies; the CEO&apos;s own change applies at once. Promotions and transfers go through their own sections.</p>
     </form>
   )
 }

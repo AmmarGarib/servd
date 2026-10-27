@@ -98,7 +98,7 @@ async function requireWaitlistModule(req: FastifyRequest, _reply: FastifyReply) 
 }
 const STAFF = { preHandler: [requireAuth(), requireWaitlistModule] }
 
-const listQuery = z.object({
+export const waitlistListQuery = z.object({
   q:      z.string().trim().max(100).optional(),
   source: z.string().max(40).optional(),
   from:   z.string().max(40).optional(),
@@ -112,7 +112,7 @@ function dateOrThrow(s: string, field: string): Date {
   return d
 }
 
-function signupWhere(q: z.infer<typeof listQuery>): Prisma.WaitlistSignupWhereInput {
+function signupWhere(q: z.infer<typeof waitlistListQuery>): Prisma.WaitlistSignupWhereInput {
   const createdAt: Prisma.DateTimeFilter = {}
   if (q.from) createdAt.gte = dateOrThrow(q.from, 'from')
   if (q.to) {
@@ -358,7 +358,7 @@ export async function waitlistRoutes(fastify: FastifyInstance) {
   // GET /waitlist/signups — full numbers for the crm module; campaigns-only
   // accounts see them masked.
   fastify.get('/signups', STAFF, async (req) => {
-    const q = listQuery.parse(req.query)
+    const q = waitlistListQuery.parse(req.query)
     const page = q.page ?? 1
     const where = signupWhere(q)
     const fullPhone = (await staffModules(req)).has('crm')
@@ -372,24 +372,34 @@ export async function waitlistRoutes(fastify: FastifyInstance) {
     return { rows: rows.map((r) => shapeRow(r, fullPhone)), total, page, pageSize: PAGE_SIZE }
   })
 
-  // GET /waitlist/signups.csv — same filters.
+  // GET /waitlist/signups.csv — same filters. Phones and emails: the CEO downloads at once; anyone else asks
+  // the CEO first (owner, 2026-10-27) through POST /crm/exports {kind: 'waitlist'} — modules/crm/customerExports.ts.
   fastify.get('/signups.csv', STAFF, async (req, reply) => {
-    const q = listQuery.parse(req.query)
+    if (req.staffUser!.role !== 'admin') {
+      throw new AppError('EXPORT_NEEDS_CEO', 'Downloading the list with phones and emails needs the CEO — ask the CEO to export.', 403)
+    }
+    const q = waitlistListQuery.parse(req.query)
     const fullPhone = (await staffModules(req)).has('crm')
-    const rows = await prisma.waitlistSignup.findMany({
-      where: signupWhere(q), select: signupSelect, orderBy: { createdAt: 'desc' }, take: CSV_MAX_ROWS,
-    })
-    const header = ['name', 'phone', 'email', 'area', 'interest', 'source', 'joined_at', 'unsubscribed_at', 'customer_id']
-    const lines = rows.map((r) => {
-      const s = shapeRow(r, fullPhone)
-      return [
-        csvCell(s.name), csvCell(s.phone, false), csvCell(s.email), csvCell(s.area), csvCell(s.interest),
-        csvCell(s.source), csvCell(s.createdAt), csvCell(s.unsubscribedAt), csvCell(s.customerId),
-      ].join(',')
-    })
+    const csv = await waitlistSignupsCsv(q, fullPhone)
     return reply
       .header('content-type', 'text/csv; charset=utf-8')
       .header('content-disposition', `attachment; filename="servd-waitlist-${new Date().toISOString().slice(0, 10)}.csv"`)
-      .send([header.join(','), ...lines].join('\n') + '\n')
+      .send(csv.text)
   })
+}
+
+/** The sign-up list as CSV (the one builder: the CEO's direct download and an approved guest-list download). */
+export async function waitlistSignupsCsv(q: z.infer<typeof waitlistListQuery>, fullPhone: boolean): Promise<{ text: string; rows: number }> {
+  const rows = await prisma.waitlistSignup.findMany({
+    where: signupWhere(q), select: signupSelect, orderBy: { createdAt: 'desc' }, take: CSV_MAX_ROWS,
+  })
+  const header = ['name', 'phone', 'email', 'area', 'interest', 'source', 'joined_at', 'unsubscribed_at', 'customer_id']
+  const lines = rows.map((r) => {
+    const s = shapeRow(r, fullPhone)
+    return [
+      csvCell(s.name), csvCell(s.phone, false), csvCell(s.email), csvCell(s.area), csvCell(s.interest),
+      csvCell(s.source), csvCell(s.createdAt), csvCell(s.unsubscribedAt), csvCell(s.customerId),
+    ].join(',')
+  })
+  return { text: [header.join(','), ...lines].join('\n') + '\n', rows: rows.length }
 }

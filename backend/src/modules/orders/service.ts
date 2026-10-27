@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client'
 import type { OrderStatus, ItemStatus } from '@prisma/client'
 import { tenantIdOfConcept } from '../../lib/webhook-events.js'
 import { consumptionForSoldLines } from '../../lib/recipeCost.js'
+import { resolveLineRemovals } from '../../lib/lineRemovals.js'
 import {
   AUTO_86, bookRemakeWaste, deductInventoryForOrder, ensureOrderDepleted, flagOrderStockFailure, lockOrderForStock,
   restoreInventoryForOrder,
@@ -321,7 +322,14 @@ export async function prepareOrderLines(
   const modifierIdFor = (menuItemId: string | null | undefined, modifierId: string | null | undefined): string | null =>
     modifierId && menuItemId && modifierDish.get(modifierId) === menuItemId ? modifierId : null
 
-  return { stationMap, fallbackStationId, serviceVessel, modifierIdFor }
+  // Removals ("No onions", owner 2026-10-27): each line's, checked against its dish's approved plate recipe (422
+  // INGREDIENT_NOT_ON_RECIPE) — the stored form per line (lib/lineRemovals.ts). A correction re-issue copies a bill
+  // already sold, so it keeps its removals as they were.
+  const removals = await resolveLineRemovals(items, { trusted: !!correction })
+  const removalsJson = (i: number): { removedIngredients: Prisma.InputJsonValue } | Record<string, never> =>
+    removals[i] && removals[i]!.length > 0 ? { removedIngredients: removals[i] as unknown as Prisma.InputJsonValue } : {}
+
+  return { stationMap, fallbackStationId, serviceVessel, modifierIdFor, removals, removalsJson }
 }
 
 export async function ingestOrder(dto: IngestOrderDTO, opts: {
@@ -363,7 +371,7 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: {
     }
   }
 
-  const { stationMap, fallbackStationId, serviceVessel, modifierIdFor } = await prepareOrderLines(dto.concept_id, dto.items, dto.source, opts.correction)
+  const { stationMap, fallbackStationId, serviceVessel, modifierIdFor, removalsJson } = await prepareOrderLines(dto.concept_id, dto.items, dto.source, opts.correction)
   if (dto.table_id) {
     const table = await prisma.table.findFirst({
       where: { id: dto.table_id, conceptId: dto.concept_id, deletedAt: null },
@@ -431,7 +439,7 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: {
             : null,
           rawPayload: dto.raw_payload as never ?? null,
           items: {
-            create: dto.items.map((item) => ({
+            create: dto.items.map((item, idx) => ({
               menuItemId: item.menuItemId,
               stationId: item.menuItemId ? (stationMap.get(item.menuItemId) ?? null) : fallbackStationId,
               externalItemId: item.externalItemId,
@@ -443,6 +451,7 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: {
               notes: item.notes ?? null,
               course: item.course ?? null,
               serviceVessel,
+              ...removalsJson(idx),
               modifiers: {
                 create: item.modifiers.map((mod) => ({
                   modifierId: modifierIdFor(item.menuItemId, mod.modifierId),

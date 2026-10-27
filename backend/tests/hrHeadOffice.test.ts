@@ -73,6 +73,14 @@ async function raise(who: string, lens?: string): Promise<string> {
   return r.json().id as string
 }
 
+/** An offer ([HR, MGMT], no CEO step) raised in A by `who` — the final-step rules below. A salary revision now
+ *  ends with the CEO (owner, 2026-10-27: wage changes), so its management step is no longer the final one. */
+async function raiseOffer(who: string, lens?: string): Promise<string> {
+  const r = await call(who, 'POST', '/records/offer', { lens, payload: { data: { candidateName: 'Candidate', salaryOffered: RS(50_000), joiningDate: '2027-01-01' } } })
+  expect(r.statusCode, r.body).toBe(201)
+  return r.json().id as string
+}
+
 beforeAll(async () => {
   HO = await tenant('GS Head Office', 'head_office')
   A = await tenant('Company A', 'company')
@@ -214,15 +222,15 @@ describe('decideRight: who decides a step (§7.4.3, A20)', () => {
   })
 
   it('the final step → 403 without a hand-over, passes with one', async () => {
-    const id = await raise('raiserA')
-    expect((await call('raiserA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(403) // raised it
-    expect((await call('hoHr2', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
+    const id = await raiseOffer('raiserA')
+    expect((await call('raiserA', 'POST', `/records/offer/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(403) // raised it
+    expect((await call('hoHr2', 'POST', `/records/offer/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
     // Final (management) step: a reached HO manager with no hand-over.
-    const no = await call('hoMgr', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })
+    const no = await call('hoMgr', 'POST', `/records/offer/${id}/decide`, { payload: { decision: 'approved' } })
     expect(no.statusCode).toBe(403)
     expect(code(no)).toBe('FINAL_STEP_NEEDS_HANDOVER')
     // The HR hand-over's delegate takes it.
-    const yes = await call('deleg', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })
+    const yes = await call('deleg', 'POST', `/records/offer/${id}/decide`, { payload: { decision: 'approved' } })
     expect(yes.statusCode, yes.body).toBe(200)
     expect(yes.json().status).toBe('approved')
     const d = await prisma.approvalDelegation.findFirstOrThrow({ where: { delegateUserId: U.deleg!.id } })
@@ -242,20 +250,20 @@ describe('decideRight: who decides a step (§7.4.3, A20)', () => {
 
   it("a request that came through head office: the company GM can't give the final sign-off; the CEO can", async () => {
     // Raised through head office by a non-HR login (an HR raiser would have signed the HR step already).
-    const id = await raise('hoMgr', A)
+    const id = await raiseOffer('hoMgr', A)
     expect((await prisma.hrRecord.findUniqueOrThrow({ where: { id } })).viaHeadOfficeId).toBe(HO)
     // A's own HR may still do the (non-final) HR review.
-    expect((await call('hrA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
-    const gm = await call('gmA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })
+    expect((await call('hrA', 'POST', `/records/offer/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
+    const gm = await call('gmA', 'POST', `/records/offer/${id}/decide`, { payload: { decision: 'approved' } })
     expect(gm.statusCode).toBe(403)
     expect(code(gm)).toBe('APPROVAL_NOT_YOURS')
-    expect((await call('ceo', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
+    expect((await call('ceo', 'POST', `/records/offer/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
   })
 
   it("a company GM still gives the final sign-off on their own staff's requests (unchanged)", async () => {
-    const id = await raise('raiserA')
-    expect((await call('hoHr2', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
-    const gm = await call('gmA', 'POST', `/records/salary_revision/${id}/decide`, { payload: { decision: 'approved' } })
+    const id = await raiseOffer('raiserA')
+    expect((await call('hoHr2', 'POST', `/records/offer/${id}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
+    const gm = await call('gmA', 'POST', `/records/offer/${id}/decide`, { payload: { decision: 'approved' } })
     expect(gm.statusCode, gm.body).toBe(200)
     expect(gm.json().status).toBe('approved')
     // §7.8: a plain member decision writes approval.decide too, in A.
@@ -279,9 +287,9 @@ describe('decideRight: who decides a step (§7.4.3, A20)', () => {
   })
 
   it('GET /hr/approvals agrees: reach lists non-final HR steps, a delegate lists final steps', async () => {
-    const atHr = await raise('raiserA')
-    const atFinal = await raise('raiserA')
-    expect((await call('hoHr2', 'POST', `/records/salary_revision/${atFinal}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
+    const atHr = await raiseOffer('raiserA')
+    const atFinal = await raiseOffer('raiserA')
+    expect((await call('hoHr2', 'POST', `/records/offer/${atFinal}/decide`, { payload: { decision: 'approved' } })).statusCode).toBe(200)
     const ids = async (who: string) => ((await call(who, 'GET', '/approvals')).json() as Array<{ id: string }>).map((r) => r.id)
     const hoHr = await ids('hoHr')
     expect(hoHr).toContain(atHr)

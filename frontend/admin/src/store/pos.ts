@@ -2,7 +2,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { MenuItem, Modifier } from '../lib/api'
-import { newIdempotencyKey, type TillLine } from '../components/pos/tillApi'
+import { newIdempotencyKey, type LineRemoval, type TillLine } from '../components/pos/tillApi'
 
 export interface CartItem {
   id: string // local ID
@@ -13,6 +13,8 @@ export interface CartItem {
   notes: string
   course: number
   modifiers: Array<{ modifierId: string; name: string; priceDeltaCents: number }>
+  /** Ingredients the customer asked to leave out ("No onions"). Price unchanged. */
+  removedIngredients?: LineRemoval[]
 }
 
 // The till's cart. It holds NO tax maths (FOH-02): it used to add the legacy
@@ -69,6 +71,8 @@ interface PosState {
 
   addItem: (item: MenuItem, selectedModifiers: Modifier[]) => void
   removeItem: (localId: string) => void
+  /** Set the ingredients left out of a line (an empty list = none). */
+  updateItemRemovals: (localId: string, removals: LineRemoval[]) => void
   updateItemQty: (localId: string, qty: number) => void
   updateItemNotes: (localId: string, notes: string) => void
   updateItemCourse: (localId: string, course: number) => void
@@ -153,6 +157,12 @@ export const usePosStore = create<PosState>()(
           : state.cart.map((i) => (i.id === localId ? { ...i, quantity: qty } : i)),
     })),
 
+  updateItemRemovals: (localId, removals) =>
+    set((state) => ({
+      checkoutKey: null,
+      cart: state.cart.map((i) => (i.id === localId ? { ...i, removedIngredients: removals } : i)),
+    })),
+
   updateItemNotes: (localId, notes) =>
     set((state) => ({
       checkoutKey: null,
@@ -198,6 +208,11 @@ export const usePosStore = create<PosState>()(
       notes: i.notes || undefined,
       course: i.course,
       modifiers: i.modifiers,
+      ...(i.removedIngredients?.length && {
+        removedIngredients: i.removedIngredients.map((r) => ({
+          key: r.key, name: r.name, masterIngredientId: r.masterIngredientId, inventoryItemId: r.inventoryItemId, prepRecipeId: r.prepRecipeId,
+        })),
+      }),
     })),
 }),
     {

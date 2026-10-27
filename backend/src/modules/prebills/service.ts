@@ -21,6 +21,7 @@
 //   cancelled   the order was cancelled / voided / rejected before FnF
 //               (markPreBillsCancelledTx, with the MANAGER who approved it)
 
+import { removalLabels } from '../../lib/lineRemovals.js'
 import type { FastifyRequest } from 'fastify'
 import type { Prisma, PreBill, PreBillStatus } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -50,6 +51,8 @@ export type PreBillLine = {
   qty: number
   unitPriceCents: number
   modifiers: Array<{ name: string; priceDeltaCents: number }>
+  /** "No onions" labels (lib/lineRemovals.ts); absent on pre-bills printed before 2026-10-27. */
+  removals?: string[]
   /** (unit + add-ons) × qty. */
   lineCents: number
 }
@@ -85,6 +88,7 @@ export interface PreBillReceipt {
     price: number
     lineTotalCents: number
     modifiers: string[]
+    removals?: string[]
   }>
   subtotalCents: number
   discountCents: number
@@ -216,6 +220,7 @@ export async function createPreBill(input: CreatePreBillInput): Promise<{ preBil
             qty: it.quantity,
             unitPriceCents: it.unitPriceCents,
             modifiers: it.modifiers.map((m) => ({ name: m.name, priceDeltaCents: m.priceDeltaCents })),
+            ...(removalLabels(it.removedIngredients).length > 0 && { removals: removalLabels(it.removedIngredients) }),
             lineCents: unit * it.quantity,
           }
         })
@@ -360,6 +365,7 @@ function receiptOf(pb: PreBill, ctx: ReceiptContext): PreBillReceipt {
       price: l.qty > 0 ? Math.round(l.lineCents / l.qty) : l.lineCents,
       lineTotalCents: l.lineCents,
       modifiers: l.modifiers.map((m) => m.name).filter(Boolean),
+      removals: l.removals ?? [],
     })),
     subtotalCents: pb.subtotalCents,
     discountCents: pb.discountCents,
@@ -526,10 +532,13 @@ export async function renderPreBillHtml(preBillId: string, req: FastifyRequest):
     const mods = item.modifiers.length
       ? `<div style="font-size:11px;color:#555;padding-left:8px">${item.modifiers.map((m) => `+ ${esc(m)}`).join(', ')}</div>`
       : ''
+    const removals = item.removals?.length
+      ? `<div style="font-size:11px;color:#555;padding-left:8px">${item.removals.map(esc).join(', ')}</div>`
+      : ''
     return `
       <tr>
         <td style="padding:2px 0;vertical-align:top">${item.qty}×</td>
-        <td style="padding:2px 4px;vertical-align:top">${esc(item.name)}${mods}</td>
+        <td style="padding:2px 4px;vertical-align:top">${esc(item.name)}${mods}${removals}</td>
         <td style="padding:2px 0;text-align:right;white-space:nowrap;vertical-align:top">${fmtPkr(item.lineTotalCents)}</td>
       </tr>`
   }).join('')

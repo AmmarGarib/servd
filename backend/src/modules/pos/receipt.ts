@@ -44,6 +44,7 @@
 // total did not match what the customer was charged, and the JSON one left
 // modifiers out of the subtotal and used a different receipt number.
 
+import { removalLabels } from '../../lib/lineRemovals.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { getReceiptConfig } from '../../lib/setup-config.js'
@@ -187,6 +188,8 @@ export interface ReceiptData {
     price: number
     lineTotalCents: number
     modifiers: string[]
+    /** "No onions" — ingredients the customer asked to leave out (lib/lineRemovals.ts). Price unchanged. */
+    removals?: string[]
   }>
   /** Sum of the lines (modifiers included, voided lines excluded). */
   subtotalCents: number
@@ -291,6 +294,7 @@ export async function buildReceiptData(orderId: string): Promise<ReceiptData> {
       price: unit,
       lineTotalCents: unit * it.quantity,
       modifiers: it.modifiers.map((m) => m.name).filter(Boolean),
+      removals: removalLabels(it.removedIngredients),
     }
   })
   const orderRef = orderRefOf(order.id)
@@ -423,10 +427,13 @@ export async function buildReceiptHtml(orderId: string, opts: { duplicate?: bool
     const modLines = item.modifiers.length
       ? `<div style="font-size:11px;color:#555;padding-left:8px">${item.modifiers.map((m) => `+ ${esc(m)}`).join(', ')}</div>`
       : ''
+    const removalLines = item.removals?.length
+      ? `<div style="font-size:11px;color:#555;padding-left:8px">${item.removals.map(esc).join(', ')}</div>`
+      : ''
     return `
       <tr>
         <td style="padding:2px 0;vertical-align:top">${item.qty}×</td>
-        <td style="padding:2px 4px;vertical-align:top">${esc(item.name)}${modLines}</td>
+        <td style="padding:2px 4px;vertical-align:top">${esc(item.name)}${modLines}${removalLines}</td>
         <td style="padding:2px 0;text-align:right;white-space:nowrap;vertical-align:top">${fmtPkr(item.lineTotalCents)}</td>
       </tr>`
   }).join('')

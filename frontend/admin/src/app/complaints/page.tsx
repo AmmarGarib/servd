@@ -13,6 +13,7 @@ import { useManagerRoles } from '../../lib/roles'
 import { NavIcon } from '../../components/ui/NavIcon'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { AnchoredMenu } from '../../components/ui/AnchoredMenu'
+import { CompensationTickets } from '../../components/complaints/CompensationTickets'
 
 interface Complaint {
   id: string
@@ -248,6 +249,8 @@ export default function ComplaintsPage() {
   const isCeo = me?.role === 'admin'
   const managerRoles = useManagerRoles()
   const canDecideAppeals = !!me && managerRoles.has(me.role)
+  // Compensation tickets (owner, 2026-10-27): managers and the CEO.
+  const [tab, setTab] = useState<'complaints' | 'compensation'>('complaints')
   const [kindFilter, setKindFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
@@ -332,6 +335,29 @@ export default function ComplaintsPage() {
   const complaints = data?.complaints ?? []
   const stats = data?.stats ?? { total: 0, open: 0, resolved: 0, inProgress: 0 }
 
+  const tabs = canDecideAppeals && (
+    <div role="tablist" className="flex gap-1 border-b border-s-border mb-4 overflow-x-auto">
+      {([['complaints', 'Complaints'], ['compensation', 'Compensation']] as const).map(([id, label]) => (
+        <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+          className={`px-3 py-2 text-sm font-semibold whitespace-nowrap border-b-2 -mb-px ${tab === id ? 'border-accent text-s-text' : 'border-transparent text-s-muted'}`}>
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+
+  if (canDecideAppeals && tab === 'compensation') {
+    return (
+      <div className="min-h-screen bg-s-bg p-4 sm:p-6 pb-24">
+        <header className="mb-4">
+          <h1 className="text-2xl font-black text-s-text mt-1">Order Complaints</h1>
+        </header>
+        {tabs}
+        <CompensationTickets conceptOptions={concepts} />
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-s-bg p-6 pb-24">
       <header className="mb-6 flex items-center justify-between">
@@ -343,6 +369,7 @@ export default function ComplaintsPage() {
           + New complaint
         </button>
       </header>
+      {tabs}
 
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">

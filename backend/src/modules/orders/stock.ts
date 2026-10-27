@@ -70,6 +70,7 @@ import { sumCents, toCents } from '../../lib/money.js'
 import { withSavepoint } from '../../lib/savepoint.js'
 import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
 import { consumptionPerLine, type ExcludedItem, type NeedRow, type SoldLine } from '../../lib/recipeCost.js'
+import { lineRemovalsOf } from '../../lib/lineRemovals.js'
 import {
   addLotTx, consumeFifoTx, ensureFifoReady, lockItemsTx, readFifoCutoverAt, returnToLotsTx, siteOnHandMany, STOCK_EPS, STOCK_SOURCE,
 } from '../../lib/stockLedger.js'
@@ -128,6 +129,7 @@ const isFifoClaim = (meta: Prisma.JsonValue | null | undefined): boolean =>
 const ORDER_LINE_SELECT = {
   id: true, menuItemId: true, quantity: true, status: true, serviceVessel: true, boxGiven: true, boxGivenAt: true, name: true,
   modifiers: { select: { modifierId: true } },
+  removedIngredients: true,
 } satisfies Prisma.OrderItemSelect
 
 type OrderLine = Prisma.OrderItemGetPayload<{ select: typeof ORDER_LINE_SELECT }>
@@ -137,6 +139,7 @@ function soldLine(l: OrderLine, o: { boxGiven?: boolean } = {}): SoldLine {
     id: l.id, menuItemId: l.menuItemId, quantity: l.quantity, status: l.status,
     modifierIds: l.modifiers.map((m) => m.modifierId), serviceVessel: l.serviceVessel,
     boxGiven: o.boxGiven ?? l.boxGiven,
+    removedIngredients: lineRemovalsOf(l.removedIngredients),
   }
 }
 

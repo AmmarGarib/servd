@@ -33,6 +33,7 @@
 // Company separation: a station is resolved inside the caller's company
 // scope (foreign → 404); a timer's company is the ORDER's.
 
+import { removalLabels } from '../../lib/lineRemovals.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { ItemStatus, Prisma, UserRole } from '@prisma/client'
 import { z } from 'zod'
@@ -274,7 +275,7 @@ export function cardRows(q: QueueRows) {
       entry: {
         kind: 'step', id: s.id, itemId: s.orderItemId, menuItemId: s.orderItem.menuItemId,
         itemName: s.orderItem.name, qty: s.orderItem.quantity, notes: s.orderItem.notes,
-        modifiers: s.orderItem.modifiers.map((m) => m.name),
+        modifiers: [...s.orderItem.modifiers.map((m) => m.name), ...removalLabels(s.orderItem.removedIngredients)],
         status: s.orderItem.status === 'held' ? 'held' : 'preparing',
         firedAt: s.firedAt, startedAt: s.startedAt, shownAt: s.kdsShownAt,
         instruction: s.recipeStep.instruction, instructionUrdu: s.recipeStep.instructionUrdu,
@@ -288,7 +289,7 @@ export function cardRows(q: QueueRows) {
       entry: {
         kind: 'line', id: it.id, itemId: it.id, menuItemId: it.menuItemId,
         itemName: it.name, qty: it.quantity, notes: it.notes,
-        modifiers: it.modifiers.map((m) => m.name),
+        modifiers: [...it.modifiers.map((m) => m.name), ...removalLabels(it.removedIngredients)],
         status: it.status,
         firedAt: it.firedAt, startedAt: it.startedAt, shownAt: it.kdsShownAt,
         instruction: null, instructionUrdu: null, estimatedSeconds: null, phase: null,
@@ -690,7 +691,7 @@ export async function kitchenBoardRoutes(fastify: FastifyInstance) {
           table: { select: { label: true } },
           items: {
             where: { status: { not: 'voided' }, voidedAt: null },
-            select: { name: true, quantity: true, notes: true, modifiers: { select: { name: true } } },
+            select: { name: true, quantity: true, notes: true, removedIngredients: true, modifiers: { select: { name: true } } },
             orderBy: { createdAt: 'asc' },
           },
         },
@@ -699,7 +700,7 @@ export async function kitchenBoardRoutes(fastify: FastifyInstance) {
       const html = renderPrint({
         id: order.id, brand: order.concept.name, channel: orderChannelOf(order), fulfilmentType: order.fulfilmentType,
         customerName: order.customer?.name ?? order.customerName, tableLabel: order.table?.label ?? null, placedAt: order.placedAt,
-        items: order.items.map((i) => ({ name: i.name, quantity: i.quantity, notes: i.notes, modifiers: i.modifiers.map((m) => m.name) })),
+        items: order.items.map((i) => ({ name: i.name, quantity: i.quantity, notes: i.notes, modifiers: [...i.modifiers.map((m) => m.name), ...removalLabels(i.removedIngredients)] })),
       }, q.kind, q.bags, await labelSizeOf(order.concept.tenantId))
       return reply.type('text/html; charset=utf-8').send(html)
     },

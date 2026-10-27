@@ -45,6 +45,20 @@ const posItemSchema = z.object({
       }),
     )
     .default([]),
+  // Removals ("No onions", owner 2026-10-27): lines of the dish's approved plate recipe to leave out — from
+  // GET /menu/items/:id/removable. Checked by orders/service prepareOrderLines (422 INGREDIENT_NOT_ON_RECIPE).
+  removedIngredients: z
+    .array(
+      z.object({
+        masterIngredientId: z.string().uuid().nullish(),
+        inventoryItemId: z.string().uuid().nullish(),
+        prepRecipeId: z.string().uuid().nullish(),
+        key: z.string().max(80).nullish(),
+        name: z.string().max(200).nullish(),
+      }),
+    )
+    .max(40)
+    .optional(),
 })
 
 // The tender the bill is priced for (decision 9: cash 15% / card or Raast QR —

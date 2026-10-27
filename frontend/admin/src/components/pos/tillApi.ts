@@ -264,6 +264,18 @@ export interface TillLine {
   notes?: string
   course?: number
   modifiers: Array<{ name: string; priceDeltaCents: number; modifierId?: string }>
+  /** "No onions" — picked from GET /menu/items/:id/removable; the server checks them, the price is unchanged. */
+  removedIngredients?: LineRemoval[]
+}
+
+/** A removable ingredient of a dish (GET /menu/items/:id/removable — backend lib/lineRemovals.ts). */
+export interface LineRemoval {
+  key: string
+  name: string
+  kind?: 'ingredient' | 'prep'
+  masterIngredientId?: string
+  inventoryItemId?: string
+  prepRecipeId?: string
 }
 
 /** Preview of the server's bill for a cart. `null` data = the API has no cart quote. */

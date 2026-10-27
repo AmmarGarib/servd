@@ -456,6 +456,32 @@ model StationChangeRequest {
   @@map("station_change_requests")
 }
 
+// A guest-list download (phones / emails) a non-CEO asked for (owner, 2026-10-27: customer exports go to the CEO).
+// modules/crm/customerExports.ts is the contract. tenantId = the requester's ACTIVE company (whose guests are
+// exported; a 'waitlist' export is the servd-wide new-brand list, filed in that company). Approved = ONE download
+// by the requester within 24 hours (expiresAt; downloadedAt claims it). Approval type customer_export (CEO only).
+model CustomerExportRequest {
+  id            String    @id @default(uuid())
+  tenantId      String
+  kind          String // customers | waitlist
+  filters       Json      @default("{}") // { search?, conceptId? } (customers) | { q?, source?, from?, to? } (waitlist)
+  reason        String // why it is needed (≥10)
+  status        String    @default("pending") // pending | approved | rejected | cancelled
+  requestedById String
+  requestedAt   DateTime  @default(now())
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  expiresAt     DateTime? // approvedAt + 24 h
+  downloadedAt  DateTime? // the one download
+  rowCount      Int?
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([requestedById])
+  @@map("customer_export_requests")
+}
+
 // ─── Category ─────────────────────────────────────────────────────────────────
 
 model Category {
@@ -2139,6 +2165,12 @@ model OrderItem {
   boxGiven      Boolean   @default(false)
   boxGivenAt    DateTime?
   boxGivenById  String?
+
+  // Removals (owner, 2026-10-27: "any item that is being deducted from stock will be adjusted if customer asks to
+  // remove"): the ingredients of the dish's approved plate recipe the customer asked to leave out — a JSON array of
+  // { masterIngredientId | inventoryItemId | prepRecipeId, name } (lib/lineRemovals.ts). The sale draws none of them
+  // (lib/recipeCost.ts consumptionPerLine); tickets / KDS / receipts print "No <name>". Price unchanged. Null = none.
+  removedIngredients Json?
 
   order     Order               @relation(fields: [orderId], references: [id])
   menuItem  MenuItem?           @relation(fields: [menuItemId], references: [id])
@@ -4184,9 +4216,23 @@ model OrderComplaint {
   // Ban appeals via the help desk (wave B, owner 2026-10-13: people change numbers). Every complaint reader
   // filters kind='complaint'. CHECK order_complaints_kind_chk and the partial unique
   // order_complaints_one_open_appeal_per_ban (one OPEN appeal per ban) are SQL only (migration 20261014090000).
-  kind         String  @default("complaint") // 'complaint' | 'ban_appeal'
+  kind         String  @default("complaint") // 'complaint' | 'ban_appeal' | 'compensation'
   banId        String? // ban_appeal: the CustomerBan appealed (a brand of the ban's company is conceptId)
   contactPhone String? // from the customer session / WhatsApp sender — never client-supplied
+
+  // Compensation tickets (owner, 2026-10-27: "extend Complaints"): kind 'compensation' = one customer
+  // compensation done at the till (void, comp / No Charge, refund, discount above the limit, price
+  // override), made from its audit row / review flag by complaints/compensation.ts — never by a route.
+  // The company is the order's brand's (conceptId). CHECKs are SQL only (migration 20261027170000).
+  compType            String? // 'void' | 'comp' | 'refund' | 'discount' | 'price_override'
+  compValueCents      Int? // per-ticket money (INT4, like the order)
+  compApproverId      String? // the manager who approved (null = approved by a PIN not recorded)
+  compActorId         String? // who did it at the till
+  compSourceRef       String?   @unique // 'audit:<auditLogId>' | 'flag:<exceptionFlagId>' — a ticket is made once
+  compFlaggedAt       DateTime? // the CEO flagged it (an ExceptionFlag 'compensation_flagged' was raised)
+  compFlaggedById     String?
+  compFlagNote        String?
+  compFlagExceptionId String?
 
   concept Concept      @relation(fields: [conceptId], references: [id])
   order   Order?       @relation(fields: [orderId], references: [id])
@@ -4194,6 +4240,7 @@ model OrderComplaint {
 
   @@index([banId])
   @@index([kind, status])
+  @@index([kind, compType, createdAt])
   @@map("order_complaints")
 }
 

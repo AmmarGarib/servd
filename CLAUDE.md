@@ -365,6 +365,21 @@ module id must be placed in a workspace in the same change.
   other type calls its own approve route item by item. An item whose approve
   needs input, options, a payment classification or is disabled is never
   selectable. Tests: `tests/hrBulkDecide.test.ts`.
+- **Wage changes and guest-list downloads go to the CEO (owner, 2026-10-27: "through the manager channel first,
+  and the CEO gives FINAL approval").** Approval types `wage_change` and `customer_export` (section ceo, NOT
+  delegable for now — the owner will hand them over later; flip `delegable` AND `decideRight`'s 'ceo' step
+  together). Wage: no new store — a salary revision (or a promotion carrying a new gross) in the HR request
+  engine whose steps always END with the CEO (`hr/service.ts workflowOf` / `isWageChange` / `wageAtCeoStep`);
+  a non-CEO salary edit on `PATCH /hr/employees/:id` answers 202 `{ pendingApproval, request, employee }`
+  (other fields save at once; 409 `WAGE_CHANGE_PENDING` while one waits) and raises it effective today; at its
+  CEO step it is `wage_change` in the inbox / bell / audit (reject note ≥10, 422 `NOTE_REQUIRED`), never
+  `hr_request`; withdraw = the record's cancel route; the CEO's own edit applies at once; payroll reads the
+  master + APPROVED revisions only. Guest list: `modules/crm/customerExports.ts` (`CustomerExportRequest`,
+  tenantId, RLS, merge repoint) — every download with phones / emails (`GET /crm/customers/export`,
+  `GET /waitlist/signups.csv`) is the CEO's at once (403 `EXPORT_NEEDS_CEO` for anyone else); others `POST
+  /crm/exports {kind, filters, reason ≥10}` → CEO approves → ONE download by the requester within 24 h (409
+  `EXPORT_ALREADY_DOWNLOADED`, 410 `EXPORT_EXPIRED`). A new export carrying customer phones / emails goes
+  through this, never its own route. Tests: `tests/wageExportApproval.test.ts`.
 - **User audit log** (`/configuration/audit-log`, module `audit_log`):
   identity trail incl. `auth.login`, `auth.login_failed`, `auth.otp_login`,
   `auth.2fa_failed`, `auth.logout`. The books' trail
@@ -2068,6 +2083,16 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
 - **K7:** the old Component library is gone (`modules/components`, `/par-sheet/components`, module id `components`
   retired); its tables stay.
 - Tests: `ingredientMaster`, `recipeCompanyShare`, `kitchenFlow`.
+- **Removals on a line ("No onions"; owner, 2026-10-27: "any item that is being deducted from stock will be adjusted
+  if customer asks to remove").** `OrderItem.removedIngredients` (JSON `[{masterIngredientId | inventoryItemId |
+  prepRecipeId, name}]`, migration `20261027160000_order_line_removals`); `lib/lineRemovals.ts` is the one rule.
+  Removable = the TOP-level lines of the dish's APPROVED plate recipe (raw by master, else stock item; sub-recipes by
+  recipe), never packaging — `GET /menu/items/:id/removable` (any staff of the brand's company; other company 404).
+  The ring-up and add-items check them in `prepareOrderLines` (422 `INGREDIENT_NOT_ON_RECIPE`); the sale explosion
+  (`consumptionPerLine`) skips those lines (a sub-recipe with its whole explosion) for that line only, so stock and
+  cost of sales follow; price unchanged. KDS / KOT / receipt / pre-bill print "No <name>". Add-ons and their
+  'removes' recipes are unchanged. Till: "Remove" on a cart line (`components/pos/RemoveIngredients.tsx`). Tests:
+  `tests/orderLineRemovals.test.ts`.
 - **Kitchen stations: the F&B manager and the chef raise, the CEO approves (owner C3, 2026-10-26: "Approval
   stays with me").** `POST /stations` / `PATCH /stations/:id` by `fnb_manager` / `boh_management` (with
   `kds_config`) answer 202 `{ pendingApproval, request }` — a `StationChangeRequest` (tenantId = the brand's
@@ -2329,6 +2354,23 @@ Briefs: `.handoff/parked/2026-10-14/`.
   OFF by default, the CEO's on Complaints (`PUT /complaints/settings/appeals`);
   OFF = storefront routes 404, WhatsApp keeps the BANNED reply, no
   BlockedNotice. `release-contact` clears `Customer.phone` and is audited.
+- **Compensation tickets (owner, 2026-10-27: "extend Complaints").** Every customer compensation at the
+  till — a void (line: audit `order_item_void`; whole bill: `order.cancel` with a user), a comp / No Charge
+  (`order_comp`; staff meals are not), a refund (`order_refund` — card-machine refunds included, the refund a
+  line void makes is that void's ticket — `order_refund_due`, `order_credit_note_payout`), a discount above the
+  limit and a price override (review flags `discount_above_cap` / `price_override` on the order) — is ONE
+  `OrderComplaint` of kind `compensation`, whatever the amount. Made from those committed rows, never by a
+  hook in the till: `complaints/compensation.ts syncCompensationTicketsForCompany` (`compSourceRef`
+  `audit:<id>` / `flag:<id>` unique, createMany skipDuplicates), worker `workers/compensationTickets.ts`
+  (every minute, per company, 7-day window) + the list route's own sync. Company = the order's brand. Born
+  `resolved` — managers' tickets need no CEO approval. `GET /complaints/compensation` (MANAGERS; type /
+  status / flagged / dates / brand); `POST /complaints/:id/flag {note ≥10}` / `/unflag` — the CEO only
+  (`FLAG_ROLES`; hand-over to come, the approvals delegation registry does not fit a review mark) — raises /
+  resolves an ExceptionFlag `compensation_flagged` in the ticket's company naming the approving manager
+  (actorId = the manager, so the bell tells the CEO). The ordinary complaint list / stats / dashboards
+  exclude `compensation`; PATCH on a ticket is 409 `COMPENSATION_TICKET_READ_ONLY`. A PIN-approved discount /
+  price override has no recorded approver (null). Admin: Complaints → Compensation tab. Migration
+  `20261027170000_compensation_tickets`; tests `tests/compensationTickets.test.ts`.
 - **Pending owner/CA confirmation:** G1 (COD never paid), H5 (rider COD on
   1351) — built on the defaults above.
 

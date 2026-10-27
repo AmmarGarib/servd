@@ -19,6 +19,7 @@ import { Modal } from '@/components/ui/Modal'
 import { NavIcon } from '../../components/ui/NavIcon'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { CorrectContactModal } from '../../components/customer/CorrectContactModal'
+import { GuestListExport } from '../../components/crm/GuestListExport'
 
 // THE customer list (the /customers page is a redirect here). Segments live on
 // /crm/segments and campaigns on /crm/campaigns — this page used to carry its
@@ -183,6 +184,9 @@ export default function CRMPage() {
             <Link href="/crm/segments" className="rounded-xl border border-s-border text-s-text text-sm font-semibold px-3 py-1.5 hover:border-primary">Segments</Link>
             <Link href="/crm/campaigns" className="rounded-xl border border-s-border text-s-text text-sm font-semibold px-3 py-1.5 hover:border-primary">Campaigns</Link>
             <Link href="/crm/naughty-list" className="rounded-xl border border-s-border text-s-text text-sm font-semibold px-3 py-1.5 hover:border-primary">Naughty list</Link>
+            {/* Phones and emails: the CEO downloads at once, anyone else asks the CEO (owner, 2026-10-27). */}
+            <GuestListExport kind="customers" filters={search.trim() ? { search: search.trim() } : {}}
+              ceoExport={{ path: `/crm/customers/export${search.trim() ? `?search=${encodeURIComponent(search.trim())}` : ''}`, filename: 'guest-list' }} />
           </div>
         </div>
       </header>

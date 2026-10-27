@@ -28,6 +28,20 @@ export interface OrderItemDTO {
   modifiers: OrderModifierDTO[]
   notes?: string
   course?: number
+  /**
+   * Ingredients the customer asked to leave out ("No onions") — each names a line of the dish's approved plate
+   * recipe by its servd master, stock item or sub-recipe (lib/lineRemovals.ts). Checked against the recipe
+   * (422 INGREDIENT_NOT_ON_RECIPE); the sale draws none of them; the price is unchanged.
+   */
+  removedIngredients?: OrderLineRemovalDTO[]
+}
+
+export interface OrderLineRemovalDTO {
+  masterIngredientId?: string | null
+  inventoryItemId?: string | null
+  prepRecipeId?: string | null
+  key?: string | null
+  name?: string | null
 }
 
 export interface OrderPaymentDTO {

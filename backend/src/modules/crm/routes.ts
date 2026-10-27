@@ -24,6 +24,7 @@ import {
   strikeCompanies, banCompanies, inCompanies, userOfCompanies,
 } from './customerScope.js'
 import { contactCorrectionRoutes } from './contactCorrection.js'
+import { customerExportRoutes } from './customerExports.js'
 
 // Loyalty accounts are per company (ONL-04): staff read only the accounts of
 // the companies in view (`loyaltyAccounts: { where: t }`), and `loyaltyAccount`
@@ -123,7 +124,7 @@ async function scopedCustomerFigures<C extends {
  * every company-facing segment reads this instead — a customer who spent
  * PKR 80k at company A is not company B's VIP.
  */
-async function companyCustomerStats(conceptIds: string[], customerIds?: string[]): Promise<CompanyStat[]> {
+export async function companyCustomerStats(conceptIds: string[], customerIds?: string[]): Promise<CompanyStat[]> {
   if (conceptIds.length === 0 || (customerIds && customerIds.length === 0)) return []
   const rows = await prisma.$queryRaw<Array<{ id: string; n: number; spent: bigint; first_at: Date | null; last_at: Date | null }>>`
     SELECT o."customerId" AS id, COUNT(*)::int AS n, COALESCE(SUM(o."totalCents"), 0)::bigint AS spent,
@@ -271,6 +272,8 @@ function conversationOfCompanies(t: TenantIdWhere): Prisma.CustomerConversationW
 export async function crmRoutes(fastify: FastifyInstance) {
   // Correct a guest's phone / email (owner C20, 2026-10-26) — ./contactCorrection.ts.
   await fastify.register(contactCorrectionRoutes)
+  // Guest-list downloads: the CEO at once, anyone else after the CEO approves (owner, 2026-10-27) — ./customerExports.ts.
+  await fastify.register(customerExportRoutes)
   // Who may do what (wave 3, UI-06). The Marketing workspace (lib/workspaces.ts:
   // owners marketing + brand_manager) holds crm + campaigns by default, so
   // MARKETING_TEAM (MANAGERS + marketing + brand_manager) reads the customer

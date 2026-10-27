@@ -771,6 +771,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.reservationGuest,
     // Overbooks waiting for the CEO (owner C10, 2026-10-26): follow the brand's company.
     tx.reservationOverbookRequest,
+    // Guest-list downloads waiting for the CEO (owner, 2026-10-27): follow the requester's company.
+    tx.customerExportRequest,
     // Customer money.
     tx.giftCard, tx.walletTransaction, tx.tipPool, tx.taxInvoice,
     // HR back office.

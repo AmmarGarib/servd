@@ -85,6 +85,7 @@
 // short transaction (voidNeverBooked), never inside the order's lock; an
 // already voided receipt is a step done (retry-safe).
 
+import { lineRemovalsOf } from '../../lib/lineRemovals.js'
 import type { OrderStatus, Prisma, ShiftCorrection, ShiftCorrectionItem } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
@@ -477,6 +478,8 @@ async function reissuePlan(db: Db, orderId: string, tender: string) {
     externalItemId: i.id, menuItemId: i.menuItemId, name: i.name, quantity: i.quantity, unitPriceCents: i.unitPriceCents,
     notes: i.notes ?? undefined, course: i.course ?? undefined,
     modifiers: i.modifiers.map((m) => ({ name: m.name, priceDeltaCents: m.priceDeltaCents, modifierId: m.modifierId })),
+    // The bill as sold: its removals ride along (the stock moves, it is not drawn again).
+    removedIngredients: lineRemovalsOf(i.removedIngredients),
   }))
   const { priceOrder, tenderOf } = await import('../../lib/pricing.js')
   const price = await priceOrder(lines, tenderOf(tender), 'pos', old.concept, { discountCents: old.discountCents, db: db as typeof prisma })

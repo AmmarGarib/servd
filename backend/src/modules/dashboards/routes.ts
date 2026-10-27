@@ -173,7 +173,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         return { value: t, monthToDate: m }
       })
       const complaintsN = () => num({ key: 'complaints', label: 'Open complaints', unit: 'count', href: '/complaints' }, false, async () => ({
-        value: await prisma.orderComplaint.count({ where: { ...orderOfCompany, status: { in: ['open'] } } }),
+        value: await prisma.orderComplaint.count({ where: { ...orderOfCompany, kind: 'complaint', status: { in: ['open'] } } }),
       }))
       // HR (per company, every row has tenantId)
       const headcountN = () => num({ key: 'headcount', label: 'Headcount', unit: 'count', href: '/hr/employees' }, false, async () => ({
