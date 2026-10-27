@@ -219,7 +219,7 @@ export default function ExpoPage() {
   const seenOrders = useRef<Set<string> | null>(null)
   useEffect(() => {
     if (!data) return
-    const ids = [...data.awaitingFire, ...data.inProgress, ...data.ready].map((o) => o.id)
+    const ids = [...(data.awaitingFire ?? []), ...(data.inProgress ?? []), ...(data.ready ?? [])].map((o) => o.id)
     const seen = seenOrders.current
     if (seen && soundEnabled && ids.some((id) => !seen.has(id))) playNewOrderBeep()
     seenOrders.current = new Set([...(seen ?? []), ...ids])

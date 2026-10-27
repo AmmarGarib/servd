@@ -737,7 +737,7 @@ export default function RidersPage() {
                   </div>
 
                   {/* Status controls */}
-                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <div className="flex min-w-0 items-center gap-2 flex-wrap">
                     {(['available', 'busy', 'offline'] as const).map((s) => (
                       <button key={s} onClick={() => statusMutation.mutate({ id: rider.id, status: s })}
                         disabled={rider.status === s || statusMutation.isPending}
