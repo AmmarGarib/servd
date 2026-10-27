@@ -2750,7 +2750,13 @@ and co-owners only). (5) **A forgotten clock-out is clocked out by servd at
 12:00 AM** after the in's day (owner: "it should auto log-out at 12:00 AM";
 `autoClockOutData`: an `auto` out punch, check-out 00:00, the day keeps its
 status, `_autoClockedOut`, flag `attendance_auto_clock_out` for HR; no punch
-overtime and no tip-pool hours from it). Not built (needs the tablet / a native
+overtime and no tip-pool hours from it). (6) **Work locations may be map pins (owner, 2026-10-27: "make work locations a system in which i can add multiple
+pin locations"):** an `HrWorkLocation` is EITHER a company Location OR the employee's own pin (label, lat, lng, radius;
+≤20 per person, CHECK `hr_work_locations_kind_chk`, `PUT /hr/employees/:id/work-locations`); a new / moved pin waits for
+the CEO (approval type `work_pin`, never delegated; `workPinPending` reuses `fencePinPending`; `POST /hr/work-pins/:id/
+approve|reject`, 409 `PIN_CHANGED`, reject note ≥10) and is measured only from its approved pin (blank radius = the
+company's), the old approved pin staying in force meanwhile; a punch there is named by the pin's label
+(`ClockLog.pinLabel`). Tests: `tests/workLocationPins.test.ts`. Not built (needs the tablet / a native
 app): fake-GPS detection, one registered phone per login, "tablet first".
 Tests: `tests/geofenceAttendance.test.ts`.
 

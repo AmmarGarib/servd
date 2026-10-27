@@ -144,6 +144,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   connector_change: spec(() => '/connectors/pos?tab=changes'),
   shift_correction: spec((id) => `/finance/shift-corrections?id=${encodeURIComponent(id)}`),
   location_pin: spec(() => '/configuration/locations'),
+  work_pin: spec(() => '/hr/employees'),
   social_connection: spec(() => '/calendar/social'),
   station_change: spec(() => '/kds/config'),
   reservation_overbook: spec(() => '/reservations'),
@@ -310,6 +311,10 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
     case 'location_pin': {
       const l = await db.location.findUnique({ where: { id }, select: { name: true } })
       return l && { ref: `Time-clock map pin of ${l.name}` }
+    }
+    case 'work_pin': {
+      const w = await db.hrWorkLocation.findUnique({ where: { id }, select: { label: true, employee: { select: { fullName: true } } } })
+      return w && { ref: `Work map pin "${w.label ?? 'pin'}" of ${w.employee.fullName}` }
     }
     case 'shift_correction': {
       const c = await db.shiftCorrection.findUnique({ where: { id }, select: { shiftId: true, businessDay: true, _count: { select: { items: true } } } })

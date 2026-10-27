@@ -54,6 +54,15 @@ export function fencePinPending(l: {
   return !(r && same({ lat: r.lat, lng: r.lng, radius: r.radius }))
 }
 
+/** Is an employee's custom work pin (owner, 2026-10-27) waiting for the CEO? The same rule as a location's pin
+ *  (fencePinPending), read from the HrWorkLocation's own columns; a company-Location work location never waits. */
+export function workPinPending(w: {
+  locationId: string | null; latitude: number | null; longitude: number | null; radiusMetres: number | null
+  fenceLatitude: number | null; fenceLongitude: number | null; fenceRadiusMetres: number | null; fencePinRejected?: unknown
+}): boolean {
+  return w.locationId == null && fencePinPending({ ...w, geofenceRadiusMetres: w.radiusMetres })
+}
+
 // ─── Types and sections ─────────────────────────────────────────────────────
 
 /** Every approval type the inbox knows. `approvals/types.ts` re-exports it. */
@@ -96,6 +105,8 @@ export const APPROVAL_TYPES = [
   // Wage changes and guest-list downloads (owner, 2026-10-27).
   'wage_change',           // an HR salary revision / promotion with a new gross, at its last (CEO) step
   'customer_export',       // a download of the guest list with phones / emails a non-CEO asked for
+  // Work locations as map pins (owner, 2026-10-27).
+  'work_pin',              // an employee's own work map pin (new or moved) waiting for the CEO
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 
@@ -302,6 +313,12 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // POST /locations/:id/fence-pin/approve | reject (modules/locations): the CEO only, never handed over (owner's
     // card, 2026-10-22: "each location gets a map pin and a radius, approved by the CEO").
     label: 'Time-clock map pins', section: 'ceo', queueModule: 'business_info', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  work_pin: {
+    // POST /hr/work-pins/:id/approve | reject (modules/hr/workLocations.ts): the CEO only, never handed over (owner,
+    // 2026-10-27: an employee's own map pins are approved by the CEO, as location pins are).
+    label: 'Employee work map pins', section: 'ceo', queueModule: 'staff_hr', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
 }
@@ -1118,6 +1135,10 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const l = await db.location.findUnique({ where: { id }, select: { tenantId: true, deletedAt: true, updatedAt: true, latitude: true, longitude: true, geofenceRadiusMetres: true, fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true, fencePinRejected: true } })
       return l?.tenantId ? subject({ companyIds: [l.tenantId], ownerTenantId: l.tenantId, submitterIds: [], viaHeadOfficeId: null, status: !l.deletedAt && fencePinPending(l) ? 'pending' : 'settled', submittedAt: l.updatedAt }) : null
     }
+    case 'work_pin': {
+      const w = await db.hrWorkLocation.findUnique({ where: { id }, select: { tenantId: true, updatedAt: true, locationId: true, latitude: true, longitude: true, radiusMetres: true, fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true, fencePinRejected: true } })
+      return w && subject({ companyIds: [w.tenantId], ownerTenantId: w.tenantId, submitterIds: [], viaHeadOfficeId: null, status: workPinPending(w) ? 'pending' : 'settled', submittedAt: w.updatedAt })
+    }
     case 'shift_correction': {
       const c = await db.shiftCorrection.findUnique({ where: { id }, select: { tenantId: true, requestedById: true, status: true, createdAt: true } })
       return c && subject({ companyIds: [c.tenantId], ownerTenantId: c.tenantId, submitterIds: [c.requestedById], viaHeadOfficeId: null, status: c.status, submittedAt: c.createdAt })
@@ -1220,6 +1241,7 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   connector_change: ['submitted'],
   shift_correction: ['submitted'],
   location_pin: ['pending'],
+  work_pin: ['pending'],
   social_connection: ['pending'],
   station_change: ['pending'],
   reservation_overbook: ['pending'],

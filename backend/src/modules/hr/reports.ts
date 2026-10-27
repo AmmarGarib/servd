@@ -144,9 +144,10 @@ function daysUntil(d: Date | null | undefined, today: Date): number | null {
 async function branchNames(emps: HrEmployee[], tenantIds: string[], labelOf: (id: string | null | undefined) => string | null) {
   const rows = emps.length ? await prisma.hrWorkLocation.findMany({
     where: { tenantId: { in: tenantIds }, employeeId: { in: emps.map((e) => e.id) }, isPrimary: true },
-    select: { employeeId: true, location: { select: { name: true } } },
+    select: { employeeId: true, label: true, location: { select: { name: true } } },
   }) : []
-  const primary = new Map(rows.map((r) => [r.employeeId, r.location.name]))
+  // A primary that is the employee's own map pin shows its label (owner, 2026-10-27).
+  const primary = new Map(rows.map((r) => [r.employeeId, r.location?.name ?? r.label ?? null]))
   return (e: HrEmployee) => primary.get(e.id) ?? labelOf(e.locationId)
 }
 

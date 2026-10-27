@@ -17,6 +17,11 @@
 // that names a location counts as being AT that location (owner: "Office Wi-Fi = Head Office location"), no map
 // reading needed — in area when that location is one of the person's work locations (or they have none). An
 // out-of-area punch of an employee is HELD for their HOD (hr/attendance.ts), never refused.
+//
+// Work locations as map pins (owner, 2026-10-27): a work location may be the employee's own map pin (HrWorkLocation
+// with no locationId). It is an anchor only once the CEO approved it (fence* columns, approval type work_pin) — its
+// approved pin + radius (blank radius → the company's). A punch matched to it names the pin by its label
+// (ClockVerdict.workPinId / locationName; ClockLog.workPinId / pinLabel; the attendance punch's pinLabel).
 
 import { AppError } from '../../lib/errors.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -48,8 +53,10 @@ export interface ClockInVerdict {
   /** true inside the nearest anchor's radius, false outside, null = not measured. */
   geofenceMatched: boolean | null
   geofenceDistanceM: number | null
-  /** The nearest anchor (the work location the punch is booked at). */
+  /** The nearest anchor (the work location the punch is booked at). A custom work pin: locationId null, workPinId
+   *  its HrWorkLocation id and locationName its label. */
   locationId: string | null
+  workPinId?: string | null
   locationName: string | null
   /** The radius the punch was held to (metres). */
   radiusM: number | null
@@ -80,20 +87,30 @@ export async function anchorsFor(tenantId: string, employeeId: string | null, co
     const rows = await prisma.hrWorkLocation.findMany({
       where: {
         tenantId, employeeId,
-        location: { tenantId, isActive: true, deletedAt: null },
+        OR: [{ location: { tenantId, isActive: true, deletedAt: null } }, { locationId: null }],
       },
-      include: { location: { select: { id: true, name: true, fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true } } },
+      select: {
+        id: true, label: true, radiusMetres: true, fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true,
+        location: { select: { id: true, name: true, fenceLatitude: true, fenceLongitude: true, fenceRadiusMetres: true } },
+      },
     })
     if (rows.length) {
       // Measured from the CEO-approved pins only; a work location with no approved pin is still the person's place
-      // (an office network naming it places them there).
+      // (an office network naming it places them there). A custom pin: its own approved pin + radius.
+      const anchors: GeofenceAnchor[] = []
+      for (const r of rows) {
+        if (r.location) {
+          if (r.location.fenceLatitude != null && r.location.fenceLongitude != null) {
+            anchors.push({ locationId: r.location.id, name: r.location.name, lat: r.location.fenceLatitude, lng: r.location.fenceLongitude, radiusM: r.radiusMetres ?? r.location.fenceRadiusMetres ?? null })
+          }
+        } else if (r.fenceLatitude != null && r.fenceLongitude != null) {
+          anchors.push({ locationId: null, workPinId: r.id, name: r.label ?? 'Map pin', lat: r.fenceLatitude, lng: r.fenceLongitude, radiusM: r.fenceRadiusMetres ?? null })
+        }
+      }
       return {
         fromWorkLocations: true,
-        workLocationIds: rows.map((r) => r.location.id),
-        anchors: rows.filter((r) => r.location.fenceLatitude != null && r.location.fenceLongitude != null).map((r) => ({
-          locationId: r.location.id, name: r.location.name, lat: r.location.fenceLatitude!, lng: r.location.fenceLongitude!,
-          radiusM: r.radiusMetres ?? r.location.fenceRadiusMetres ?? null,
-        })),
+        workLocationIds: rows.flatMap((r) => (r.location ? [r.location.id] : [])),
+        anchors,
       }
     }
   }
@@ -150,6 +167,7 @@ export async function enforceClockInPolicy(
     geofenceMatched: matched,
     geofenceDistanceM: near ? Math.round(near.distanceM) : null,
     locationId: near?.anchor.locationId ?? null,
+    workPinId: near?.anchor.workPinId ?? null,
     locationName: near?.anchor.name ?? null,
     radiusM,
     outOfArea: cfg.enforced && reason != null,

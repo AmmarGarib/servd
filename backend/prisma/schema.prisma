@@ -1336,6 +1336,9 @@ model ClockLog {
   tenantId          String?
   locationId        String?
   outOfArea         Boolean?
+  // The employee's custom work pin the punch was measured against (owner, 2026-10-27), and its label then.
+  workPinId         String?
+  pinLabel          String?
 
   user User @relation(fields: [userId], references: [id])
 
@@ -8942,15 +8945,32 @@ model HrWorkLocation {
   id           String   @id @default(uuid())
   tenantId     String
   employeeId   String
-  locationId   String
+  // EITHER a company Location (locationId) OR a custom map pin of this employee only (label + latitude + longitude;
+  // owner, 2026-10-27: "make work locations a system in which i can add multiple pin locations"). CHECK
+  // hr_work_locations_kind_chk. For a Location, radiusMetres is the per-employee radius; for a pin it is the pin's
+  // radius as entered (null = the company's).
+  locationId   String?
+  label        String?
+  latitude     Float?
+  longitude    Float?
   radiusMetres Int?
   isPrimary    Boolean  @default(false)
+  // A custom pin's fence the CEO APPROVED (approval type work_pin, mirroring Location.fence*): the time clock measures
+  // from these only; a new / moved pin waits and the old approved one stays in force meanwhile. fencePinRejected =
+  // the pin the CEO turned down ({lat, lng, radius, at, byId, note}).
+  fenceLatitude        Float?
+  fenceLongitude       Float?
+  fenceRadiusMetres    Int?
+  fencePinApprovedAt   DateTime?
+  fencePinApprovedById String?
+  fencePinRejected     Json?
   createdById  String?
   createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
 
   tenant   Tenant     @relation("TenantHrWorkLocations", fields: [tenantId], references: [id])
   employee HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  location Location   @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  location Location?  @relation(fields: [locationId], references: [id], onDelete: Restrict)
 
   @@unique([employeeId, locationId])
   @@index([tenantId])

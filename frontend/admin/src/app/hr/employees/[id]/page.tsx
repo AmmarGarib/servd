@@ -22,6 +22,7 @@ import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
 import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { CompactEmptyState } from '../../../../components/ui/CompactEmptyState'
+import { MapPin } from '@/components/ui/MapPin'
 
 interface Profile {
   employee: Record<string, unknown> & { id: string; tenantId: string; fullName: string; employeeCode: string; status: string; employmentType: string; grossSalaryCents: number; userId: string | null; data: Record<string, unknown> }
@@ -495,71 +496,144 @@ function CreateLoginForm({ p }: { p: Profile }) {
   )
 }
 
-interface WorkLoc { locationId: string; name?: string; radiusMetres: number | null; isPrimary: boolean; hasPin?: boolean }
+type PinState = 'approved' | 'pending' | 'rejected'
+interface WorkLocLoc { kind: 'location'; locationId: string; name?: string; radiusMetres: number | null; isPrimary: boolean; hasPin?: boolean }
+interface WorkLocPin {
+  kind: 'pin'; id?: string; tmp?: string; label: string; latitude: number; longitude: number; radiusMetres: number | null; isPrimary: boolean
+  status?: PinState; approved?: { latitude: number; longitude: number; radiusMetres: number | null } | null
+  rejected?: { note?: string } | null; dirty?: boolean
+}
+type WorkLoc = WorkLocLoc | WorkLocPin
 interface LocationOpt { id: string; name: string; tenantId?: string | null; latitude?: number | string | null; longitude?: number | string | null }
 
-/** Where this person may punch (owner, 2026-10-15). One or more of the company's locations; the time clock measures
- *  every punch against them. A punch outside is never refused — it is recorded and flagged for HR. */
+const MAX_WORK_LOCATIONS = 20
+const keyOf = (c: WorkLoc) => (c.kind === 'location' ? `loc:${c.locationId}` : `pin:${c.id ?? c.tmp}`)
+/** The API's list → the card's items (an older server sends no `kind`: every row is a Location). */
+const fromApi = (rows: Array<Record<string, unknown>>): WorkLoc[] => rows.map((r) => r['kind'] === 'pin'
+  ? { kind: 'pin', id: r['id'] as string, label: (r['label'] as string) ?? 'Map pin', latitude: r['latitude'] as number, longitude: r['longitude'] as number, radiusMetres: (r['radiusMetres'] as number | null) ?? null, isPrimary: !!r['isPrimary'], status: r['status'] as PinState, approved: (r['approved'] as WorkLocPin['approved']) ?? null, rejected: (r['rejected'] as WorkLocPin['rejected']) ?? null }
+  : { kind: 'location', locationId: r['locationId'] as string, name: r['name'] as string, radiusMetres: (r['radiusMetres'] as number | null) ?? null, isPrimary: !!r['isPrimary'], hasPin: r['hasPin'] as boolean })
+
+function PinStatus({ c }: { c: WorkLocPin }) {
+  if (c.dirty || !c.status) return <span className="s-badge-muted">Not saved yet</span>
+  if (c.status === 'approved') return <span className="s-badge-green">Approved</span>
+  if (c.status === 'pending') return <span className="s-badge-amber">Waiting for the CEO{c.approved ? ' — the approved pin stays in force' : ''}</span>
+  return <span className="s-badge-red" title={c.rejected?.note}>Rejected{c.rejected?.note ? `: ${c.rejected.note}` : ''}</span>
+}
+
+/** Add or move one map pin: a name, the shared map picker (paste a Google Maps link, click, drag, search) and a radius. */
+function PinEditor({ initial, onDone, onCancel }: { initial?: WorkLocPin; onDone: (p: { label: string; latitude: number; longitude: number; radiusMetres: number | null }) => void; onCancel: () => void }) {
+  const [label, setLabel] = useState(initial?.label ?? '')
+  const [coords, setCoords] = useState<{ lat: number | null; lng: number | null }>({ lat: initial?.latitude ?? null, lng: initial?.longitude ?? null })
+  const [radius, setRadius] = useState(initial?.radiusMetres != null ? String(initial.radiusMetres) : '')
+  const r = radius ? Number(radius) : null
+  const badRadius = r != null && (r < 10 || r > 5000)
+  const ready = label.trim().length > 0 && coords.lat != null && coords.lng != null && !badRadius
+  return (
+    <div className="rounded-xl p-3 space-y-3 mb-3" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.12)' }}>
+      <p className="text-sm font-bold text-white/85">{initial ? `Move "${initial.label}"` : 'Add a map pin'}</p>
+      <input className={inp} placeholder="Name, e.g. Client site — DHA" aria-label="Pin name" maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} />
+      <MapPin value={coords} onChange={setCoords} height={240} hint="Paste a Google Maps link, or click the map to drop the pin." />
+      <div className="flex flex-wrap items-center gap-2">
+        <input className={`${inp} w-auto max-w-[170px]`} inputMode="numeric" placeholder="Radius (m)" aria-label="Pin radius in metres"
+          value={radius} onChange={(e) => setRadius(e.target.value.replace(/\D/g, ''))} />
+        <span className="text-[11px] text-white/45">{badRadius ? '10 to 5,000 metres.' : 'Blank uses the company’s radius.'}</span>
+      </div>
+      <p className="text-[11px] text-white/45">A new or moved pin waits for the CEO. Until it is approved, punches are not measured from it.</p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className={btn} disabled={!ready} onClick={() => onDone({ label: label.trim(), latitude: coords.lat!, longitude: coords.lng!, radiusMetres: r })}>{initial ? 'Use this pin' : 'Add pin'}</button>
+        <button type="button" className={btnGhost} onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+/** Where this person may punch (owner, 2026-10-15; map pins 2026-10-27). Company locations and / or their own map
+ *  pins; the time clock measures every punch against them. A punch from anywhere else is recorded and flagged. */
 function WorkLocationsCard({ p }: { p: Profile }) {
   const qc = useQueryClient()
   const empId = p.employee.id
-  const { data: saved } = useQuery({ queryKey: ['hr-work-locations', empId], queryFn: () => api.get<{ items: WorkLoc[] }>(`/hr/employees/${empId}/work-locations`) })
+  const { data: saved } = useQuery({ queryKey: ['hr-work-locations', empId], queryFn: () => api.get<{ items: Array<Record<string, unknown>> }>(`/hr/employees/${empId}/work-locations`) })
   const { data: all = [] } = useQuery({ queryKey: ['locations'], queryFn: () => api.get<LocationOpt[]>('/locations') })
   const [items, setItems] = useState<WorkLoc[] | null>(null)
   const [add, setAdd] = useState('')
+  const [pinEdit, setPinEdit] = useState<'new' | string | null>(null)
   const [msg, setMsg] = useState('')
   const [ok, setOk] = useState(false)
   // Only the employee's own company's locations (the API refuses any other).
   const mine = all.filter((l) => !l.tenantId || l.tenantId === p.employee.tenantId)
-  const cur = items ?? saved?.items ?? []
-  const pinOf = (id: string) => {
-    const l = mine.find((x) => x.id === id)
+  const cur: WorkLoc[] = items ?? fromApi(saved?.items ?? [])
+  const pinOf = (c: WorkLocLoc) => {
+    const l = mine.find((x) => x.id === c.locationId)
     if (l) return l.latitude != null && l.longitude != null && l.latitude !== '' && l.longitude !== ''
-    return cur.find((c) => c.locationId === id)?.hasPin ?? true
+    return c.hasPin ?? true
   }
-  const nameOf = (id: string) => mine.find((x) => x.id === id)?.name ?? cur.find((c) => c.locationId === id)?.name ?? id
+  const nameOf = (c: WorkLoc) => (c.kind === 'pin' ? c.label : mine.find((x) => x.id === c.locationId)?.name ?? c.name ?? c.locationId)
   const edit = (next: WorkLoc[]) => { setItems(next); setOk(false); setMsg('') }
   const save = useMutation({
-    mutationFn: () => api.put(`/hr/employees/${empId}/work-locations`, { items: cur.map((c) => ({ locationId: c.locationId, radiusMetres: c.radiusMetres ?? null, isPrimary: c.isPrimary })) }),
+    mutationFn: () => api.put(`/hr/employees/${empId}/work-locations`, {
+      items: cur.map((c) => c.kind === 'location'
+        ? { locationId: c.locationId, radiusMetres: c.radiusMetres ?? null, isPrimary: c.isPrimary }
+        : { ...(c.id && { id: c.id }), label: c.label, latitude: c.latitude, longitude: c.longitude, radiusMetres: c.radiusMetres ?? null, isPrimary: c.isPrimary }),
+    }),
     onSuccess: () => { setOk(true); setMsg(''); setItems(null); void qc.invalidateQueries({ queryKey: ['hr-work-locations', empId] }); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
     onError: (e: Error) => { setMsg(e.message); setOk(false) },
   })
-  const available = mine.filter((l) => !cur.some((c) => c.locationId === l.id))
+  const available = mine.filter((l) => !cur.some((c) => c.kind === 'location' && c.locationId === l.id))
+  const full = cur.length >= MAX_WORK_LOCATIONS
+  const editing = pinEdit && pinEdit !== 'new' ? cur.find((c) => keyOf(c) === pinEdit) as WorkLocPin | undefined : undefined
   return (
     <div className="rounded-2xl p-5 lg:col-span-2" style={card}>
       <p className="text-sm font-black text-white/85 mb-2">Work locations</p>
-      <p className="text-sm text-white/60 mb-3">Where this person works. Their clock-in is measured against these. A punch from anywhere else is still recorded, and flagged for HR.</p>
+      <p className="text-sm text-white/60 mb-3">Where this person works: company locations and their own map pins. Their clock-in is measured against these. A punch from anywhere else is still recorded, and flagged for HR.</p>
       {cur.length === 0 && <p className="text-xs text-white/45 mb-3">None set — punches are measured against all of the company&rsquo;s locations.</p>}
       <div className="space-y-2 mb-3">
-        {cur.map((c) => (
-          <div key={c.locationId} className="flex flex-wrap items-center gap-3 rounded-xl px-3 py-2" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
-            <span className="text-sm font-bold text-white/85 min-w-[140px]">{nameOf(c.locationId)}</span>
-            <label className="flex items-center gap-1.5 text-xs text-white/60">
-              <input type="radio" name="primary-work-location" checked={c.isPrimary} onChange={() => edit(cur.map((x) => ({ ...x, isPrimary: x.locationId === c.locationId })))} /> Primary
-            </label>
-            <input className={`${inp} max-w-[150px]`} inputMode="numeric" placeholder="Radius (m)" aria-label={`Radius in metres for ${nameOf(c.locationId)}`}
-              value={c.radiusMetres ?? ''} onChange={(e) => { const n = e.target.value.replace(/\D/g, ''); edit(cur.map((x) => x.locationId === c.locationId ? { ...x, radiusMetres: n ? Number(n) : null } : x)) }} />
-            {!pinOf(c.locationId) && <span className="text-[11px]" style={{ color: 'var(--erp-danger)' }}>No map pin — punches here cannot be measured. Set the pin under Configuration → Locations.</span>}
-            <button className="ml-auto text-xs text-white/40 hover:text-s-red" onClick={() => {
-              const rest = cur.filter((x) => x.locationId !== c.locationId)
-              edit(rest.length && !rest.some((x) => x.isPrimary) ? rest.map((x, i) => ({ ...x, isPrimary: i === 0 })) : rest)
-            }}>Remove</button>
-          </div>
-        ))}
+        {cur.map((c) => {
+          const k = keyOf(c)
+          return (
+            <div key={k} className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-3 py-2" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+              <span className="text-sm font-bold text-white/85 min-w-0 break-words sm:min-w-[140px]">{nameOf(c)}</span>
+              {c.kind === 'pin' && <span className="text-[11px] text-white/45">Map pin · {c.latitude.toFixed(5)}, {c.longitude.toFixed(5)} · {c.radiusMetres != null ? `${c.radiusMetres} m` : 'company radius'}</span>}
+              <label className="flex items-center gap-1.5 text-xs text-white/60">
+                <input type="radio" name="primary-work-location" checked={c.isPrimary} onChange={() => edit(cur.map((x) => ({ ...x, isPrimary: keyOf(x) === k })))} /> Primary
+              </label>
+              {c.kind === 'location' && (
+                <input className={`${inp} w-auto max-w-[150px]`} inputMode="numeric" placeholder="Radius (m)" aria-label={`Radius in metres for ${nameOf(c)}`}
+                  value={c.radiusMetres ?? ''} onChange={(e) => { const n = e.target.value.replace(/\D/g, ''); edit(cur.map((x) => keyOf(x) === k ? { ...x, radiusMetres: n ? Number(n) : null } : x)) }} />
+              )}
+              {c.kind === 'location' && !pinOf(c) && <span className="text-[11px]" style={{ color: 'var(--erp-danger)' }}>No map pin — punches here cannot be measured. Set the pin under Configuration → Locations.</span>}
+              {c.kind === 'pin' && <PinStatus c={c} />}
+              <span className="ml-auto flex gap-3">
+                {c.kind === 'pin' && <button className="text-xs text-white/50 hover:text-white/80" onClick={() => setPinEdit(k)}>Move</button>}
+                <button className="text-xs text-white/40 hover:text-s-red" onClick={() => {
+                  const rest = cur.filter((x) => keyOf(x) !== k)
+                  edit(rest.length && !rest.some((x) => x.isPrimary) ? rest.map((x, i) => ({ ...x, isPrimary: i === 0 })) : rest)
+                }}>Remove</button>
+              </span>
+            </div>
+          )
+        })}
       </div>
-      <div className="flex gap-2 max-w-md">
-        <Select className={inp} value={add} onChange={(e) => setAdd(e.target.value)} aria-label="Add a work location">
-          <option value="">Add a location…</option>
+      {pinEdit && (
+        <PinEditor key={pinEdit} initial={editing} onCancel={() => setPinEdit(null)} onDone={(v) => {
+          if (editing) edit(cur.map((x) => keyOf(x) === pinEdit ? { ...(x as WorkLocPin), ...v, dirty: true } : x))
+          else edit([...cur, { kind: 'pin', tmp: `${Date.now()}`, ...v, isPrimary: cur.length === 0, dirty: true }])
+          setPinEdit(null)
+        }} />
+      )}
+      <div className="flex flex-wrap gap-2 max-w-xl">
+        <Select className={`${inp} w-auto min-w-0 flex-1`} value={add} onChange={(e) => setAdd(e.target.value)} aria-label="Add a work location">
+          <option value="">Add a company location…</option>
           {available.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
         </Select>
-        <button className={btnGhost} disabled={!add || cur.length >= 10} onClick={() => { edit([...cur, { locationId: add, radiusMetres: null, isPrimary: cur.length === 0 }]); setAdd('') }}>Add</button>
+        <button className={btnGhost} disabled={!add || full} onClick={() => { edit([...cur, { kind: 'location', locationId: add, radiusMetres: null, isPrimary: cur.length === 0 }]); setAdd('') }}>Add</button>
+        <button className={btnGhost} disabled={full || !!pinEdit} onClick={() => setPinEdit('new')}>Add a map pin</button>
       </div>
-      <p className="text-[11px] text-white/35 mt-2">Radius is optional — blank uses the location&rsquo;s own radius, then the company&rsquo;s. The primary location is shown as the Branch Location.</p>
+      <p className="text-[11px] text-white/35 mt-2">Up to {MAX_WORK_LOCATIONS}. A location&rsquo;s radius is optional — blank uses the location&rsquo;s own radius, then the company&rsquo;s. A primary company location is shown as the Branch Location. Map pins belong to this person only and are measured once the CEO approves them.</p>
       {msg && <p className="text-xs text-s-red mt-2">{msg}</p>}
       {ok && <p className="text-xs text-primary-ink mt-2">Saved.</p>}
-      <div className="flex gap-2 mt-3">
+      <div className="flex flex-wrap gap-2 mt-3">
         <button className={btn} disabled={!items || save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save work locations'}</button>
-        {items && <button className={btnGhost} onClick={() => { setItems(null); setMsg('') }}>Discard</button>}
+        {items && <button className={btnGhost} onClick={() => { setItems(null); setMsg(''); setPinEdit(null) }}>Discard</button>}
       </div>
     </div>
   )

@@ -125,7 +125,7 @@ function DayTab() {
 type TodayStatus = 'in' | 'out' | 'not_in' | 'missing_punch' | 'on_leave' | 'recorded'
 interface TodayRow {
   employeeId: string; employeeCode: string; fullName: string; department: string | null
-  workLocations: Array<{ locationId: string; name: string; isPrimary: boolean; hasPin: boolean }>
+  workLocations: Array<{ locationId: string | null; workPinId?: string; name: string; isPrimary: boolean; hasPin: boolean }>
   status: TodayStatus; checkIn: string | null; checkOut: string | null; outOfArea: boolean
   punches: Array<{ type: 'in' | 'out'; at: string; location: string | null; distanceM: number | null; outOfArea: boolean }>
 }
@@ -215,7 +215,7 @@ function TodayTab() {
                 {r.outOfArea && <OutOfAreaBadge />}
               </div>
               <p className="text-[11px] text-white/35 mt-1">
-                {r.workLocations.length === 0 ? 'No work locations set — measured against the company locations' : r.workLocations.map((w) => `${w.name}${w.isPrimary ? ' (primary)' : ''}${w.hasPin ? '' : ' — no map pin'}`).join(' · ')}
+                {r.workLocations.length === 0 ? 'No work locations set — measured against the company locations' : r.workLocations.map((w) => `${w.name}${w.isPrimary ? ' (primary)' : ''}${w.hasPin ? '' : w.workPinId ? ' — pin waiting for the CEO' : ' — no map pin'}`).join(' · ')}
               </p>
             </div>
             <p className="text-xs font-black md:text-right" style={{ color: STATUS_COLOR_T[r.status] }}>{STATUS_LABEL[r.status]}</p>

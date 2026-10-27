@@ -255,8 +255,11 @@ describe('two companies', () => {
       'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_brand_move', 'stock_transfer', 'storefront_publish', 'tip_pool',
       // Wage changes at the CEO's step (owner, 2026-10-27) read the same /hr/approvals queue: listed, none waiting.
       'wage_change',
+      // Employee work map pins (owner, 2026-10-27) read /hr/work-pins (registered with the HR routes): listed, none waiting.
+      'work_pin',
     ])
     expect(countOf(body, 'wage_change')).toBe(0)
+    expect(countOf(body, 'work_pin')).toBe(0)
     for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer', 'cash_voucher',
       'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'on_account_client']) {
       expect(countOf(body, t), t).toBe(1)

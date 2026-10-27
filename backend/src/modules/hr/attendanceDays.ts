@@ -102,7 +102,7 @@ export async function workingDaysBetween(
       select: { startDate: true, data: true },
     }),
     getFormat(tenantId, 'holiday'),
-    prisma.hrWorkLocation.findMany({ where: { tenantId, employeeId: { in: emps.map((e) => e.id) } }, select: { employeeId: true, locationId: true } }),
+    prisma.hrWorkLocation.findMany({ where: { tenantId, employeeId: { in: emps.map((e) => e.id) }, locationId: { not: null } }, select: { employeeId: true, locationId: true } }),
     rotaCells(tenantId, emps, lo, hi),
   ])
   const locKey = holidayFmt.fields.find((f) => f.type === 'location')?.key ?? 'location'
@@ -117,7 +117,7 @@ export async function workingDaysBetween(
     holidayAt.set(d, set)
   }
   for (const e of emps) {
-    const branches = new Set<string>([...(e.locationId ? [e.locationId] : []), ...workLocs.filter((w) => w.employeeId === e.id).map((w) => w.locationId)])
+    const branches = new Set<string>([...(e.locationId ? [e.locationId] : []), ...workLocs.filter((w) => w.employeeId === e.id).flatMap((w) => (w.locationId ? [w.locationId] : []))])
     const days: Array<{ day: number; cell: RotaCell }> = []
     for (let d = lo; d <= hi; d += DAY_MS) {
       const cell = cells.get(`${e.id}:${ymd(new Date(d))}`)

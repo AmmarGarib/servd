@@ -96,7 +96,9 @@ type OperationsConfigT = Awaited<ReturnType<typeof prisma.operationsConfig.findF
 
 /** A place a punch is measured from. `radiusM` is the place's own fence (a work location's radius, else the
  *  location's geofenceRadiusMetres); null = the company's radius. */
-export interface GeofenceAnchor { locationId: string; name: string; lat: number; lng: number; radiusM?: number | null }
+/** A place a punch is measured from: a company Location (locationId) or an employee's own approved work pin
+ *  (workPinId, owner 2026-10-27; locationId null, name = the pin's label). */
+export interface GeofenceAnchor { locationId: string | null; workPinId?: string | null; name: string; lat: number; lng: number; radiusM?: number | null }
 export interface GeofenceConfig {
   enforced: boolean
   radiusM: number

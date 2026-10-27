@@ -34,13 +34,15 @@ const activeCompany = (actor: Actor): string => requireTenantId(actor.tenantId, 
 
 /** What the punch screen shows about where the punch was taken. */
 const whereOut = (v: ClockInVerdict | null) => v && (v.geofenceMatched != null || v.outOfArea != null)
-  ? { locationId: v.locationId, location: v.locationName, distanceM: v.geofenceDistanceM, radiusM: v.radiusM, matched: v.geofenceMatched, outOfArea: !!v.outOfArea, reason: v.outOfArea ? v.outOfAreaReason : null, flagged: !!(v.enforced && v.outOfArea) }
+  ? { locationId: v.locationId, workPinId: v.workPinId ?? null, location: v.locationName, distanceM: v.geofenceDistanceM, radiusM: v.radiusM, matched: v.geofenceMatched, outOfArea: !!v.outOfArea, reason: v.outOfArea ? v.outOfAreaReason : null, flagged: !!(v.enforced && v.outOfArea) }
   : null
 
 /** The verdict's columns on the punch log and the attendance punch. */
 const verdictCols = (v: ClockInVerdict | null) => ({
   geofenceMatched: v?.geofenceMatched ?? null, geofenceDistanceM: v?.geofenceDistanceM ?? null,
   locationId: v?.locationId ?? null, outOfArea: v?.outOfArea ?? null,
+  // A custom work pin (owner, 2026-10-27): named by its label on the punch.
+  workPinId: v?.workPinId ?? null, pinLabel: v?.workPinId ? v.locationName : null,
 })
 
 /** What the attendance day needs to hold an out-of-area punch for the HOD (hr/attendance.ts holdDay). */
@@ -299,7 +301,7 @@ export async function punchReport(tenantIds: string[], day: string): Promise<Pun
     row.punches.push({
       type: l.type === 'out' ? 'out' : 'in', at: l.recordedAt.toISOString(), source: 'clock', clockLogId: l.id,
       geofenceMatched: l.geofenceMatched, geofenceDistanceM: l.geofenceDistanceM, selfieUrl: l.selfieUrl, lat: l.lat, lng: l.lng,
-      locationId: l.locationId, outOfArea: l.outOfArea,
+      locationId: l.locationId, outOfArea: l.outOfArea, workPinId: l.workPinId, pinLabel: l.pinLabel,
     })
     rows.set(key, row)
   }

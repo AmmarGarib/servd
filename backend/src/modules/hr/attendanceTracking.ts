@@ -54,7 +54,8 @@ async function locationNames(tenantIds: string[], ids: Iterable<string | null | 
 }
 
 const view = (p: PunchEntry, names: Map<string, string>): PunchView => ({
-  type: p.type, at: p.at, source: p.source, locationId: p.locationId ?? null, location: p.locationId ? names.get(p.locationId) ?? null : null,
+  // A punch matched to the employee's own work pin is named by the pin's label (owner, 2026-10-27).
+  type: p.type, at: p.at, source: p.source, locationId: p.locationId ?? null, location: (p.locationId ? names.get(p.locationId) : null) ?? p.pinLabel ?? null,
   matched: p.geofenceMatched ?? null, distanceM: p.geofenceDistanceM ?? null, outOfArea: !!p.outOfArea,
 })
 
@@ -70,7 +71,7 @@ export async function todayBoard(tenantIds: string[], opts: { locationId?: strin
     },
     select: {
       id: true, tenantId: true, employeeCode: true, fullName: true, status: true, departmentId: true, designationId: true, gradeId: true, locationId: true, managerId: true,
-      workLocations: { select: { locationId: true, isPrimary: true, radiusMetres: true, location: { select: { name: true, latitude: true, longitude: true } } }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }] },
+      workLocations: { select: { id: true, locationId: true, label: true, isPrimary: true, radiusMetres: true, fenceLatitude: true, location: { select: { name: true, latitude: true, longitude: true } } }, orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }] },
     },
     orderBy: [{ employeeCode: 'asc' }],
   })
@@ -112,7 +113,9 @@ export async function todayBoard(tenantIds: string[], opts: { locationId?: strin
     return {
       employeeId: e.id, tenantId: e.tenantId, employeeCode: e.employeeCode, fullName: e.fullName,
       department: label(e.departmentId), designation: label(e.designationId),
-      workLocations: e.workLocations.map((w) => ({ locationId: w.locationId, name: w.location.name, isPrimary: w.isPrimary, radiusMetres: w.radiusMetres, hasPin: w.location.latitude != null && w.location.longitude != null })),
+      workLocations: e.workLocations.map((w) => w.location
+        ? { locationId: w.locationId, name: w.location.name, isPrimary: w.isPrimary, radiusMetres: w.radiusMetres, hasPin: w.location.latitude != null && w.location.longitude != null }
+        : { locationId: null, workPinId: w.id, name: w.label ?? 'Map pin', isPrimary: w.isPrimary, radiusMetres: w.radiusMetres, hasPin: w.fenceLatitude != null }),
       status,
       attendanceStatus: rec?.category ?? null,
       lateMinutes: rec?.quantity ?? null,
@@ -164,7 +167,7 @@ export async function punchLog(tenantIds: string[], q: { from: string; to: strin
     include: { employee: { select: { id: true, employeeCode: true, fullName: true, userId: true } } },
   })
   const fromRecords = new Set<string>()
-  const out: Array<Omit<PunchLogRow, 'location'> & { location?: string | null }> = []
+  const out: Array<Omit<PunchLogRow, 'location'> & { location?: string | null; pinLabel?: string | null }> = []
   for (const r of records) {
     for (const [i, p] of punchesOf(r).entries()) {
       if (p.clockLogId) fromRecords.add(p.clockLogId)
@@ -172,7 +175,7 @@ export async function punchLog(tenantIds: string[], q: { from: string; to: strin
         id: p.clockLogId ?? `${r.id}:${i}`, date: r.startDate ? ymd(r.startDate) : ymd(pktToday(new Date(p.at))),
         employeeId: r.employee?.id ?? r.employeeId, employeeCode: r.employee?.employeeCode ?? null, fullName: r.employee?.fullName ?? '',
         userId: r.employee?.userId ?? null, tenantId: r.tenantId, attendanceRecordId: r.id, attendanceStatus: r.category,
-        type: p.type, at: p.at, source: p.source, locationId: p.locationId ?? null,
+        type: p.type, at: p.at, source: p.source, locationId: p.locationId ?? null, pinLabel: p.pinLabel ?? null,
         matched: p.geofenceMatched ?? null, distanceM: p.geofenceDistanceM ?? null, outOfArea: !!p.outOfArea,
       })
     }
@@ -198,7 +201,7 @@ export async function punchLog(tenantIds: string[], q: { from: string; to: strin
     out.push({
       id: l.id, date: ymd(pktToday(l.recordedAt)), employeeId: e?.id ?? null, employeeCode: e?.employeeCode ?? null, fullName: e?.fullName ?? l.user.name,
       userId: l.userId, tenantId: l.tenantId!, attendanceRecordId: null, attendanceStatus: null,
-      type: l.type === 'out' ? 'out' : 'in', at: l.recordedAt.toISOString(), source: 'clock', locationId: l.locationId,
+      type: l.type === 'out' ? 'out' : 'in', at: l.recordedAt.toISOString(), source: 'clock', locationId: l.locationId, pinLabel: l.pinLabel,
       matched: l.geofenceMatched, distanceM: l.geofenceDistanceM, outOfArea: !!l.outOfArea,
     })
   }
@@ -209,7 +212,7 @@ export async function punchLog(tenantIds: string[], q: { from: string; to: strin
   const names = await locationNames(tenantIds, slice.map((r) => r.locationId))
   return {
     from: q.from, to: q.to, page, pageSize, total: filtered.length,
-    rows: slice.map((r) => ({ ...r, location: r.locationId ? names.get(r.locationId) ?? null : null })) as PunchLogRow[],
+    rows: slice.map(({ pinLabel, ...r }) => ({ ...r, location: (r.locationId ? names.get(r.locationId) : null) ?? pinLabel ?? null })) as PunchLogRow[],
   }
 }
 

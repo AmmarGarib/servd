@@ -24,6 +24,7 @@ import type { ApprovalItem, ApprovalProvider, ApprovalType, ProviderContext } fr
 import { onAccountClients } from './onAccountProvider.js'
 import { shiftCorrections } from '../shiftCorrections/approvalProvider.js'
 import { locationPins } from '../locations/approvalProvider.js'
+import { workPins } from '../hr/workPinApprovalProvider.js'
 import { socialConnections } from '../socialConnections/approvalProvider.js'
 import { stationChanges } from '../stations/approvalProvider.js'
 import { reservationOverbooks } from '../reservations/overbookProvider.js'
@@ -1408,6 +1409,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   connectorChanges,
   shiftCorrections,
   locationPins,
+  workPins,
   socialConnections,
   stationChanges,
   reservationOverbooks,

@@ -83,6 +83,9 @@ export interface PunchEntry {
   geofenceMatched?: boolean | null
   geofenceDistanceM?: number | null
   locationId?: string | null
+  /** The employee's own work pin the punch was measured against, and its label then (owner, 2026-10-27). */
+  workPinId?: string | null
+  pinLabel?: string | null
   selfieUrl?: string | null
   /** Outside the work locations / no location while the geofence is on (null = not judged). */
   outOfArea?: boolean | null
@@ -250,6 +253,8 @@ export interface PunchInput {
   geofenceMatched?: boolean | null
   geofenceDistanceM?: number | null
   locationId?: string | null
+  workPinId?: string | null
+  pinLabel?: string | null
   selfieUrl?: string | null
   outOfArea?: boolean | null
   outOfAreaReason?: string | null
@@ -317,6 +322,7 @@ export async function recordPunch(p: PunchInput): Promise<PunchResult> {
     type: p.kind, at: at.toISOString(), source: p.source, clockLogId: p.clockLogId ?? null,
     geofenceMatched: p.geofenceMatched ?? null, geofenceDistanceM: p.geofenceDistanceM ?? null,
     locationId: p.locationId ?? null, selfieUrl: p.selfieUrl ?? null,
+    ...(p.workPinId && { workPinId: p.workPinId, pinLabel: p.pinLabel ?? null }),
     ...(p.outOfArea != null && { outOfArea: p.outOfArea }),
     ...(p.outOfArea && p.outOfAreaReason && { outOfAreaReason: p.outOfAreaReason }),
   }

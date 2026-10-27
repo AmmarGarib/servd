@@ -252,6 +252,9 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Overbooking goes to the CEO (owner C10, 2026-10-26): one pending request per reservation, kind / status CHECKs (RLS out).
   for (const statement of migrationSection('20261027120000_reservation_overbook_approval',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
+  // Work locations as map pins (2026-10-27): exactly one of a Location / a pin, the fence pair and radius CHECKs.
+  for (const statement of migrationSection('20261027200000_work_location_pins',
+    '-- ─── SQL-only objects', '-- ─── end SQL-only objects')) await applyIdempotent(prisma, statement)
   // Void & re-issue (2026-10-21): the tender-reference and no-food / no-money-returned CHECKs.
   for (const statement of migrationSection('20261021140000_shift_correction_reissue',
     '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
