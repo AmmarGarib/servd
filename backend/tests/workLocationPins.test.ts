@@ -16,6 +16,7 @@ import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { hrRoutes } from '../src/modules/hr/routes.js'
 import { timeClockRoutes } from '../src/modules/timeclock/routes.js'
 import { locationRoutes } from '../src/modules/locations/routes.js'
+import { conceptRoutes } from '../src/modules/concepts/routes.js'
 import { approvalSubject } from '../src/lib/approvalRights.js'
 import { pktToday } from '../src/modules/hr/logic.js'
 
@@ -81,6 +82,7 @@ beforeAll(async () => {
   await app.register(hrRoutes, { prefix: '/hr' })
   await app.register(timeClockRoutes, { prefix: '/time-clock' })
   await app.register(locationRoutes, { prefix: '/locations' })
+  await app.register(conceptRoutes, { prefix: '/concepts' })
   await app.ready()
 }, 60_000)
 
@@ -197,5 +199,12 @@ describe('an employee\'s own map pins', () => {
     const loc = await prisma.location.findFirstOrThrow({ where: { tenantId: A } })
     await expect(prisma.hrWorkLocation.create({ data: { tenantId: A, employeeId: emps['boss']!, locationId: loc.id, label: 'x', latitude: 1, longitude: 1 } })).rejects.toThrow()
     await expect(prisma.hrWorkLocation.create({ data: { tenantId: A, employeeId: emps['shopper']!, label: 'x' } })).rejects.toThrow()
+  })
+
+  it('HR may read a Google Maps link to place a pin (owner, 2026-10-27: HR was refused); floor staff may not', async () => {
+    const hr = await app.inject({ method: 'GET', url: '/concepts/resolve-maps-link?url=', headers: { authorization: `Bearer ${hrA.token}` } })
+    expect(hr.statusCode, hr.body).toBe(400)
+    const floor = await app.inject({ method: 'GET', url: '/concepts/resolve-maps-link?url=', headers: { authorization: `Bearer ${staff[Object.keys(staff)[0]].token}` } })
+    expect(floor.statusCode).toBe(403)
   })
 })

@@ -384,7 +384,8 @@ export async function conceptRoutes(fastify: FastifyInstance) {
   // ahead of /:id so the literal path is never read as a concept id.
   fastify.get<{ Querystring: { url?: string } }>(
     '/resolve-maps-link',
-    { preHandler: requireAuth(...MANAGERS) },
+    // HR too: HR pins employees' work locations on the map (owner, 2026-10-27). It only reads a public link.
+    { preHandler: requireAuth(...MANAGERS, 'hr') },
     async (req, reply) => {
       const raw = (req.query.url ?? '').trim()
       if (!raw) return reply.status(400).send({ error: { code: 'BAD_URL', message: 'url is required' } })
