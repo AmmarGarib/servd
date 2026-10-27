@@ -54,6 +54,10 @@
 // transfer (no brands) draws every lot and its arrived lots keep their brand.
 // POST /stock-transfers/brand-move does a brand move at one outlet at once
 // (brandMove.ts brandMoveTx — the same engine, all steps stamped).
+//
+// THE CEO APPROVES BRAND MOVES (owner, 2026-10-27): a brand move raised by
+// anyone but the CEO waits ('requested', approval type stock_brand_move) and
+// moves nothing until the CEO approves — brandMoveApproval.ts is the contract.
 
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
@@ -72,7 +76,8 @@ import {
 } from '../../lib/stockLedger.js'
 import { postInventoryDocInSavepoint, WASTE_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
 import { costsHiddenFor } from '../inventory/routes.js'
-import { brandMoveTx } from './brandMove.js'
+import { brandMoveTx, checkBrandMoveTx } from './brandMove.js'
+import { approveBrandMove, assertBrandMoveShippable, ceoOnly, closeBrandMove, isCeo, MIN_REJECT_NOTE } from './brandMoveApproval.js'
 import { activeTenantId } from '../../lib/tenantScope.js'
 import { flagPostingFailed } from '../accounting/journal.js'
 
@@ -115,11 +120,11 @@ const createSchema = z.object({
 
 export async function stockTransferRoutes(fastify: FastifyInstance) {
   // GET /stock-transfers — list, with status + location + item filters
-  fastify.get<{ Querystring: { status?: string; fromLocationId?: string; toLocationId?: string; limit?: string } }>(
+  fastify.get<{ Querystring: { status?: string; fromLocationId?: string; toLocationId?: string; limit?: string; brandMove?: string } }>(
     '/',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      const { status, fromLocationId, toLocationId, limit } = req.query
+      const { status, fromLocationId, toLocationId, limit, brandMove } = req.query
       return prisma.stockTransfer.findMany({
         where: {
           // Company scope first; the client filters only narrow within it.
@@ -127,6 +132,8 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
           ...(status         && { status }),
           ...(fromLocationId && { fromLocationId }),
           ...(toLocationId   && { toLocationId }),
+          // The approvals inbox: brand moves are the CEO's queue (stock_brand_move), the rest the managers'.
+          ...(brandMove === 'true' ? { brandMove: true } : brandMove === 'false' ? { brandMove: false } : {}),
         },
         orderBy: { requestedAt: 'desc' },
         take: limit ? Math.min(parseInt(limit, 10), 200) : 50,
@@ -207,12 +214,16 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       after: { quantity: transfer.quantity, item: transfer.inventoryItem.name, from: transfer.fromLocation.name, to: transfer.toLocation.name },
     })
     // The bell (queued, after the write): the managers who may approve it.
-    approvalWaiting('stock_transfer', transfer.id, { round: `request:${transfer.requestedAt.toISOString()}`, actorId: req.staffUser!.id })
-    return reply.status(201).send(transfer)
+    // A brand move waits for the CEO (stock_brand_move); a plain transfer for the managers.
+    approvalWaiting(brandMove ? 'stock_brand_move' : 'stock_transfer', transfer.id, { round: `request:${transfer.requestedAt.toISOString()}`, actorId: req.staffUser!.id })
+    return reply.status(201).send(brandMove ? { ...transfer, pendingApproval: true } : transfer)
   })
 
   // PATCH /stock-transfers/:id/approve
   fastify.patch<{ Params: { id: string } }>('/:id/approve', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    // A brand move is the CEO's to approve (brandMoveApproval.ts) — never a manager's.
+    const owned = await findOwnedTransfer(req, req.params.id)
+    if (owned.brandMove) return brandMoveApproved(req, owned)
     const approvedAt = new Date()
     const moved = await transition(req.params.id, 'requested', 'approved', { approvedById: req.staffUser!.id, approvedAt }, req)
     await decidedNotice(req, req.params.id, 'approve', approvedAt)
@@ -227,6 +238,7 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
     if (t.status !== 'approved') {
       throw new AppError('BAD_STATE', `Cannot transition from '${t.status}' to 'shipped'. Expected 'approved'.`, 409)
     }
+    await assertBrandMoveShippable(req, t)
     const { item, qty } = await transferStock(t)
     await ensureFifoReady(item.tenantId)
     const actorId = req.staffUser!.id
@@ -399,8 +411,28 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
     const unit = body.unit ?? item.unit
     const qty = toPurchaseUnits(body.quantity, unit, item.unit)
     if (qty == null) throw new AppError('UNIT_MISMATCH', `${item.name} is stocked in ${item.unit}; ${unit} can't be converted to it`, 422)
-    await ensureFifoReady(tenantId)
     const actorId = req.staffUser!.id
+
+    // Anyone but the CEO: the move waits for the CEO and nothing moves now (owner, 2026-10-27).
+    if (!isCeo(req)) {
+      await checkBrandMoveTx(prisma, { tenantId, locationId: body.locationId, fromConceptId: body.fromConceptId, toConceptId: body.toConceptId, qty })
+      const request = await prisma.stockTransfer.create({
+        data: {
+          inventoryItemId: item.id, fromLocationId: body.locationId, toLocationId: body.locationId,
+          fromConceptId: body.fromConceptId, toConceptId: body.toConceptId, brandMove: true,
+          quantity: qty, unit: item.unit, reason: body.reason ?? null, requestedById: actorId, status: 'requested',
+        },
+      })
+      await audit({ category: 'identity',
+        action: 'stock-transfer.brand_move_requested', entity: 'StockTransfer', entityId: request.id,
+        userId: actorId, tenantId, userEmail: req.staffUser?.email ?? null,
+        after: { item: item.name, qty, unit: item.unit, fromConceptId: body.fromConceptId, toConceptId: body.toConceptId, locationId: body.locationId },
+      })
+      approvalWaiting('stock_brand_move', request.id, { round: `request:${request.requestedAt.toISOString()}`, actorId })
+      return reply.status(202).send({ pendingApproval: true, request })
+    }
+
+    await ensureFifoReady(tenantId)
     const r = await prisma.$transaction((tx) => brandMoveTx(tx, {
       tenantId, inventoryItemId: item.id, locationId: body.locationId, fromConceptId: body.fromConceptId, toConceptId: body.toConceptId,
       qty, unit: item.unit, actorId, at: new Date(), reason: body.reason ?? null,
@@ -414,6 +446,22 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(costsHiddenFor(req) ? t : { ...t, movedValueCents: r.valueCents })
   })
 
+  // POST /stock-transfers/:id/brand-move/approve | reject {note ≥10} | withdraw — the CEO's decision on a waiting
+  // brand move (approval type stock_brand_move), or the requester's withdrawal. Contract: brandMoveApproval.ts.
+  fastify.post<{ Params: { id: string } }>('/:id/brand-move/approve', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const t = await findOwnedTransfer(req, req.params.id)
+    return brandMoveApproved(req, t)
+  })
+  fastify.post<{ Params: { id: string } }>('/:id/brand-move/reject', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const body = z.object({ note: z.string().trim().max(300).optional() }).parse(req.body ?? {})
+    const t = await findOwnedTransfer(req, req.params.id)
+    return closeBrandMove(req, t, 'reject', body.note)
+  })
+  fastify.post<{ Params: { id: string } }>('/:id/brand-move/withdraw', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    const t = await findOwnedTransfer(req, req.params.id)
+    return closeBrandMove(req, t, 'withdraw', null)
+  })
+
   // PATCH /stock-transfers/:id/cancel — abort (any non-received status)
   fastify.patch<{ Params: { id: string }; Body: { reason?: string } }>(
     '/:id/cancel',
@@ -423,6 +471,13 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       const t = await findOwnedTransfer(req, req.params.id)
       if (t.status === 'received') throw new AppError('IMMUTABLE', 'Cannot cancel a received transfer', 422)
       if (t.status === 'cancelled') return t
+      // A brand move waiting for the CEO: the requester withdraws it, the CEO rejects it (reason ≥10), nobody else.
+      if (t.brandMove && t.status === 'requested') {
+        if (t.requestedById === req.staffUser!.id && !isCeo(req)) return closeBrandMove(req, t, 'withdraw', body.reason)
+        if (!isCeo(req)) throw ceoOnly('turn down a brand move someone else raised')
+        if ((body.reason ?? '').trim().length < MIN_REJECT_NOTE && t.requestedById === req.staffUser!.id) return closeBrandMove(req, t, 'withdraw', body.reason)
+        return closeBrandMove(req, t, 'reject', body.reason)
+      }
       // Conditional on the status read (stock-04): a receive that committed
       // meanwhile (with its transit-loss waste and entry) is never overwritten
       // by a cancel that read the transfer before it. A shipped transfer gives
@@ -454,6 +509,15 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       return updated
     },
   )
+}
+
+/** The CEO approves a waiting brand move (brandMoveApproval.ts); costs shown as the inventory screens show them. */
+async function brandMoveApproved(req: FastifyRequest, t: Awaited<ReturnType<typeof findOwnedTransfer>>) {
+  if (!t.brandMove) throw new AppError('NOT_A_BRAND_MOVE', 'This transfer does not move stock between brands.', 422)
+  if (!isCeo(req)) throw ceoOnly('approve it')
+  const stock = await transferStock(t)
+  const r = await approveBrandMove(req, t, stock)
+  return costsHiddenFor(req) || r.movedValueCents == null ? r.transfer : { ...r.transfer, movedValueCents: r.movedValueCents }
 }
 
 /** The one approval.decide funnel (lib/approvalRights.ts auditApproval): writes the audit

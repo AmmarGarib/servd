@@ -147,6 +147,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   social_connection: spec(() => '/calendar/social'),
   station_change: spec(() => '/kds/config'),
   reservation_overbook: spec(() => '/reservations'),
+  stock_brand_move: spec(() => '/inventory/transfers'),
 }
 
 /** The inbox, filtered to the type (every login may open it). */
@@ -206,6 +207,14 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
     case 'stock_transfer': {
       const t = await db.stockTransfer.findUnique({ where: { id }, select: { quantity: true, unit: true, inventoryItem: { select: { name: true } } } })
       return t && { ref: `Stock transfer ${t.quantity} ${t.unit} ${t.inventoryItem?.name ?? ''}`.trim() }
+    }
+    case 'stock_brand_move': {
+      const t = await db.stockTransfer.findUnique({ where: { id }, select: { quantity: true, unit: true, fromConceptId: true, toConceptId: true, inventoryItem: { select: { name: true } } } })
+      if (!t) return null
+      const ids = [t.fromConceptId, t.toConceptId].filter((x): x is string => !!x)
+      const names = new Map((await db.concept.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })).map((c) => [c.id, c.name]))
+      const nm = (c: string | null) => (c ? names.get(c) ?? 'a brand' : 'shared stock')
+      return { ref: `Stock move ${t.quantity} ${t.unit} ${t.inventoryItem?.name ?? ''}`.trim(), detail: `${nm(t.fromConceptId)} → ${nm(t.toConceptId)}` }
     }
     case 'cash_voucher':
     case 'cash_request_hod':

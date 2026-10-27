@@ -856,6 +856,11 @@ noindex, no servd chrome / feedback / pop-ups).
   staff "Delivered" override is managers-only and only when the code locked
   or the rider never accepted — and only while the company's code-only
   switch is OFF (see "Delivery money and customers").
+- **Rider documents are private (owner C16, 2026-10-27).** CNIC, licence and bike papers are files on the ONE
+  record-files store, owner type `rider_document` (a `Rider` row; images + PDF; no new table, no URL fields).
+  Read + attach = `MANAGERS` behind the `riders` module gate (`gateAs('/riders')`), scoped to the RIDER's company
+  (foreign rider 404), files stamped with the rider's `tenantId`; rider tokens never reach `/record-files`. Admin:
+  Riders -> Roster -> "Documents (private)" (`RecordFiles`). Tests: `tests/recordFiles.test.ts`.
 - **Not built yet:** earnings/payouts, push notifications for offers (the app
   polls), store release (EAS, icons, Play background-location declaration),
   KYC, route optimisation.
@@ -1988,6 +1993,13 @@ per-site stock now (D4).
   site per brand. Migration `20261027130000_brand_stock` gave existing lots the brand of an outlet with exactly ONE
   live brand (not when that outlet is / may be the stock home of a company with an outlet-less brand); outlets with
   several brands stay shared until a brand count or move assigns them. Tests `tests/brandStock.test.ts`.
+  **Every brand move needs the CEO (owner, 2026-10-27: "moving stock between brands needs my approval").** Anyone but
+  the CEO gets 202 `{ pendingApproval, request }` (the StockTransfer row itself, `requested` — no second store) and
+  nothing moves; approval type `stock_brand_move` (section ceo, never delegable; `stockTransfers/brandMoveApproval.ts`):
+  `POST /stock-transfers/:id/brand-move/approve` (one outlet: brandMoveTx in the claim's transaction, stock re-checked —
+  409 `INSUFFICIENT_STOCK`; two outlets: approved, then ship / receive) | `/reject {note ≥10}` | `/withdraw`
+  (requester); a manager never approves, rejects or ships a brand move the CEO did not approve (403
+  `BRAND_MOVE_CEO_ONLY`). The CEO's own move is at once. Tests `tests/brandMoveApproval.test.ts`.
 
 ### Kitchen flow (owner, 2026-10-26)
 

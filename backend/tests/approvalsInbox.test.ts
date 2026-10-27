@@ -252,7 +252,7 @@ describe('two companies', () => {
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
       'bad_debt', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_run',
-      'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_transfer', 'storefront_publish', 'tip_pool',
+      'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_brand_move', 'stock_transfer', 'storefront_publish', 'tip_pool',
     ])
     for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer', 'cash_voucher',
       'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'on_account_client']) {

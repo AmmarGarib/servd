@@ -518,7 +518,8 @@ const stockTransfers: ApprovalProvider = {
       fromLocationId: string; toLocationId: string; requestedById: string | null; requestedAt: string
       inventoryItem: { name: string } | null; fromLocation: { name: string } | null; toLocation: { name: string } | null
     }
-    const rows = await ctx.read<Row[]>('/stock-transfers?status=requested&limit=200')
+    // Brand moves are the CEO's own queue (stockBrandMoves below).
+    const rows = await ctx.read<Row[]>('/stock-transfers?status=requested&brandMove=false&limit=200')
     if (rows === null) return null
     if (rows.length === 0) return []
     const [locs, names] = await Promise.all([
@@ -548,6 +549,66 @@ const stockTransfers: ApprovalProvider = {
           input: { field: 'reason', label: 'Reason (optional)', required: false } },
       ],
     }))
+  },
+}
+
+// ── Stock moves between brands (owner, 2026-10-27) ─────────────────────────
+// A StockTransfer with brandMove true waiting in 'requested' (stockTransfers/brandMoveApproval.ts):
+// GET /stock-transfers?status=requested&brandMove=true; POST /stock-transfers/:id/brand-move/approve | reject.
+// The CEO only, never handed over (APPROVAL_RIGHTS.stock_brand_move, section 'ceo').
+const stockBrandMoves: ApprovalProvider = {
+  type: 'stock_brand_move',
+  label: APPROVAL_RIGHTS.stock_brand_move.label,
+  module: APPROVAL_RIGHTS.stock_brand_move.queueModule,
+  link: '/inventory/transfers',
+  ...rightsOf('stock_brand_move'),
+  async load(ctx) {
+    type Row = {
+      id: string; quantity: number; unit: string; reason: string | null
+      fromLocationId: string; toLocationId: string; fromConceptId: string | null; toConceptId: string | null
+      requestedById: string | null; requestedAt: string
+      inventoryItem: { name: string } | null; fromLocation: { name: string } | null; toLocation: { name: string } | null
+    }
+    const rows = await ctx.read<Row[]>('/stock-transfers?status=requested&brandMove=true&limit=200')
+    if (rows === null) return null
+    if (rows.length === 0) return []
+    const brandIds = Array.from(new Set(rows.flatMap((r) => [r.fromConceptId, r.toConceptId]).filter((x): x is string => !!x)))
+    const [locs, names, brands] = await Promise.all([
+      prisma.location.findMany({ where: { id: { in: Array.from(new Set(rows.map((r) => r.fromLocationId))) } }, select: { id: true, tenantId: true } }),
+      userNames(rows.map((r) => r.requestedById)),
+      prisma.concept.findMany({ where: { id: { in: brandIds } }, select: { id: true, name: true } }),
+    ])
+    const tenantOf = new Map(locs.map((l) => [l.id, l.tenantId]))
+    const brandName = new Map(brands.map((b) => [b.id, b.name]))
+    const nm = (c: string | null) => (c ? brandName.get(c) ?? 'A brand' : 'Shared stock')
+    return rows.map((r): ApprovalItem => {
+      const oneOutlet = r.fromLocationId === r.toLocationId
+      return {
+        type: 'stock_brand_move',
+        id: r.id,
+        tenantId: tenantOf.get(r.fromLocationId) ?? null,
+        section: APPROVAL_RIGHTS.stock_brand_move.section,
+        submittedByIds: idList(r.requestedById),
+        title: `${r.inventoryItem?.name ?? 'Item'} — ${r.quantity} ${r.unit}`,
+        subtitle: `${nm(r.fromConceptId)} → ${nm(r.toConceptId)}`,
+        facts: facts([
+          ['From brand', nm(r.fromConceptId)],
+          ['To brand', nm(r.toConceptId)],
+          ['Outlet', oneOutlet ? r.fromLocation?.name : `${r.fromLocation?.name ?? '?'} → ${r.toLocation?.name ?? '?'}`],
+          ['Quantity', `${r.quantity} ${r.unit}`],
+          ['Requested by', r.requestedById ? names.get(r.requestedById) : null],
+          ['Reason', r.reason],
+        ]),
+        waitingSince: iso(r.requestedAt),
+        link: '/inventory/transfers',
+        actions: [
+          { kind: 'approve', label: 'Approve', method: 'POST', path: `/stock-transfers/${r.id}/brand-move/approve`, body: {},
+            confirm: oneOutlet ? 'Move this stock and its cost to the other brand now?' : 'Approve this move? The outlets then ship and receive it.' },
+          { kind: 'reject', label: 'Reject', method: 'POST', path: `/stock-transfers/${r.id}/brand-move/reject`, body: {},
+            input: { field: 'note', label: 'Reason (at least 10 characters)', required: true } },
+        ],
+      }
+    })
   },
 }
 
@@ -1227,6 +1288,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   payrollRuns,
   tipPools,
   stockTransfers,
+  stockBrandMoves,
   cashRequestsFinance,
   cashVouchers,
   fixedAssetRequests,

@@ -91,6 +91,8 @@ export const APPROVAL_TYPES = [
   'station_change',        // a new kitchen station or a change the F&B manager / chef raised, waiting for the CEO
   // Overbooking (owner C10, 2026-10-26).
   'reservation_overbook',  // a booking (or a change of one) past capacity a manager raised, waiting for the CEO
+  // Brand stock moves (owner, 2026-10-27).
+  'stock_brand_move',      // stock moved between two brands of a company (a StockTransfer with brandMove), waiting for the CEO
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 
@@ -261,6 +263,13 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // 2026-10-26: "F&B manager and kitchen managers may add or change kitchen stations, with CEO approval";
     // "Approval stays with me").
     label: 'Kitchen station changes', section: 'ceo', queueModule: 'kds_config', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  stock_brand_move: {
+    // A StockTransfer with brandMove true, status 'requested' (modules/stockTransfers/brandMoveApproval.ts):
+    // POST /stock-transfers/:id/brand-move/approve | reject — the CEO only, never handed over (owner, 2026-10-27:
+    // "moving stock between brands needs my approval").
+    label: 'Stock moves between brands', section: 'ceo', queueModule: 'inventory', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   reservation_overbook: {
@@ -992,12 +1001,16 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const t = await db.tipPool.findUnique({ where: { id }, select: { tenantId: true, createdById: true, status: true } })
       return t && subject({ companyIds: [t.tenantId], ownerTenantId: t.tenantId, submitterIds: [t.createdById], viaHeadOfficeId: null, status: t.status })
     }
-    case 'stock_transfer': {
-      const s = await db.stockTransfer.findUnique({ where: { id }, select: { fromLocationId: true, toLocationId: true, requestedById: true, status: true, requestedAt: true } })
+    case 'stock_transfer':
+    case 'stock_brand_move': {
+      const s = await db.stockTransfer.findUnique({ where: { id }, select: { fromLocationId: true, toLocationId: true, requestedById: true, status: true, requestedAt: true, brandMove: true } })
       if (!s) return null
       const locs = await db.location.findMany({ where: { id: { in: [s.fromLocationId, s.toLocationId] } }, select: { id: true, tenantId: true } })
       const from = locs.find((l) => l.id === s.fromLocationId)?.tenantId ?? null
-      return subject({ companyIds: locs.map((l) => l.tenantId), ownerTenantId: from, submitterIds: [s.requestedById], viaHeadOfficeId: null, status: s.status, submittedAt: s.requestedAt })
+      // A brand move is the CEO's (stock_brand_move); it never waits in the managers' stock_transfer queue, and a
+      // plain transfer never in the CEO's brand-move queue.
+      const status = (type === 'stock_brand_move') === s.brandMove ? s.status : `other_queue:${s.status}`
+      return subject({ companyIds: locs.map((l) => l.tenantId), ownerTenantId: from, submitterIds: [s.requestedById], viaHeadOfficeId: null, status, submittedAt: s.requestedAt })
     }
     case 'cash_voucher':
     case 'cash_request_hod':
@@ -1162,6 +1175,7 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   hr_request: ['submitted'],
   payroll_run: ['draft'],
   stock_transfer: ['requested'],
+  stock_brand_move: ['requested'],
   cash_request_finance: ['submitted', 'draft'],
   cash_voucher: ['finance_approved', 'hod_signed'],
   fixed_asset_request: ['pending'],

@@ -70,6 +70,8 @@ beforeAll(async () => {
   await prisma.conceptLocation.createMany({ data: [{ conceptId: A.conceptId, locationId: A.locationId, isPrimary: true }, { conceptId: brand2, locationId: A.locationId, isPrimary: true }] })
   u.mgrA = await mkUser('brandMgrA', 'manager', A.tenantId)
   u.mgrB = await mkUser('brandMgrB', 'manager', B.tenantId)
+  // Brand moves need the CEO (owner, 2026-10-27; tests/brandMoveApproval.test.ts): the CEO's own move is at once.
+  u.ceoA = await mkUser('brandCeoA', 'admin', A.tenantId)
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof AppError) return reply.status(err.statusCode).send({ error: { code: err.code, message: err.message } })
@@ -135,7 +137,7 @@ describe('moving stock between brands', () => {
     const it0 = await mkItem(A)
     await lotFor(A, it0.id, 4, 250, brand2, 6)
     const before = await lotValuation(prisma, A.tenantId)
-    const res = await call(u.mgrA!, 'POST', '/stock-transfers/brand-move', {
+    const res = await call(u.ceoA!, 'POST', '/stock-transfers/brand-move', {
       inventoryItemId: it0.id, locationId: A.locationId, fromConceptId: brand2, toConceptId: A.conceptId, quantity: 3, reason: 'Short on the line',
     })
     expect(res.statusCode).toBe(201)
@@ -167,7 +169,7 @@ describe('moving stock between brands', () => {
     const it0 = await mkItem(A)
     await lotFor(A, it0.id, 1, 100, brand2)
     await lotFor(A, it0.id, 9, 100, null)          // shared stock is not brand 2's to move
-    const res = await call(u.mgrA!, 'POST', '/stock-transfers/brand-move', {
+    const res = await call(u.ceoA!, 'POST', '/stock-transfers/brand-move', {
       inventoryItemId: it0.id, locationId: A.locationId, fromConceptId: brand2, toConceptId: A.conceptId, quantity: 2,
     })
     expect(res.statusCode).toBe(409)
@@ -176,7 +178,7 @@ describe('moving stock between brands', () => {
     expect(await prisma.stockTransfer.count({ where: { inventoryItemId: it0.id } })).toBe(0)
   })
 
-  it('the normal transfer flow takes brands too: same outlet, request → approve → ship → receive', async () => {
+  it('the normal transfer flow takes brands too: same outlet, request → the CEO\'s approval moves it', async () => {
     const it0 = await mkItem(A)
     await lotFor(A, it0.id, 5, 120, null)   // shared stock, assigned to brand 2
     const created = await call(u.mgrA!, 'POST', '/stock-transfers', {
@@ -184,9 +186,11 @@ describe('moving stock between brands', () => {
     })
     expect(created.statusCode).toBe(201)
     const id = (created.json() as { id: string }).id
-    expect((await call(u.mgrA!, 'PATCH', `/stock-transfers/${id}/approve`)).statusCode).toBe(200)
-    expect((await call(u.mgrA!, 'PATCH', `/stock-transfers/${id}/ship`)).statusCode).toBe(200)
-    expect((await call(u.mgrA!, 'PATCH', `/stock-transfers/${id}/receive`, {})).statusCode).toBe(200)
+    // A manager cannot approve a brand move; the CEO's approval at one outlet moves it at once.
+    expect((await call(u.mgrA!, 'PATCH', `/stock-transfers/${id}/approve`)).json().error.code).toBe('BRAND_MOVE_CEO_ONLY')
+    const approved = await call(u.ceoA!, 'PATCH', `/stock-transfers/${id}/approve`)
+    expect(approved.statusCode).toBe(200)
+    expect(approved.json()).toMatchObject({ status: 'received' })
     expect(await brandQty(it0.id, brand2)).toBe(2)
     expect(await brandQty(it0.id, null)).toBe(3)
     expect(await entryLines(`inventory.brand_move:${id}`)).toEqual(expect.arrayContaining([

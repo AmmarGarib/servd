@@ -13,6 +13,12 @@
 // shared stock) to another at ONE outlet, at once (POST /stock-transfers/
 // brand-move): the cost moves with it. Brand on-hand comes from
 // GET /inventory/by-brand.
+//
+// The CEO approves every brand move (owner, 2026-10-27: "moving stock between
+// brands needs my approval"): anyone else's move waits ("Waiting for the CEO")
+// and nothing moves until the CEO approves (POST /stock-transfers/:id/brand-move/
+// approve | reject {note ≥10}); the requester may withdraw it. The CEO's own
+// move happens at once.
 
 import { ArrowLeft } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -23,6 +29,8 @@ import { stockErrorText, errorCode } from '../../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
 import { NumberField } from '../../../components/ui/NumberField'
 import { Button, Dialog, DialogFooter, ErrorBanner, Field, Input, LinkButton, SectionCard } from '../../../components/finance/ui'
+import { usePermissions } from '../../../hooks/useCan'
+import { useAuthStore } from '../../../store/auth'
 
 interface Site { id: string; name: string; tenantId: string }
 interface SiteRow { inventoryItemId: string; locationId: string; qty: number }
@@ -40,6 +48,7 @@ interface Transfer {
   fromLocation?: { name: string } | null
   toLocation?: { name: string } | null
   brandMove?: boolean; fromConceptId?: string | null; toConceptId?: string | null
+  requestedById?: string
 }
 
 const STATUS_LABEL: Record<Transfer['status'], string> = {
@@ -56,6 +65,9 @@ const OWN_TEXT: Record<string, string> = {
   OVER_RECEIVED: 'More cannot arrive than was sent.',
   BRAND_NOT_IN_COMPANY: 'Both brands must belong to the company that holds the stock.',
   SAME_BRAND: 'Pick two different brands (or shared stock).',
+  BRAND_MOVE_CEO_ONLY: 'Moving stock between brands needs the CEO\'s approval.',
+  NOT_PENDING: 'This brand move is no longer waiting — reload the page.',
+  NOTE_TOO_SHORT: 'Say why in at least 10 characters.',
 }
 function errText(e: unknown): string {
   return OWN_TEXT[errorCode(e)] ?? stockErrorText(e)
@@ -86,6 +98,10 @@ export default function StockTransfersPage() {
   const [tried, setTried] = useState(false)
   const [receiveFor, setReceiveFor] = useState<Transfer | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [rejectFor, setRejectFor] = useState<Transfer | null>(null)
+  const { data: me } = usePermissions()
+  const isCeo = me?.role === 'admin'
+  const myId = useAuthStore((st) => st.user?.id)
 
   const from = sites.find((s) => s.id === fromId)
   // Only outlets of the sending outlet's company can receive.
@@ -119,6 +135,14 @@ export default function StockTransfersPage() {
     onSuccess: refresh,
     onError: (e) => setActionError(errText(e)),
   })
+  // A brand move waiting for the CEO: the CEO approves (or rejects with a reason); the requester may withdraw.
+  const decide = useMutation({
+    mutationFn: (a: { id: string; verb: 'approve' | 'withdraw' }) => api.post(`/stock-transfers/${a.id}/brand-move/${a.verb}`, {}),
+    onMutate: () => setActionError(null),
+    onSuccess: refresh,
+    onError: (e) => setActionError(errText(e)),
+  })
+  const waitingForCeo = (t: Transfer) => !!t.brandMove && t.status === 'requested'
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -181,7 +205,7 @@ export default function StockTransfersPage() {
           </form>
         </SectionCard>
 
-        <BrandMoveCard sites={sites} items={items} byBrand={byBrand} onDone={refresh} />
+        <BrandMoveCard sites={sites} items={items} byBrand={byBrand} isCeo={isCeo} onDone={refresh} />
 
         <SectionCard heading="Transfers">
           {actionError && <ErrorBanner message={actionError} />}
@@ -212,14 +236,28 @@ export default function StockTransfersPage() {
                       </td>
                       <td className="py-1.5 text-right font-mono">{qtyText(t.quantity)} {t.unit}</td>
                       <td className="py-1.5 text-right font-mono">{t.receivedQuantity != null ? `${qtyText(t.receivedQuantity)} ${t.unit}` : '—'}</td>
-                      <td className="py-1.5 pl-3"><span className={STATUS_BADGE[t.status]}>{STATUS_LABEL[t.status]}</span></td>
+                      <td className="py-1.5 pl-3">
+                        {waitingForCeo(t)
+                          ? <span className="s-badge-purple">Waiting for the CEO</span>
+                          : <span className={STATUS_BADGE[t.status]}>{STATUS_LABEL[t.status]}</span>}
+                      </td>
                       <td className="py-1.5 text-right whitespace-nowrap space-x-3">
+                        {waitingForCeo(t) ? (
+                          <>
+                            {isCeo && <LinkButton disabled={decide.isPending} onClick={() => decide.mutate({ id: t.id, verb: 'approve' })}>Approve</LinkButton>}
+                            {isCeo && <LinkButton tone="danger" disabled={decide.isPending} onClick={() => setRejectFor(t)}>Reject</LinkButton>}
+                            {!isCeo && t.requestedById === myId && (
+                              <LinkButton tone="danger" disabled={decide.isPending} onClick={() => decide.mutate({ id: t.id, verb: 'withdraw' })}>Withdraw</LinkButton>
+                            )}
+                          </>
+                        ) : (<>
                         {t.status === 'requested' && <LinkButton disabled={act.isPending} onClick={() => act.mutate({ id: t.id, verb: 'approve' })}>Approve</LinkButton>}
                         {t.status === 'approved' && <LinkButton disabled={act.isPending} onClick={() => act.mutate({ id: t.id, verb: 'ship' })}>Ship</LinkButton>}
                         {t.status === 'shipped' && <LinkButton onClick={() => setReceiveFor(t)}>Receive</LinkButton>}
                         {(t.status === 'requested' || t.status === 'approved' || t.status === 'shipped') && (
                           <LinkButton tone="danger" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, verb: 'cancel' })}>Cancel</LinkButton>
                         )}
+                        </>)}
                       </td>
                     </tr>
                   ))}
@@ -230,13 +268,16 @@ export default function StockTransfersPage() {
         </SectionCard>
       </div>
 
+      {rejectFor && <RejectBrandMoveDialog transfer={rejectFor} onClose={() => setRejectFor(null)} onDone={() => { setRejectFor(null); refresh() }} />}
       {receiveFor && <ReceiveDialog transfer={receiveFor} onClose={() => setReceiveFor(null)} onDone={() => { setReceiveFor(null); refresh() }} />}
     </div>
   )
 }
 
-/** Move stock between two brands at one outlet, at once (owner B13 (a)). The cost moves with the stock. */
-function BrandMoveCard({ sites, items, byBrand, onDone }: { sites: Site[]; items: Item[]; byBrand?: ByBrand; onDone: () => void }) {
+/** Move stock between two brands at one outlet (owner B13 (a)). The cost moves with the stock. The CEO's move
+ *  happens at once; anyone else's waits for the CEO's approval (owner, 2026-10-27). */
+function BrandMoveCard({ sites, items, byBrand, isCeo, onDone }: { sites: Site[]; items: Item[]; byBrand?: ByBrand; isCeo: boolean; onDone: () => void }) {
+  const [sent, setSent] = useState<string | null>(null)
   const [siteId, setSiteId] = useState('')
   const [itemId, setItemId] = useState('')
   const [fromB, setFromB] = useState('')
@@ -266,7 +307,12 @@ function BrandMoveCard({ sites, items, byBrand, onDone }: { sites: Site[]; items
       inventoryItemId: itemId, locationId: siteId, fromConceptId: fromB === SHARED ? null : fromB, toConceptId: toB === SHARED ? null : toB,
       quantity: qty, reason: reason.trim() || undefined,
     }),
-    onSuccess: () => { setQty(null); setReason(''); setTried(false); onDone() },
+    onMutate: () => setSent(null),
+    onSuccess: (res: unknown) => {
+      setQty(null); setReason(''); setTried(false)
+      setSent((res as { pendingApproval?: boolean } | null)?.pendingApproval ? 'Sent to the CEO for approval — nothing moves until the CEO approves.' : 'Moved.')
+      onDone()
+    },
   })
   const brandOptions = (
     <>
@@ -278,7 +324,7 @@ function BrandMoveCard({ sites, items, byBrand, onDone }: { sites: Site[]; items
     <SectionCard heading="Move between brands">
       <p className="text-xs text-s-muted mb-3 max-w-2xl">
         Each brand keeps its own stock, even in a shared kitchen. Moving stock to another brand moves its cost too (oldest stock first, at what it cost):
-        the brand that sells it carries the cost. It happens at once, at one outlet.
+        the brand that sells it carries the cost. It moves at one outlet{isCeo ? ', at once.' : ' once the CEO approves it.'}
       </p>
       <form noValidate className="space-y-3" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!problem && !move.isPending) move.mutate() }}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -320,12 +366,37 @@ function BrandMoveCard({ sites, items, byBrand, onDone }: { sites: Site[]; items
           </p>
         )}
         {move.error && <ErrorBanner message={errText(move.error)} />}
+        {sent && !move.error && <p className="text-xs font-bold text-success" role="status">{sent}</p>}
         <div className="flex items-center justify-end gap-3">
           {tried && problem && <p role="alert" className="text-xs font-bold" style={{ color: 'var(--erp-warning)' }}>{problem}</p>}
-          <Button type="submit" disabled={move.isPending}>{move.isPending ? 'Moving…' : 'Move stock'}</Button>
+          <Button type="submit" disabled={move.isPending}>{move.isPending ? 'Sending…' : isCeo ? 'Move stock' : 'Ask the CEO'}</Button>
         </div>
       </form>
     </SectionCard>
+  )
+}
+
+function RejectBrandMoveDialog({ transfer, onClose, onDone }: { transfer: Transfer; onClose: () => void; onDone: () => void }) {
+  const [note, setNote] = useState('')
+  const [tried, setTried] = useState(false)
+  const short = note.trim().length < 10
+  const submit = useMutation({
+    mutationFn: () => api.post(`/stock-transfers/${transfer.id}/brand-move/reject`, { note: note.trim() }),
+    onSuccess: onDone,
+  })
+  return (
+    <Dialog title={`Reject the move of ${transfer.inventoryItem?.name ?? 'stock'}`} onClose={onClose} dirty={note !== ''}>
+      <form noValidate className="space-y-3" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!short && !submit.isPending) submit.mutate() }}>
+        <p className="text-xs text-s-muted">Nothing moves. The person who asked is told your reason.</p>
+        <Field label="Reason" error={tried && short ? 'Say why in at least 10 characters.' : null}>
+          <Input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Simmer needs it for the weekend" />
+        </Field>
+        {submit.error && <ErrorBanner message={errText(submit.error)} />}
+        <DialogFooter onCancel={onClose}>
+          <Button type="submit" disabled={submit.isPending}>{submit.isPending ? 'Rejecting…' : 'Reject'}</Button>
+        </DialogFooter>
+      </form>
+    </Dialog>
   )
 }
 
