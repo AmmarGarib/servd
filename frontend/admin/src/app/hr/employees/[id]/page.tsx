@@ -525,11 +525,20 @@ function PinEditor({ initial, onDone, onCancel }: { initial?: WorkLocPin; onDone
   const r = radius ? Number(radius) : null
   const badRadius = r != null && (r < 10 || r > 5000)
   const ready = label.trim().length > 0 && coords.lat != null && coords.lng != null && !badRadius
+  // Say what is missing instead of a silent grey button (owner, 2026-10-27: HR pasted the link, the pin landed, and
+  // "Add pin" stayed grey because the name was empty).
+  const missing = !label.trim() ? 'Type a name for this pin (e.g. Garib House).' : coords.lat == null || coords.lng == null ? 'Paste the Google Maps link and press “Use this link”.' : badRadius ? 'Radius must be 10 to 5,000 metres.' : null
+  const [tried, setTried] = useState(false)
+  const nameRef = useRef<HTMLInputElement>(null)
   return (
     <div className="rounded-xl p-3 space-y-3 mb-3" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.12)' }}>
       <p className="text-sm font-bold text-white/85">{initial ? `Move "${initial.label}"` : 'Add a map pin'}</p>
-      <input className={inp} placeholder="Name, e.g. Client site — DHA" aria-label="Pin name" maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} />
-      <MapPin value={coords} onChange={setCoords} height={240} hint="Paste a Google Maps link, or click the map to drop the pin." />
+      <div>
+        <label className="text-[11px] text-white/55 font-bold uppercase tracking-wider" htmlFor="pin-name">Pin name (required)</label>
+        <input id="pin-name" ref={nameRef} className={`${inp} mt-1`} placeholder="e.g. Garib House" aria-label="Pin name" maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)}
+          style={tried && !label.trim() ? { borderColor: 'var(--erp-danger)' } : undefined} />
+      </div>
+      <MapPin value={coords} onChange={setCoords} height={240} hint="" />
       <div className="flex flex-wrap items-center gap-2">
         <input className={`${inp} w-auto max-w-[170px]`} inputMode="numeric" placeholder="Radius (m)" aria-label="Pin radius in metres"
           value={radius} onChange={(e) => setRadius(e.target.value.replace(/\D/g, ''))} />
@@ -537,9 +546,14 @@ function PinEditor({ initial, onDone, onCancel }: { initial?: WorkLocPin; onDone
       </div>
       <p className="text-[11px] text-white/45">A new or moved pin waits for the CEO. Until it is approved, punches are not measured from it.</p>
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={btn} disabled={!ready} onClick={() => onDone({ label: label.trim(), latitude: coords.lat!, longitude: coords.lng!, radiusMetres: r })}>{initial ? 'Use this pin' : 'Add pin'}</button>
+        <button type="button" className={btn} onClick={() => {
+          if (!ready) { setTried(true); if (!label.trim()) nameRef.current?.focus(); return }
+          onDone({ label: label.trim(), latitude: coords.lat!, longitude: coords.lng!, radiusMetres: r })
+        }}>{initial ? 'Use this pin' : 'Add pin'}</button>
         <button type="button" className={btnGhost} onClick={onCancel}>Cancel</button>
       </div>
+      {tried && missing && <p className="text-[12px] font-bold" style={{ color: 'var(--erp-danger)' }}>{missing}</p>}
+      <p className="text-[11px] text-white/45">Then press <b>Save work locations</b> below — the pin is not kept until you save.</p>
     </div>
   )
 }

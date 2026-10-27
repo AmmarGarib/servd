@@ -390,11 +390,17 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       const raw = (req.query.url ?? '').trim()
       if (!raw) return reply.status(400).send({ error: { code: 'BAD_URL', message: 'url is required' } })
 
-      const ALLOWED = new Set([
-        'maps.app.goo.gl', 'goo.gl', 'google.com', 'www.google.com',
-        'maps.google.com', 'www.google.com.pk', 'google.com.pk',
-      ])
-      const hostOk = (u: URL) => u.protocol === 'https:' && ALLOWED.has(u.hostname)
+      // Google's own hosts only: the short links, and google.<country> / maps.google.<country> / consent.google.<country>
+      // (a server outside Pakistan is sent to its region's Google or the cookie-consent page first — owner, 2026-10-27,
+      // HR's link was refused as "redirects away from Google Maps").
+      const hostOk = (u: URL) => u.protocol === 'https:' && (
+        u.hostname === 'maps.app.goo.gl' || u.hostname === 'goo.gl'
+        || /^((www|maps|consent)\.)?google\.(com|[a-z]{2}|com\.[a-z]{2}|co\.[a-z]{2})$/.test(u.hostname))
+      // The consent page carries the real address in ?continue=.
+      const unwrapConsent = (u: URL): URL => {
+        if (!u.hostname.startsWith('consent.')) return u
+        try { const c = new URL(u.searchParams.get('continue') ?? ''); return hostOk(c) ? c : u } catch { return u }
+      }
 
       let current: URL
       try { current = new URL(raw) } catch {
@@ -419,11 +425,13 @@ export async function conceptRoutes(fastify: FastifyInstance) {
 
         const loc = res.headers.get('location')
         if (res.status >= 300 && res.status < 400 && loc) {
-          const next = new URL(loc, current)
+          const next = unwrapConsent(new URL(loc, current))
           if (!hostOk(next)) {
             return reply.status(400).send({ error: { code: 'REDIRECT_OFF_GOOGLE', message: 'That link redirects away from Google Maps' } })
           }
           current = next
+          // The redirect itself usually carries the place's coordinates: stop there.
+          if (parseMapsUrl(current)) break
           continue
         }
         break

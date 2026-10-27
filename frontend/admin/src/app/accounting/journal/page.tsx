@@ -46,7 +46,11 @@ import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFil
 interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean; subAccounts?: Array<{ id: string; name: string; code: string | null }> }
 interface Brand { id: string; name: string; tenantId: string | null }
 interface CurrentLock { tenantId?: string | null; lockedThrough: string | null; reopenedThrough?: string | null }
-interface DraftLine { key: number; accountId: string; debit: string; credit: string; memo: string; conceptId: string; subAccountId: string }
+interface DraftLine {
+  key: number; accountId: string; debit: string; credit: string; memo: string; conceptId: string; subAccountId: string
+  /** Its amount was filled to balance the entry (owner, 2026-10-27); it follows the other lines until typed into. */
+  auto?: boolean
+}
 
 const PKT_OFFSET_MS = 5 * 3600_000
 const pktDate = (iso: string) => new Date(new Date(iso).getTime() + PKT_OFFSET_MS).toISOString().slice(0, 10)
@@ -157,6 +161,32 @@ function JournalsPage() {
 
   function patchLine(key: number, patch: Partial<DraftLine>) {
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
+  }
+
+  // Owner, 2026-10-27: "when a debit entry is made it should opt same credit editable amount on auto". Typing an
+  // amount fills the difference on the opposite side of ONE balancing line: the line already auto-filled, else the
+  // first line with no amount (a new line when none is free). Typing into that line makes it the user's own.
+  function typeAmount(key: number, side: 'debit' | 'credit', value: string) {
+    setLines((ls) => {
+      const typed = ls.map((l) => (l.key === key ? { ...l, [side]: value, ...(value && { [side === 'debit' ? 'credit' : 'debit']: '' }), auto: false } : l))
+      const others = typed.filter((l) => !l.auto)
+      let diff = 0
+      for (const l of others) {
+        const d = toPaisa(l.debit); const c = toPaisa(l.credit)
+        if (d === null || c === null) return typed
+        diff += d - c
+      }
+      let target = typed.find((l) => l.auto && l.key !== key)
+        ?? typed.find((l) => l.key !== key && !l.debit.trim() && !l.credit.trim())
+      if (!target) {
+        if (diff === 0) return typed
+        target = { ...blankLine(), conceptId: typed.find((l) => l.key === key)?.conceptId ?? '' }
+        typed.push(target)
+      }
+      const amount = (Math.abs(diff) / 100).toFixed(2)
+      const fill = diff > 0 ? { debit: '', credit: amount } : diff < 0 ? { debit: amount, credit: '' } : { debit: '', credit: '' }
+      return typed.map((l) => (l.key === target!.key ? { ...l, ...fill, auto: diff !== 0 } : l))
+    })
   }
 
   // Live validation and totals.
@@ -517,12 +547,12 @@ function JournalsPage() {
                       </td>
                       <td className="py-1.5 pr-2">
                         <Input aria-label={`Line ${i + 1} debit`} inputMode="decimal" value={line.debit} placeholder="0.00"
-                          onChange={(e) => patchLine(line.key, { debit: e.target.value, ...(e.target.value && { credit: '' }) })}
+                          onChange={(e) => typeAmount(line.key, 'debit', e.target.value)}
                           className={`${inputCls} text-right font-mono`} />
                       </td>
                       <td className="py-1.5 pr-2">
                         <Input aria-label={`Line ${i + 1} credit`} inputMode="decimal" value={line.credit} placeholder="0.00"
-                          onChange={(e) => patchLine(line.key, { credit: e.target.value, ...(e.target.value && { debit: '' }) })}
+                          onChange={(e) => typeAmount(line.key, 'credit', e.target.value)}
                           className={`${inputCls} text-right font-mono`} />
                       </td>
                       <td className="py-1.5">
