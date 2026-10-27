@@ -121,7 +121,7 @@ export interface PunchWhere { lat?: number; lng?: number; selfieUrl?: string; ac
 
 /**
  * Judge a punch against the company's policy. Throws only for the selfie rule (clock-in, when the company requires
- * it) — never for where the punch was taken. `role` is null for a kiosk punch by someone without a login (never
+ * it) — never for where the punch was taken. `role` is null for a punch with no login (an old kiosk punch; never
  * exempt). `employeeId` is the HR employee punching in this company, if any. An OUT with no location fix is not
  * judged (logging out of the admin sends no location); an out with a fix is measured like an in.
  */

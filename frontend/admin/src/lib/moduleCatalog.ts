@@ -408,10 +408,10 @@ export const ALWAYS_OPEN_PREFIXES: readonly string[] = [
   '/w', '/me', '/account', '/help', '/login', '/kds/login', '/reset-password', '/supplier',
   // A head-office login's own landing page (D1).
   '/head-office',
-  // The admin's one punch screen (decision 32) — "Me" and kiosk mode. Its API
-  // (/time-clock/status, punch-in/out, kiosk/punch) is ALL_STAFF and punches
-  // only the caller (or the employee whose code + PIN is entered), so every
-  // login opens it; the Workforce sidebar link stays with staff_directory.
+  // The admin's one punch screen (decision 32) — the signed-in person's own
+  // clock (kiosk mode removed 2026-10-27). Its API (/time-clock/status,
+  // punch-in/out) is ALL_STAFF and punches only the caller, so every login
+  // opens it; the Workforce sidebar link stays with staff_directory.
   '/time-clock',
   // Cash requests (/finance/cash-vouchers) are a personal page now, so the
   // line below opens them to every login.

@@ -56,11 +56,12 @@ async function mkEmp(key: string, tenantId: string, grossRs: number) {
 }
 const rec = (tenantId: string, section: string, employeeId: string | null, data: Record<string, unknown>) =>
   prisma.hrRecord.create({ data: { tenantId, section, formVersion: 0, employeeId, status: 'approved', ...data } as never })
-/** A punched day: in and out at Karachi times. */
-const punched = (tenantId: string, employeeId: string, day: string, inT: string, outT: string) =>
+/** A punched day: in and out at Karachi times. `kiosk` = a day punched at the old shared kiosk (PIN clock-in removed
+ *  2026-10-27) — such days must keep counting exactly like a login's. */
+const punched = (tenantId: string, employeeId: string, day: string, inT: string, outT: string, source: 'clock' | 'kiosk' = 'clock') =>
   rec(tenantId, 'attendance', employeeId, {
     startDate: D(day), category: 'present',
-    data: { status: 'present', checkIn: inT, checkOut: outT, _source: 'clock', _punches: [{ type: 'in', at: PKT(day, inT), source: 'clock' }, { type: 'out', at: PKT(day, outT), source: 'clock' }] },
+    data: { status: 'present', checkIn: inT, checkOut: outT, _source: source, _punches: [{ type: 'in', at: PKT(day, inT), source }, { type: 'out', at: PKT(day, outT), source }] },
   })
 
 const call = (who: string, method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown) =>
@@ -109,14 +110,16 @@ beforeAll(async () => {
   for (let n = 1; n <= 30; n++) {
     const day = nov(n)
     if (D(day).getUTCDay() === 0 || [3, 4, 5, 10, 11, 12, 20].includes(n)) continue
-    att[day] = (await punched(tenantA, a1, day, '09:00', '17:00')).id
+    // The 2nd was punched at the old kiosk: it is a worked day like any other (never absent).
+    att[day] = (await punched(tenantA, a1, day, '09:00', '17:00', n === 2 ? 'kiosk' : 'clock')).id
   }
   // 5th: no punch, but HR corrected it (an approved hand-keyed day) — wins.
   att[nov(5)] = (await rec(tenantA, 'attendance', a1, { startDate: D(nov(5)), category: 'present', data: { status: 'present', checkIn: '09:00', checkOut: '17:00', _source: 'correction' } })).id
   // Overtime days: 10th to 19:00 (2 h after the shift), 11th to 17:20 (20 min — ignored),
   // 12th to 20:00 with an approved 1 h request (the request wins), Sunday 8th 08:00–19:00
   // on the weekly off (11 h, 2 h beyond the 9-hour standard day).
-  att[nov(10)] = (await punched(tenantA, a1, nov(10), '09:00', '19:00')).id
+  // The 10th was punched at the old kiosk too: its punch OT is offered like a login's.
+  att[nov(10)] = (await punched(tenantA, a1, nov(10), '09:00', '19:00', 'kiosk')).id
   att[nov(11)] = (await punched(tenantA, a1, nov(11), '09:00', '17:20')).id
   att[nov(12)] = (await punched(tenantA, a1, nov(12), '09:00', '20:00')).id
   att[nov(8)] = (await punched(tenantA, a1, nov(8), '08:00', '19:00')).id

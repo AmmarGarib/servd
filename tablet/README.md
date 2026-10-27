@@ -9,7 +9,7 @@ Android-first landscape Expo app for in-shift staff. Companion to the customer
 - **KDS** — all-orders expediter view + per-station ticket lanes
 - **Reservations** — host stand day view with seat / no-show actions
 - **Curbside** — "Cars here" / "En route" queue with arrived button
-- **Time clock** — selfie + geo punch
+- **Time clock** — the signed-in person's own selfie + geo punch (no kiosk PIN: every staff member has their own login; floor staff sign in with a WhatsApp code)
 - **Inventory** — stock count with camera barcode scan
 - **Customer** — phone lookup with strikes / loyalty / order history
 - **Dispatch** — live rider map + assign rider
@@ -33,7 +33,7 @@ Set the API host in `app.json -> expo.extra.apiUrl`. Default `http://10.0.2.2:40
 hits the dev backend from an Android emulator. On a real tablet, use the LAN IP
 of the dev machine (e.g. `http://192.168.1.42:4000`).
 
-## Kiosk / device lockdown
+## Device lockdown
 
 Android tablets running this app should be set as **Device Owner** with the app
 pinned via the Lock Task Mode API (or simpler: use Samsung Knox / Scalefusion /

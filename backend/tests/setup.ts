@@ -128,6 +128,10 @@ async function applyIdempotent(prisma: PrismaClient, statement: string): Promise
     if (found.length === 0) await prisma.$executeRawUnsafe(statement)
     return
   }
+  // A re-runnable section drops its constraint before re-adding it: the add above is already skipped
+  // when the constraint exists, so the drop is skipped too; a data fix-up UPDATE is safe to repeat.
+  if (/^ALTER\s+TABLE\s+"[^"]+"\s+DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+"[^"]+"$/i.test(statement)) return
+  if (/^UPDATE\s+"[^"]+"\s+SET\s/i.test(statement)) { await prisma.$executeRawUnsafe(statement); return }
   throw new Error(`tests/setup.ts: unexpected raw-SQL statement shape: ${statement.slice(0, 120)}`)
 }
 

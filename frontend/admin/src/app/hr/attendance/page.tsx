@@ -1,5 +1,5 @@
 'use client'
-// Attendance for a day: every punch (time clock, tablet, kiosk PIN) next to
+// Attendance for a day: every punch (time clock, tablet; old kiosk-PIN punches before 2026-10-27) next to
 // the attendance record it produced. Punches write attendance on their own —
 // present or late against the roster — so HR works only the exceptions here:
 // a missing punch, a late that needs regularising, a day nobody punched.
@@ -95,7 +95,7 @@ function DayTab() {
                   style={{ background: p.type === 'in' ? 'rgb(var(--erp-accent-rgb) / 0.15)' : 'rgb(var(--fg-rgb) / 0.06)', color: p.type === 'in' ? 'var(--erp-success)' : 'rgb(var(--fg-rgb) / 0.7)' }}
                   title={p.geofenceDistanceM != null ? `${p.geofenceDistanceM} m from the nearest work location` : undefined}>
                   {p.type.toUpperCase()} {time(p.at)}
-                  <span className="font-normal text-white/40">{p.source === 'kiosk' ? 'kiosk' : 'clock'}</span>
+                  <span className="font-normal text-white/40">{p.source === 'kiosk' ? 'kiosk (old)' : 'clock'}</span>
                   {(p.outOfArea || p.geofenceMatched === false) && <span className="text-s-amber">out of area</span>}
                   {p.selfieUrl && <a href={p.selfieUrl} target="_blank" rel="noreferrer" className="underline font-normal">selfie</a>}
                 </span>
@@ -272,7 +272,7 @@ function PunchLogTab() {
                     {r.employeeCode && <span className="text-white/40"> {r.employeeCode}</span>}
                   </td>
                   <td className="px-3 py-1.5 font-bold text-white/75">{r.type.toUpperCase()}</td>
-                  <td className="px-3 py-1.5 text-white/55">{r.source === 'kiosk' ? 'Kiosk PIN' : 'Login'}</td>
+                  <td className="px-3 py-1.5 text-white/55">{r.source === 'kiosk' ? 'Kiosk (old)' : 'Login'}</td>
                   <td className="px-3 py-1.5 text-white/70 whitespace-nowrap">{r.location ?? '—'}</td>
                   <td className="px-3 py-1.5 text-white/55 whitespace-nowrap">{r.distanceM != null ? `${r.distanceM} m` : 'no location sent'}</td>
                   <td className="px-3 py-1.5">{r.outOfArea && <OutOfAreaBadge />}</td>
@@ -293,7 +293,47 @@ function PunchLogTab() {
   )
 }
 
-const TABS = [['today', 'Today'], ['punches', 'Punch log'], ['day', 'Day & corrections']] as const
+interface NoLoginRow { id: string; tenantId: string; company: string | null; employeeCode: string; fullName: string; phone: string | null; status: string; department: string | null; designation: string | null; branch: string | null }
+
+/** Current employees with no servd login (owner, 2026-10-27: the kiosk PIN is gone, every staff member clocks in with
+ *  their own login, and from 1 November a working day with no punch is absent). Each row opens the employee's
+ *  Login & clock-in tab, where HR links or creates the login. */
+function NoLoginTab() {
+  const { data, error, isLoading, dataUpdatedAt, isFetching, refetch } = useQuery({
+    queryKey: ['hr-staff-without-login'],
+    queryFn: () => api.get<{ count: number; employees: NoLoginRow[] }>('/hr/staff-without-login'),
+  })
+  const rows = data?.employees ?? []
+  const companies = new Set(rows.map((r) => r.tenantId)).size
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <p className="text-sm text-white/60 flex-1 min-w-[240px]">
+          Everyone clocks in with their own login — there is no kiosk PIN any more. Floor staff sign in with a code sent to their WhatsApp, so they need no email or password. From 1 November a working day with no punch counts as absent: give each person below a login.
+        </p>
+        <Refresh at={dataUpdatedAt} fetching={isFetching} onClick={() => void refetch()} />
+      </div>
+      {error && <p className="text-sm text-s-red mb-3">{(error as Error).message}</p>}
+      {isLoading && <p className="text-sm text-white/40">Loading…</p>}
+      {data && <p className="text-xs font-bold mb-2" style={{ color: data.count ? 'var(--erp-danger)' : 'var(--erp-success)' }}>{data.count ? `${data.count} without a login` : 'Everyone has a login.'}</p>}
+      <div className="rounded-2xl overflow-hidden" style={card}>
+        {!isLoading && rows.length === 0 && <CompactEmptyState message="Every current employee has a login." />}
+        {rows.map((r) => (
+          <Link key={r.id} href={`/hr/employees/${r.id}?tab=login`}
+            className="px-4 py-3 border-t border-white/[0.05] first:border-t-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm hover:bg-white/[0.03] [@media(pointer:coarse)]:min-h-[44px]">
+            <span className="font-bold text-white/85 min-w-0 break-words">{r.fullName}</span>
+            <span className="text-[11px] text-white/40 min-w-0 break-words">
+              {[r.employeeCode, r.designation, r.department, r.branch, companies > 1 ? r.company : null, r.status === 'on_leave' ? 'on leave' : null].filter(Boolean).join(' · ')}
+            </span>
+            <span className="ml-auto text-xs text-primary-ink whitespace-nowrap">Give a login →</span>
+          </Link>
+        ))}
+      </div>
+    </>
+  )
+}
+
+const TABS = [['today', 'Today'], ['punches', 'Punch log'], ['day', 'Day & corrections'], ['nologin', 'Staff without a login']] as const
 type TabKey = (typeof TABS)[number][0]
 
 export default function HrAttendancePage() {
@@ -320,7 +360,7 @@ function Attendance() {
     ;(ev.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus()
   }
   return (
-    <HrShell title="Attendance tracking" subtitle="Punches come from the time clock (login on a phone, or the outlet tablet with a PIN), measured against each person's work locations. Out-of-area punches are allowed and flagged.">
+    <HrShell title="Attendance tracking" subtitle="Everyone punches with their own login (phone, admin or the outlet tablet), measured against each person's work locations. Out-of-area punches are allowed and flagged.">
       <BulkAttendanceButtons />
       <div role="tablist" aria-label="Attendance views" className="flex gap-1 mb-5 overflow-x-auto">
         {TABS.map(([k, label], i) => (
@@ -332,6 +372,7 @@ function Attendance() {
         {tab === 'today' && <TodayTab />}
         {tab === 'punches' && <PunchLogTab />}
         {tab === 'day' && <DayTab />}
+        {tab === 'nologin' && <NoLoginTab />}
       </div>
     </HrShell>
   )

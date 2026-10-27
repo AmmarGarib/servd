@@ -2,7 +2,7 @@
 //
 // The time clock is the capture device; the HR 'attendance' record is what
 // payroll, reports and the dashboard read. A punch — the signed-in time clock,
-// the tablet, or the shared kiosk PIN for staff without a login — writes that
+// the tablet (the shared kiosk PIN was removed 2026-10-27; its old days still count) — writes that
 // day's attendance record for the person in THAT company:
 //
 //   first in    creates the day: present, or late when the check-in is past

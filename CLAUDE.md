@@ -281,6 +281,14 @@ module id must be placed in a workspace in the same change.
   Workforce forms follow), and activation never sends a floor login a password link
   (`offboarding.ts activationSideEffects`) — floor staff never get a password. Tests:
   `tests/ownerAuthAnswers.test.ts`.
+  **Kiosk PIN clock-in is REMOVED (owner, 2026-10-27: "this is redundant now, we will give all staff proper
+  logins").** Every staff member clocks in with their OWN login (floor staff by WhatsApp code). Gone:
+  `POST /time-clock/kiosk/punch`, `POST|DELETE /hr/employees/:id/kiosk-pin`, `hr/kioskPin.ts`, `kioskPinSet` on
+  the employee profile, the admin / tablet kiosk modes (404, no shim). `HrEmployee.kioskPinHash` stays (unread).
+  Old attendance days with `_source` / punch source `kiosk` still count everywhere (attendanceDays, payroll, today
+  board, punch log, tip pools, reports; shown as "Kiosk (old)"). HR's list to finish before 1 Nov (no punch =
+  absent): `GET /hr/staff-without-login` (HR_BACK_OFFICE, companies in view) → HR → Attendance → "Staff without a
+  login". Tests: `tests/staffWithoutLogin.test.ts`.
 - **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
   also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
   (same scope as offboard; never `admin` / `owner` — 403 `REISSUE_CEO_ONLY`,
@@ -938,8 +946,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `/auth/pin/change`) is 6–8 digits — 422 `PIN_TOO_SHORT`. A stored 4–5 digit PIN still approves: its first use
   stamps `User.pinChangeRequiredAt` and tells the holder on the bell; `/auth/account` returns
   `pinChangeRequired` / `pinChangeBy` (account page banner); `SHORT_PIN_GRACE_HOURS` (72) after that first
-  use it is refused (403 `PIN_CHANGE_REQUIRED`) until a new PIN is set. Kiosk PINs (HR) are not affected; the
-  5-tries / 15-minute lock is unchanged.
+  use it is refused (403 `PIN_CHANGE_REQUIRED`) until a new PIN is set. The 5-tries / 15-minute lock is
+  unchanged. There are no kiosk PINs any more: kiosk PIN clock-in was removed (owner, 2026-10-27) — see "Floor
+  staff sign in with a code".
 - **No skip of real sales.** There is no per-document Skip, no date-range
   skip and no "skip held" at go-live. `skipped` is automatic only
   (prefiled_direct, zero_value per setting, zero_value_unsupported,
@@ -2723,6 +2732,8 @@ stack two. Tests: `tests/officeNetwork.test.ts`.
 
 **Geo-fenced attendance (owner's card + answers, 2026-10-22).** Builds on the
 15 Oct time clock (`timeclock/policy.ts`, work locations) — never a second one.
+Every punch is a person's OWN login: kiosk PIN clock-in was removed (owner,
+2026-10-27); old kiosk punches still count and are still measured as recorded.
 (1) The clock measures ONLY from the pin + radius the CEO approved
 (`Location.fenceLatitude / fenceLongitude / fenceRadiusMetres`, migration
 `20261022190000`; companies whose geofence was already on had their pins carried

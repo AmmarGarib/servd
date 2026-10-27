@@ -49,11 +49,11 @@ function sourceText(d: Record<string, unknown>, status: string, punches: PunchEn
   const src = str(d['_source'])
   let s: string
   if (d['_manual'] || src === 'hr') s = 'Manual (HR)'
-  else if (src === 'kiosk') s = 'Kiosk PIN'
+  else if (src === 'kiosk') s = 'Kiosk (old)'
   else if (src === 'correction') s = 'Manual (HR)'
   else {
     const p = punches[0]?.source ?? src
-    s = p === 'tablet' ? 'Tablet' : p === 'kiosk' ? 'Kiosk PIN' : p === 'clock' ? 'Time clock' : src === 'tablet' ? 'Tablet' : src ? 'Time clock' : 'Manual (HR)'
+    s = p === 'tablet' ? 'Tablet' : p === 'kiosk' ? 'Kiosk (old)' : p === 'clock' ? 'Time clock' : src === 'tablet' ? 'Tablet' : src ? 'Time clock' : 'Manual (HR)'
   }
   // The admin's wording (lib/hr.ts recordStatusText): a manual day waiting for the CEO.
   if (d['_manual'] && status === 'submitted') return `${s} — waiting for CEO`

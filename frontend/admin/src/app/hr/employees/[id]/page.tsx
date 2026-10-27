@@ -12,7 +12,6 @@ import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../co
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
 import { openPrintable } from '../../../../components/hr/RecordDetail'
 import { Select } from '@/components/ui/Select'
-import { PasswordInput } from '@/components/ui/PasswordInput'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { usePermissions } from '../../../../hooks/useCan'
 import { OffboardButtons, FLOOR_LOGIN_ROLES } from '../../../../components/hr/OffboardButtons'
@@ -35,7 +34,6 @@ interface Profile {
   /** A pay change waiting for approval (owner, 2026-10-27: the CEO gives the final approval). */
   pendingWageChange: { id: string; section: string; status: string; grossCents: number | null; basicCents: number | null; effectiveDate: string | null; waitingFor: string | null; atCeoStep: boolean; canWithdraw: boolean } | null
   user: { id: string; name: string; email: string; role: string; status?: 'pending' | 'active' | 'suspended' } | null
-  kioskPinSet: boolean
 }
 
 const TABS = ['Profile', 'Documents', 'Requests', 'Leave', 'Loans & pay', 'Letters', 'Login & clock-in'] as const
@@ -397,7 +395,7 @@ function LoginTab({ p }: { p: Profile }) {
     <div className="grid lg:grid-cols-2 gap-4 max-w-4xl">
       <div className="rounded-2xl p-5" style={card}>
         <p className="text-sm font-black text-white/85 mb-2">servd login</p>
-        <p className="text-sm text-white/60 mb-3">Not everyone needs one — most kitchen staff punch in with a kiosk PIN instead. Linking a login lets this person clock in as themselves, use <strong>My HR</strong> and, if they manage people, approve their team&rsquo;s requests. One login can be linked to one employee record in each company.</p>
+        <p className="text-sm text-white/60 mb-3">Every staff member clocks in with their own login. Floor staff (cashiers, kitchen, front and back of house, expediters) sign in with a code sent to their WhatsApp — no email or password needed. From 1 November a working day with no punch counts as absent, so give everyone a login. The login lets this person clock in as themselves, use <strong>My HR</strong> and, if they manage people, approve their team&rsquo;s requests. One login can be linked to one employee record in each company.</p>
         {p.user ? (
           <div className="space-y-3">
             <div className="flex items-center gap-3 flex-wrap">
@@ -421,7 +419,6 @@ function LoginTab({ p }: { p: Profile }) {
         {err && <p className="text-xs text-s-red mt-2">{err}</p>}
         {!p.user && <CreateLoginForm p={p} />}
       </div>
-      <KioskPinCard p={p} />
       <WorkLocationsCard p={p} />
     </div>
   )
@@ -639,50 +636,3 @@ function WorkLocationsCard({ p }: { p: Profile }) {
   )
 }
 
-function KioskPinCard({ p }: { p: Profile }) {
-  const qc = useQueryClient()
-  const confirm = useConfirm()
-  const [pin, setPin] = useState('')
-  const [msg, setMsg] = useState('')
-  const [bad, setBad] = useState(false)
-  const save = useMutation({
-    mutationFn: () => api.post(`/hr/employees/${p.employee.id}/kiosk-pin`, { pin }),
-    onSuccess: () => { setPin(''); setBad(false); setMsg('PIN set. Tell them in person — it is not shown again.'); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
-    onError: (e: Error) => { setBad(true); setMsg(e.message) },
-  })
-  const clear = useMutation({
-    mutationFn: () => api.delete(`/hr/employees/${p.employee.id}/kiosk-pin`),
-    onSuccess: () => { setBad(false); setMsg('PIN removed.'); void qc.invalidateQueries({ queryKey: ['hr-employee'] }) },
-    onError: (e: Error) => { setBad(true); setMsg(e.message) },
-  })
-  const submit = (ev: React.FormEvent) => {
-    ev.preventDefault()
-    if (save.isPending) return
-    if (pin.length < 4) { setBad(true); setMsg('The PIN is 4 to 6 digits.'); return }
-    setMsg(''); save.mutate()
-  }
-  const remove = async () => {
-    const ok = await confirm({ title: 'Remove the kiosk PIN?', body: `${p.employee.fullName} will no longer be able to punch at the kiosk until a new PIN is set.`, confirmLabel: 'Remove PIN', danger: true })
-    if (ok) clear.mutate()
-  }
-  return (
-    <div className="rounded-2xl p-5" style={card}>
-      <p className="text-sm font-black text-white/85 mb-2">Kiosk PIN</p>
-      <p className="text-sm text-white/60 mb-3">For staff without a login: they punch in and out at the shared time clock with their employee ID <strong>{p.employee.employeeCode}</strong> and this PIN. Each punch writes their attendance for the day.</p>
-      {p.user ? (
-        <p className="text-xs text-white/45">This person has a login, so they clock in with it — no kiosk PIN needed.</p>
-      ) : (
-        <form onSubmit={submit}>
-          <p className="text-xs mb-2" style={{ color: p.kioskPinSet ? 'var(--erp-success)' : 'rgb(var(--fg-rgb) / 0.45)' }}>{p.kioskPinSet ? 'A PIN is set.' : 'No PIN yet.'}</p>
-          <div className="flex flex-wrap gap-2">
-            <PasswordInput numeric className={inp} wrapperClassName="flex-1 min-w-[160px]" maxLength={6} autoComplete="new-password" placeholder="4–6 digits"
-              value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} aria-label="New kiosk PIN" aria-invalid={bad && pin.length < 4 ? true : undefined} />
-            <button type="submit" className={btn} disabled={pin.length < 4 || save.isPending}>{save.isPending ? 'Saving…' : p.kioskPinSet ? 'Change' : 'Set'}</button>
-            {p.kioskPinSet && <button type="button" className={btnGhost} disabled={clear.isPending} onClick={() => void remove()}>Remove</button>}
-          </div>
-        </form>
-      )}
-      {msg && <p className={`text-xs mt-2 ${bad ? 'text-s-red' : 'text-white/60'}`} role={bad ? 'alert' : 'status'}>{msg}</p>}
-    </div>
-  )
-}

@@ -3,7 +3,6 @@
 //   POST /time-clock/punch-in   (alias /clock-in)   the signed-in person clocks in
 //   POST /time-clock/punch-out  (alias /clock-out)  …and out
 //   GET  /time-clock/status                          open punch + today's punches (tablet)
-//   POST /time-clock/kiosk/punch                     staff WITHOUT a login: employee code + PIN
 //   GET  /time-clock/logs?date=YYYY-MM-DD            the day's punches next to attendance (managers, HR)
 //
 // Every punch goes through service.ts, which writes the ClockLog punch log AND
@@ -19,7 +18,7 @@ import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { pktToday } from '../hr/logic.js'
 import { getSettings } from '../hr/service.js'
 import { onOfficeNetwork } from '../../lib/officeNetwork.js'
-import { clockIn, clockOut, kioskPunch, openClockIn, punchReport, setHoldReason, spans, type Actor } from './service.js'
+import { clockIn, clockOut, openClockIn, punchReport, setHoldReason, spans, type Actor } from './service.js'
 
 const PUNCH_REPORT_ROLES = Array.from(new Set([...MANAGERS, 'hr'])) as UserRole[]
 
@@ -97,18 +96,6 @@ export async function timeClockRoutes(fastify: FastifyInstance) {
       missedClockOut: openIn?.missed ? { since: openIn.since } : null,
       todayShifts: (seeAll ? rows.flatMap(shiftsOf) : myShifts).sort((a, b) => b.clockInAt.localeCompare(a.clockInAt)),
     }
-  })
-
-  // POST /time-clock/kiosk/punch — the shared kiosk. The device is signed in
-  // (so the company is known); the person is identified by their HR employee
-  // code and kiosk PIN. In when their day is not open, out when it is.
-  fastify.post('/kiosk/punch', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const body = punchBody.extend({
-      employeeCode: z.string().min(1).max(40),
-      pin: z.string().min(4).max(12),
-      action: z.enum(['in', 'out']).optional(),
-    }).parse(req.body)
-    return kioskPunch(actor(req), body, req.ip)
   })
 
   // POST /time-clock/hold-reason — the person says why a punch was outside their work location (owner,

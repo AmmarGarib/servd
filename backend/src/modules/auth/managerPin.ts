@@ -38,8 +38,8 @@ export const PIN_FORMAT = /^\d{4,8}$/
  * Owner C1 (2026-10-26, option b): "Managers and CEO need at least 6 digits
  * (short PINs changed at next use)". Every NEW override PIN is 6 to 8 digits
  * (422 PIN_TOO_SHORT) — User.pin is only ever an override PIN (CEO, managers,
- * finance: canHoldOverridePin); floor staff punch with the HR kiosk PIN
- * (hr/kioskPin.ts), which this does not touch.
+ * finance: canHoldOverridePin). There is no kiosk PIN any more (removed, owner
+ * 2026-10-27): every staff member clocks in with their own login.
  *
  * An existing 4–5 digit PIN still approves. Its FIRST successful use stamps
  * `User.pinChangeRequiredAt` and tells the holder on the bell ("Set a new

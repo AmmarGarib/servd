@@ -321,7 +321,7 @@ export const HR_SECTIONS: HrSection[] = [
   // approved by attendance.ts and never wait.
   { key: 'attendance', specNo: 9, title: 'Attendance', group: 'Time', kind: 'record', requires: ['employeeId', 'startDate', 'category'],
     workflow: [CEO_STEP],
-    effect: 'Written automatically from clock-in punches (time clock, tablet or kiosk PIN): present or late against the rostered shift and the grace minutes in HR settings; a day with an in and no out becomes missing punch. A day HR keys or edits by hand is marked "Entered manually" and counts for payroll only once the CEO approves it; a punch never overwrites it.',
+    effect: 'Written automatically from clock-in punches (time clock or tablet, each person with their own login; old kiosk punches still count): present or late against the rostered shift and the grace minutes in HR settings; a day with an in and no out becomes missing punch. A day HR keys or edits by hand is marked "Entered manually" and counts for payroll only once the CEO approves it; a punch never overwrites it.',
     fields: [
       emp(),
       f('date', 'Date', 'date', { required: true, bind: 'startDate' }),

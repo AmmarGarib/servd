@@ -56,7 +56,6 @@ import { reverseJournalEntry } from '../accounting/journal.js'
 import { applyAttendanceCorrection, flagMissingPunches, attendanceKeys } from './attendance.js'
 import { workingDaysBetween } from './attendanceDays.js'
 import { approvedLeaveOn, leaveSpan, isHalfDayLeave, OFF_MARK, ymd as rotaYmd, rotaFor } from './rota.js'
-import { hasKioskPin, setKioskPin, clearKioskPin } from './kioskPin.js'
 import { loginsToDeactivate, deactivateLeftLogins } from './separations.js'
 import { accountStateOf } from '../auth/accountStatus.js'
 import { TRANSFERRED_STATUS } from './transfer.js'
@@ -1359,7 +1358,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!emp) throw new NotFoundError('Employee', req.params.id)
     await applyDueEffects(emp.tenantId)
     const fresh = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: emp.id } })
-    const [label, records, balances, loans, user, kioskPinSet] = await Promise.all([
+    const [label, records, balances, loans, user] = await Promise.all([
       employeeLabels(emp.tenantId, [fresh]),
       prisma.hrRecord.findMany({ where: { employeeId: emp.id }, orderBy: { createdAt: 'desc' }, take: 200 }),
       leaveBalancesFor(emp.tenantId, emp.id),
@@ -1368,7 +1367,6 @@ export async function hrRoutes(fastify: FastifyInstance) {
       // Offboard / Reinstate (auth/offboarding.ts) — never its module access.
       fresh.userId ? prisma.user.findUnique({ where: { id: fresh.userId }, select: { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true } })
         .then((u) => u && { id: u.id, name: u.name, email: u.email, role: u.role, status: accountStateOf(u) }) : null,
-      hasKioskPin(emp.id),
     ])
     const salaryHistory = records
       .filter((r) => (r.section === 'salary_revision' || r.section === 'promotion') && r.status === 'approved' && r.amountCents)
@@ -1393,7 +1391,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return {
       employee: fresh,
       labels: { department: label(fresh.departmentId), designation: label(fresh.designationId), grade: label(fresh.gradeId), branch: label(fresh.locationId), manager: managerLabelOf(label, fresh) },
-      documents: emp.documents, records, leaveBalances: balances, loans, salaryHistory, pendingWageChange, user, kioskPinSet,
+      documents: emp.documents, records, leaveBalances: balances, loans, salaryHistory, pendingWageChange, user,
     }
   })
 
@@ -1575,35 +1573,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
       }
       throw err
     }
-    // Someone with a login punches as themselves; a kiosk PIN is for staff
-    // without one.
-    if (userId) await clearKioskPin(emp.id)
     await audit({
       category: 'identity', action: 'hr.employee.link_user', entity: 'HrEmployee', entityId: emp.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: emp.tenantId, before: { userId: emp.userId }, after: { userId },
     })
     return updated
-  })
-
-  // ── Kiosk PIN (staff without a login) ────────────────────────────────────
-  // Decision 32: staff who have no servd login punch at the shared kiosk with
-  // their employee code and a PIN HR sets here.
-  fastify.post<{ Params: { id: string } }>('/employees/:id/kiosk-pin', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
-    const { pin } = z.object({ pin: z.string().max(12) }).parse(req.body)
-    const emp = await prisma.hrEmployee.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
-    if (!emp) throw new NotFoundError('Employee', req.params.id)
-    if (emp.userId) throw new AppError('HAS_LOGIN', 'This employee has a servd login — they clock in with it, not a kiosk PIN', 409)
-    if (!['active', 'on_leave'].includes(emp.status)) throw new AppError('NOT_EMPLOYED', 'Only a current employee can have a kiosk PIN', 409)
-    await setKioskPin(emp.id, pin)
-    await audit({ category: 'identity', action: 'hr.employee.kiosk_pin_set', entity: 'HrEmployee', entityId: emp.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: emp.tenantId })
-    return { ok: true, kioskPinSet: true }
-  })
-  fastify.delete<{ Params: { id: string } }>('/employees/:id/kiosk-pin', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
-    const emp = await prisma.hrEmployee.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
-    if (!emp) throw new NotFoundError('Employee', req.params.id)
-    await clearKioskPin(emp.id)
-    await audit({ category: 'identity', action: 'hr.employee.kiosk_pin_clear', entity: 'HrEmployee', entityId: emp.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: emp.tenantId })
-    return { ok: true, kioskPinSet: false }
   })
 
   // ── Logins ↔ employees (decision 31) ─────────────────────────────────────
@@ -1674,6 +1648,31 @@ export async function hrRoutes(fastify: FastifyInstance) {
       if (hit) suggestions.push({ userId: u.id, employeeId: hit.id, by: phoneKey(hit.phone) && phoneKey(hit.phone) === phoneKey(u.phone) ? 'phone' : hit.personalEmail && u.email && hit.personalEmail.toLowerCase() === u.email.toLowerCase() ? 'email' : 'name' })
     }
     return { loginsWithoutRecord, employeesWithoutLogin, suggestions }
+  })
+
+  // GET /hr/staff-without-login — current employees (active / on leave) with no linked servd login, in the companies
+  // in view (owner, 2026-10-27: the kiosk PIN is gone, every staff member clocks in with their own login, and from
+  // 1 Nov a working day with no punch is absent). HR works down this list giving each person a login. Names, codes
+  // and labels only — never pay.
+  fastify.get('/staff-without-login', { preHandler: HR_BACK_OFFICE }, async (req) => {
+    const rows = await prisma.hrEmployee.findMany({
+      where: { ...inTenants(req), userId: null, status: { in: ['active', 'on_leave'] } },
+      select: { id: true, tenantId: true, employeeCode: true, fullName: true, phone: true, status: true, departmentId: true, designationId: true, gradeId: true, managerId: true, locationId: true, joiningDate: true },
+      orderBy: [{ fullName: 'asc' }],
+    })
+    const [label, companies] = await Promise.all([
+      employeeLabelsAcross(rows),
+      prisma.tenant.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.tenantId))] } }, select: { id: true, name: true } }),
+    ])
+    const companyName = new Map(companies.map((c) => [c.id, c.name]))
+    return {
+      count: rows.length,
+      employees: rows.map((e) => ({
+        id: e.id, tenantId: e.tenantId, company: companyName.get(e.tenantId) ?? null, employeeCode: e.employeeCode, fullName: e.fullName,
+        phone: e.phone, status: e.status, joiningDate: e.joiningDate,
+        department: label(e.departmentId), designation: label(e.designationId), branch: label(e.locationId),
+      })),
+    }
   })
 
   // Leavers' logins — switched off once the last working day has passed

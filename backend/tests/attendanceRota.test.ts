@@ -5,7 +5,7 @@
 //   Real DB:   the rota generated from HR roster + swaps + exceptions; punches
 //              writing attendance (late, missing punch, hand-keyed rows left
 //              alone, a correction rewriting the day); the time clock through
-//              HTTP with the company geofence; the kiosk PIN; the /scheduling
+//              HTTP with the company geofence; the kiosk PIN is gone; the /scheduling
 //              grid and its HR-salary costing; tip pools on company rules;
 //              logins linked per company; departments written in HR only;
 //              budgeted labour without frozen seats; leavers' logins.
@@ -303,20 +303,12 @@ describe('the time clock', () => {
     await expect(enforceClockInPolicy(lonely, 'admin', {})).resolves.toMatchObject({ geofenceMatched: null })
   })
 
-  it('lets staff without a login punch at the kiosk with their code and PIN', async () => {
+  it('kiosk PIN clock-in is removed (owner, 2026-10-27): no PIN route, no kiosk punch, no kioskPinSet', async () => {
     const dish = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: emps['Dishwasher']! } })
-    expect((await call('hr', 'POST', `/hr/employees/${emps['Cook']}/kiosk-pin`, { pin: '4827' })).statusCode).toBe(409) // has a login
-    expect((await call('hr', 'POST', `/hr/employees/${dish.id}/kiosk-pin`, { pin: '1234' })).statusCode).toBe(400) // weak
-    expect((await call('hr', 'POST', `/hr/employees/${dish.id}/kiosk-pin`, { pin: '4827' })).statusCode).toBe(200)
-    expect((await call('hr', 'GET', `/hr/employees/${dish.id}`)).json().kioskPinSet).toBe(true)
-    const bad = await call('boss', 'POST', '/time-clock/kiosk/punch', { employeeCode: dish.employeeCode, pin: '9999', lat: 24.8607, lng: 67.0011 })
-    expect(bad.statusCode).toBe(401)
-    const inn = await call('boss', 'POST', '/time-clock/kiosk/punch', { employeeCode: dish.employeeCode, pin: '4827', lat: 24.8607, lng: 67.0011 })
-    expect(inn.statusCode).toBe(200)
-    expect(inn.json()).toMatchObject({ action: 'in', location: 'Branch A' })
-    const out = await call('boss', 'POST', '/time-clock/kiosk/punch', { employeeCode: dish.employeeCode, pin: '4827' })
-    expect(out.json()).toMatchObject({ action: 'out' })
-    expect(out.json().attendance.recordId).toBe(inn.json().attendance.recordId)
+    expect((await call('hr', 'POST', `/hr/employees/${dish.id}/kiosk-pin`, { pin: '4827' })).statusCode).toBe(404)
+    expect((await call('hr', 'DELETE', `/hr/employees/${dish.id}/kiosk-pin`)).statusCode).toBe(404)
+    expect((await call('hr', 'GET', `/hr/employees/${dish.id}`)).json()).not.toHaveProperty('kioskPinSet')
+    expect((await call('boss', 'POST', '/time-clock/kiosk/punch', { employeeCode: dish.employeeCode, pin: '4827', lat: 24.8607, lng: 67.0011 })).statusCode).toBe(404)
     await setOps({ geofenceEnforced: false })
   })
 })

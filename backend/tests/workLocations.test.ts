@@ -4,7 +4,7 @@
 //     a work location's radius overrides the company's;
 //   - out of area is NEVER refused: recorded on the ClockLog (company, location, outOfArea) and the day's
 //     attendance, and flagged for HR once per employee per Karachi day while the geofence is on — not when off;
-//   - no location fix while enforced → allowed + flagged; the kiosk punch takes the tablet's lat/lng;
+//   - no location fix while enforced → allowed + flagged; old kiosk punches (route removed 2026-10-27) still read;
 //   - PUT /hr/employees/:id/work-locations: another company's location 422, another company's employee 404,
 //     exactly one primary, the primary is the Branch Location;
 //   - /hr/attendance-tracking: today board and punch log, company-scoped;
@@ -19,7 +19,7 @@ import { hrRoutes } from '../src/modules/hr/routes.js'
 import { timeClockRoutes } from '../src/modules/timeclock/routes.js'
 import { tenantRoutes } from '../src/modules/tenants/routes.js'
 import { enforceClockInPolicy } from '../src/modules/timeclock/policy.js'
-import { setKioskPin } from '../src/modules/hr/kioskPin.js'
+import { recordPunch } from '../src/modules/hr/attendance.js'
 import { pktToday } from '../src/modules/hr/logic.js'
 
 const RUN = Date.now().toString(36)
@@ -81,7 +81,6 @@ beforeAll(async () => {
     await emp(A, k, users[k]!.id)
   }
   await emp(A, 'kiosk')
-  await setKioskPin(emps['kiosk']!, '4827')
   await emp(B, 'bee')
   await setOps(A, { geofenceEnforced: true, geofenceRadiusMetres: 150 })
 
@@ -218,23 +217,25 @@ describe('the punch is measured, never refused', () => {
     expect((await flagsFor(A, emps['nofix']!))[0]!.metadata).toMatchObject({ punches: 1 })
   })
 
-  it('the kiosk punch takes the tablet\'s lat/lng', async () => {
+  it('kiosk PIN clock-in is gone (owner, 2026-10-27); an old kiosk day keeps its punches and verdicts', async () => {
     const code = (await prisma.hrEmployee.findUniqueOrThrow({ where: { id: emps['kiosk']! } })).employeeCode
-    await call(hrA, 'PUT', `/hr/employees/${emps['kiosk']}/work-locations`, { items: [{ locationId: a2, isPrimary: true }] })
-    const inn = await call(kioskA, 'POST', '/time-clock/kiosk/punch', { employeeCode: code, pin: '4827', ...P2 })
-    expect(inn.statusCode).toBe(200)
-    expect(inn.json()).toMatchObject({ action: 'in', location: 'A Two' })
-    expect(inn.json().where).toMatchObject({ locationId: a2, outOfArea: false })
-    // Out from somewhere else: allowed, flagged.
-    const out = await call(kioskA, 'POST', '/time-clock/kiosk/punch', { employeeCode: code, pin: '4827', ...P1 })
-    expect(out.statusCode).toBe(200)
-    expect(out.json()).toMatchObject({ action: 'out' })
-    expect(out.json().where).toMatchObject({ outOfArea: true, flagged: true })
+    expect((await call(kioskA, 'POST', '/time-clock/kiosk/punch', { employeeCode: code, pin: '4827', ...P2 })).statusCode).toBe(404)
+    expect((await call(hrA, 'POST', `/hr/employees/${emps['kiosk']}/kiosk-pin`, { pin: '4827' })).statusCode).toBe(404)
+    // A punch taken at the kiosk before the removal (written as it was then).
+    const at = new Date()
+    await recordPunch({ tenantId: A, employeeId: emps['kiosk']!, kind: 'in', at: new Date(at.getTime() - 60_000), source: 'kiosk', locationId: a2, geofenceMatched: true, outOfArea: false })
+    await recordPunch({
+      tenantId: A, employeeId: emps['kiosk']!, kind: 'out', at, source: 'kiosk', locationId: a2, geofenceMatched: false, outOfArea: true,
+      outOfAreaReason: 'outside', outOfAreaWhere: { distanceM: 9000, location: 'A Two', radiusM: 100 },
+    })
     const day = (await dayRecord(A, emps['kiosk']!))!.data as Record<string, unknown>
+    expect(day['_source']).toBe('kiosk')
     expect(day['_outOfArea']).toBe(true)
     const punches = day['_punches'] as Array<{ type: string; locationId: string; outOfArea?: boolean }>
     expect(punches.map((p) => [p.type, p.locationId, !!p.outOfArea])).toEqual([['in', a2, false], ['out', a2, true]])
-    expect(await flagsFor(A, emps['kiosk']!)).toHaveLength(1)
+    // …and the today board still shows the day.
+    const board = await call(hrA, 'GET', '/hr/attendance-tracking/today')
+    expect((board.json().rows as Array<{ employeeId: string }>).some((x) => x.employeeId === emps['kiosk'])).toBe(true)
   })
 })
 

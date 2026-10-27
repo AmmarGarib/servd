@@ -617,7 +617,7 @@ export async function transferEmployeesToHeadOffice(input: TransferInput, actor:
           basicSalaryCents: e.basicSalaryCents, grossSalaryCents: e.grossSalaryCents, monthlyTaxCents: e.monthlyTaxCents,
           paymentMethod: e.paymentMethod, bankName: e.bankName, iban: e.iban,
           eobiNo: e.eobiNo, sessiNo: e.sessiNo, ntn: e.ntn, photoUrl: e.photoUrl,
-          // The kiosk PIN belongs to the company's branch tablets — not carried.
+          // Retired kiosk PIN column (clock-in removed 2026-10-27) — never carried.
           kioskPinHash: null,
           data: await headOfficeData(tx, hoId, (e.data ?? {}) as Record<string, unknown>, transferredFrom, unitCache),
           createdById: actor.id,

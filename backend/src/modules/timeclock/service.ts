@@ -7,9 +7,10 @@
 // company is the one they are punching for. A login with no employee record
 // (the CEO, an agency user) still punches; it just has no attendance.
 //
-// Staff WITHOUT a login punch at a shared kiosk with their HR employee code
-// and PIN (hr/kioskPin.ts), with the tablet's GPS. Their punch goes straight to
-// attendance (ClockLog is the punch log of logins).
+// Every staff member punches with their OWN login (owner, 2026-10-27: the
+// shared kiosk with an employee code + PIN is removed; floor staff sign in with
+// a WhatsApp code). Old kiosk punches (`_source` 'kiosk') stay on their
+// attendance days and keep counting; the punch report still lists them.
 //
 // Where (owner, 2026-10-15): every punch is measured against the employee's
 // own work locations (policy.ts) and is NEVER refused for where it was taken —
@@ -20,9 +21,8 @@ import type { Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { requireTenantId } from '../../lib/tenantScope.js'
-import { recordPunch, attendanceKeys, closeMissedDays, isMissedClockOut, lastInOf, type PunchEntry, type PunchResult } from '../hr/attendance.js'
-import { verifyKioskPin } from '../hr/kioskPin.js'
-import { getFormat, STANDING_ATTENDANCE, ATTENDANCE_DAY_TAKEN } from '../hr/service.js'
+import { recordPunch, attendanceKeys, closeMissedDays, isMissedClockOut, type PunchEntry, type PunchResult } from '../hr/attendance.js'
+import { getFormat, STANDING_ATTENDANCE } from '../hr/service.js'
 import { pktToday } from '../hr/logic.js'
 import { enforceClockInPolicy, flagOutOfArea, type ClockInVerdict } from './policy.js'
 import { approvalWaiting } from '../approvals/notify.js'
@@ -162,58 +162,6 @@ export async function clockOut(actor: Actor, body: PunchBody = {}, ip?: string) 
   return { clockedOutAt: log.recordedAt, where: whereOut(verdict), attendance: attendanceOut(att) }
 }
 
-/**
- * This employee's day in this company, as the kiosk sees it:
- *   open    an in with no out that is still a shift — the next punch is the out;
- *   missed  an in with no out that isMissedClockOut() calls forgotten;
- *   none    nothing open — the next punch is the in.
- */
-async function openDayState(tenantId: string, employeeId: string, now = new Date()): Promise<'open' | 'missed' | 'none'> {
-  const today = pktToday(now)
-  const k = attendanceKeys((await getFormat(tenantId, 'attendance')).fields)
-  const rows = await prisma.hrRecord.findMany({
-    where: { tenantId, section: 'attendance', employeeId, status: ATTENDANCE_DAY_TAKEN, startDate: { in: [today, new Date(today.getTime() - 86_400_000)] } },
-  })
-  const open = rows.filter((r) => {
-    const d = r.data as Record<string, unknown>
-    return ['clock', 'kiosk'].includes(String(d['_source'])) && !d[k.checkOut] && !d['_missedOut']
-  })
-  if (open.some((r) => !isMissedClockOut(lastInOf(r), now))) return 'open'
-  return open.length ? 'missed' : 'none'
-}
-
-const KIOSK_MISSED_OUT = 'Your last clock-in was never clocked out, so servd clocked you out at 12:00 AM that night and told HR. If you are starting a shift now, punch again to clock in.'
-
-/**
- * A kiosk punch by someone without a login: in if their day is not open, out
- * if it is. The kiosks send no action, so the server decides — and it never
- * turns a refused clock-out into a clock-in (audit HR-R2: the closer's 02:05
- * punch became an in, and every shift after that was booked as the hours
- * between shifts). When the open in is a forgotten clock-out, the punch is
- * taken as the out it most likely is: the day is closed as a missed punch for
- * HR and the person is told to punch again if they are starting a shift. Only
- * when nothing is open is the punch an in.
- */
-export async function kioskPunch(device: Actor, body: PunchBody & { employeeCode: string; pin: string; action?: 'in' | 'out' }, ip?: string) {
-  const tenantId = activeCompany(device)
-  const emp = await verifyKioskPin(tenantId, body.employeeCode, body.pin)
-  if (emp.userId) throw new AppError('HAS_LOGIN', 'You have a servd login — clock in with it instead of the kiosk PIN', 409)
-  const kind = body.action ?? ((await openDayState(tenantId, emp.id)) === 'none' ? 'in' : 'out')
-  // The tablet's GPS (lat/lng in the body) is measured against the
-  // employee's own work locations, for an in and — when it sent a fix — an out.
-  const verdict = await enforceClockInPolicy(tenantId, null, body, { employeeId: emp.id, kind, ip })
-  const at = new Date()
-  const r = await recordPunch({
-    tenantId, employeeId: emp.id, kind, at, source: 'kiosk', actorUserId: device.id,
-    ...verdictCols(verdict), outOfAreaReason: verdict.outOfAreaReason, selfieUrl: body.selfieUrl ?? null, ...holdCols(verdict, body),
-  })
-  heldNotice(r, null)
-  if (kind === 'out' && r.skipped === 'no_open_day') throw new AppError('NOT_CLOCKED_IN', 'You are not clocked in today', 409)
-  if (kind === 'out' && r.skipped === 'missed_out') throw new AppError('MISSED_CLOCK_OUT', KIOSK_MISSED_OUT, 409, { recordId: r.recordId })
-  if (r.recordId) await flagOutOfArea({ tenantId, employeeId: emp.id, userId: null, name: emp.fullName, kind, at, verdict })
-  return { employee: { id: emp.id, fullName: emp.fullName, employeeCode: emp.employeeCode }, action: kind, at, attendance: attendanceOut(r), location: verdict.locationName ?? null, where: whereOut(verdict) }
-}
-
 /** The person's reason for their own out-of-area day waiting for the HOD (POST /time-clock/hold-reason). */
 export async function setHoldReason(actor: Actor, recordId: string, reason: string) {
   const tenantId = activeCompany(actor)
@@ -249,8 +197,8 @@ export interface PunchRow {
 /**
  * Every punch on a Karachi calendar day in these companies, one row per
  * person, with the attendance record it produced beside it. Login punches
- * come from ClockLog (selfie and geofence verdict included); kiosk punches
- * from the attendance record. A login's punch belongs to the company stamped
+ * come from ClockLog (selfie and geofence verdict included); old kiosk punches
+ * (before 2026-10-27) from the attendance record. A login's punch belongs to the company stamped
  * on it (ClockLog.tenantId); a legacy row with no company falls back to the
  * people who belong to the company.
  */
@@ -289,7 +237,7 @@ export async function punchReport(tenantIds: string[], day: string): Promise<Pun
     if (r.employee.userId) userToKey.set(r.employee.userId, key)
     rows.set(key, {
       key, name: r.employee.fullName, employeeId: r.employee.id, employeeCode: r.employee.employeeCode, userId: r.employee.userId, role: null,
-      // Kiosk punches live only here; login punches are listed from ClockLog.
+      // Old kiosk punches (removed 2026-10-27) live only here; login punches are listed from ClockLog.
       punches: ((d['_punches'] as PunchEntry[] | undefined) ?? []).filter((p) => p.source === 'kiosk'),
       attendance: { id: r.id, status: r.category, lateMinutes: r.quantity, checkIn: d[k.checkIn] ?? null, checkOut: d[k.checkOut] ?? null, source: d['_source'] ?? 'hr' },
     })
