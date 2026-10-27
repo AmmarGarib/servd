@@ -77,6 +77,9 @@ beforeAll(async () => {
   // The suite tests the loyalty engine itself, so it runs with loyalty ON; the pause has its
   // own test (tests/loyaltyPause.test.ts), which switches it off again.
   await prisma.setting.upsert({ where: { key: 'loyalty.paused' }, create: { key: 'loyalty.paused', value: '{"paused":false}' }, update: { value: '{"paused":false}' } })
+  // Customer ordering is OFF on live until the owner opens it (lib/onlineOrdering.ts; absent = off). The suite tests
+  // ordering, so it runs with ordering ON; the switch has its own test (tests/onlineOrderingSwitch.test.ts).
+  await prisma.setting.upsert({ where: { key: 'ordering.online' }, create: { key: 'ordering.online', value: '{"on":true}' }, update: { value: '{"on":true}' } })
 
   // TEST_RLS: policies on, app role granted (after every object above exists).
   if (RLS_MODE) await applyRlsMode(prisma)

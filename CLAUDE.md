@@ -1622,7 +1622,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
 - **Fixed assets v2:** classes per company; 1500–1599 and 2012 are
   `controlledBy 'fixed_asset'` (only `fixed_asset.*` / `capex.*` sources post
   there). Bought assets come in through CapEx capitalisation — the CEO approves
-  every one, Quick buys included. **Existing assets (owner, 2026-10-21: "It
+  every one, Quick buys included. **Quick buy "Paid from" (owner, 2026-10-27: "book the asset through liability
+  directly (e.g. Paid through Due to Garibsons)")** = bank | cash | `garibsons` (an instalment with
+  `CapexPayment.source 'garibsons'`, Dr 1340 / Cr 2210 — never a money account, no WHT, not a payment in the register,
+  reference optional) | `credit` (supplier required — 422 `SUPPLIER_REQUIRED` / `SUPPLIER_NOT_IN_COMPANY`; no payment,
+  the CEO's approval books Dr class cost / Cr 2012), all through `recordEquipmentPurchaseTx`. **Existing assets (owner, 2026-10-21: "It
   only showing buy equipment, give an option to add asset also, so we can add
   previously bought / Transferred from related party assets" — REVERSES "no
   opening / pre-servd assets"):** `POST /accounting/fixed-assets/existing`

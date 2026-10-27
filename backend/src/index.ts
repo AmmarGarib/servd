@@ -129,6 +129,7 @@ import { receivableRoutes } from './modules/receivables/routes.js'
 import { foodSafetyRoutes } from './modules/foodSafety/routes.js'
 import { hrRoutes } from './modules/hr/routes.js'
 import { loyaltyRoutes } from './modules/loyalty/routes.js'
+import { orderingSwitchRoutes } from './modules/storefront/orderingSwitchRoutes.js'
 import { storefrontRoutes } from './modules/storefront/routes.js'
 import { webhookRoutes, webhookManagementRoutes } from './modules/webhooks/routes.js'
 import { reviewRoutes } from './modules/reviews/routes.js'
@@ -496,6 +497,7 @@ async function build() {
       await api.register(crmRoutes, { prefix: '/crm' })
       await api.register(waitlistRoutes, { prefix: '/waitlist' })
       await api.register(loyaltyRoutes, { prefix: '/loyalty' })
+      await api.register(orderingSwitchRoutes, { prefix: '/ordering-switch' }) // customer ordering on/off, CEO (owner 2026-10-27)
       await api.register(storefrontRoutes, { prefix: '/storefront' })
       // A banned customer's own view of their blocks + appeals (resumed 2026-10-15).
       await api.register(banAppealRoutes, { prefix: '/storefront' })

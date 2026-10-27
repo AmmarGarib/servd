@@ -6,6 +6,7 @@ import { api } from '../../../lib/api'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { useAuthStore } from '../../../store/auth'
 
 interface Concept { id: string; name: string; slug: string }
 interface ServiceHour {
@@ -58,6 +59,48 @@ function windowProblems(windows: Window[]): Record<number, string> {
 const DEFAULT_OPEN = 11 * 60
 const DEFAULT_CLOSE = 23 * 60
 const DEFAULT_WINDOW: Window = { openMin: DEFAULT_OPEN, closeMin: DEFAULT_CLOSE, isReservable: true }
+
+interface OnlineOrdering { on: boolean; reason: string | null; updatedAt: string | null }
+
+/** The CEO's servd-wide switch for customer ordering (owner, 2026-10-27; PUT /ordering-switch). */
+function OrderingSwitchPanel() {
+  const qc = useQueryClient()
+  const isCeo = useAuthStore((s) => s.isRole('admin'))
+  const [reason, setReason] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const { data } = useQuery<OnlineOrdering>({ queryKey: ['ordering-switch'], queryFn: () => api.get<OnlineOrdering>('/ordering-switch') })
+  const flip = useMutation({
+    mutationFn: () => api.put('/ordering-switch', { on: !data?.on, reason }),
+    onSuccess: () => { setReason(''); setErr(null); qc.invalidateQueries({ queryKey: ['ordering-switch'] }) },
+    onError: (e: Error) => setErr(e.message),
+  })
+  if (!data) return null
+  return (
+    <section className="rounded-2xl border p-6 space-y-3" style={{ borderColor: data.on ? 'var(--border)' : 'var(--erp-warning)', background: 'var(--surface)' }}>
+      <h2 className="text-lg font-bold">{data.on ? 'Customers can order online' : 'Online ordering is off for every brand'}</h2>
+      <p className="text-sm text-s-muted max-w-2xl">
+        {data.on
+          ? 'The website, group orders and WhatsApp take orders during each brand\'s hours below.'
+          : 'The website, group orders and WhatsApp take no orders at any brand, whatever the hours below. Menus, brand pages and table bookings stay up; the till is not affected.'}
+        {data.reason ? ` Reason: ${data.reason}.` : ''}
+      </p>
+      {isCeo ? (
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block flex-1 min-w-[220px]">
+            <span className="block text-xs font-bold text-s-muted mb-1">Reason (at least 10 characters)</span>
+            <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300}
+              className="w-full rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm" />
+          </label>
+          <button type="button" disabled={reason.trim().length < 10 || flip.isPending} onClick={() => flip.mutate()}
+            className="rounded-lg px-4 py-2 text-sm font-black disabled:opacity-50" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
+            {flip.isPending ? 'Saving…' : data.on ? 'Switch ordering off' : 'Switch ordering on'}
+          </button>
+        </div>
+      ) : <p className="text-xs text-s-muted">Only the CEO switches online ordering on or off.</p>}
+      {err && <p className="text-xs" style={{ color: 'var(--erp-danger)' }}>{err}</p>}
+    </section>
+  )
+}
 
 export default function HoursPage() {
   const qc = useQueryClient()
@@ -144,6 +187,7 @@ export default function HoursPage() {
       </header>
 
       <div className="px-7 py-7 max-w-3xl mx-auto space-y-6">
+        <OrderingSwitchPanel />
         {concepts.length === 0 ? (
           <div className="rounded-2xl p-10 text-center"
             style={{ background: 'color-mix(in srgb, var(--erp-warning) 5%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 20%, transparent)' }}>

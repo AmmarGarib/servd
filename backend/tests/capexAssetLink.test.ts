@@ -12,6 +12,9 @@
 //   • H26: an architect's fee on a build-out is capital; a broker's is 6110.
 //   • H25 deposits: 1360, returned / kept; a legacy 1310 deposit reclassed.
 //   • Quick buy: bank only, one transaction, every id of the active company.
+//   • Quick buy through a liability (owner, 2026-10-27): Garibsons paid → Dr 1340 /
+//     Cr 2210 (no money account, no WHT, not a payment); on credit → no payment,
+//     the CEO's approval books Dr class cost / Cr 2012.
 //   • A delivery month already closed: the capitalisation posts late and the
 //     depreciation catches up.
 //   • The cash seam (petty cash / cash requests): Dr 1340 / Cr 1011 | 1355.
@@ -34,6 +37,7 @@ import { applyEvent } from '../src/modules/fixedAssets/events.js'
 import { chargeThrough } from '../src/modules/fixedAssets/service.js'
 import { addMonths, currentPeriodPkt, lastCompletedPeriodPkt, lastDayPkt } from '../src/modules/fixedAssets/schedule.js'
 import { postJournalEntry } from '../src/modules/accounting/journal.js'
+import { isPaymentEntry } from '../src/modules/accounting/paymentsRegister.js'
 
 const RUN = Math.random().toString(36).slice(2, 8)
 let app: FastifyInstance
@@ -501,6 +505,79 @@ describe('Quick buy (bank only, one transaction)', () => {
     expect(ok.statusCode, ok.body).toBe(201)
     expect(amt((await entry(`capex.payment:${ok.json().paymentId}`))!.rows, '1021', 'credit')).toBe(50_000)
     expect((await prisma.capexProject.findUniqueOrThrow({ where: { id: ok.json().projectId } })).tenantId).toBe(tenantC)
+  })
+})
+
+describe('Quick buy through a liability (owner, 2026-10-27)', () => {
+  let base: { locationId: string; item: string; classKey: string; quantity: number; unitCostCents: number; paidAt: string }
+  beforeAll(() => { base = { locationId: locA2, item: 'Dough sheeter', classKey: 'kitchen_equipment', quantity: 1, unitCostCents: 300_000, paidAt: PAID } })
+
+  it('paid by Garibsons: Dr 1340 / Cr 2210 in the purchase\'s company, no money account, no WHT, not a payment; the CEO moves it to the class cost', async () => {
+    await withholdingOn(tenantA, true)
+    try {
+      expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, payFrom: 'garibsons', bankAccountId: bank.a })).json().error.code).toBe('BANK_NOT_NEEDED')
+      expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, payFrom: 'garibsons', whtOverrideCents: 1_000, whtOverrideReason: 'certificate' })).json().error.code).toBe('WHT_NOT_WITHHELD_HERE')
+      const r = await call('finA', 'POST', '/finance/capex/quick-buy', {
+        ...base, payFrom: 'garibsons', supplierId: supA, paymentRef: 'GB-771', classification: 'official', taxStatus: 'not_applicable',
+      })
+      expect(r.statusCode, r.body).toBe(201)
+      const body = r.json()
+      expect(body.capitalisation).toMatchObject({ status: 'pending', applied: false })
+      const pay = await prisma.capexPayment.findUniqueOrThrow({ where: { id: body.paymentId } })
+      expect(pay).toMatchObject({ source: 'garibsons', bankAccountId: null, paymentRef: 'GB-771' })
+      expect(Number(pay.whtCents)).toBe(0)
+      const je = await entry(`capex.payment:${body.paymentId}`)
+      expect(je!.tenantId).toBe(tenantA)
+      expect(amt(je!.rows, '1340', 'debit')).toBe(300_000)
+      expect(amt(je!.rows, '2210', 'credit')).toBe(300_000)
+      expect(je!.rows.some((x) => ['1010', '1011', '1020', '2040'].includes(x.code))).toBe(false)
+      // Not a payment out of the company's money: never in the register, never classified.
+      expect(await isPaymentEntry(prisma, tenantA, je!.id)).toBe(false)
+      expect(await prisma.paymentClassification.count({ where: { journalEntryId: je!.id } })).toBe(0)
+      // A re-sync (PATCH of the instalment) never moves it to a bank or cash.
+      expect((await call('finA', 'PATCH', `/finance/capex/payments/${body.paymentId}`, { payFrom: 'cash' })).json().error.code).toBe('PAID_BY_GARIBSONS')
+      // The CEO approves → asset at cost against the 1340 advance.
+      await applyEvent(body.capitalisation.eventId, staff.ceoA!.id)
+      const asset = await prisma.fixedAsset.findFirstOrThrow({ where: { capexLineId: body.lineId } })
+      expect(asset).toMatchObject({ tenantId: tenantA, locationId: locA2, costCents: 300_000 })
+      const acq = (await entry(`fixed_asset.acquire:${asset.id}`))!.rows
+      expect(amt(acq, '1340', 'credit')).toBe(300_000)
+      expect(amt(acq, '2012', 'credit')).toBe(0)
+    } finally {
+      await withholdingOn(tenantA, false)
+    }
+  })
+
+  it('on credit from the supplier: no payment and nothing posts; the CEO\'s approval books Dr class cost / Cr 2012', async () => {
+    expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, payFrom: 'credit' })).json().error.code).toBe('SUPPLIER_REQUIRED')
+    expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, payFrom: 'credit', supplierId: supB })).json().error.code).toBe('SUPPLIER_NOT_IN_COMPANY')
+    expect((await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, payFrom: 'credit', supplierId: supA, bankAccountId: bank.a })).json().error.code).toBe('BANK_NOT_NEEDED')
+    const journalsBefore = await prisma.journalEntry.count({ where: { tenantId: tenantA } })
+    const r = await call('finA', 'POST', '/finance/capex/quick-buy', { ...base, item: 'Proofer', payFrom: 'credit', supplierId: supA })
+    expect(r.statusCode, r.body).toBe(201)
+    const body = r.json()
+    expect(body.paymentId).toBeNull()
+    expect(body.capitalisation).toMatchObject({ status: 'pending' })
+    expect(await prisma.capexPayment.count({ where: { lineId: body.lineId } })).toBe(0)
+    expect(await prisma.journalEntry.count({ where: { tenantId: tenantA } })).toBe(journalsBefore)
+    expect(await prisma.capexLine.findUniqueOrThrow({ where: { id: body.lineId } })).toMatchObject({ supplierId: supA, status: 'delivered' })
+    await applyEvent(body.capitalisation.eventId, staff.ceoA!.id)
+    const asset = await prisma.fixedAsset.findFirstOrThrow({ where: { capexLineId: body.lineId } })
+    const acq = (await entry(`fixed_asset.acquire:${asset.id}`))!.rows
+    expect(amt(acq, '2012', 'credit')).toBe(300_000)
+    expect(amt(acq, '1340', 'credit')).toBe(0)
+    expect(acq.some((x) => x.type === 'debit' && x.amount === 300_000)).toBe(true)
+  })
+
+  it('two companies: B buys through Garibsons in B only; A\'s outlet and supplier are refused', async () => {
+    expect((await call('finB', 'POST', '/finance/capex/quick-buy', { ...base, payFrom: 'garibsons' })).json().error.code).toBe('LOCATION_NOT_IN_COMPANY')
+    expect((await call('finB', 'POST', '/finance/capex/quick-buy', { ...base, locationId: locB, payFrom: 'credit', supplierId: supA })).json().error.code).toBe('SUPPLIER_NOT_IN_COMPANY')
+    const r = await call('finB', 'POST', '/finance/capex/quick-buy', { ...base, locationId: locB, payFrom: 'garibsons' })
+    expect(r.statusCode, r.body).toBe(201)
+    const je = await entry(`capex.payment:${r.json().paymentId}`)
+    expect(je!.tenantId).toBe(tenantB)
+    expect(amt(je!.rows, '2210', 'credit')).toBe(300_000)
+    expect((await prisma.capexProject.findUniqueOrThrow({ where: { id: r.json().projectId } })).tenantId).toBe(tenantB)
   })
 })
 

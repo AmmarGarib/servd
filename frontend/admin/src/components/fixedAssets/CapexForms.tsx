@@ -419,8 +419,15 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
 
 // ─── Quick buy ──────────────────────────────────────────────────────────────
 
+type QuickBuyPayFrom = 'bank' | 'cash' | 'garibsons' | 'credit'
+const PAY_FROM_NOTE: Record<Exclude<QuickBuyPayFrom, 'bank'>, string> = {
+  cash: 'Paid from the cash on hand (1010).',
+  garibsons: 'Garibsons paid the supplier: booked to Due to Garibsons (2210). No company money moves.',
+  credit: 'Nothing is paid now: the supplier is owed (2012) once the CEO approves, and paid later from the project tracker.',
+}
+
 interface QuickBuyResponse {
-  projectId: string; lineId: string; paymentId: string; eventId: string | null
+  projectId: string; lineId: string; paymentId: string | null; eventId: string | null
   capitalisation: null | { eventId: string; status: 'posted' | 'pending'; applied: boolean; assetIds: string[]; error: { code: string; message: string } | null }
 }
 
@@ -439,8 +446,9 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
   const [supplierId, setSupplierId] = useState('')
   const [paidAt, setPaidAt] = useState(todayIso())
   const [bankId, setBankId] = useState('')
-  // Bank or cash on hand (owner, 2026-10-21: "Add cash option to Quick buy").
-  const [payFrom, setPayFrom] = useState<'bank' | 'cash'>('bank')
+  // Bank or cash on hand (owner, 2026-10-21: "Add cash option to Quick buy"); or booked through a liability
+  // (owner, 2026-10-27): Garibsons paid it (Due to Garibsons, 2210), or owed to the supplier (on credit).
+  const [payFrom, setPayFrom] = useState<QuickBuyPayFrom>('bank')
   const [ref, setRef] = useState('')
   const [tax, setTax] = useState(0)
   const [authority, setAuthority] = useState('')
@@ -464,6 +472,8 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
   const total = unitCost * qty
   const wht = preview({ grossCents: total, inputTaxCents: tax, section: section || undefined, supplier, paidOn: paidAt, treatment: 'capital' })
   const banksHere = (L0?.bankAccounts ?? []).filter((b) => b.accountCode)
+  // Garibsons / credit move none of the company's money: no withholding here, no payment classification.
+  const viaLiability = payFrom === 'garibsons' || payFrom === 'credit'
 
   const send = useMutation({
     mutationFn: () => api.post<QuickBuyResponse>('/finance/capex/quick-buy', {
@@ -478,16 +488,16 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
       paidAt,
       payFrom,
       ...(payFrom === 'bank' && bankId ? { bankAccountId: bankId } : {}),
-      ...(ref.trim() ? { paymentRef: ref.trim() } : {}),
+      ...(payFrom !== 'credit' && ref.trim() ? { paymentRef: ref.trim() } : {}),
       inputTaxCents: tax,
       ...(tax > 0 && authority ? { inputTaxAuthority: authority } : {}),
-      ...(section ? { whtSection: section } : {}),
-      ...(override ? { whtOverrideCents: overrideCents, whtOverrideReason: overrideReason.trim() } : {}),
+      ...(section && !viaLiability ? { whtSection: section } : {}),
+      ...(override && !viaLiability ? { whtOverrideCents: overrideCents, whtOverrideReason: overrideReason.trim() } : {}),
       ...(life ? { usefulLifeMonths: Number(life) } : {}),
       ...(salvage > 0 ? { salvageCents: salvage } : {}),
       ...(warranty ? { warrantyMonths: Number(warranty) } : {}),
       ...(notes.trim() ? { notes: notes.trim() } : {}),
-      ...paymentClassificationBody(payCls),
+      ...(viaLiability ? {} : paymentClassificationBody(payCls)),
     }),
     onSuccess: onDone,
   })
@@ -502,10 +512,11 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
   if (unitCost <= 0) problems.push(['qb-cost', 'Enter the unit cost.'])
   if (!paidAt || paidAt < bounds.min || paidAt > todayIso()) problems.push(['qb-paid', 'Pick the day it was paid (not in the future).'])
   if (payFrom === 'bank' && banksHere.length > 1 && !bankId) problems.push(['quickbuy-bank', 'Pick the bank it was paid from.'])
+  if (payFrom === 'credit' && !supplierId) problems.push(['qb-supplier', 'Pick the supplier it is bought on credit from.'])
   if (tax > 0 && !authority) problems.push(['qb-auth', 'Pick the authority that charged the sales tax.'])
   if (tax > 0 && tax >= total) problems.push(['qb-tax', 'The sales tax must be less than the total.'])
-  if (override && !(overrideReason.trim().length >= 5 && overrideCents < total)) problems.push(['qb-why', 'Your own withholding figure needs a reason (5 characters or more) and must be below the total.'])
-  if (paymentClassificationError(payCls)) problems.push(['qb-cls', paymentClassificationError(payCls)!])
+  if (override && !viaLiability && !(overrideReason.trim().length >= 5 && overrideCents < total)) problems.push(['qb-why', 'Your own withholding figure needs a reason (5 characters or more) and must be below the total.'])
+  if (!viaLiability && paymentClassificationError(payCls)) problems.push(['qb-cls', paymentClassificationError(payCls)!])
   const [problem, setProblem] = useState<string | null>(null)
   const submitBuy = (e: React.FormEvent) => {
     e.preventDefault()
@@ -523,7 +534,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
       {L0 && (
         <form onSubmit={submitBuy} noValidate className="space-y-3">
           <p className="text-xs text-white/55">
-            Records a purchase made today: it is paid from a bank account or the cash on hand, and the equipment is prepared for the fixed-asset register in the same step.
+            Records a purchase made today: paid from a bank account or the cash on hand, paid by Garibsons, or owed to the supplier. The equipment is prepared for the fixed-asset register in the same step.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -557,23 +568,29 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
             )}
             <L t="Quantity"><NumberField id="qb-qty" min={1} max={100000} className={inp} value={asNum(quantity)} onValueChange={(n) => setQuantity(fromNum(n))} /></L>
             <L t="Unit cost, sales tax included (PKR)"><MoneyInput id="qb-cost" value={unitCost} onChange={setUnitCost} className={inp} /></L>
-            <L t="Supplier">
-              <Select className={inp} value={supplierId} onChange={(e) => { setSupplierId(e.target.value); const s = L0.lookups.suppliers.find((x) => x.id === e.target.value); if (s?.defaultTaxAuthority && !authority) setAuthority(s.defaultTaxAuthority) }}>
-                <option value="">No supplier on file</option>
+            <L t={payFrom === 'credit' ? 'Supplier (required on credit)' : 'Supplier'}>
+              <Select id="qb-supplier" className={inp} value={supplierId} onChange={(e) => { setSupplierId(e.target.value); const s = L0.lookups.suppliers.find((x) => x.id === e.target.value); if (s?.defaultTaxAuthority && !authority) setAuthority(s.defaultTaxAuthority) }}>
+                <option value="">{payFrom === 'credit' ? 'Pick the supplier' : 'No supplier on file'}</option>
                 {L0.lookups.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
               </Select>
             </L>
-            <L t="Paid on"><input id="qb-paid" type="date" min={bounds.min} className={inp} value={paidAt} max={todayIso()} onChange={(e) => setPaidAt(e.target.value)} /></L>
+            <L t={payFrom === 'credit' ? 'Bought on' : 'Paid on'}><input id="qb-paid" type="date" min={bounds.min} className={inp} value={paidAt} max={todayIso()} onChange={(e) => setPaidAt(e.target.value)} /></L>
             <L t="Paid from">
-              <Select id="qb-payfrom" className={inp} value={payFrom} onChange={(e) => setPayFrom(e.target.value as 'bank' | 'cash')}>
+              <Select id="qb-payfrom" className={inp} value={payFrom} onChange={(e) => setPayFrom(e.target.value as QuickBuyPayFrom)}>
                 <option value="bank">Bank</option>
                 <option value="cash">Cash on hand</option>
+                <option value="garibsons">Due to Garibsons (paid by Garibsons)</option>
+                <option value="credit">On credit from the supplier</option>
               </Select>
             </L>
             {payFrom === 'bank'
               ? <BankAccountSelect tenantId={L0.tenantId} value={bankId} onChange={setBankId} id="quickbuy-bank" label="Bank account" className={inp} />
-              : <p className="text-[11px] text-white/45 self-end pb-2">Paid from the cash on hand (1010).</p>}
-            <L t="Payment reference"><input className={inp} value={ref} onChange={(e) => setRef(e.target.value)} placeholder={payFrom === 'cash' ? 'Receipt number' : 'Cheque or transfer number'} /></L>
+              : <p className="text-[11px] text-white/45 self-end pb-2">{PAY_FROM_NOTE[payFrom]}</p>}
+            {payFrom !== 'credit' && (
+              <L t={payFrom === 'garibsons' ? 'Garibsons voucher no., if any' : 'Payment reference'}>
+                <input className={inp} value={ref} onChange={(e) => setRef(e.target.value)} placeholder={payFrom === 'cash' ? 'Receipt number' : payFrom === 'garibsons' ? 'Optional' : 'Cheque or transfer number'} />
+              </L>
+            )}
           </div>
 
           {!cls?.pooled && <p className="text-[11px] text-white/45">Equipment is booked to the outlet and shared across brands. Smallwares can be given to a brand.</p>}
@@ -586,6 +603,13 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
                 {L0.taxAuthorities.map((a) => <option key={a} value={a}>{AUTHORITY_LABEL[a] ?? a.toUpperCase()}</option>)}
               </Select>
             </L>
+            {viaLiability ? (
+              <p className="text-[11px] text-white/45 sm:col-span-2">
+                {payFrom === 'credit'
+                  ? 'No income tax is withheld now: it is taken when the supplier is paid.'
+                  : 'No income tax is withheld here: Garibsons paid the supplier.'}
+              </p>
+            ) : (<>
             <L t="Income tax withholding">
               <Select className={inp} value={section} onChange={(e) => setSection(e.target.value)}>
                 <option value="">Automatic (the supplier&rsquo;s default)</option>
@@ -596,15 +620,16 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
               <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
               Use my own withholding figure
             </label>
+            </>)}
           </div>
-          {override && (
+          {override && !viaLiability && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <L t="Income tax withheld (PKR)"><MoneyInput value={overrideCents} onChange={setOverrideCents} className={inp} /></L>
               <L t="Why (at least 5 characters)"><input id="qb-why" className={inp} value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)} placeholder="Certificate not on file yet" /></L>
             </div>
           )}
-          <ExemptionLine supplier={supplier} />
-          {total > 0 && <WhtPreview result={wht} grossCents={total} override={override ? overrideCents : null} />}
+          {!viaLiability && <ExemptionLine supplier={supplier} />}
+          {!viaLiability && total > 0 && <WhtPreview result={wht} grossCents={total} override={override ? overrideCents : null} />}
 
           <details className="rounded-xl p-3" style={{ border: '1px solid rgb(var(--fg-rgb) / 0.07)' }}>
             <summary className="text-sm font-bold text-white/70 cursor-pointer">More details (life, salvage value, warranty, notes)</summary>
@@ -618,11 +643,14 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
             </div>
           </details>
 
-          <div id="qb-cls"><PaymentClassificationFields value={payCls} onChange={setPayCls} compact /></div>
+          {!viaLiability && <div id="qb-cls"><PaymentClassificationFields value={payCls} onChange={setPayCls} compact /></div>}
           {problem && <p role="alert" className="text-xs font-bold text-s-red">{problem}</p>}
           <ErrorLine error={send.error} />
           <div className="flex flex-wrap gap-2 pt-1">
-            <button type="submit" disabled={send.isPending} className={btnPrimary}>{send.isPending ? 'Recording…' : `Pay ${money(total - (override ? overrideCents : wht.whtCents))} and prepare for the register`}</button>
+            <button type="submit" disabled={send.isPending} className={btnPrimary}>{send.isPending ? 'Recording…'
+              : payFrom === 'garibsons' ? `Record ${money(total)} paid by Garibsons and prepare for the register`
+              : payFrom === 'credit' ? `Record ${money(total)} owed to the supplier and prepare for the register`
+              : `Pay ${money(total - (override ? overrideCents : wht.whtCents))} and prepare for the register`}</button>
             <button type="button" onClick={onClose} className={btnGhost}>Cancel</button>
           </div>
         </form>
@@ -634,6 +662,13 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
 /** What happened after a Quick buy, in words. */
 export function quickBuyMessage(r: QuickBuyResponse, isCeo: boolean): { tone: 'ok' | 'wait' | 'bad'; text: string } {
   const c = r.capitalisation
+  if (r.paymentId === null) {
+    // On credit from the supplier: nothing paid yet.
+    if (!c) return { tone: 'wait', text: 'Bought on credit. It is not on the fixed-asset register yet: finance prepares it from the item in the Project tracker.' }
+    if (c.error) return { tone: 'bad', text: `Bought on credit, but putting it on the register was refused: ${c.error.message} It stays waiting in the approvals inbox.` }
+    if (c.status === 'posted') return { tone: 'ok', text: 'Bought on credit and put on the fixed-asset register. The supplier is owed until paid.' }
+    return { tone: 'wait', text: isCeo ? 'Bought on credit. Approve the capitalisation in Fixed assets, Requests.' : 'Bought on credit. The capitalisation is awaiting the CEO.' }
+  }
   if (!c) return { tone: 'wait', text: 'Bought and paid. It is not on the fixed-asset register yet: finance prepares it from the item in the Project tracker.' }
   if (c.error) return { tone: 'bad', text: `Bought and paid, but putting it on the register was refused: ${c.error.message} It stays waiting in the approvals inbox.` }
   if (c.status === 'posted') return { tone: 'ok', text: 'Bought, paid and put on the fixed-asset register.' }

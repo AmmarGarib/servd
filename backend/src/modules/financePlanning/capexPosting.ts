@@ -48,6 +48,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { ACCT, lateDatingFor, withLateNote, type JournalLineInput } from '../accounting/journal.js'
 import { syncSourcePosting, liveRevision, type LiveRevision, type SyncOutcome } from '../accounting/sourcePosting.js'
 import { inputTaxCodeFor, isAuthorityKey, INPUT_TAX_ACCOUNTS } from '../accounting/taxAuthorities.js'
+import { FUNDING_ACCOUNT } from '../accounting/pettyCashPosting.js'
 import { computeWithholding, defaultSectionForCapex, whtSectionOrNull, type WhtSection } from '../../lib/withholding.js'
 import { assertMoneyFits, toCents } from '../../lib/money.js'
 import { moneyAccountCode, assertPaymentReference, receiptText } from '../../lib/bankAccounts.js'
@@ -71,6 +72,8 @@ export const CAPITAL_PAYABLES = ACCT.CAPITAL_PAYABLES         // 2012
 const LEGACY_PAYABLES = ACCT.AP_SUPPLIERS                     // 2010
 const WHT_PAYABLE = ACCT.WHT_PAYABLE                          // 2040
 const RENT = ACCT.RENT                                        // 6010
+/** CapexPayment.source of an instalment Garibsons paid: credited to 2210 Due to Garibsons, never a money account. */
+export const GARIBSONS_SOURCE = 'garibsons'
 
 export const CAPEX_TREATMENTS = ['capital', 'prepaid', 'deposit', 'expense'] as const
 export type CapexTreatment = (typeof CAPEX_TREATMENTS)[number]
@@ -368,8 +371,12 @@ export async function syncCapexPaymentPosting(
   const creditConceptId = fromCash
     ? (live?.lines.find((l) => l.type === 'credit' && l.accountCode !== WHT_PAYABLE)?.conceptId ?? null)
     : null
+  const fromGaribsons = p.source === GARIBSONS_SOURCE
   let creditCode: string
-  if (fromCash) {
+  if (fromGaribsons) {
+    // Garibsons paid the supplier: always 2210 Due to Garibsons (the petty-cash H1 funding account), whatever the call names.
+    creditCode = FUNDING_ACCOUNT.garibsons
+  } else if (fromCash) {
     if (!liveMoney) throw new AppError('CASH_PAYMENT_UNPOSTED', 'This instalment was paid from petty cash but has no entry on the books — post it from the cash request', 422)
     creditCode = liveMoney
   } else if (!namesMoney && liveMoney) {
@@ -394,7 +401,7 @@ export async function syncCapexPaymentPosting(
   // Withholding (never on a deposit, never on cash-request money).
   let wht = 0
   const snapshot: Prisma.CapexPaymentUpdateInput = {}
-  if (treatment !== 'deposit' && !fromCash) {
+  if (treatment !== 'deposit' && !fromCash && !fromGaribsons) {
     const base = amount - (treatment === 'capital' ? inputTaxShare(amount, line) : inputShare)
     if (p.whtOverrideReason) {
       wht = toCents(p.whtCents)
@@ -754,6 +761,14 @@ export type EquipmentPurchasePay =
    * supplier is later paid through the line's own CapEx payment (Dr 2012 / Cr the money).
    */
   | { kind: 'credit' }
+  /**
+   * Paid by Garibsons (owner, 2026-10-27: "book the asset through liability directly, e.g. Paid through Due to
+   * Garibsons"): a paid instalment (source 'garibsons') posted Dr 1340 / Cr 2210 Due to Garibsons in the purchase's
+   * company — the same account a Garibsons petty-cash top-up and a Garibsons-funded existing asset credit. No money
+   * account moves (so it is not a payment in the payments register) and nothing is withheld (Garibsons paid the
+   * supplier). The CEO's capitalisation then moves 1340 to the class cost, as for any advance.
+   */
+  | { kind: 'garibsons'; paymentRef?: string | null; notes?: string | null }
 
 /**
  * Equipment bought and paid on the day — Quick buy's engine (POST
@@ -832,6 +847,17 @@ export async function recordEquipmentPurchaseTx(tx: Tx, a: {
       },
     })
     ledger = await syncCapexPaymentPosting(payment.id, { tx, postedBy: a.postedBy, payFrom: a.pay.payFrom, bankAccountId: a.pay.payFrom === 'bank' ? a.pay.bankAccountId : null })
+    paymentId = payment.id
+    entryId = ledger.entryId
+  } else if (a.pay.kind === 'garibsons') {
+    const payment = await tx.capexPayment.create({
+      data: {
+        lineId: line.id, label: 'balance', amountCents: total, paidAmountCents: total, paidAt: a.paidAt,
+        paymentRef: a.pay.paymentRef ?? null, bankAccountId: null, notes: a.pay.notes ?? null,
+        source: GARIBSONS_SOURCE, whtCents: 0, whtRateBps: 0,
+      },
+    })
+    ledger = await syncCapexPaymentPosting(payment.id, { tx, postedBy: a.postedBy })
     paymentId = payment.id
     entryId = ledger.entryId
   } else if (a.pay.kind === 'cash_document') {

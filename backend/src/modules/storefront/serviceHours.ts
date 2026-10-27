@@ -23,6 +23,7 @@
 // form, online ordering follows the opening hours only; the pure helpers below
 // still take closures for when it exists.
 
+import { isOnlineOrderingOn } from '../../lib/onlineOrdering.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { formatBrandName } from '../../lib/brandName.js'
@@ -135,6 +136,10 @@ function opensAtPhrase(opensAt: Date, at: Date): string {
 
 /** Whether a brand takes orders for `at` (now, or a scheduled time), in PKT. */
 export async function orderingState(concept: { id: string; name: string }, at: Date): Promise<OrderingState> {
+  // Customer ordering switched off servd-wide (lib/onlineOrdering.ts; owner, 2026-10-27) — every brand closed.
+  if (!(await isOnlineOrderingOn())) {
+    return { open: false, opensAt: null, message: `${formatBrandName(concept.name)} isn't taking orders online yet.` }
+  }
   const hours = await prisma.serviceHours.findMany({
     where: { conceptId: concept.id },
     select: { dayOfWeek: true, openMin: true, closeMin: true },

@@ -25,7 +25,7 @@ import { audit } from '../../lib/audit.js'
 import {
   syncCapexPaymentPosting, capexLedgerState, capexTreatmentOf, recalcLinePaid, assertPaymentRemovable,
   prepareCapitalisation, checkCapitalisable, insertCapitaliseRequestTx, recordDepositReturn, reclassLegacyDeposit,
-  recordEquipmentPurchaseTx,
+  recordEquipmentPurchaseTx, GARIBSONS_SOURCE,
   findOrphanAdvances, pendingCapitalisation, CAPEX_TREATMENTS, CAPEX_SOURCE,
   DEPOSIT_RETURN_SOURCE, DEPOSIT_RECLASS_SOURCE, type CapexLineLedger,
 } from './capexPosting.js'
@@ -822,6 +822,9 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       if (ownedPayment.source === 'cash') {
         throw new AppError('PAID_FROM_CASH', 'This instalment was paid from petty cash / a cash request — correct it there', 409)
       }
+      if (ownedPayment.source === GARIBSONS_SOURCE && (body.payFrom !== undefined || body.bankAccountId !== undefined)) {
+        throw new AppError('PAID_BY_GARIBSONS', 'Garibsons paid this instalment (Due to Garibsons, 2210) — it has no bank or cash to change', 422)
+      }
       const tenantId = ownedPayment.line.project.tenantId
       // A prepayment's months cannot move once releasing has started.
       const coverChange = (body.coversFrom !== undefined && body.coversFrom !== ownedPayment.coversFrom)
@@ -979,6 +982,15 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
   // The CEO's own Quick buy is then applied at once. Cash on hand pays too
   // (owner, 2026-10-21: "Add cash option to Quick buy"): Cr 1010 instead of
   // the bank; the CEO's capitalisation approval stays the check.
+  // Booked through a liability (owner, 2026-10-27: "it should also list option
+  // to book the asset through liability directly"), through the same engine:
+  //   payFrom 'garibsons' — Garibsons paid: Dr 1340 / Cr 2210 Due to Garibsons
+  //     (no money account, no withholding, not a payment in the register; the
+  //     reference is optional — Garibsons' voucher no.);
+  //   payFrom 'credit' — owed to the supplier (422 SUPPLIER_REQUIRED /
+  //     SUPPLIER_NOT_IN_COMPANY): no payment and nothing posts now; the CEO's
+  //     approval books Dr class cost / Cr 2012, and the supplier is paid later
+  //     through the line's own CapEx payment (withholding taken then).
   fastify.post('/capex/quick-buy', { preHandler: requireAuth(...CAPITAL_WRITERS) }, async (req, reply) => {
     const body = z.object({
       locationId:        z.string().min(1),
@@ -991,7 +1003,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
       supplierId:        z.string().min(1).nullable().optional(),
       vendor:            z.string().trim().max(120).nullable().optional(),
       paidAt:            isoDay,
-      payFrom:           z.enum(['bank', 'cash']).optional(),
+      payFrom:           z.enum(['bank', 'cash', 'garibsons', 'credit']).optional(),
       bankAccountId:     z.string().min(1).nullable().optional(),
       paymentRef:        z.string().max(120).nullable().optional(),
       inputTaxCents:     zMoneyCents('The sales tax').default(0),
@@ -1009,6 +1021,16 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     if (payFrom === 'cash' && body.bankAccountId) {
       throw new AppError('CASH_WITH_BANK', 'Paid from cash names no bank account — pick one or the other', 422)
     }
+    const viaLiability = payFrom === 'garibsons' || payFrom === 'credit'
+    if (viaLiability && body.bankAccountId) {
+      throw new AppError('BANK_NOT_NEEDED', payFrom === 'credit' ? 'Bought on credit names no bank account — nothing is paid now' : 'Paid by Garibsons names no bank account', 422)
+    }
+    if (viaLiability && body.whtOverrideCents !== undefined) {
+      throw new AppError('WHT_NOT_WITHHELD_HERE', payFrom === 'credit'
+        ? 'Nothing is paid now, so no income tax is withheld — it is taken when the supplier is paid'
+        : 'Garibsons paid the supplier, so no income tax is withheld here', 422)
+    }
+    if (payFrom === 'credit' && !body.supplierId) throw new AppError('SUPPLIER_REQUIRED', 'Pick the supplier this is bought on credit from', 422)
     // Every client id resolves to the ACTIVE company (422 otherwise).
     const tenantId = requireActiveCompany(req)
     await assertLocationOfCompany(tenantId, body.locationId)
@@ -1024,20 +1046,23 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     const total = body.unitCostCents * body.quantity
     assertMoneyFits(total, 'This purchase (quantity × unit cost)')
     assertLineTax(body.inputTaxCents, body.inputTaxAuthority, total)
-    const override = overrideData(body)
+    const override = overrideData({ whtOverrideCents: body.whtOverrideCents, whtOverrideReason: body.whtOverrideReason } as PaymentBody)
     const actor = actorOf(req)
     const canCapitalise = FA_WRITER_ROLES.includes(actor.role)
     const paidAt = quickBuyPaidAt(body.paidAt)
     const supplierName = body.supplierId ? (await prisma.supplier.findUnique({ where: { id: body.supplierId }, select: { name: true } }))?.name ?? null : null
 
-    const out = await prisma.$transaction(classifyingTx(classificationOf(req.body), req.staffUser!.id, 'ledger.entryId', async (tx) => {
+    // Garibsons / credit move none of the company's money accounts: not a payment, so never classified.
+    const out = await prisma.$transaction(classifyingTx(viaLiability ? null : classificationOf(req.body), req.staffUser!.id, 'ledger.entryId', async (tx) => {
       // The one engine (capexPosting.ts recordEquipmentPurchaseTx) — a finance payee voucher for equipment uses it too.
       const r = await recordEquipmentPurchaseTx(tx, {
         tenantId, locationId: body.locationId, item: body.item, cls, quantity: body.quantity, unitCostCents: body.unitCostCents,
         paidAt, supplierId: body.supplierId ?? null, vendor: body.vendor ?? supplierName,
         inputTaxCents: body.inputTaxCents, inputTaxAuthority: body.inputTaxAuthority ?? null, whtSection: body.whtSection ?? null,
         warrantyMonths: body.warrantyMonths ?? null, notes: body.notes ?? null,
-        pay: { kind: 'instalment', payFrom, bankAccountId: payFrom === 'bank' ? body.bankAccountId ?? null : null, paymentRef: body.paymentRef ?? null, extra: override },
+        pay: payFrom === 'credit' ? { kind: 'credit' }
+          : payFrom === 'garibsons' ? { kind: 'garibsons', paymentRef: body.paymentRef?.trim() || null, notes: 'Paid by Garibsons (Due to Garibsons, 2210)' }
+          : { kind: 'instalment', payFrom, bankAccountId: payFrom === 'bank' ? body.bankAccountId ?? null : null, paymentRef: body.paymentRef ?? null, extra: override },
         postedBy: actor.id,
         capitalise: canCapitalise ? {
           input: {
@@ -1049,7 +1074,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
           reason: (projectName) => ((body.reason ?? '').length >= 10 ? body.reason! : `Quick buy: ${body.item} for ${projectName}`),
         } : null,
       })
-      return { projectId: r.projectId, lineId: r.lineId, paymentId: r.paymentId, eventId: r.eventId, ledger: r.ledger! }
+      return { projectId: r.projectId, lineId: r.lineId, paymentId: r.paymentId, eventId: r.eventId, ledger: r.ledger }
     }), { timeout: 60_000, maxWait: 15_000 })
 
     // The CEO's own Quick buy is applied at once, through the one approval
@@ -1073,7 +1098,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
     await audit({
       category: 'accounting', action: 'capex.quick_buy', entity: 'CapexLine', entityId: out.lineId,
       userId: actor.id, userEmail: req.staffUser!.email, tenantId,
-      after: { ...out, applied, assetIds }, metadata: { classKey: cls.key, totalCents: total, locationId: body.locationId },
+      after: { ...out, applied, assetIds }, metadata: { classKey: cls.key, totalCents: total, locationId: body.locationId, payFrom },
     })
     return reply.status(201).send({
       ...out,
