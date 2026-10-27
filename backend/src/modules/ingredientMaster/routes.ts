@@ -262,7 +262,7 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
   })
 
   fastify.post<{ Params: { id: string } }>('/:id/merge', { preHandler: requireAuth(...MASTER_REVIEWERS) }, async (req) => {
-    const { intoId } = z.object({ intoId: z.string().uuid() }).parse(req.body)
+    const { intoId } = z.object({ intoId: z.string().min(1).max(64) }).parse(req.body)
     if (intoId === req.params.id) throw new AppError('MERGE_SAME', 'Pick another ingredient to merge into', 422)
     const src = await loadLive(req.params.id)
     const dst = await loadLive(intoId)

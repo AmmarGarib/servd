@@ -251,7 +251,7 @@ const createItemSchema = z.object({
   tenantId: z.string().min(1).optional(),
   // Kitchen flow (2026-10-26, K1/K3): the servd-wide master this item is. Absent = the master of the same name (and
   // unit) — added as 'needs_review' when servd has none yet. The master's definition fills the item.
-  masterIngredientId: z.string().uuid().optional(),
+  masterIngredientId: z.string().min(1).max(64).optional(),
 })
 
 // General partial edit (Sourcing Master Sheet name/unit/category/notes, the
@@ -452,12 +452,13 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     return reply.status(201).send(item)
   })
 
+  // Master ids are not all UUIDs: the 2026-10-26 backfill made them md5 hex (32 chars) — never .uuid() on one.
   // POST /inventory/from-master {masterIngredientId} — the ACTIVE company's stock item for a servd master (kitchen
   // flow, 2026-10-26, K3): the linked item when it has one (200), else an unlinked item of the same name and unit is
   // linked, else one is made from the master's definition (201) — no price, supplier, par or stock (the company sets
   // those on Sourcing / Inventory). Idempotent. Item keepers and recipe editors (picking an ingredient in a recipe).
   fastify.post('/from-master', { preHandler: requireAuth(...ITEM_MASTER_EDITORS) }, async (req, reply) => {
-    const body = z.object({ masterIngredientId: z.string().uuid() }).parse(req.body)
+    const body = z.object({ masterIngredientId: z.string().min(1).max(64) }).parse(req.body)
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_COMPANY', 'Pick the company this ingredient belongs to.', 422)
     if (!req.staffUser!.memberTenantIds.includes(tenantId)) throw new ForbiddenError('You can only add stock items inside a company you belong to.')

@@ -95,6 +95,14 @@ describe('company items from the master', () => {
     expect(again.json().id).toBe(itemA)
   })
 
+  it('a backfilled master (md5 id, not a UUID) can be picked — owner screenshot 2026-10-27 "Validation failed"', async () => {
+    const id = 'f'.repeat(32)
+    await prisma.ingredientMaster.create({ data: { id, name: 'Flour (All-Purpose / Maida)', normalizedName: 'flour (all-purpose / maida)', stockUnit: 'g', category: 'dry_goods', status: 'approved' } })
+    const r = await call(u.chefA!, 'POST', '/inventory/from-master', { masterIngredientId: id })
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json()).toMatchObject({ tenantId: A.tenantId, masterIngredientId: id })
+  })
+
   it('company B gets its own item, never A\'s; the search shows each company only its own', async () => {
     const r = await call(u.chefB!, 'POST', '/inventory/from-master', { masterIngredientId: beefId })
     expect(r.statusCode).toBe(201)
