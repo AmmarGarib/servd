@@ -19,6 +19,7 @@ import { unusedCleanupRoutes } from './unusedCleanup.js'
 import { MASTER_FIELDS, ensureCompanyItemForMasterTx, findOrCreateMasterTx, itemFieldsFromMaster, liveMaster, sameUnitFamily } from '../../lib/ingredientMaster.js'
 import { siteStockRoutes } from './siteStock.js'
 import { expiringRoutes } from './expiring.js'
+import { itemHistoryRoutes } from './itemHistory.js'
 
 // ─── One ingredient master, per company (owner decision 30, 2026-09-27) ──────
 //
@@ -1001,4 +1002,6 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   await fastify.register(siteStockRoutes, { readers: STOCK_READERS, hideCosts: costsHiddenFor })
   // Use-by (owner B6, 2026-10-26): GET /inventory/expiring.
   await fastify.register(expiringRoutes, { readers: STOCK_READERS, hideCosts: costsHiddenFor })
+  // Stock item history (owner, 2026-10-27): GET /inventory/:id/movements (itemHistory.ts).
+  await fastify.register(itemHistoryRoutes, { readers: ITEM_READERS, hideCosts: costsHiddenFor, itemWhere: inventoryTenantWhere })
 }

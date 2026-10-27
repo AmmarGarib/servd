@@ -18,6 +18,7 @@ import { FormField } from '../../components/ui/FormField'
 import { NumberField } from '../../components/ui/NumberField'
 import { MoneyInput } from '../../components/ui/MoneyInput'
 import { ExpiringLots, type ExpiringRow } from '../../components/inventory/ExpiringLots'
+import { ItemStockHistory } from '../../components/kitchen/ItemStockHistory'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number; parLevel: number
@@ -179,6 +180,8 @@ export default function InventoryPage() {
   // Edit panel (category, opening cost, par, issue on receipt) and the
   // "assign a company" panel for a company-less item.
   const [editItemId, setEditItemId] = useState<string | null>(null)
+  // Stock item history (owner, 2026-10-27): every stock movement of one item.
+  const [historyItemId, setHistoryItemId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState({ category: '', costPkr: '', parLevel: '', issueOnReceipt: false, purchaseUnit: '', purchaseUnitFactor: '', countFrequency: 'weekly', perishable: false, shelfLifeDays: '' })
   const [assignItemId, setAssignItemId] = useState<string | null>(null)
   const [assignForm, setAssignForm] = useState({ tenantId: '', costPkr: '' })
@@ -262,6 +265,8 @@ export default function InventoryPage() {
   // account when the cost class changes), the opening cost of an item with no
   // deliveries (422 COST_FROM_DELIVERIES otherwise), par, issue on receipt.
   const editItem = editItemId ? items.find((i) => i.id === editItemId) ?? null : null
+  const historyItem = historyItemId ? items.find((i) => i.id === historyItemId) ?? null : null
+  useEffect(() => { if (historyItemId) document.getElementById('stock-history')?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }, [historyItemId])
   const editMutation = useMutation({
     mutationFn: (item: InventoryItem) => {
       const body: Record<string, unknown> = {}
@@ -557,6 +562,20 @@ export default function InventoryPage() {
               </div>
               {addMutation.isError && <p role="alert" className="text-xs text-s-red">{(addMutation.error as Error).message}</p>}
             </form>
+          )}
+
+          {historyItem && (
+            <section id="stock-history" aria-label={`History of ${historyItem.name}`}
+              className="rounded-xl border border-primary bg-s-surface p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-bold text-s-text text-sm">History — {historyItem.name}</p>
+                  <p className="text-xs text-s-muted">Every delivery, sale (by plate recipe), prep, count, waste and transfer. On hand now: {historyItem.currentStock} {historyItem.unit}.</p>
+                </div>
+                <button type="button" onClick={() => setHistoryItemId(null)} className="rounded-xl border border-s-border text-s-muted px-3 py-1.5 text-xs">Close</button>
+              </div>
+              <ItemStockHistory itemId={historyItem.id} />
+            </section>
           )}
 
           {/* Edit item: category, opening cost, par, issue on receipt */}
@@ -881,6 +900,12 @@ export default function InventoryPage() {
                                   <button onClick={() => openWaste(item)}
                                     className="text-xs px-2 py-1 rounded-lg border border-s-red/30 text-s-red/70 hover:border-s-red hover:text-s-red transition-colors">
                                     waste
+                                  </button>
+                                )}
+                                {item.tenantId && (
+                                  <button onClick={() => setHistoryItemId(item.id)}
+                                    className="text-xs px-2 py-1 rounded-lg border border-s-border text-s-muted hover:border-primary hover:text-primary-ink transition-colors">
+                                    history
                                   </button>
                                 )}
                                 {!kitchenView && item.tenantId && (
