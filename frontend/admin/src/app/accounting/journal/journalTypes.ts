@@ -28,8 +28,8 @@ export interface PendingChange {
 
 export interface EntryFlags {
   status: EntryStatus
-  reversedBy: { id: string; entryDate: string } | null
-  reverses: { id: string } | null
+  reversedBy: { id: string; entryDate: string; voucherNo?: string | null } | null
+  reverses: { id: string; entryDate?: string; voucherNo?: string | null; description?: string } | null
   pendingChange: PendingChange | null
   canTextEdit: boolean
   canRequestChange: boolean

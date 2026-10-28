@@ -8,9 +8,22 @@ import { Select } from '@/components/ui/Select'
 import { Button, Input } from '@/components/finance/ui'
 import type { ChartAccount, EntryStatus, SubAccount } from './journalTypes'
 
-export function StatusBadge({ status }: { status: EntryStatus }) {
-  if (status === 'reversed') return <span className="s-badge-amber shrink-0">Reversed</span>
-  if (status === 'reversal') return <span className="s-badge-muted shrink-0">Reversal</span>
+const shortDay = (iso: string) => new Date(iso).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', timeZone: 'Asia/Karachi' })
+
+/** Entry status in plain words (owner, 2026-10-28: "make the reversal entries easy to understand in ledger"):
+ *  a cancelled entry names the entry that cancelled it, a cancelling entry names the one it cancels. */
+export function StatusBadge({ status, reversedBy, reverses }: {
+  status: EntryStatus
+  reversedBy?: { entryDate: string; voucherNo?: string | null } | null
+  reverses?: { entryDate?: string; voucherNo?: string | null; description?: string } | null
+}) {
+  if (status === 'reversed') {
+    return <span className="s-badge-amber shrink-0">{reversedBy ? `Cancelled by ${reversedBy.voucherNo ?? 'a later entry'} on ${shortDay(reversedBy.entryDate)}` : 'Cancelled'}</span>
+  }
+  if (status === 'reversal') {
+    const what = reverses?.voucherNo ?? (reverses?.description ? `“${readableDescription(reverses.description)}”` : 'an earlier entry')
+    return <span className="s-badge-muted shrink-0">{`Cancels ${what}${reverses?.entryDate ? ` of ${shortDay(reverses.entryDate)}` : ''}`}</span>
+  }
   if (status === 'change_pending') return <span className="s-badge-amber shrink-0">Awaiting CEO</span>
   return null
 }

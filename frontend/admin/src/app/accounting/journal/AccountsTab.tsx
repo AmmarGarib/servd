@@ -63,6 +63,8 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
   const [brandId, setBrandId] = useState('')
   const [subId, setSubId] = useState('')
   const [exportErr, setExportErr] = useState<string | null>(null)
+  // Hide an entry and the entry that cancels it when both are in the list (they net to zero; owner, 2026-10-28).
+  const [hideCancelled, setHideCancelled] = useState(false)
 
   const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ['concepts', 'picker'], queryFn: () => api.get('/concepts?view=picker') })
 
@@ -83,7 +85,19 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
   const pages = st.data?.pages ?? []
   const first = pages[0]
   const last = pages[pages.length - 1]
-  const lines = pages.flatMap((p) => p.lines)
+  const allLines = pages.flatMap((p) => p.lines)
+  // Each line's own movement, from the running balance (so balances can be re-run over the lines shown).
+  const withMove = allLines.map((l, i) => ({ ...l, move: l.balanceCents - (i === 0 ? (first?.openingCents ?? 0) : allLines[i - 1]!.balanceCents) }))
+  const inList = new Set(allLines.map((l) => l.entryId))
+  const pairedOut = (l: (typeof allLines)[number]) =>
+    (l.status === 'reversed' && !!l.reversedBy && inList.has(l.reversedBy.id)) || (l.status === 'reversal' && !!l.reverses && inList.has(l.reverses.id))
+  const hiddenCount = allLines.filter(pairedOut).length
+  const lines = hideCancelled
+    ? withMove.filter((l) => !pairedOut(l)).reduce<{ out: typeof withMove; bal: number }>((acc, l) => {
+        const bal = acc.bal + l.move
+        acc.out.push({ ...l, balanceCents: bal }); acc.bal = bal; return acc
+      }, { out: [], bal: first?.openingCents ?? 0 }).out
+    : withMove
   const subs = first?.subAccounts ?? []
   const selectedAccount: ChartAccount | null = picked && picked.id === accountId ? picked
     : first ? { id: first.account.id, tenantId: null, code: first.account.code, name: first.account.name, type: first.account.type, isActive: true } : null
@@ -175,6 +189,12 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
             </div>
           )}
 
+          {hiddenCount > 0 && (
+            <label className="flex items-center gap-2 text-xs text-s-muted">
+              <input type="checkbox" checked={hideCancelled} onChange={(e) => setHideCancelled(e.target.checked)} />
+              Hide cancelled entries ({hiddenCount} lines: entries cancelled in this period and the entries that cancel them — they net to zero)
+            </label>
+          )}
           <div className="s-card overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-xs min-w-[44rem]">
@@ -200,7 +220,7 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
                           {l.voucherNo && <span className="font-mono font-semibold mr-1">{l.voucherNo}</span>}{l.particulars ?? readableDescription(l.description)}
                         </button>
                         {l.memo && <span className="block text-s-muted">{l.memo}</span>}
-                        {l.status && l.status !== 'live' && <span className="mt-0.5 inline-block"><StatusBadge status={l.status} /></span>}
+                        {l.status && l.status !== 'live' && <span className="mt-0.5 inline-block"><StatusBadge status={l.status} reversedBy={l.reversedBy} reverses={l.reverses} /></span>}
                       </td>
                       <td className="py-1.5 px-3 text-right font-mono whitespace-nowrap">{l.debitCents ? fmtPkr(l.debitCents) : ''}</td>
                       <td className="py-1.5 px-3 text-right font-mono whitespace-nowrap">{l.creditCents ? fmtPkr(l.creditCents) : ''}</td>

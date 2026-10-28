@@ -1200,6 +1200,10 @@ type CashCategory = 'operating' | 'investing' | 'financing'
 
 function categorise(code: string): CashCategory {
   if (code.startsWith('15')) return 'investing'  // fixed assets
+  // Equipment advances (1340), refundable deposits (1360) and capital payables (2012) are written only by CapEx and
+  // the asset register, so cash against them is investing even on a manual journal (owner, 2026-10-28: a manual
+  // correction refunding a duplicate equipment payment, Dr bank / Cr 1340, showed as operating cash in).
+  if (code === ACCT.SUPPLIER_ADVANCES || code === ACCT.SECURITY_DEPOSITS || code === ACCT.CAPITAL_PAYABLES) return 'investing'
   if (code.startsWith('30')) return 'financing'  // owner capital / drawings
   return 'operating'
 }

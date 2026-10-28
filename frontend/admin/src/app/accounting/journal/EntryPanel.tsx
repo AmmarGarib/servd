@@ -117,7 +117,7 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
       {e && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={e.status} />
+            <StatusBadge status={e.status} reversedBy={e.reversedBy} reverses={e.reverses} />
             {e.reverses && <span className="text-xs text-s-muted">Reverses another entry</span>}
             {e.reversedBy && <span className="text-xs text-s-muted">Reversed on {pktDate(e.reversedBy.entryDate)}</span>}
             {e.postedBy && <span className="text-xs text-s-muted">Posted by {e.postedBy.name}</span>}

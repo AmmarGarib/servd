@@ -157,7 +157,7 @@ function JournalRow({ r, onOpen }: { r: RegRow; onOpen: () => void }) {
           {r.companyName && <> · {r.companyName}</>}
         </span>
       </span>
-      <StatusBadge status={r.status} />
+      <StatusBadge status={r.status} reversedBy={r.reversedBy} reverses={r.reverses} />
       <span className="font-mono text-xs shrink-0 text-right min-w-[6rem]" style={{ color: net > 0 ? 'var(--erp-success)' : net < 0 ? 'var(--erp-danger)' : 'var(--text)' }}>
         {net > 0 ? `In ${fmtPkr(net)}` : net < 0 ? `Out ${fmtPkr(-net)}` : fmtPkr(r.totalCents)}
       </span>

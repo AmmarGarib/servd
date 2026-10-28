@@ -108,8 +108,10 @@ export interface EntryAnnotation {
   sourceType: string
   isManual: boolean
   status: JournalStatus
-  reversedBy: { id: string; entryDate: string } | null
-  reverses: { id: string } | null
+  /** The entry that cancelled this one (voucher number + date, so the ledger can say "Cancelled by JV-00009 on 20 Oct"). */
+  reversedBy: { id: string; entryDate: string; voucherNo: string | null } | null
+  /** The entry this reversal cancels. */
+  reverses: { id: string; entryDate: string; voucherNo: string | null; description: string } | null
   pendingChange: PendingChange | null
   /** Description / reference / memos may be changed now, in place. */
   canTextEdit: boolean
@@ -163,8 +165,8 @@ export async function annotateEntries(
     reversalRefs.push({ tenantId: e.tenantId, reference: `${type}.reversal:${rest}` }, { tenantId: e.tenantId, reference: `${type}.void:${rest}` })
   }
   const [revs, origs, pending, vouchers, taxLinks, closed] = await Promise.all([
-    reversalRefs.length ? prisma.journalEntry.findMany({ where: { OR: reversalRefs, description: { startsWith: 'Reversal of ' } }, select: { id: true, tenantId: true, reference: true, entryDate: true } }) : [],
-    originalRefs.length ? prisma.journalEntry.findMany({ where: { OR: originalRefs }, select: { id: true, tenantId: true, reference: true } }) : [],
+    reversalRefs.length ? prisma.journalEntry.findMany({ where: { OR: reversalRefs, description: { startsWith: 'Reversal of ' } }, select: { id: true, tenantId: true, reference: true, entryDate: true, voucherNo: true } }) : [],
+    originalRefs.length ? prisma.journalEntry.findMany({ where: { OR: originalRefs }, select: { id: true, tenantId: true, reference: true, entryDate: true, voucherNo: true, description: true } }) : [],
     prisma.journalRequest.findMany({
       where: { tenantId: { in: tenantIds }, reverseEntryId: { in: ids }, kind: { in: ['reverse', 'amend'] }, status: { in: [...OPEN_CHANGE_STATUSES] } },
       select: { id: true, kind: true, status: true, reason: true, preparedById: true, submittedAt: true, reverseEntryId: true },
@@ -188,13 +190,13 @@ export async function annotateEntries(
     let reverses: EntryAnnotation['reverses'] = null
     if (isReversal) {
       const o = origOf.get(`${e.tenantId}|${m![1]}:${m![3]}`)
-      reverses = o ? { id: o.id } : null
+      reverses = o ? { id: o.id, entryDate: o.entryDate.toISOString(), voucherNo: o.voucherNo, description: o.description } : null
     } else if (ref.includes(':')) {
       const at = ref.indexOf(':')
       const type = ref.slice(0, at)
       const rest = ref.slice(at + 1)
       const r = revOf.get(`${e.tenantId}|${type}.reversal:${rest}`) ?? revOf.get(`${e.tenantId}|${type}.void:${rest}`)
-      reversedBy = r ? { id: r.id, entryDate: r.entryDate.toISOString() } : null
+      reversedBy = r ? { id: r.id, entryDate: r.entryDate.toISOString(), voucherNo: r.voucherNo } : null
     }
     const p = pendingOf.get(e.id)
     const pendingChange: PendingChange | null = p ? {

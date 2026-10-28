@@ -148,3 +148,22 @@ describe('petty cash is cash', () => {
     expect(other.totals).toEqual({ inflowCents: 0, outflowCents: 0, netCents: 0, transfersCents: 0 })
   })
 })
+
+describe('a manual correction against an equipment advance stays investing (owner, 2026-10-28)', () => {
+  it('the same machine paid twice, the duplicate refunded by a manual journal on 1340: investing nets to one payment', async () => {
+    const T = (await prisma.tenant.create({ data: { name: 'Flow Dup', slug: 'cfc-dup' } })).id
+    await ensureChartOfAccounts(T)
+    // Two CapEx payments for one machine, then a manual entry: Dr bank 230,000 + Dr 1212-like expense 24,128 / Cr 1340 254,128.
+    await post(T, 'capex.payment', [{ accountCode: '1340', type: 'debit', amountCents: 23_000_000 }, { accountCode: '1020', type: 'credit', amountCents: 23_000_000 }])
+    await post(T, 'capex.payment', [{ accountCode: '1340', type: 'debit', amountCents: 25_412_800 }, { accountCode: '1020', type: 'credit', amountCents: 25_412_800 }])
+    await post(T, 'manual', [
+      { accountCode: '1020', type: 'debit', amountCents: 23_000_000 },
+      { accountCode: '6130', type: 'debit', amountCents: 2_412_800 },
+      { accountCode: '1340', type: 'credit', amountCents: 25_412_800 },
+    ])
+    const r = await cashFlow([T], from, to)
+    expect(cat(r, 'investing')).toMatchObject({ inflowCents: 23_000_000, outflowCents: 48_412_800, netCents: -25_412_800 })
+    expect(cat(r, 'operating').inflowCents).toBe(0)
+    expect(r.totals.netCents).toBe(-25_412_800)
+  })
+})
