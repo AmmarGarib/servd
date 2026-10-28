@@ -440,7 +440,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       const parsed = parseMapsUrl(current)
       if (!parsed) {
         return reply.status(422).send({
-          error: { code: 'NO_COORDS', message: 'Could not find coordinates in that link. Open the place in Google Maps, use Share → Copy link, and paste that.' },
+          error: { code: 'NO_COORDS', message: 'That link is to a named place, which carries no exact spot. In Google Maps, long-press the exact spot to drop a pin, then Share → Copy link — or copy the pin\'s numbers (e.g. 24.833002, 67.063442) and paste those.' },
         })
       }
       return parsed

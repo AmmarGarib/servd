@@ -32,6 +32,8 @@ function coordsInLink(raw: string): { lat: number; lng: number } | null {
   return null
 }
 
+const DROP_PIN_HELP = 'In Google Maps, long-press the exact spot to drop a pin, then Share → Copy link and paste it here. Or tap the numbers shown at the top (e.g. 24.833002, 67.063442) to copy them and paste those here.'
+
 /** The first link in pasted text (WhatsApp / Maps share text often has words around it). */
 const linkIn = (text: string) => text.match(/https?:\/\/\S+/)?.[0] ?? text.trim()
 
@@ -42,11 +44,17 @@ export function MapPin({ value, onChange, hint }: Props) {
   const [resolvedName, setResolvedName] = useState<string | null>(null)
 
   async function resolveMapsLink(raw: string) {
+    setError(null); setResolvedName(null)
+    // Coordinates copied from Google Maps (long-press the spot, tap the numbers at the top): "24.833002, 67.063442".
+    const ll = raw.trim().match(/^(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/)
+    if (ll) {
+      const lat = +ll[1]!, lng = +ll[2]!
+      if (inRange(lat, lng)) { onChange({ lat, lng }); return }
+    }
     const url = linkIn(raw)
     if (!url) return
-    setError(null); setResolvedName(null)
     if (!/^https:\/\/(maps\.app\.goo\.gl|goo\.gl|([a-z]+\.)?google\.[a-z.]+)\//i.test(url)) {
-      setError('Paste a Google Maps link — in Google Maps: Share → Copy link.')
+      setError(DROP_PIN_HELP)
       return
     }
     const local = coordsInLink(url)
@@ -57,7 +65,8 @@ export function MapPin({ value, onChange, hint }: Props) {
       onChange({ lat: r.lat, lng: r.lng })
       setResolvedName(r.name)
     } catch (err) {
-      setError((err as Error).message || 'Could not read that link')
+      const code = (err as { code?: string }).code
+      setError(code === 'NO_COORDS' ? `That link is to a named place, which carries no exact spot. ${DROP_PIN_HELP}` : ((err as Error).message || 'Could not read that link'))
     } finally {
       setResolving(false)
     }
@@ -77,10 +86,10 @@ export function MapPin({ value, onChange, hint }: Props) {
             onChange={(e) => setMapsLink(e.target.value)}
             onPaste={(e) => {
               const t = e.clipboardData.getData('text')
-              if (/goo\.gl|google\.[a-z.]+\/maps/i.test(t)) { e.preventDefault(); setMapsLink(linkIn(t)); void resolveMapsLink(t) }
+              if (/goo\.gl|google\.[a-z.]+\/maps/i.test(t) || /^\s*-?\d{1,2}(\.\d+)?\s*,\s*-?\d{1,3}(\.\d+)?\s*$/.test(t)) { e.preventDefault(); setMapsLink(t.trim()); void resolveMapsLink(t) }
             }}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void resolveMapsLink(mapsLink) } }}
-            placeholder="https://maps.app.goo.gl/…"
+            placeholder="Google Maps link, or 24.833002, 67.063442"
             className={`${inputCls} min-w-0 flex-1`}
           />
           <button type="button" onClick={() => void resolveMapsLink(mapsLink)} disabled={resolving || !mapsLink.trim()}
@@ -88,7 +97,7 @@ export function MapPin({ value, onChange, hint }: Props) {
             {resolving ? 'Reading…' : 'Use this link'}
           </button>
         </div>
-        <p className="text-[11px] text-white/45 mt-1">In Google Maps, drop the pin on the exact spot → Share → Copy link, then paste it here.</p>
+        <p className="text-[11px] text-white/45 mt-1">In Google Maps, long-press the exact spot to drop a pin → Share → Copy link, then paste it here. Or paste the pin’s numbers (e.g. 24.833002, 67.063442).</p>
       </div>
 
       {lat != null && lng != null ? (
