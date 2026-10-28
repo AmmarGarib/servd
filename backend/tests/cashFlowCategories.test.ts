@@ -12,7 +12,7 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError, errorResponse } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
-import { postJournalEntry, type JournalLineInput } from '../src/modules/accounting/journal.js'
+import { postJournalEntry, reverseJournalEntry, type JournalLineInput } from '../src/modules/accounting/journal.js'
 import { parsePktEndOfDay, parsePktStartOfDay } from '../src/modules/accounting/dates.js'
 import { accountingRoutes } from '../src/modules/accounting/routes.js'
 import { cashFlow } from '../src/modules/accounting/reports.js'
@@ -167,3 +167,25 @@ describe('a manual correction against an equipment advance stays investing (owne
     expect(r.totals.netCents).toBe(-25_412_800)
   })
 })
+
+describe('an entry cancelled in the period is left out with its cancellation (owner, 2026-10-28)', () => {
+  it('the pair adds nothing to in / out; the net is unchanged; a cancellation of an earlier month stays', async () => {
+    const T = (await prisma.tenant.create({ data: { name: 'Flow Rev', slug: 'cfc-rev' } })).id
+    await ensureChartOfAccounts(T)
+    await post(T, 'manual', [{ accountCode: '6130', type: 'debit', amountCents: 1_000_000 }, { accountCode: '1020', type: 'credit', amountCents: 1_000_000 }])
+    const wrong = await postJournalEntry({ tenantId: T, sourceType: 'manual', sourceId: 'cf-wrong', description: 'wrong', entryDate: new Date('2026-08-11T07:00:00Z'),
+      lines: [{ accountCode: '1020', type: 'debit', amountCents: 23_000_000 }, { accountCode: '1340', type: 'credit', amountCents: 23_000_000 }] })
+    expect(wrong.posted).toBe(true)
+    await reverseJournalEntry(T, 'manual', 'cf-wrong', 'posted by mistake', { entryDate: new Date('2026-08-12T07:00:00Z') })
+    const r = await cashFlow([T], from, to)
+    expect(r.totals).toMatchObject({ inflowCents: 0, outflowCents: 1_000_000, netCents: -1_000_000 })
+    expect(cat(r, 'investing')).toMatchObject({ inflowCents: 0, outflowCents: 0 })
+    // A cancellation in August of a July entry is real August cash: it stays.
+    await postJournalEntry({ tenantId: T, sourceType: 'manual', sourceId: 'cf-july', description: 'july', entryDate: new Date('2026-07-20T07:00:00Z'),
+      lines: [{ accountCode: '6130', type: 'debit', amountCents: 500_000 }, { accountCode: '1020', type: 'credit', amountCents: 500_000 }] })
+    await reverseJournalEntry(T, 'manual', 'cf-july', 'refunded', { entryDate: new Date('2026-08-13T07:00:00Z') })
+    const r2 = await cashFlow([T], from, to)
+    expect(r2.totals).toMatchObject({ inflowCents: 500_000, outflowCents: 1_000_000, netCents: -500_000 })
+  })
+})
+

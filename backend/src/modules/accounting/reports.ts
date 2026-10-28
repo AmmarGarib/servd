@@ -1345,6 +1345,19 @@ export async function cashFlow(tenantIds: string[], dateFrom: Date, dateTo: Date
     include: { lines: { include: { account: true } } },
   })
 
+  // An entry cancelled inside the period and the entry that cancels it net to zero: leave both out, so they do
+  // not inflate the in / out columns (owner, 2026-10-28: cancelled JV pairs showed as 460,000 in and out). The
+  // net never changes. A cancellation whose original is outside the period stays — that cash really moved then.
+  const REVERSAL_REF = /^([^:]+)\.(reversal|void):(.+)$/
+  const byRef = new Map(entriesWithCash.map((e) => [`${e.tenantId}|${e.reference ?? ''}`, e.id]))
+  const cancelledPair = new Set<string>()
+  for (const e of entriesWithCash) {
+    const m = REVERSAL_REF.exec(e.reference ?? '')
+    if (!m || !e.description.startsWith('Reversal of ')) continue
+    const original = byRef.get(`${e.tenantId}|${m[1]}:${m[3]}`)
+    if (original) { cancelledPair.add(original); cancelledPair.add(e.id) }
+  }
+
   const perCash = new Map(cashAccounts.map((a) => [a.id, {
     tenantId: a.tenantId,
     companyName: a.tenantId ? (nameOf.get(a.tenantId) ?? null) : null,
@@ -1360,6 +1373,7 @@ export async function cashFlow(tenantIds: string[], dateFrom: Date, dateTo: Date
   ])
 
   for (const entry of entriesWithCash) {
+    if (cancelledPair.has(entry.id)) continue
     const split = splitEntryCash(entry.lines.map((l) => ({ ...l, amountCents: toCents(l.amountCents) })), isCash)
     for (const [accountId, s] of split.perAccount) {
       const row = perCash.get(accountId)!
