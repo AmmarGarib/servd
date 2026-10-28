@@ -789,7 +789,7 @@ export default function RidersPage() {
                     <>
                       <input value={emailEdit.value} onChange={(e) => setEmailEdit({ id: rider.id, value: e.target.value })}
                         placeholder="name@gsfoods.pk" type="email" autoFocus
-                        className="s-input w-auto min-w-0 flex-1 sm:flex-none sm:w-64 py-1.5 text-xs" />
+                        className="s-input w-full sm:w-64 py-1.5 text-xs" />
                       <button onClick={() => emailMutation.mutate({ id: rider.id, email: emailEdit.value })} disabled={emailMutation.isPending || !emailEdit.value.trim()}
                         className="rounded-lg bg-primary text-primary-on font-bold px-3 py-1.5 disabled:opacity-50">Save</button>
                       <button onClick={() => { setEmailEdit(null); emailMutation.reset() }} className="rounded-lg border border-s-border text-s-muted px-3 py-1.5">Cancel</button>
