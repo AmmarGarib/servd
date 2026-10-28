@@ -860,8 +860,16 @@ circumstances. GS Foods will run their own delivery fleet.
 
 ### Own-fleet delivery — rider app v1 (2026-10-10)
 
-**docs/rider-app.md is the contract.** Riders sign in with phone + a
-WhatsApp code (`/rider-auth/*`, token types `rider` / `rider_refresh` — a
+**docs/rider-app.md is the contract.** Riders sign in with phone + PASSWORD
+(owner, 2026-10-28: "riders also i want full accounts"; `POST /rider-auth/login`,
+`Rider.passwordHash`); the WhatsApp code only SETS the password — first sign-in
+and forgotten password (`/otp/verify` needs `newPassword`, 400
+`PASSWORD_REQUIRED`; a reset ends older sessions). **Customers verify a code
+only at sign-up and to reset a forgotten password** (owner, 2026-10-28;
+`/auth/customer/password/forgot|reset` — one code to the account's OWN phone +
+email); everyday sign-in is email + password; the emailed sign-in link
+(`/auth/customer/request|verify`) answers 410 `CUSTOMER_LINK_LOGIN_RETIRED`.
+Riders' tokens are their own (`/rider-auth/*`, token types `rider` / `rider_refresh` — a
 rider is NOT a `User`, so no staff route ever accepts a rider token and vice
 versa). Rider API at `/rider/*`: shift on/off, jobs (offered → accepted →
 picked up → arrived → delivered with the customer's 4-digit code), live

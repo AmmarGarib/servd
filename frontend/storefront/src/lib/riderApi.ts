@@ -294,11 +294,15 @@ const enc = encodeURIComponent
 export type StepAction = 'accept' | 'decline' | 'picked-up' | 'arrived'
 
 export const riderApi = {
-  /** 202 { sent: true } for every number, known or not. */
+  /** Phone + password (owner, 2026-10-28: riders have full accounts). 401 INVALID_CREDENTIALS. */
+  signIn: (phone: string, password: string) =>
+    publicPost<RiderSessionResponse>('/rider-auth/login', { phone, password }),
+  /** A WhatsApp code to SET the password (first sign-in, forgotten password). 202 { sent: true } for every number. */
   requestCode: (phone: string) =>
     publicPost<{ sent: boolean }>('/rider-auth/otp/request', { phone }),
-  verifyCode: (phone: string, code: string) =>
-    publicPost<RiderSessionResponse>('/rider-auth/otp/verify', { phone, code }),
+  /** The code + the new password: stores it and signs in. A code never signs in on its own. */
+  setPassword: (phone: string, code: string, newPassword: string) =>
+    publicPost<RiderSessionResponse>('/rider-auth/otp/verify', { phone, code, newPassword }),
 
   me: () => riderFetch<{ rider: RiderPublic }>('/rider/me'),
   setShift: (online: boolean) =>

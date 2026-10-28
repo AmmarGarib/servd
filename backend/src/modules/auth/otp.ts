@@ -203,8 +203,10 @@ function messageFor(purpose: OtpPurpose, code: string): string {
       return `${code} is your servd code to turn on two-factor sign-in for this number. ${tail}`
     case 'waitlist':
       return `${code} is your servd code to join the new-brand waitlist. ${tail} If you did not ask to join, ignore this message.`
+    case 'password_reset':
+      return `${code} is your servd code to reset your password. ${tail} If you did not ask for it, ignore this message — your password stays as it is.`
     case 'rider_login':
-      return `${code} is your servd rider sign-in code. ${tail} If you did not just try to sign in, tell your manager.`
+      return `${code} is your servd rider code to set your password. ${tail} If you did not just ask for it, tell your manager.`
     default:
       return `Your servd verification code is ${code}. ${tail}`
   }

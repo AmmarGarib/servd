@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import bcrypt from 'bcryptjs'                  // password checks on the self-service routes
 import { z } from 'zod'
-import { staffLogin, refreshStaffToken, customerRegister, customerLogin, verifyMagicLink, requestMagicLink, hashPassword, issueShiftSession, findOtpLoginStaff, normaliseCustomerContact } from './service.js'
+import { staffLogin, refreshStaffToken, customerRegister, customerLogin, hashPassword, issueShiftSession, findOtpLoginStaff } from './service.js'
 import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, requestSharedCode, verifySharedCode, issueStaffCodeInPerson } from './otp.js'
 import { preparePin, setManagerPin, PIN_FORMAT, isWeakPin, MIN_NEW_PIN_LENGTH, SHORT_PIN_GRACE_HOURS } from './managerPin.js'
 import { accountStateOf, whereAccountState, suspendData, reactivateData, approveData, softDeleteData } from './accountStatus.js'
@@ -46,7 +46,6 @@ import {
   STAFF_PASSWORD_LIMIT,
   STAFF_PASSWORD_USER_LIMIT,
   CUSTOMER_PASSWORD_LIMIT,
-  MAGIC_LINK_VERIFY_LIMIT,
   PASSWORD_RESET_LIMIT,
   PASSWORD_RESET_USE_LIMIT,
   STAFF_OTP_PHONE_LIMIT
@@ -57,35 +56,15 @@ const staffLoginSchema = z.object({
   password: z.string().min(8),
 })
 
-// Floor-staff code sign-in. The phone is free-form because it is typed on a
-// till by someone who may write it 0300…, +92300… or 92300… — normalisePhone
-// resolves all three to one key.
-const staffOtpRequestSchema = z.object({
-  phone: z.string().min(7).max(20),
-})
-const staffOtpVerifySchema = z.object({
-  phone: z.string().min(7).max(20),
-  code: z.string().min(4).max(8),
-})
+// Customer reset codes per account email per 15 minutes (each one sends a real WhatsApp + email).
+const CUSTOMER_RESET_EMAIL_LIMIT = { scope: 'customer-reset-email', max: 3, lockoutSec: 15 * 60 }
 
 const refreshSchema = z.object({
   refreshToken: z.string(),
 })
 
-// 32 characters for a link to an existing account; a signed link (longer) for
-// a contact that had no account when it was requested (service.ts).
-const magicLinkVerifySchema = z.object({
-  token: z.string().min(32).max(1000),
-})
-
 // Rate-limit buckets this module owns (same shape as lib/loginRateLimit.ts).
 //
-// Sign-in links, PER CONTACT per day: the endpoint is unauthenticated and sends
-// a message to a contact the caller chose, so the contact is what gets capped —
-// an IP limit alone is the easy half to get around (owner rule, 2026-09-09).
-// Counted for every request, account or not, so a 429 says nothing about
-// whether the contact has one.
-const MAGIC_LINK_CONTACT_LIMIT = { scope: 'magic-link-contact', max: 5, lockoutSec: 24 * 60 * 60 }
 // Manager-issued sign-in codes, per manager per hour. A shift start is a
 // handful; this stops a session being used to mint codes in bulk.
 const STAFF_CODE_ISSUER_LIMIT = { scope: 'staff-code-issuer', max: 30, lockoutSec: 60 * 60 }
@@ -646,6 +625,60 @@ export async function authRoutes(fastify: FastifyInstance) {
       throw err
     }
     return reply.status(200).send(result)
+  })
+
+  // Forgotten customer password (owner, 2026-10-28: "Customers also only use otp for first time login" — a code
+  // is for the first sign-up and for getting back in, never an everyday sign-in). ONE code to the account's OWN
+  // phone (WhatsApp) and email — never a contact the caller types; the caller only names the account's email.
+  //   POST /customer/password/forgot { email }                     → 202 { sent: true }, always
+  //   POST /customer/password/reset  { email, code, newPassword }  → 200 { token, customer } | 401 INVALID_CODE
+  // The forgot answer is the same for any email and does not wait for the send, so it says nothing about which
+  // emails have accounts. A reset ends every older session of the customer.
+  fastify.post('/customer/password/forgot', async (req, reply) => {
+    refuseCodeRequestInPractice('customer') // practice copy: nothing is sent
+    const body = z.object({ email: z.string().email().max(200) }).parse(req.body)
+    const email = body.email.trim().toLowerCase()
+    await checkRateLimit(CUSTOMER_PASSWORD_LIMIT, req.ip ?? 'unknown')
+    await claimRateLimit(CUSTOMER_RESET_EMAIL_LIMIT, `email:${email}`)
+    const c = await prisma.customer.findFirst({
+      where: { email, deletedAt: null },
+      select: { id: true, phone: true, email: true },
+    })
+    if (c?.email) {
+      void requestSharedCode({ phone: c.phone, email: c.email, purpose: 'password_reset', customerId: c.id }).catch((err: Error) => {
+        req.log.warn({ err: err.message, customerId: c.id }, 'customer reset code not sent')
+      })
+    }
+    return reply.status(202).send({ sent: true })
+  })
+
+  fastify.post('/customer/password/reset', async (req, reply) => {
+    const ip = req.ip ?? 'unknown'
+    await checkRateLimit(CUSTOMER_PASSWORD_LIMIT, ip)
+    const body = z.object({
+      email: z.string().email().max(200),
+      code: z.string().trim().regex(/^\d{4,6}$/),
+      newPassword: z.string()
+        .min(8, 'Password must be at least 8 characters')
+        .max(128)
+        .regex(/[a-zA-Z]/, 'Password must contain a letter')
+        .regex(/[0-9]/, 'Password must contain a number'),
+    }).parse(req.body)
+    const email = body.email.trim().toLowerCase()
+    const invalid = () => new AppError('INVALID_CODE', 'That code is not right, or it has expired. Ask for a new one.', 401)
+    const c = await prisma.customer.findFirst({ where: { email, deletedAt: null }, select: { id: true, phone: true, email: true } })
+    if (!c?.email) { await recordFailure(CUSTOMER_PASSWORD_LIMIT, ip); throw invalid() }
+    try {
+      await verifySharedCode({ phone: c.phone, email: c.email, code: body.code, purpose: 'password_reset' })
+    } catch (err) {
+      if (!(err instanceof AppError)) throw err
+      await recordFailure(CUSTOMER_PASSWORD_LIMIT, ip)
+      throw invalid()
+    }
+    await prisma.customer.update({ where: { id: c.id }, data: { password: await hashPassword(body.newPassword) } })
+    await revokeAllForSubject(c.id)
+    await clearFailures(CUSTOMER_PASSWORD_LIMIT, ip)
+    return reply.status(200).send(await customerLogin(c.email, body.newPassword))
   })
 
   // POST /auth/customer/register — email+password signup
@@ -2488,62 +2521,13 @@ export async function authRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // POST /auth/customer/request — send a sign-in link to the email or phone.
-  // Used by the mobile app login flow. Always returns 200 to prevent
-  // enumeration.
-  //
-  // Unauthenticated, and it sends a message to a contact the CALLER chose —
-  // the shape the 2026-09-09 audit removed /customer/request-otp for. So:
-  //   • capped PER CONTACT per day (MAGIC_LINK_CONTACT_LIMIT), every request
-  //     counted whether or not the contact has an account; the per-IP limit
-  //     stays underneath, but it is the easy half to get around;
-  //   • the phone is normalised before lookup, so 0300… finds the 92300…
-  //     account instead of making a second, empty one;
-  //   • no account is created here. A contact with none gets a signed link,
-  //     and the account is made when the link is followed (service.ts).
-  fastify.post('/customer/request', {
-    config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
-  }, async (req, reply) => {
-    refuseCodeRequestInPractice('customer') // practice copy: no link is sent
-    const body = z.object({
-      email: z.string().email().optional(),
-      phone: z.string().min(7).max(20).optional(),
-      name:  z.string().min(1).max(80).optional(),
-    }).refine((v) => !!(v.email || v.phone), { message: 'Provide email or phone' })
-      .parse(req.body)
-
-    const { isEmail, contact } = normaliseCustomerContact((body.email ?? body.phone)!)
-    try {
-      await claimRateLimit(MAGIC_LINK_CONTACT_LIMIT, `${isEmail ? 'email' : 'phone'}:${contact}`)
-    } catch (err) {
-      if (err instanceof AppError && err.statusCode === 429) {
-        throw new AppError('MAGIC_LINK_LIMIT', 'Too many sign-in links have been requested for this contact today. Try again tomorrow.', 429)
-      }
-      throw err
-    }
-
-    try {
-      await requestMagicLink(contact, body.name)
-    } catch (err) {
-      // Log but always return 200 — don't leak whether the address exists.
-      req.log.warn({ err: (err as Error).message }, 'requestMagicLink failed')
-    }
-    return reply.status(200).send({ ok: true })
-  })
-
-  // POST /auth/customer/verify — verify magic link token
-  // Rate-limited per IP so a token-guessing bot can't spam the endpoint.
-  fastify.post('/customer/verify', async (req, reply) => {
-    const ip = req.ip ?? 'unknown'
-    await checkRateLimit(MAGIC_LINK_VERIFY_LIMIT, ip)
-    const body = magicLinkVerifySchema.parse(req.body)
-    try {
-      const result = await verifyMagicLink(body.token)
-      await clearFailures(MAGIC_LINK_VERIFY_LIMIT, ip)
-      return reply.status(200).send(result)
-    } catch (err) {
-      await recordFailure(MAGIC_LINK_VERIFY_LIMIT, ip)
-      throw err
-    }
-  })
+  // POST /auth/customer/request and /auth/customer/verify — the emailed sign-in link — are RETIRED (owner,
+  // 2026-10-28: "Customers also only use otp for first time login"). A customer verifies a code ONCE, at signup
+  // (/customer/request-signup-codes + /customer/register), and signs in with email + password after that
+  // (/customer/login; a forgotten password goes through the reset link). 410 so an old app build says why.
+  for (const path of ['/customer/request', '/customer/verify']) {
+    fastify.post(path, async () => {
+      throw new AppError('CUSTOMER_LINK_LOGIN_RETIRED', 'Sign in with your email and password. New to servd? Create an account at servd.pk.', 410)
+    })
+  }
 }

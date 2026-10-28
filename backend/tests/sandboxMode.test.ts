@@ -657,7 +657,6 @@ describe('login codes', () => {
 
     const others: Array<[string, object, Record<string, string>?]> = [
       ['/api/v1/auth/customer/request-signup-codes', { phone: '03001234567', email: 'someone@example.com' }],
-      ['/api/v1/auth/customer/request', { email: 'someone@example.com' }],
       ['/api/v1/rider-auth/otp/request', { phone: '03001234567' }],
       ['/api/v1/waitlist/request-code', { phone: '03001234567', consent: true }],
     ]

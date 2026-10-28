@@ -1,4 +1,5 @@
-// Rider-app sign-in (docs/rider-app.md): phone number + a WhatsApp code.
+// Rider-app sign-in (docs/rider-app.md): phone number + password (owner, 2026-10-28: "riders also i want full
+// accounts"). A WhatsApp code only sets the password — the first time and after a forgotten one.
 //
 // A rider is NOT a User. A User with a rider role would inherit every
 // ALL_STAFF route — the order lists, the dispatch board, the hand-over codes —
@@ -127,4 +128,11 @@ export function verifyRiderToken(token: string, expected: RiderTokenType): Rider
     throw new AppError('INVALID_TOKEN_TYPE', 'Wrong token type for this endpoint', 401)
   }
   return payload
+}
+
+/** The stored password hash of a sign-in rider (null = no password yet). Read apart from RIDER_SELECT so the hash
+ *  never travels with the rider shape. */
+export async function riderPasswordHash(riderId: string): Promise<string | null> {
+  const r = await prisma.rider.findUnique({ where: { id: riderId }, select: { passwordHash: true } })
+  return r?.passwordHash ?? null
 }

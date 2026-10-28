@@ -309,6 +309,9 @@ export const STAFF_OTP_PHONE_LIMIT: Limit = { scope: 'staff-otp-phone', max: 6, 
 // `claim` (before the work), never check-then-record.
 export const RIDER_OTP_PHONE_LIMIT: Limit = { scope: 'rider-otp-phone', max: 6, lockoutSec: 15 * 60 }
 export const RIDER_OTP_IP_LIMIT:    Limit = { scope: 'rider-otp-ip',    max: 40, lockoutSec: 10 * 60 }
+// Rider password sign-in (owner, 2026-10-28): wrong passwords per number, and per IP (loose — carrier NAT).
+export const RIDER_PASSWORD_PHONE_LIMIT: Limit = { scope: 'rider-password-phone', max: 8, lockoutSec: 15 * 60 }
+export const RIDER_PASSWORD_IP_LIMIT:    Limit = { scope: 'rider-password-ip',    max: 60, lockoutSec: 10 * 60 }
 // Requests to /rider/* whose token is refused (bad, expired, revoked, or the
 // rider deactivated), per IP. Only failures count, so riders sharing a carrier
 // IP are not throttled by each other's ordinary traffic — an expired access

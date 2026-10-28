@@ -53,7 +53,8 @@ vi.mock('../src/lib/ws.js', async (orig) => {
 const { serviceClient: prisma } = await import('../src/lib/prisma.js')
 const { redis } = await import('../src/lib/redis.js')
 const { AppError } = await import('../src/lib/errors.js')
-const { issueStaffSession, verifyStaffToken, verifyCustomerToken } = await import('../src/modules/auth/service.js')
+const { issueStaffSession, verifyStaffToken, verifyCustomerToken, hashPassword } = await import('../src/modules/auth/service.js')
+const PW = 'RiderPass123'
 const { issueRiderSession } = await import('../src/modules/riderAuth/service.js')
 const { riderAuthRoutes } = await import('../src/modules/riderAuth/routes.js')
 const { riderAppRoutes } = await import('../src/modules/rider/routes.js')
@@ -235,7 +236,7 @@ describe('rider sign-in', () => {
     await codeFor('923115550201')
     expect(sent).toHaveLength(1)
     expect(sent[0]!.to).toBe('923115550201')
-    expect(sent[0]!.msg).toMatch(/rider sign-in code/)
+    expect(sent[0]!.msg).toMatch(/rider code to set your password/)
   })
 
   it('does not wait for the WhatsApp send, so the timing does not tell a rider from a stranger', async () => {
@@ -277,7 +278,7 @@ describe('rider sign-in', () => {
     await authPost('/otp/request', { phone: '03115550201' })
     const code = await codeFor('923115550201')
     const wrong = code === '000000' ? '111111' : '000000'
-    const res = await Promise.all(Array.from({ length: 25 }, () => authPost('/otp/verify', { phone: '03115550201', code: wrong })))
+    const res = await Promise.all(Array.from({ length: 25 }, () => authPost('/otp/verify', { phone: '03115550201', code: wrong, newPassword: PW })))
     const codes = res.map((r) => r.statusCode)
     // One request + five guesses fill the phone bucket; the rest never reach the code.
     expect(codes.filter((c) => c === 401)).toHaveLength(5)
@@ -285,21 +286,27 @@ describe('rider sign-in', () => {
     const row = await prisma.phoneOtp.findFirstOrThrow({ where: { phone: '923115550201', purpose: 'rider_login' } })
     expect(row.attempts).toBeLessThanOrEqual(5)
     // Locked out — even the right code waits for the window.
-    expect((await authPost('/otp/verify', { phone: '03115550201', code })).statusCode).toBe(429)
+    expect((await authPost('/otp/verify', { phone: '03115550201', code, newPassword: PW })).statusCode).toBe(429)
   })
 
-  it('verify issues rider tokens; a wrong code or unknown number is 401 INVALID_CODE', async () => {
+  it('verify with a new password issues rider tokens; a wrong code or unknown number is 401 INVALID_CODE', async () => {
     await authPost('/otp/request', { phone: '+92 311 5550201' })
     const code = await codeFor('923115550201')
 
-    const wrong = await authPost('/otp/verify', { phone: '03115550201', code: code === '000000' ? '111111' : '000000' })
+    // A code alone never signs in (owner, 2026-10-28): it sets the password.
+    const bare = await authPost('/otp/verify', { phone: '03115550201', code })
+    expect(bare.statusCode).toBe(400)
+    expect(bare.json().error.code).toBe('PASSWORD_REQUIRED')
+    expect((await authPost('/otp/verify', { phone: '03115550201', code, newPassword: 'short' })).statusCode).toBe(400)
+
+    const wrong = await authPost('/otp/verify', { phone: '03115550201', code: code === '000000' ? '111111' : '000000', newPassword: PW })
     expect(wrong.statusCode).toBe(401)
     expect(wrong.json().error.code).toBe('INVALID_CODE')
-    const stranger = await authPost('/otp/verify', { phone: '03115559999', code })
+    const stranger = await authPost('/otp/verify', { phone: '03115559999', code, newPassword: PW })
     expect(stranger.statusCode).toBe(401)
     expect(stranger.json().error.code).toBe('INVALID_CODE')
 
-    const ok = await authPost('/otp/verify', { phone: '03115550201', code })
+    const ok = await authPost('/otp/verify', { phone: '03115550201', code, newPassword: PW })
     expect(ok.statusCode).toBe(200)
     const body = ok.json()
     expect(body.rider).toEqual({
@@ -310,11 +317,44 @@ describe('rider sign-in', () => {
     expect((jwt.decode(body.refreshToken) as { type: string }).type).toBe('rider_refresh')
 
     // The code is used up.
-    expect((await authPost('/otp/verify', { phone: '03115550201', code })).statusCode).toBe(401)
+    expect((await authPost('/otp/verify', { phone: '03115550201', code, newPassword: PW })).statusCode).toBe(401)
 
     const me = await app.inject({ method: 'GET', url: '/api/v1/rider/me', headers: { authorization: `Bearer ${body.accessToken}` } })
     expect(me.statusCode).toBe(200)
     expect(me.json().rider.id).toBe(riders['a1']!.id)
+  })
+
+  it('signs in with phone + password; no password yet, a wrong one or an unknown number is the same 401', async () => {
+    await prisma.rider.update({ where: { id: riders['a1']!.id }, data: { passwordHash: null } })
+    const none = await authPost('/login', { phone: '03115550201', password: PW })
+    expect(none.statusCode).toBe(401)
+    expect(none.json().error.code).toBe('INVALID_CREDENTIALS')
+
+    await authPost('/otp/request', { phone: '03115550201' })
+    const code = await codeFor('923115550201')
+    const set = await authPost('/otp/verify', { phone: '03115550201', code, newPassword: PW })
+    expect(set.statusCode).toBe(200)
+    const row = await prisma.rider.findUniqueOrThrow({ where: { id: riders['a1']!.id } })
+    expect(row.passwordHash).toMatch(/^\$2/)
+    expect(row.passwordHash).not.toContain(PW)
+
+    const ok = await authPost('/login', { phone: '+92 311 5550201', password: PW })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json().rider.id).toBe(riders['a1']!.id)
+    expect((jwt.decode(ok.json().accessToken) as { type: string }).type).toBe('rider')
+    expect(JSON.stringify(ok.json())).not.toContain('passwordHash')
+
+    const wrong = await authPost('/login', { phone: '03115550201', password: 'Wrong-pass-1' })
+    expect(wrong.statusCode).toBe(401)
+    expect(wrong.json()).toEqual(none.json())
+    const stranger = await authPost('/login', { phone: '03115559999', password: PW })
+    expect(stranger.json()).toEqual(none.json())
+  })
+
+  it('a deactivated rider cannot sign in with their password', async () => {
+    const r = await mkRider('gonepw', tenantA, '923115550277')
+    await prisma.rider.update({ where: { id: r.id }, data: { isActive: false, passwordHash: await hashPassword(PW) } })
+    expect((await authPost('/login', { phone: '03115550277', password: PW })).statusCode).toBe(401)
   })
 
   it('a deactivated rider gets no code, and their live token stops working', async () => {

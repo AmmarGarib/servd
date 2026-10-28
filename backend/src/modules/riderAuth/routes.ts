@@ -1,10 +1,15 @@
 // /api/v1/rider-auth — rider-app sign-in (docs/rider-app.md). Public,
-// rate-limited.
+// rate-limited. Riders have full accounts (owner, 2026-10-28): phone + password.
 //
-//   POST /otp/request { phone }        → 202 { sent: true }, always
-//   POST /otp/verify  { phone, code }  → 200 { accessToken, refreshToken, rider } | 401 INVALID_CODE
-//   POST /refresh     { refreshToken } → 200 { accessToken, refreshToken } (rotated; old one revoked)
+//   POST /login       { phone, password }              → 200 { accessToken, refreshToken, rider } | 401 INVALID_CREDENTIALS
+//   POST /otp/request { phone }                        → 202 { sent: true }, always
+//   POST /otp/verify  { phone, code, newPassword }     → 200 { accessToken, refreshToken, rider } | 401 INVALID_CODE
+//   POST /refresh     { refreshToken }                 → 200 { accessToken, refreshToken } (rotated; old one revoked)
 //   POST /logout      { refreshToken? } [+ Bearer rider token] → 204 (whatever was sent is revoked)
+//
+// The WhatsApp code is ONLY for the first sign-in and a forgotten password: /otp/verify needs the new password
+// with the code (400 PASSWORD_REQUIRED without it), stores it, ends every older session of the rider and signs
+// in. A code never signs in on its own.
 //
 // A manager must first add the rider in admin → Riders. The request answers
 // the same for a known and an unknown number — same status, same body, same
@@ -22,8 +27,11 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import jwt from 'jsonwebtoken'
+import bcrypt from 'bcryptjs'
+import { hashPassword } from '../auth/service.js'
 import { normalisePhone, requestOtp, verifyOtp } from '../auth/otp.js'
 import { AppError } from '../../lib/errors.js'
+import { serviceClient as prisma } from '../../lib/prisma.js'
 import { refuseCodeRequestInPractice } from '../../lib/sandbox.js'
 import { revokeToken, claimRevocation, isCutOff, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import {
@@ -32,10 +40,24 @@ import {
   clearFailures,
   RIDER_OTP_PHONE_LIMIT,
   RIDER_OTP_IP_LIMIT,
+  RIDER_PASSWORD_PHONE_LIMIT,
+  RIDER_PASSWORD_IP_LIMIT,
 } from '../../lib/loginRateLimit.js'
-import { findLoginRider, issueRiderSession, loadActiveRider, riderPublic, verifyRiderToken } from './service.js'
+import { findLoginRider, issueRiderSession, loadActiveRider, riderPasswordHash, riderPublic, verifyRiderToken } from './service.js'
 
 const phoneSchema = z.string().trim().min(7).max(20)
+const newPasswordSchema = z.string()
+  .min(8, 'Password must be at least 8 characters')
+  .max(128)
+  .regex(/[a-zA-Z]/, 'Password must contain a letter')
+  .regex(/[0-9]/, 'Password must contain a number')
+
+// Compared when the number has no rider or no password yet, so the answer takes as long either way.
+const DUMMY_HASH = bcrypt.hashSync('servd-rider-no-password', 12)
+
+function invalidCredentials(): AppError {
+  return new AppError('INVALID_CREDENTIALS', 'Wrong phone number or password. First time, or forgot it? Get a code to set your password.', 401)
+}
 
 function invalidCode(): AppError {
   return new AppError('INVALID_CODE', 'That code is not valid. Request a new one and try again.', 401)
@@ -57,7 +79,27 @@ function ttlOf(token: string): number {
 const ROTATED = 'rotated'
 
 export async function riderAuthRoutes(fastify: FastifyInstance) {
-  // POST /rider-auth/otp/request
+  // POST /rider-auth/login — phone + password.
+  fastify.post('/login', async (req, reply) => {
+    const body = z.object({ phone: phoneSchema, password: z.string().min(1).max(128) }).parse(req.body)
+    const phone = normalisePhone(body.phone)
+    const phoneKey = `phone:${phone}`
+    const ip = ipOf(req)
+    await claimRateLimit(RIDER_PASSWORD_IP_LIMIT, ip)
+    await claimRateLimit(RIDER_PASSWORD_PHONE_LIMIT, phoneKey)
+
+    const rider = await findLoginRider(phone)
+    const hash = rider ? await riderPasswordHash(rider.id) : null
+    const ok = await bcrypt.compare(body.password, hash ?? DUMMY_HASH)
+    if (!rider || !hash || !ok) throw invalidCredentials()
+
+    await clearFailures(RIDER_PASSWORD_PHONE_LIMIT, phoneKey)
+    await releaseRateLimit(RIDER_PASSWORD_IP_LIMIT, ip)
+    const session = issueRiderSession(rider)
+    return reply.status(200).send({ ...session, rider: riderPublic(rider) })
+  })
+
+  // POST /rider-auth/otp/request — a code to SET the password (first sign-in, forgotten password).
   fastify.post('/otp/request', async (req, reply) => {
     refuseCodeRequestInPractice('rider') // practice copy: nothing is sent (lib/sandbox.ts)
     const body = z.object({ phone: phoneSchema }).parse(req.body)
@@ -86,7 +128,16 @@ export async function riderAuthRoutes(fastify: FastifyInstance) {
 
   // POST /rider-auth/otp/verify
   fastify.post('/otp/verify', async (req, reply) => {
-    const body = z.object({ phone: phoneSchema, code: z.string().trim().min(4).max(8) }).parse(req.body)
+    const body = z.object({
+      phone: phoneSchema,
+      code: z.string().trim().min(4).max(8),
+      newPassword: z.string().max(128).optional(),
+    }).parse(req.body)
+    // A code never signs in on its own: it sets the password (owner, 2026-10-28).
+    if (!body.newPassword) {
+      throw new AppError('PASSWORD_REQUIRED', 'Choose a password to go with the code.', 400)
+    }
+    const newPassword = newPasswordSchema.parse(body.newPassword)
     const phone = normalisePhone(body.phone)
     const phoneKey = `phone:${phone}`
     const ip = ipOf(req)
@@ -115,6 +166,17 @@ export async function riderAuthRoutes(fastify: FastifyInstance) {
     await clearFailures(RIDER_OTP_PHONE_LIMIT, phoneKey)
     // A sign-in that worked is not a strike against a shared carrier IP.
     await releaseRateLimit(RIDER_OTP_IP_LIMIT, ip)
+
+    // The new password replaces any old one. A RESET (a password was already set) ends every session issued
+    // before it — a forgotten password may mean a lost phone; the first password leaves the rider's earlier
+    // code sessions alone.
+    const hadPassword = !!(await riderPasswordHash(rider.id))
+    await prisma.rider.update({
+      where: { id: rider.id },
+      data: { passwordHash: await hashPassword(newPassword), passwordSetAt: new Date() },
+    })
+    if (hadPassword) await revokeAllForSubject(rider.id)
+    await clearFailures(RIDER_PASSWORD_PHONE_LIMIT, phoneKey)
 
     const session = issueRiderSession(rider)
     return reply.status(200).send({ ...session, rider: riderPublic(rider) })
