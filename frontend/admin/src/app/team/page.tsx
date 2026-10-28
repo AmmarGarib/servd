@@ -29,11 +29,6 @@ interface Invite {
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
 const input = 'w-full rounded-lg px-3 py-2 text-sm bg-s-surface border border-white/10 text-white/85 focus:outline-none focus:border-primary/60'
 
-// Roles that sign in with a code sent to their phone instead of a password —
-// the server's OTP_LOGIN_ROLES (auth/middleware.ts). A login in one of these
-// needs a mobile number; the API refuses one without (PHONE_REQUIRED).
-const CODE_LOGIN_ROLES = new Set(['cashier', 'foh', 'boh', 'kitchen', 'expediter'])
-
 const INVITE_STATUS: Record<Invite['status'], { label: string; color: string }> = {
   pending:   { label: 'Waiting for the CEO', color: 'var(--erp-warning)' },
   active:    { label: 'Approved',            color: 'var(--erp-success)' },
@@ -138,7 +133,6 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
   // and the sign-in (generated email + password) shown here once.
   const practice = useIsPracticeCopy()
   const [issued, setIssued] = useState<{ name: string; email: string; password: string } | null>(null)
-  const needsPhone = !practice && CODE_LOGIN_ROLES.has(role)
 
   const invite = useMutation({
     mutationFn: () => api.post<{ name: string; email: string; status?: string; temporaryPassword?: string }>('/auth/staff/invite', {
@@ -172,12 +166,9 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
     e.preventDefault()
     setErr(null); setDone(null); setIssued(null)
     if (!name.trim()) return setErr('Type their name.')
-    // Floor staff sign in with a WhatsApp code — no email needed (owner C14).
-    if (!practice && !email.trim() && !needsPhone) return setErr('An email is required — it is how they sign in.')
+    // Everyone signs in with an @gsfoods.pk email and password.
+    if (!practice && !email.trim()) return setErr('An email is required — it is how they sign in.')
     if (!role || !childRoles.includes(role)) return setErr('Pick a role.')
-    if (needsPhone && phone.replace(/\D/g, '').length < 10) {
-      return setErr('Add their mobile number — cashiers, servers and kitchen staff sign in with a code sent to it.')
-    }
     invite.mutate()
   }
 
@@ -214,15 +205,15 @@ function AddLoginForm({ childRoles, employees }: { childRoles: string[]; employe
         </label>
         {!practice && (<>
         <label className="block">
-          <span className="text-[11px] text-white/45">Email</span>
+          <span className="text-[11px] text-white/45">Company email (@gsfoods.pk)</span>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} name="login-email"
             autoComplete="off" autoCapitalize="none" spellCheck={false} className={input} />
         </label>
         <label className="block">
           <span className="text-[11px] text-white/45">
-            {needsPhone ? 'Mobile number (required — they sign in with a code sent here)' : 'Mobile number (optional for this role; required for cashiers, servers and kitchen staff)'}
+            Mobile number (optional)
           </span>
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" name="login-phone" autoComplete="off" required={needsPhone} className={input} />
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} type="tel" inputMode="tel" name="login-phone" autoComplete="off" className={input} />
         </label>
         </>)}
         <label className="block">

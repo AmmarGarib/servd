@@ -157,19 +157,21 @@ describe('C2: Module Access ticks bind managers too', () => {
 })
 
 // ─── C14 ─────────────────────────────────────────────────────────────────────
-describe('C14: floor staff sign in with a code and use My HR', () => {
-  it('HR creates a floor login with no email — active at once, linked, no password link; office logins still need an email', async () => {
+describe('C14 (as changed 2026-10-28): floor staff get an email + password login and use My HR', () => {
+  it('a floor login needs an @gsfoods.pk email like everyone; HR\'s floor invite is still active at once and linked', async () => {
     const emp = await prisma.hrEmployee.create({ data: { tenantId: tenantA, employeeCode: `oaa-${RUN}-1`, fullName: 'Floor Cook', status: 'active' } })
     const phone = `0301${String(1_000_000 + Math.floor(Math.random() * 8_999_999)).slice(0, 7)}`
     resetSpy.mockClear()
-    const r = await call('hrA', 'POST', '/auth/staff/invite', { name: 'Floor Cook', email: '', phone, role: 'kitchen', employeeId: emp.id })
-    expect(r.statusCode).toBe(201)
+    const noMail = await call('hrA', 'POST', '/auth/staff/invite', { name: 'Floor Cook', email: '', phone, role: 'kitchen', employeeId: emp.id })
+    expect(noMail.statusCode).toBe(400)
+    expect(noMail.json().error.code).toBe('EMAIL_REQUIRED')
+    const email = `floor.cook.${RUN}@gsfoods.pk`
+    const r = await call('hrA', 'POST', '/auth/staff/invite', { name: 'Floor Cook', email, phone, role: 'kitchen', employeeId: emp.id })
+    expect(r.statusCode, r.body).toBe(201)
     const body = r.json()
     expect(body.status).toBe('active')
-    expect(body.email).toBeNull()
+    expect(body.email).toBe(email)
     expect(body.linkedEmployeeId).toBe(emp.id)
-    expect(body.passwordLink).toBe('unavailable')
-    expect(resetSpy).not.toHaveBeenCalled()
     userIds.push(body.id)
 
     const office = await call('hrA', 'POST', '/auth/staff/invite', { name: 'No Mail', role: 'procurement' })
@@ -177,7 +179,7 @@ describe('C14: floor staff sign in with a code and use My HR', () => {
     expect(office.json().error.code).toBe('EMAIL_REQUIRED')
 
     // The floor login reads its own My HR.
-    const cook = { id: body.id, name: 'Floor Cook', email: null, role: 'kitchen' }
+    const cook = { id: body.id, name: 'Floor Cook', email, role: 'kitchen' }
     users.cook = cook
     const me = await call('cook', 'GET', '/hr/me')
     expect(me.statusCode).toBe(200)

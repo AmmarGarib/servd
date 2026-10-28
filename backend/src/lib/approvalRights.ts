@@ -37,7 +37,7 @@ import { assertNotAmongSubmitters } from './separation-of-duties.js'
 import { resolveTenantScope } from './tenantScope.js'
 import { runWithRlsContext } from './rlsContext.js'
 import { approvalDecided } from '../modules/approvals/notify.js'
-import { ADMIN_ONLY, APPROVERS, MANAGERS, usesOtpLogin } from '../modules/auth/middleware.js'
+import { ADMIN_ONLY, APPROVERS, MANAGERS, isFloorRole } from '../modules/auth/middleware.js'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -363,7 +363,7 @@ export function delegableTypesOf(section: string): ApprovalType[] {
  */
 export function sectionOf(type: string, item?: { role?: string | null; tenantId?: string | null; kind?: string | null }): ApprovalSection {
   const r = rightOf(type)
-  if (type === 'staff_login' && item?.role && !usesOtpLogin(item.role)) return 'ceo'
+  if (type === 'staff_login' && item?.role && !isFloorRole(item.role)) return 'ceo'
   if (type === 'storefront_publish' && item && item.tenantId === null) return 'ceo'
   // A cancel (reverse) or edit (amend) of an existing manual entry is the CEO's alone (owner, 2026-10-23).
   if (type === 'journal_request' && (item?.kind === 'reverse' || item?.kind === 'amend')) return 'ceo'
@@ -1158,7 +1158,7 @@ export async function approvalSubject(type: string, id: string, db: Db = service
  */
 export function approvalInputOf(type: ApprovalType, id: string, s: ApprovalSubject, extra: Partial<CanApproveInput> = {}): CanApproveInput {
   const ceoOnlyByItem =
-    (type === 'staff_login' && !usesOtpLogin(s.role ?? null))
+    (type === 'staff_login' && !isFloorRole(s.role ?? null))
     || (type === 'journal_request' && (s.kind === 'reverse' || s.kind === 'amend'))
     || (type === 'intercompany_transfer' && !s.headOfficePair)
     || ((type === 'recipe' || type === 'storefront_publish') && s.companyIds.length === 0)

@@ -12,7 +12,6 @@
 //     their password, and change it later with the current PIN, so the CEO no
 //     longer chooses (and knows) everyone's PIN.
 //
-// Floor staff sign in with a code and have no password; the page says so.
 
 import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -26,7 +25,6 @@ interface Account {
   name: string
   email: string | null
   role: string
-  usesCodeLogin: boolean
   mustChangePassword: boolean
   hasPin: boolean
   canHoldPin: boolean
@@ -73,15 +71,7 @@ function AccountPasswordInner() {
           </div>
         )}
 
-        {me?.usesCodeLogin ? (
-          <section className="rounded-xl border border-s-border bg-s-surface p-4">
-            <p className="text-sm font-bold">You sign in with a code</p>
-            <p className="text-xs text-s-muted mt-1">
-              Cashiers, servers and kitchen staff have no password: each sign-in sends a code to your WhatsApp and email.
-              If it does not arrive, a manager can give you one from Workforce.
-            </p>
-          </section>
-        ) : me ? (
+        {me ? (
           <PasswordSection first={first} onDone={() => { if (first) router.replace('/w') }} />
         ) : null}
 

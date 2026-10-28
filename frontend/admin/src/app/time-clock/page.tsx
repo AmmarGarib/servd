@@ -7,8 +7,8 @@
 // HR attendance for the day.
 //
 // Everyone clocks in with their OWN login (owner, 2026-10-27): the shared
-// kiosk mode (employee ID + kiosk PIN) is removed. Floor staff sign in with a
-// code sent to their WhatsApp. Old kiosk punches still count.
+// kiosk mode (employee ID + kiosk PIN) is removed. Everyone signs in with their
+// @gsfoods.pk email and password. Old kiosk punches still count.
 
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'

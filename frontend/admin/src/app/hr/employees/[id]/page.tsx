@@ -395,7 +395,7 @@ function LoginTab({ p }: { p: Profile }) {
     <div className="grid lg:grid-cols-2 gap-4 max-w-4xl">
       <div className="rounded-2xl p-5" style={card}>
         <p className="text-sm font-black text-white/85 mb-2">servd login</p>
-        <p className="text-sm text-white/60 mb-3">Every staff member clocks in with their own login. Floor staff (cashiers, kitchen, front and back of house, expediters) sign in with a code sent to their WhatsApp — no email or password needed. From 1 November a working day with no punch counts as absent, so give everyone a login. The login lets this person clock in as themselves, use <strong>My HR</strong> and, if they manage people, approve their team&rsquo;s requests. One login can be linked to one employee record in each company.</p>
+        <p className="text-sm text-white/60 mb-3">Every staff member clocks in with their own login. Everyone signs in with their own @gsfoods.pk email and password. From 1 November a working day with no punch counts as absent, so give everyone a login. The login lets this person clock in as themselves, use <strong>My HR</strong> and, if they manage people, approve their team&rsquo;s requests. One login can be linked to one employee record in each company.</p>
         {p.user ? (
           <div className="space-y-3">
             <div className="flex items-center gap-3 flex-wrap">
@@ -444,7 +444,7 @@ function CreateLoginForm({ p }: { p: Profile }) {
   const childRoles = me?.childRoles ?? []
   const [open, setOpen] = useState(false)
   const [name, setName] = useState(p.employee.fullName)
-  // Only a company address is a sign-in; floor staff need none (owner C14 — they sign in with a WhatsApp code).
+  // Only a company address (@gsfoods.pk) is a sign-in, for every role.
   const [email, setEmail] = useState(typeof p.employee.personalEmail === 'string' && /@gsfoods\.pk$/i.test(p.employee.personalEmail) ? p.employee.personalEmail : '')
   const [phone, setPhone] = useState(typeof p.employee.phone === 'string' ? p.employee.phone : '')
   const [role, setRole] = useState('')
@@ -472,8 +472,8 @@ function CreateLoginForm({ p }: { p: Profile }) {
     <form className="mt-4 space-y-2 border-t border-white/10 pt-4" onSubmit={(e) => { e.preventDefault(); if (!create.isPending) create.mutate() }}>
       <p className="text-sm font-black text-white/85">Create login</p>
       <input className={inp} value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Name" />
-      <input className={inp} value={email} onChange={(e) => setEmail(e.target.value)} placeholder={FLOOR_LOGIN_ROLES.includes(role) ? 'Company email (not needed for floor staff)' : 'Company email'} aria-label="Email" type="email" />
-      <input className={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile (needed for floor staff)" aria-label="Mobile" />
+      <input className={inp} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Company email (@gsfoods.pk)" aria-label="Email" type="email" />
+      <input className={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile (optional)" aria-label="Mobile" />
       <Select className={inp} value={role} onChange={(e) => setRole(e.target.value)} aria-label="Role">
         <option value="">Choose a role…</option>
         {childRoles.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
@@ -481,12 +481,12 @@ function CreateLoginForm({ p }: { p: Profile }) {
       <p className="text-xs text-white/45">
         {!role ? 'Floor staff (cashier, FOH, BOH, kitchen, expediter) can sign in at once; manager and office logins wait for the CEO.'
           : FLOOR_LOGIN_ROLES.includes(role) && (me?.role === 'hr' || me?.role === 'admin')
-            ? 'Active at once — they sign in with a code sent to this mobile.'
+            ? 'Active at once — they get a link to set their password.'
             : 'Waits for the CEO to approve it.'}
       </p>
       {err && <p className="text-xs text-s-red">{err}</p>}
       <div className="flex gap-2">
-        <button type="submit" className={btn} disabled={!role || !name.trim() || (!email.trim() && !FLOOR_LOGIN_ROLES.includes(role)) || create.isPending}>{create.isPending ? 'Creating…' : 'Create login'}</button>
+        <button type="submit" className={btn} disabled={!role || !name.trim() || !email.trim() || create.isPending}>{create.isPending ? 'Creating…' : 'Create login'}</button>
         <button type="button" className={btnGhost} onClick={() => setOpen(false)}>Cancel</button>
       </div>
     </form>

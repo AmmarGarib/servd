@@ -359,11 +359,10 @@ describe('UI-09 HR reads the Workforce staff list, scoped to its companies', () 
     expect((await call('hrA', 'GET', '/auth/staff/pending')).statusCode).toBe(403)
     expect((await call('hrA', 'PATCH', `/auth/staff/${U.cookA!.id}/approve`, {})).statusCode).toBe(403)
     // Reissue password is HR's too (owner, 2026-10-16: "Give this option to HR also"), with limits:
-    // a normal office login of its company → 200; never the CEO's or a co-owner's; never a floor
-    // (WhatsApp-code) login; never another company's.
+    // a login of its company → 200 (floor logins too since 2026-10-28: email + password for everyone);
+    // never the CEO's or a co-owner's; never another company's.
     const cook = await call('hrA', 'POST', `/auth/users/${U.cookA!.id}/reissue-password`, {})
-    expect(cook.statusCode).toBe(400)
-    expect(cook.json().error.code).toBe('NOT_A_PASSWORD_LOGIN')
+    expect(cook.statusCode, cook.body).toBe(200)
     for (const who of ['ceoA', 'ownerA']) {
       const r = await call('hrA', 'POST', `/auth/users/${U[who]!.id}/reissue-password`, {})
       expect(r.statusCode, who).toBe(403)

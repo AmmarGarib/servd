@@ -197,11 +197,10 @@ describe('HR sends a password reset link', () => {
     expect(await links(U['sharedAB']!.id)).toBe(0)
   })
 
-  it('floor logins sign in with a code: no reset link (400)', async () => {
+  it('floor logins use a password now (owner, 2026-10-28): HR sends them a reset link too', async () => {
     const r = await send('hrA', U['cashA']!.id)
-    expect(r.statusCode).toBe(400)
-    expect(r.json().error.code).toBe('NOT_A_PASSWORD_LOGIN')
-    expect(await links(U['cashA']!.id)).toBe(0)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(await links(U['cashA']!.id)).toBe(1)
   })
 
   it('the practice copy sends no links (503), nothing issued', async () => {
@@ -250,11 +249,11 @@ describe('HR issues a new password', () => {
     expect((await reissue('hrA', U['sharedAB']!.id)).statusCode).toBe(403)
   })
 
-  it("HR never for the CEO's, a co-owner's, its own or a floor login; the CEO may for a co-owner", async () => {
+  it("HR never for the CEO's, a co-owner's or its own; a floor login now yes; the CEO may for a co-owner", async () => {
     expect((await reissue('hrA', U['ceoA']!.id)).json().error.code).toBe('REISSUE_CEO_ONLY')
     expect((await reissue('hrA', U['ownerA']!.id)).json().error.code).toBe('REISSUE_CEO_ONLY')
     expect((await reissue('hrA', U['hrA']!.id)).json().error.code).toBe('REISSUE_SELF')
-    expect((await reissue('hrA', U['cashA']!.id)).json().error.code).toBe('NOT_A_PASSWORD_LOGIN')
+    expect((await reissue('hrA', U['cashA']!.id)).statusCode).toBe(200)
     expect((await reissue('ceoA', U['ownerA']!.id)).statusCode).toBe(200)
   })
 

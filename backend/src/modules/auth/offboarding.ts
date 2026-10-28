@@ -20,7 +20,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { disconnectUser } from '../../lib/ws.js'
 import { suspendData } from './accountStatus.js'
-import { usesOtpLogin } from './middleware.js'
+import { isFloorRole } from './middleware.js'
 import { requestPasswordReset, deliveryConfigured } from './passwordReset.js'
 
 /** Who onboards and offboards logins: HR and the CEO. */
@@ -28,7 +28,7 @@ export const OFFBOARDERS = ['admin', 'hr'] as UserRole[]
 
 /** Is a login of `role`, added by `inviterRole`, active at once (no CEO approval)? */
 export function activeAtOnce(inviterRole: UserRole | string, role: UserRole | string): boolean {
-  return (inviterRole === 'hr' || inviterRole === 'admin') && usesOtpLogin(role)
+  return (inviterRole === 'hr' || inviterRole === 'admin') && isFloorRole(role)
 }
 
 /**
@@ -57,7 +57,7 @@ export async function activationSideEffects(
   let passwordLink: 'sent' | 'unavailable' | 'failed' = 'unavailable'
   // A floor login signs in with a WhatsApp code and never gets a password
   // (owner C14, 2026-10-26: "Don't give floor staff passwords").
-  if (opts.sendPasswordLink !== false && !usesOtpLogin(user.role) && user.email && await deliveryConfigured().catch(() => false)) {
+  if (opts.sendPasswordLink !== false && user.email && await deliveryConfigured().catch(() => false)) {
     try {
       const outcome = await requestPasswordReset(user.email, req.ip ?? null)
       passwordLink = outcome.email === 'sent' || outcome.whatsapp === 'sent' ? 'sent' : 'failed'

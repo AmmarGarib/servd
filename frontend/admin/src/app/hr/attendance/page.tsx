@@ -309,7 +309,7 @@ function NoLoginTab() {
     <>
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <p className="text-sm text-white/60 flex-1 min-w-[240px]">
-          Everyone clocks in with their own login — there is no kiosk PIN any more. Floor staff sign in with a code sent to their WhatsApp, so they need no email or password. From 1 November a working day with no punch counts as absent: give each person below a login.
+          Everyone clocks in with their own login — there is no kiosk PIN any more. Everyone signs in with their own @gsfoods.pk email and password. From 1 November a working day with no punch counts as absent: give each person below a login.
         </p>
         <Refresh at={dataUpdatedAt} fetching={isFetching} onClick={() => void refetch()} />
       </div>

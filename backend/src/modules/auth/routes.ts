@@ -20,7 +20,7 @@ import { requireModule } from '../notifications/requireModule.js'
 import { sendEmail, mailConfig, invalidateMailConfig, emailConfigured as isEmailConfigured, SMTP_HOST_KEY, SMTP_PORT_KEY, SMTP_USER_KEY, SMTP_PASS_KEY, SMTP_FROM_KEY } from '../../lib/mailer.js'
 import { runDeliveryWatch, DELIVERY_STATE_KEY } from '../../workers/deliveryWatch.js'
 import { requestPasswordReset, consumeResetToken, checkResetToken, deliveryConfigured } from './passwordReset.js'
-import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, EVERY_LOGIN, usesOtpLogin, OTP_LOGIN_ROLES } from './middleware.js'
+import { requireAuth, requireCustomerAuth, ADMIN_ONLY, MANAGERS, ALL_STAFF, EVERY_LOGIN, usesOtpLogin, FLOOR_ROLES } from './middleware.js'
 import { revokeBearer, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { setAuthCookies, setAccessCookie, clearAuthCookies, readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from '../../lib/cookies.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -271,80 +271,12 @@ export async function authRoutes(fastify: FastifyInstance) {
   //
   // The response is identical whether or not a number matched. Anything else
   // turns this into a way to ask "is this number a cashier here?".
-  fastify.post('/staff/otp/request', async (req, reply) => {
-    refuseCodeRequestInPractice('staff') // practice copy: nothing is sent, say so (lib/sandbox.ts)
-    const body = staffOtpRequestSchema.parse(req.body)
-    const phone = normalisePhone(body.phone)
-
-    await checkRateLimit(STAFF_PASSWORD_LIMIT, req.ip ?? 'unknown')
-    await checkRateLimit(STAFF_OTP_PHONE_LIMIT, `phone:${phone}`)
-
-    const staff = await findOtpLoginStaff(phone)
-    if (staff) {
-      try {
-        // Same code to WhatsApp and the staff member's email; either works.
-        await requestSharedCode({ phone, email: staff.email, purpose: 'staff_login' })
-      } catch (err) {
-        // A cooldown is the caller's own doing and worth saying out loud —
-        // silence here reads as "my number is wrong" and they try another one.
-        if (err instanceof AppError && (err.code === 'OTP_COOLDOWN' || err.code === 'OTP_DAILY_LIMIT')) throw err
-        // Anything else (WhatsApp down or unconfigured) is ours. Say so plainly
-        // rather than returning the generic success: a cashier standing at a
-        // till needs to know to go and find a manager, not to keep retrying.
-        req.log.error({ err, staffId: staff.id }, 'staff login OTP send failed')
-        // The way round it is real now: a manager opens Workforce, finds this
-        // person and taps "Sign-in code" (POST /auth/staff/:id/sign-in-code).
-        throw new AppError(
-          'OTP_UNAVAILABLE',
-          'Sign-in codes cannot be sent right now. Ask a manager for a sign-in code — they get one from Workforce ("Sign-in code" next to your name) — and enter it here.',
-          503,
-        )
-      }
-      await recordFailure(STAFF_OTP_PHONE_LIMIT, `phone:${phone}`)
-    }
-
-    // Same body, same timing envelope, whether or not the number is staff.
-    return reply.status(200).send({
-      sent: true,
-      message: 'If that number belongs to a staff account, a code is on its way.',
-    })
+  // Retired 2026-10-28 (owner): every staff login is an @gsfoods.pk email + password (middleware.ts OTP_LOGIN_ROLES).
+  fastify.post('/staff/otp/request', async () => {
+    throw new AppError('STAFF_CODE_LOGIN_RETIRED', 'Staff sign in with their @gsfoods.pk email and password. WhatsApp sign-in codes are switched off — ask HR for your login.', 410)
   })
-
-  // POST /auth/staff/otp/verify — { phone, code } → a session.
-  //
-  // Issues exactly the same session a password login would, through the same
-  // issueStaffSession(), so the two paths cannot drift in what they grant.
-  fastify.post('/staff/otp/verify', async (req, reply) => {
-    const body = staffOtpVerifySchema.parse(req.body)
-    const phone = normalisePhone(body.phone)
-    const key = `phone:${phone}`
-
-    await checkRateLimit(STAFF_PASSWORD_LIMIT, req.ip ?? 'unknown')
-    await checkRateLimit(STAFF_OTP_PHONE_LIMIT, key)
-
-    // Re-resolve the account at VERIFY time rather than trusting anything from
-    // the request step. A code alone must not be enough if the account was
-    // suspended, deleted or promoted out of a floor role in the five minutes
-    // since it was sent.
-    const staff = await findOtpLoginStaff(phone)
-    if (!staff) {
-      await recordFailure(STAFF_OTP_PHONE_LIMIT, key)
-      throw new UnauthorizedError('That code is not valid')
-    }
-
-    try {
-      await verifySharedCode({ phone, email: staff.email, code: body.code, purpose: 'staff_login' })
-    } catch (err) {
-      await recordFailure(STAFF_OTP_PHONE_LIMIT, key)
-      await signInAudit(req, 'auth.login_failed', { userId: staff.id, email: staff.email }, { reason: failReason(err), method: 'otp' })
-      throw err
-    }
-    await clearFailures(STAFF_OTP_PHONE_LIMIT, key)
-
-    await signInAudit(req, 'auth.otp_login', { userId: staff.id, email: staff.email }, { method: 'otp' })
-    const session = await issueShiftSession(staff)
-    setAuthCookies(reply, session.accessToken, session.refreshToken, session.sessionEndsAt)
-    return reply.status(200).send(session)
+  fastify.post('/staff/otp/verify', async () => {
+    throw new AppError('STAFF_CODE_LOGIN_RETIRED', 'Staff sign in with their @gsfoods.pk email and password. WhatsApp sign-in codes are switched off — ask HR for your login.', 410)
   })
 
   // Two-step sign-in is RETIRED (owner, 2026-10-26: "remove two-step sign-in;
@@ -908,7 +840,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         where: {
           ...whereAccountState('pending'), deletedAt: null,
           tenantId: { in: queue },
-          role: { in: OTP_LOGIN_ROLES },
+          role: { in: FLOOR_ROLES },
           OR: [{ invitedById: null }, { invitedById: { not: me } }],
         },
         select: { ...select, tenantMemberships: { select: { tenantId: true } } },
@@ -952,16 +884,14 @@ export async function authRoutes(fastify: FastifyInstance) {
     const practice = isSandbox()
     const body = z.object({
       name:       z.string().trim().min(1).max(120),
-      // Floor logins (owner C14, 2026-10-26) sign in with a WhatsApp code to
-      // their own mobile and have no password, so a company email is optional
-      // for them; every other role still needs one.
+      // Every login needs an @gsfoods.pk email (owner, 2026-10-28: code sign-in retired) — checked below.
       email:      z.string().email().max(200).optional().or(z.literal('')),
       phone:      z.string().min(7).max(20).optional().or(z.literal('')),
       role:       z.string().min(1),
       employeeId: z.string().min(1).optional(),
     }).parse(req.body)
     if (!practice && !body.email && !usesOtpLogin(body.role)) {
-      throw new AppError('EMAIL_REQUIRED', 'A company email is needed for this login — only floor staff (cashier, FOH, BOH, kitchen, expediter) sign in without one.', 400)
+      throw new AppError('EMAIL_REQUIRED', 'Every login needs a company email (@gsfoods.pk) — staff sign in with their email and password.', 400)
     }
 
     const allowed = childRolesFor(req.staffUser!.role)
@@ -2474,7 +2404,7 @@ export async function authRoutes(fastify: FastifyInstance) {
         id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true,
       })
       if (!usesOtpLogin(target.role)) {
-        throw new AppError('NOT_A_CODE_LOGIN', 'Only cashiers, servers and kitchen staff sign in with a code. Managers and office staff use their password.', 400)
+        throw new AppError('STAFF_CODE_LOGIN_RETIRED', 'Sign-in codes are switched off: everyone signs in with their @gsfoods.pk email and password. Use "New password" or "Send password reset link" instead.', 410)
       }
       if (!childRolesFor(actor.role).includes(target.role)) {
         throw new AppError('ROLE_NOT_ALLOWED', 'Your role cannot sign this person in. Ask their own manager.', 403)

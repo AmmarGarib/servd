@@ -10,7 +10,7 @@ import { usePermissions } from '../../hooks/useCan'
 import { useAuthStore } from '../../store/auth'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 
-/** Roles that sign in with a code (server: OTP_LOGIN_ROLES) — HR brings them back at once. */
+/** The floor category (server: OTP_LOGIN_ROLES) — HR invites and reinstates them at once. They sign in with email and password like everyone else. */
 export const FLOOR_LOGIN_ROLES = ['cashier', 'foh', 'boh', 'kitchen', 'expediter']
 
 const ghost = 'rounded-md px-2 py-1.5 text-[11px] font-bold border border-s-border text-s-muted hover:text-s-text hover:border-primary/40 disabled:opacity-50'
@@ -58,8 +58,7 @@ export function OffboardButtons({ login, onDone }: { login: { id: string; name: 
   return (
     <div>
       <div className="flex flex-wrap gap-2">
-        {/* Floor logins sign in with a WhatsApp code, not a password. */}
-        {login.status !== 'suspended' && login.status !== 'pending' && !FLOOR_LOGIN_ROLES.includes(login.role) && (role === 'admin' || login.role !== 'owner') && (
+        {login.status !== 'suspended' && login.status !== 'pending' && (role === 'admin' || login.role !== 'owner') && (
           <button type="button" className={ghost} disabled={link.isPending} onClick={async () => {
             const r = await confirm({
               title: `Send ${login.name} a password reset link?`,
@@ -69,7 +68,7 @@ export function OffboardButtons({ login, onDone }: { login: { id: string; name: 
             if (r) link.mutate()
           }}>{link.isPending ? 'Sending…' : 'Send password reset link'}</button>
         )}
-        {login.status !== 'suspended' && login.status !== 'pending' && !FLOOR_LOGIN_ROLES.includes(login.role) && (role === 'admin' || login.role !== 'owner') && (
+        {login.status !== 'suspended' && login.status !== 'pending' && (role === 'admin' || login.role !== 'owner') && (
           <button type="button" className={ghost} disabled={reissue.isPending} onClick={async () => {
             const r = await confirm({
               title: `Issue a new password for ${login.name}?`,

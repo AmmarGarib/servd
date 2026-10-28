@@ -417,11 +417,22 @@ export const HR_TEAM = [...MANAGERS, 'hr'] as UserRole[]
  * on file. Widening this set weakens the strong side; it does not strengthen
  * the weak one.
  */
-export const OTP_LOGIN_ROLES = ['cashier', 'foh', 'boh', 'kitchen', 'expediter'] as UserRole[]
+/** Floor staff (cashier, FOH, BOH, kitchen, expediter): HR switches their logins on at once and approves them
+ *  (offboarding.ts activeAtOnce, approvalRights.ts). A business category only — it says nothing about HOW they sign in. */
+export const FLOOR_ROLES = ['cashier', 'foh', 'boh', 'kitchen', 'expediter'] as UserRole[]
 
-/** True when this role signs in with a WhatsApp code instead of a password. */
-export function usesOtpLogin(role: UserRole | string | null | undefined): boolean {
-  return !!role && (OTP_LOGIN_ROLES as string[]).includes(role)
+export function isFloorRole(role: UserRole | string | null | undefined): boolean {
+  return !!role && (FLOOR_ROLES as string[]).includes(role)
+}
+
+/** Staff WhatsApp-code sign-in is RETIRED (owner, 2026-10-28: "No WhatsApp code for anyone anymore. Gsfoods.pk email
+ *  and Password for everyone"). No role signs in with a code; every staff login is an @gsfoods.pk email + password.
+ *  Kept (empty) so old call sites read "nobody". Customers and riders keep their own phone codes. */
+export const OTP_LOGIN_ROLES = [] as UserRole[]
+
+/** Always false now: no staff role signs in with a WhatsApp code (see OTP_LOGIN_ROLES). */
+export function usesOtpLogin(_role: UserRole | string | null | undefined): boolean {
+  return false
 }
 
 // Every staff role — derived from the Prisma enum (lib/roles.ts), so a role

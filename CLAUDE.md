@@ -273,14 +273,15 @@ module id must be placed in a workspace in the same change.
   /hr/letters/:key/word`, `GET /hr/letters/:key/word?employeeId|recordId`
   (filled; none = the blank file), `GET /:key/preview`, `GET /letters/fields`.
   Tests: `tests/hrLetterWord.test.ts`.
-- **Floor staff sign in with a code and use My HR (owner C14, 2026-10-26: "give them accounts for sign in
-  and hr submissions … Like leaves").** Already there: floor roles (`OTP_LOGIN_ROLES`) sign in to the admin
-  with a WhatsApp code; `/hr/me*` (leave, requests, locked payslips — own record only) is `ALL_STAFF`, ungated,
-  a personal page, and HR's floor invite is active at once and links the employee. Added: a floor login
-  needs NO email (`POST /auth/staff/invite` → 400 `EMAIL_REQUIRED` only for other roles; HR / Team /
-  Workforce forms follow), and activation never sends a floor login a password link
-  (`offboarding.ts activationSideEffects`) — floor staff never get a password. Tests:
-  `tests/ownerAuthAnswers.test.ts`.
+- **Every staff login is an @gsfoods.pk email + password — WhatsApp code sign-in is RETIRED (owner, 2026-10-28: "No
+  WhatsApp code for anyone anymore. Gsfoods.pk email and Password for everyone"; REPLACES C14 of 2026-10-26).**
+  `auth/middleware.ts`: `OTP_LOGIN_ROLES` is empty and `usesOtpLogin()` is false for every role; `FLOOR_ROLES` /
+  `isFloorRole` keep the floor CATEGORY (HR's floor invites active at once — `offboarding.ts activeAtOnce`; HR approves
+  them — `approvalRights.ts`). `POST /auth/staff/otp/request|verify` and `/auth/staff/:id/sign-in-code` answer 410
+  `STAFF_CODE_LOGIN_RETIRED`; every invite needs an @gsfoods.pk email (400 `EMAIL_REQUIRED`), no role needs a phone;
+  activation sends every login a password link; HR's "New password" / "Send password reset link" work for floor
+  logins. Customers and riders keep their own phone codes. `/hr/me*` (My HR) is unchanged. Tests:
+  `tests/staffOtpLogin.test.ts` (the retirement), `tests/ownerAuthAnswers.test.ts`.
   **Kiosk PIN clock-in is REMOVED (owner, 2026-10-27: "this is redundant now, we will give all staff proper
   logins").** Every staff member clocks in with their OWN login (floor staff by WhatsApp code). Gone:
   `POST /time-clock/kiosk/punch`, `POST|DELETE /hr/employees/:id/kiosk-pin`, `hr/kioskPin.ts`, `kioskPinSet` on

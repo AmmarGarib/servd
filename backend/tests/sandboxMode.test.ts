@@ -647,11 +647,10 @@ describe('login codes', () => {
     practice(true)
     const phone = normalisePhone(cashier.phone)
     const before = await prisma.phoneOtp.count({ where: { phone } })
+    // Staff code sign-in is retired (owner, 2026-10-28): the same 410 for everyone, nothing issued.
     const staff = await inject('POST', '/api/v1/auth/staff/otp/request', { phone: cashier.phone })
-    expect(staff.status).toBe(503)
-    expect(staff.body.error.code).toBe('OTP_UNAVAILABLE')
-    expect(staff.body.error.message).toMatch(/Sign-in code/)
-    // The same answer for a number that is nobody's: it says nothing about who is staff.
+    expect(staff.status).toBe(410)
+    expect(staff.body.error.code).toBe('STAFF_CODE_LOGIN_RETIRED')
     const nobody = await inject('POST', '/api/v1/auth/staff/otp/request', { phone: '03009999999' })
     expect(nobody).toEqual(staff)
     expect(await prisma.phoneOtp.count({ where: { phone } })).toBe(before)
@@ -673,11 +672,11 @@ describe('login codes', () => {
     expect(recentlyBlocked()).toEqual([])
   })
 
-  it('code requests, live: the floor-staff route still answers as before (no early refusal)', async () => {
-    // A number that belongs to nobody: live answers the generic 200 without sending anything.
+  it('code requests, live: staff code sign-in is retired (owner, 2026-10-28) — 410, nothing sent', async () => {
     const r = await inject('POST', '/api/v1/auth/staff/otp/request', { phone: '03008888888' })
-    expect(r.status).toBe(200)
-    expect(r.body).toEqual({ sent: true, message: 'If that number belongs to a staff account, a code is on its way.' })
+    expect(r.status).toBe(410)
+    expect(r.body.error.code).toBe('STAFF_CODE_LOGIN_RETIRED')
+    expect((await inject('POST', '/api/v1/auth/staff/otp/verify', { phone: '03008888888', code: '123456' })).status).toBe(410)
   })
 
   it('codes still issue under NODE_ENV=production in the practice copy (the send resolves, no 503)', async () => {
@@ -964,12 +963,10 @@ describe('adding staff logins', () => {
     return u
   }
 
-  it('live: an invite still needs an email (and a phone for floor roles), waits for the CEO and returns no password', async () => {
+  it('live: an invite needs an email (every role, owner 2026-10-28; no phone needed), waits for the CEO and returns no password', async () => {
     const noEmail = await inject('POST', '/api/v1/auth/staff/invite', { name: 'Live Nameonly', role: 'cashier' }, fnbAuth)
     expect(noEmail.status).toBe(400)
-    const noPhone = await inject('POST', '/api/v1/auth/staff/invite', { name: 'Live Nophone', role: 'cashier', email: `${PREFIX}.live1@gsfoods.pk` }, fnbAuth)
-    expect(noPhone.status).toBe(400)
-    expect(noPhone.body.error.code).toBe('PHONE_REQUIRED')
+    expect(noEmail.body.error.code).toBe('EMAIL_REQUIRED')
     const ok = await inject('POST', '/api/v1/auth/staff/invite', { name: 'Live Invite', role: 'kitchen', email: `${PREFIX}.live2@gsfoods.pk`, phone: `0301${String(STAMP).slice(-7)}` }, fnbAuth)
     expect(ok.status).toBe(201)
     await track(ok.body.email)
@@ -989,11 +986,10 @@ describe('adding staff logins', () => {
     expect(login.status).toBe(200)
     expect(login.body.accessToken).toBeTruthy()
 
-    // The same floor login on live servd still cannot use a password.
+    // Live servd takes a floor login's password too (owner, 2026-10-28: email + password for everyone).
     practice(false)
     const live = await inject('POST', '/api/v1/auth/login', { email: r.body.email, password: r.body.temporaryPassword })
-    expect(live.status).toBe(403)
-    expect(live.body.error.code).toBe('USE_CODE_LOGIN')
+    expect(live.status).toBe(200)
   })
 
   it('practice copy: the CEO adds staff from a name and a role too', async () => {
