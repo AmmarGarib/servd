@@ -393,7 +393,7 @@ function JournalsPage() {
             ...(canPrepare ? [['requests', isAdmin ? 'Requests' : 'My requests']] : []),
           ] as Array<[PageTab, string]>).map(([k, label]) => (
             <button key={k} role="tab" type="button" aria-selected={tab === k} onClick={() => setTab(k)}
-              className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-semibold ${tab === k ? 'text-s-text' : 'border-transparent text-s-muted hover:text-s-text'}`}
+              className={`whitespace-nowrap border-b-2 px-2 sm:px-3 py-2 text-[13px] sm:text-sm font-semibold ${tab === k ? 'text-s-text' : 'border-transparent text-s-muted hover:text-s-text'}`}
               style={tab === k ? { borderColor: 'var(--erp-accent)' } : undefined}>
               {label}
             </button>
