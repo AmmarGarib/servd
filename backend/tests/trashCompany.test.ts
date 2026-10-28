@@ -248,7 +248,7 @@ describe('domain', () => {
 describe('rider', () => {
   it('delete → Trash; same phone → IN_TRASH; restore → inactive and offline; erasable when unused', async () => {
     const phone = `0321${String(stamp).slice(-7)}`
-    const created = await call('mgmtA', 'POST', '/riders', { name: `${P} rider`, phone })
+    const created = await call('mgmtA', 'POST', '/riders', { name: `${P} rider`, phone, email: `trash.rider.${stamp}@gsfoods.pk` })
     expect(created.statusCode).toBe(201)
     const id = (created.json() as { id: string }).id
     const stored = (created.json() as { phone: string }).phone
@@ -257,10 +257,10 @@ describe('rider', () => {
     expect((await call('mgmtA', 'DELETE', `/riders/${id}`)).statusCode).toBe(204)
     expect((await openEntry('rider', id))?.tenantId).toBe(T.A)
 
-    const again = await call('mgmtA', 'POST', '/riders', { name: 'Again', phone })
+    const again = await call('mgmtA', 'POST', '/riders', { name: 'Again', phone, email: `again.a.${stamp}@gsfoods.pk` })
     expect(again.statusCode).toBe(409)
     expect(code(again)).toBe('IN_TRASH')
-    const other = await call('mgmtB', 'POST', '/riders', { name: 'Again', phone })
+    const other = await call('mgmtB', 'POST', '/riders', { name: 'Again', phone, email: `again.b.${stamp}@gsfoods.pk` })
     expect(other.statusCode).toBe(409)
     expect(code(other)).toBe('PHONE_TAKEN')
 

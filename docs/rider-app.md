@@ -5,11 +5,9 @@ Owner decisions (2026-10-10):
 - **Two clients, one API**: a native Expo app in `rider/` (needed for location
   while the phone is locked) and a web version at **servd.pk/rider** (no app
   store; location only while the page is open).
-- **Login**: phone number + password (owner, 2026-10-28: "riders also i want
-  full accounts"). The WhatsApp code is only for the first sign-in and a
-  forgotten password — it comes with the new password and sets it. A manager
-  must first add the rider in admin → Riders; an unknown number gets the same
-  answer as a known one.
+- **Login**: an @gsfoods.pk email + password, same as staff (owner,
+  2026-10-28). A manager adds the rider in admin → Riders with their email and
+  issues the password there (New password, shown once). No WhatsApp code.
 - **v1 scope**: jobs (accept / decline, navigate, picked up → arrived →
   delivered), live location while on shift, the customer's code at hand-over.
   **Not v1**: earnings and payouts (later: models, nightly worker, admin).
@@ -46,9 +44,8 @@ staff see only the riders carrying B's orders.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| POST | `/rider-auth/login` | `{ phone, password }` | `200 { accessToken, refreshToken, rider }` or `401 { error: { code: 'INVALID_CREDENTIALS' } }` — the same answer for no password yet, a wrong one or an unknown number. Limits per phone and per IP. |
-| POST | `/rider-auth/otp/request` | `{ phone }` | `202 { sent: true }` — always the same, known number or not. Sends a 6-digit WhatsApp code to SET the password (`requestOtp`, purpose `rider_login`) only when exactly one active, non-deleted rider with a company has that normalised phone. Limits: per IP and per phone (reuse `loginRateLimit` buckets). |
-| POST | `/rider-auth/otp/verify` | `{ phone, code, newPassword }` | Stores the password (8+, a letter and a number) and signs in: `200 { accessToken, refreshToken, rider }`; `400 PASSWORD_REQUIRED` without `newPassword` (a code never signs in on its own); `401 { error: { code: 'INVALID_CODE' } }`. A reset (a password was already set) ends every older session. |
+| POST | `/rider-auth/login` | `{ email, password }` | `200 { accessToken, refreshToken, rider }` or `401 { error: { code: 'INVALID_CREDENTIALS' } }` — the same answer for no password yet, a wrong one, or an unknown / non-gsfoods email. Limits per email and per IP. |
+| POST | `/rider-auth/otp/request`, `/otp/verify` | — | `410 RIDER_CODE_LOGIN_RETIRED` (the WhatsApp code sign-in is gone). |
 | POST | `/rider-auth/refresh` | `{ refreshToken }` | `200 { accessToken, refreshToken }` (rotated; the old one is revoked) |
 | POST | `/rider-auth/logout` | `{ refreshToken? }` (+ Bearer when there is one) | `204` (both tokens revoked); works with an expired access token |
 

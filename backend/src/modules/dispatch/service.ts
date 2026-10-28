@@ -780,7 +780,9 @@ export async function resendReroutedCode(
 
 /** Set the rider's own availability — the one writer (admin /dispatch, /riders, tablet, rider app). */
 export async function setRiderStatus(riderId: string, status: 'available' | 'busy' | 'offline') {
-  return prisma.rider.update({ where: { id: riderId }, data: { status } })
+  // Never the password hash (riders/routes.ts withoutSecret).
+  const { passwordHash, ...row } = await prisma.rider.update({ where: { id: riderId }, data: { status } })
+  return { ...row, hasPassword: !!passwordHash }
 }
 
 /** Free a busy rider whose last order in hand (other than `exceptOrderId`) just ended. */

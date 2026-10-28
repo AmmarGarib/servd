@@ -860,11 +860,14 @@ circumstances. GS Foods will run their own delivery fleet.
 
 ### Own-fleet delivery — rider app v1 (2026-10-10)
 
-**docs/rider-app.md is the contract.** Riders sign in with phone + PASSWORD
-(owner, 2026-10-28: "riders also i want full accounts"; `POST /rider-auth/login`,
-`Rider.passwordHash`); the WhatsApp code only SETS the password — first sign-in
-and forgotten password (`/otp/verify` needs `newPassword`, 400
-`PASSWORD_REQUIRED`; a reset ends older sessions). **Customers verify a code
+**docs/rider-app.md is the contract.** Riders sign in like staff (owner,
+2026-10-28: "Riders same as staff — Gsfoods email + password"): an @gsfoods.pk
+`Rider.email` (required on add, unique, never a staff login's — 409
+`EMAIL_TAKEN`) + a password the manager issues on Riders (`POST
+/riders/:id/new-password`, shown once, ends older sessions); `POST
+/rider-auth/login {email, password}`; the WhatsApp code routes answer 410
+`RIDER_CODE_LOGIN_RETIRED`. Rider rows never carry `passwordHash` in a
+response (`withoutSecret`, `hasPassword`). **Customers verify a code
 only at sign-up and to reset a forgotten password** (owner, 2026-10-28;
 `/auth/customer/password/forgot|reset` — one code to the account's OWN phone +
 email); everyday sign-in is email + password; the emailed sign-in link

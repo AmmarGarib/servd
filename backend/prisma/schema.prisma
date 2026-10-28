@@ -3933,9 +3933,10 @@ model Rider {
   // normalised (auth/otp.ts normalisePhone, 92… digits) from 2026-10-10 —
   // migration 20261010120000_rider_app normalised the existing rows.
   phone           String      @unique
-  // Riders have full accounts (owner, 2026-10-28: "riders also i want full accounts"): phone + password. The
-  // WhatsApp code is only for the FIRST sign-in and a forgotten password — it sets the password, it never signs
-  // in on its own. bcrypt hash; null = no password yet (riderAuth/routes.ts).
+  // Riders sign in like staff (owner, 2026-10-28: "Riders same as staff — Gsfoods email + password"): an
+  // @gsfoods.pk email (stored lower-case, unique; never a staff login's email) + a password a manager issues on
+  // Riders (POST /riders/:id/new-password, shown once). No WhatsApp code. bcrypt hash; null = none issued yet.
+  email           String?     @unique
   passwordHash    String?
   passwordSetAt   DateTime?
   vehicleType     VehicleType @default(bike)

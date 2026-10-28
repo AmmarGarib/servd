@@ -25,6 +25,9 @@ import { requireAuth, ALL_STAFF, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { normalisePhone } from '../auth/otp.js'
+import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
+import { generateStaffPassword } from '../../lib/generatePassword.js'
+import { hashPassword } from '../auth/service.js'
 import { revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { audit } from '../../lib/audit.js'
 import { withdrawOffer } from '../dispatch/service.js'
@@ -41,9 +44,32 @@ const riderSchema = z.object({
     }
     return n
   }),
+  // The rider's sign-in, same as staff (owner, 2026-10-28): an @gsfoods.pk email; the password is issued with
+  // POST /riders/:id/new-password.
+  email: z.string().trim().max(200).transform((v, ctx) => {
+    const e = normaliseStaffEmail(v)
+    if (!isStaffEmail(e)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: STAFF_EMAIL_MESSAGE })
+      return z.NEVER
+    }
+    return e
+  }).optional(),
   vehicleType: z.enum(['bike', 'car', 'bicycle', 'foot']).default('bike'),
   notes: z.string().optional(),
 })
+
+/** A rider row as the admin sees it: never the password hash, only whether one is issued. */
+function withoutSecret<T extends { passwordHash?: string | null }>(r: T): Omit<T, 'passwordHash'> & { hasPassword: boolean } {
+  const { passwordHash, ...rest } = r
+  return { ...rest, hasPassword: !!passwordHash }
+}
+
+/** A rider's email may not be a staff login's (one address, one account). */
+async function assertEmailFree(email: string | undefined) {
+  if (!email) return
+  const staff = await serviceClient.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } }, select: { id: true } })
+  if (staff) throw new AppError('EMAIL_TAKEN', 'That email belongs to a staff login. Give the rider their own @gsfoods.pk email.', 409)
+}
 
 /**
  * Turn the unique-phone violation into a clear 409 — IN_TRASH when the number
@@ -53,6 +79,10 @@ const riderSchema = z.object({
 function phoneTaken(req: FastifyRequest, phone: string | undefined) {
   return async (err: unknown): Promise<never> => {
     if ((err as { code?: string }).code === 'P2002') {
+      const target = (err as { meta?: { target?: unknown } }).meta?.target
+      if (Array.isArray(target) ? target.includes('email') : String(target ?? '').includes('email')) {
+        throw new AppError('EMAIL_TAKEN', 'Another rider already uses this email', 409)
+      }
       const holder = phone
         ? await serviceClient.rider.findUnique({ where: { phone }, select: { id: true, tenantId: true, deletedAt: true } })
         : null
@@ -223,7 +253,7 @@ export async function riderRoutes(fastify: FastifyInstance) {
   // the hand-over code).
   fastify.get('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const scope = await scopeTenantWhere(req, 'read')
-    return prisma.rider.findMany({
+    const rows = await prisma.rider.findMany({
       where: { deletedAt: null, ...scope },
       include: {
         tenant: { select: { name: true } },
@@ -249,6 +279,7 @@ export async function riderRoutes(fastify: FastifyInstance) {
       },
       orderBy: [{ status: 'asc' }, { name: 'asc' }],
     })
+    return rows.map(withoutSecret)
   })
 
   // POST /riders — a new rider belongs to the ACTIVE company (honours
@@ -258,8 +289,10 @@ export async function riderRoutes(fastify: FastifyInstance) {
     const body = riderSchema.parse(req.body)
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before adding a rider', 422)
+    if (!body.email) throw new AppError('EMAIL_REQUIRED', `A rider signs in with an @gsfoods.pk email. Add one.`, 400)
+    await assertEmailFree(body.email)
     const rider = await prisma.rider.create({ data: { ...body, tenantId } }).catch(phoneTaken(req, body.phone))
-    return reply.status(201).send(rider)
+    return reply.status(201).send(withoutSecret(rider))
   })
 
   // PATCH /riders/:id
@@ -269,10 +302,42 @@ export async function riderRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = riderSchema.partial().parse(req.body)
       const rider = await loadRiderInScope(req, req.params.id, 'write')
+      if (body.email && body.email !== rider.email) await assertEmailFree(body.email)
       const updated = await prisma.rider.update({ where: { id: rider.id }, data: body }).catch(phoneTaken(req, body.phone))
-      // A new number is a new sign-in identity: whoever held the old one is out.
-      if (body.phone && body.phone !== rider.phone) await revokeAllForSubject(rider.id)
-      return updated
+      // A new email is a new sign-in identity: whoever held the old one is out.
+      if (body.email && body.email !== rider.email) await revokeAllForSubject(rider.id)
+      return withoutSecret(updated)
+    },
+  )
+
+  // POST /riders/:id/new-password — a manager issues the rider's password (owner, 2026-10-28: riders sign in
+  // like staff). A fresh strong password, returned ONCE and never stored in plain text; every session the rider
+  // had ends. Needs the rider's @gsfoods.pk email first.
+  fastify.post<{ Params: { id: string } }>(
+    '/:id/new-password',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const rider = await loadRiderInScope(req, req.params.id, 'write')
+      if (!rider.email) {
+        throw new AppError('EMAIL_REQUIRED', 'This rider has no @gsfoods.pk email, so they cannot sign in. Add one first.', 400)
+      }
+      const temporaryPassword = generateStaffPassword()
+      await prisma.rider.update({
+        where: { id: rider.id },
+        data: { passwordHash: await hashPassword(temporaryPassword), passwordSetAt: new Date() },
+      })
+      await revokeAllForSubject(rider.id)
+      await audit({
+        category: 'identity',
+        action: 'rider.password_reissue',
+        entity: 'Rider',
+        entityId: rider.id,
+        userId: req.staffUser!.id,
+        userEmail: req.staffUser!.email,
+        tenantId: rider.tenantId,
+        metadata: { actorRole: req.staffUser!.role, riderEmail: rider.email },
+      })
+      return { riderId: rider.id, email: rider.email, temporaryPassword }
     },
   )
 

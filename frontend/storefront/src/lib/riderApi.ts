@@ -31,6 +31,7 @@ export interface RiderPublic {
   id: string
   name: string
   phone: string            // normalised 92… digits
+  email: string | null     // the @gsfoods.pk sign-in
   vehicleType: string
   status: RiderStatus | string
   companyName: string | null
@@ -294,15 +295,9 @@ const enc = encodeURIComponent
 export type StepAction = 'accept' | 'decline' | 'picked-up' | 'arrived'
 
 export const riderApi = {
-  /** Phone + password (owner, 2026-10-28: riders have full accounts). 401 INVALID_CREDENTIALS. */
-  signIn: (phone: string, password: string) =>
-    publicPost<RiderSessionResponse>('/rider-auth/login', { phone, password }),
-  /** A WhatsApp code to SET the password (first sign-in, forgotten password). 202 { sent: true } for every number. */
-  requestCode: (phone: string) =>
-    publicPost<{ sent: boolean }>('/rider-auth/otp/request', { phone }),
-  /** The code + the new password: stores it and signs in. A code never signs in on its own. */
-  setPassword: (phone: string, code: string, newPassword: string) =>
-    publicPost<RiderSessionResponse>('/rider-auth/otp/verify', { phone, code, newPassword }),
+  /** @gsfoods.pk email + password, same as staff (owner, 2026-10-28). 401 INVALID_CREDENTIALS. */
+  signIn: (email: string, password: string) =>
+    publicPost<RiderSessionResponse>('/rider-auth/login', { email, password }),
 
   me: () => riderFetch<{ rider: RiderPublic }>('/rider/me'),
   setShift: (online: boolean) =>

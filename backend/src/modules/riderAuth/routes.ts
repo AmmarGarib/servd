@@ -1,66 +1,35 @@
-// /api/v1/rider-auth — rider-app sign-in (docs/rider-app.md). Public,
-// rate-limited. Riders have full accounts (owner, 2026-10-28): phone + password.
+// /api/v1/rider-auth — rider-app sign-in (docs/rider-app.md). Public, rate-limited.
+// Riders sign in like staff (owner, 2026-10-28: "Riders same as staff — Gsfoods email + password").
 //
-//   POST /login       { phone, password }              → 200 { accessToken, refreshToken, rider } | 401 INVALID_CREDENTIALS
-//   POST /otp/request { phone }                        → 202 { sent: true }, always
-//   POST /otp/verify  { phone, code, newPassword }     → 200 { accessToken, refreshToken, rider } | 401 INVALID_CODE
-//   POST /refresh     { refreshToken }                 → 200 { accessToken, refreshToken } (rotated; old one revoked)
+//   POST /login       { email, password }  → 200 { accessToken, refreshToken, rider } | 401 INVALID_CREDENTIALS
+//   POST /refresh     { refreshToken }     → 200 { accessToken, refreshToken } (rotated; old one revoked)
 //   POST /logout      { refreshToken? } [+ Bearer rider token] → 204 (whatever was sent is revoked)
+//   POST /otp/request, /otp/verify         → 410 RIDER_CODE_LOGIN_RETIRED (the WhatsApp code sign-in is gone)
 //
-// The WhatsApp code is ONLY for the first sign-in and a forgotten password: /otp/verify needs the new password
-// with the code (400 PASSWORD_REQUIRED without it), stores it, ends every older session of the rider and signs
-// in. A code never signs in on its own.
-//
-// A manager must first add the rider in admin → Riders. The request answers
-// the same for a known and an unknown number — same status, same body, same
-// rate limit (the phone bucket counts every request, matched or not), and the
-// same timing (the WhatsApp send is not awaited) — so it cannot be used to
-// learn which numbers are riders, or to make GS Foods' WhatsApp message a
-// number of the caller's choosing: a code only ever goes to a number that is
-// already an active rider's.
-//
-// Every limit here is CLAIMED before the work it guards (loginRateLimit
-// `claim`), never read first and counted after: parallel requests used to all
-// pass the read, so 25 simultaneous guesses got 25 tries against a limit of 6,
-// and 20 simultaneous code requests sent 15 WhatsApp messages.
+// A manager adds the rider in admin → Riders with an @gsfoods.pk email and issues the password there
+// (POST /riders/:id/new-password, shown once). A wrong password, no password yet, an unknown or non-gsfoods
+// email all get the same 401 in the same time. Limits are CLAIMED before the work (loginRateLimit `claim`).
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
-import { hashPassword } from '../auth/service.js'
-import { normalisePhone, requestOtp, verifyOtp } from '../auth/otp.js'
 import { AppError } from '../../lib/errors.js'
-import { serviceClient as prisma } from '../../lib/prisma.js'
-import { refuseCodeRequestInPractice } from '../../lib/sandbox.js'
 import { revokeToken, claimRevocation, isCutOff, revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import {
   claim as claimRateLimit,
   release as releaseRateLimit,
   clearFailures,
-  RIDER_OTP_PHONE_LIMIT,
-  RIDER_OTP_IP_LIMIT,
-  RIDER_PASSWORD_PHONE_LIMIT,
+  RIDER_PASSWORD_EMAIL_LIMIT,
   RIDER_PASSWORD_IP_LIMIT,
 } from '../../lib/loginRateLimit.js'
-import { findLoginRider, issueRiderSession, loadActiveRider, riderPasswordHash, riderPublic, verifyRiderToken } from './service.js'
+import { findLoginRiderByEmail, issueRiderSession, loadActiveRider, riderPasswordHash, riderPublic, verifyRiderToken } from './service.js'
 
-const phoneSchema = z.string().trim().min(7).max(20)
-const newPasswordSchema = z.string()
-  .min(8, 'Password must be at least 8 characters')
-  .max(128)
-  .regex(/[a-zA-Z]/, 'Password must contain a letter')
-  .regex(/[0-9]/, 'Password must contain a number')
-
-// Compared when the number has no rider or no password yet, so the answer takes as long either way.
+// Compared when the email has no rider or no password yet, so the answer takes as long either way.
 const DUMMY_HASH = bcrypt.hashSync('servd-rider-no-password', 12)
 
 function invalidCredentials(): AppError {
-  return new AppError('INVALID_CREDENTIALS', 'Wrong phone number or password. First time, or forgot it? Get a code to set your password.', 401)
-}
-
-function invalidCode(): AppError {
-  return new AppError('INVALID_CODE', 'That code is not valid. Request a new one and try again.', 401)
+  return new AppError('INVALID_CREDENTIALS', 'Wrong email or password. Forgot it? Ask your manager for a new password.', 401)
 }
 
 function signedOut(): AppError {
@@ -79,108 +48,32 @@ function ttlOf(token: string): number {
 const ROTATED = 'rotated'
 
 export async function riderAuthRoutes(fastify: FastifyInstance) {
-  // POST /rider-auth/login — phone + password.
+  // POST /rider-auth/login — @gsfoods.pk email + password.
   fastify.post('/login', async (req, reply) => {
-    const body = z.object({ phone: phoneSchema, password: z.string().min(1).max(128) }).parse(req.body)
-    const phone = normalisePhone(body.phone)
-    const phoneKey = `phone:${phone}`
+    const body = z.object({ email: z.string().trim().max(200), password: z.string().min(1).max(128) }).parse(req.body)
+    const email = body.email.toLowerCase()
+    const emailKey = `email:${email}`
     const ip = ipOf(req)
     await claimRateLimit(RIDER_PASSWORD_IP_LIMIT, ip)
-    await claimRateLimit(RIDER_PASSWORD_PHONE_LIMIT, phoneKey)
+    await claimRateLimit(RIDER_PASSWORD_EMAIL_LIMIT, emailKey)
 
-    const rider = await findLoginRider(phone)
+    const rider = await findLoginRiderByEmail(email)
     const hash = rider ? await riderPasswordHash(rider.id) : null
     const ok = await bcrypt.compare(body.password, hash ?? DUMMY_HASH)
     if (!rider || !hash || !ok) throw invalidCredentials()
 
-    await clearFailures(RIDER_PASSWORD_PHONE_LIMIT, phoneKey)
+    await clearFailures(RIDER_PASSWORD_EMAIL_LIMIT, emailKey)
     await releaseRateLimit(RIDER_PASSWORD_IP_LIMIT, ip)
     const session = issueRiderSession(rider)
     return reply.status(200).send({ ...session, rider: riderPublic(rider) })
   })
 
-  // POST /rider-auth/otp/request — a code to SET the password (first sign-in, forgotten password).
-  fastify.post('/otp/request', async (req, reply) => {
-    refuseCodeRequestInPractice('rider') // practice copy: nothing is sent (lib/sandbox.ts)
-    const body = z.object({ phone: phoneSchema }).parse(req.body)
-    const phone = normalisePhone(body.phone)
-
-    // Every request takes a slot, matched or not — the limit must not differ
-    // between a rider's number and anyone else's. The IP bucket counts them
-    // too, so one source cannot walk the whole fleet's numbers.
-    await claimRateLimit(RIDER_OTP_IP_LIMIT, ipOf(req))
-    await claimRateLimit(RIDER_OTP_PHONE_LIMIT, `phone:${phone}`)
-
-    const rider = await findLoginRider(phone)
-    if (rider) {
-      // Not awaited. The cooldown and cap checks, the insert and the WhatsApp
-      // send take real time (the send hundreds of milliseconds), and an
-      // unknown number does none of it — waiting would make the reply's
-      // timing say which numbers are riders. A send that fails, or a request
-      // inside the cooldown (whose code is still valid), changes nothing the
-      // caller sees.
-      void requestOtp({ phone, purpose: 'rider_login' }).catch((err: Error) => {
-        req.log.warn({ err: err.message, riderId: rider.id }, 'rider sign-in code not sent')
-      })
-    }
-    return reply.status(202).send({ sent: true })
-  })
-
-  // POST /rider-auth/otp/verify
-  fastify.post('/otp/verify', async (req, reply) => {
-    const body = z.object({
-      phone: phoneSchema,
-      code: z.string().trim().min(4).max(8),
-      newPassword: z.string().max(128).optional(),
-    }).parse(req.body)
-    // A code never signs in on its own: it sets the password (owner, 2026-10-28).
-    if (!body.newPassword) {
-      throw new AppError('PASSWORD_REQUIRED', 'Choose a password to go with the code.', 400)
-    }
-    const newPassword = newPasswordSchema.parse(body.newPassword)
-    const phone = normalisePhone(body.phone)
-    const phoneKey = `phone:${phone}`
-    const ip = ipOf(req)
-
-    // The slot is taken before the code is looked at (and verifyOtp takes one
-    // on the code itself), so parallel guesses cannot outrun either limit.
-    await claimRateLimit(RIDER_OTP_IP_LIMIT, ip)
-    await claimRateLimit(RIDER_OTP_PHONE_LIMIT, phoneKey)
-
-    // Both lookups run whatever the number, so an unknown number makes the
-    // same database round trips as a rider's. The rider is re-resolved at
-    // verify time: a code alone is not enough if the rider was deactivated,
-    // deleted or moved off this number since it was sent.
-    const rider = await findLoginRider(phone)
-    let codeOk = false
-    try {
-      await verifyOtp({ phone, code: body.code, purpose: 'rider_login' })
-      codeOk = true
-    } catch (err) {
-      // Wrong, expired, used up, locked or never sent — one answer for all of
-      // them. Anything else (the database is down) is not a wrong code.
-      if (!(err instanceof AppError)) throw err
-    }
-    if (!rider || !codeOk) throw invalidCode()
-
-    await clearFailures(RIDER_OTP_PHONE_LIMIT, phoneKey)
-    // A sign-in that worked is not a strike against a shared carrier IP.
-    await releaseRateLimit(RIDER_OTP_IP_LIMIT, ip)
-
-    // The new password replaces any old one. A RESET (a password was already set) ends every session issued
-    // before it — a forgotten password may mean a lost phone; the first password leaves the rider's earlier
-    // code sessions alone.
-    const hadPassword = !!(await riderPasswordHash(rider.id))
-    await prisma.rider.update({
-      where: { id: rider.id },
-      data: { passwordHash: await hashPassword(newPassword), passwordSetAt: new Date() },
+  // The WhatsApp code sign-in is retired: riders sign in like staff. 410 so an old app build says why.
+  for (const path of ['/otp/request', '/otp/verify']) {
+    fastify.post(path, async () => {
+      throw new AppError('RIDER_CODE_LOGIN_RETIRED', 'Sign in with your @gsfoods.pk email and password. Your manager gives you your password.', 410)
     })
-    if (hadPassword) await revokeAllForSubject(rider.id)
-    await clearFailures(RIDER_PASSWORD_PHONE_LIMIT, phoneKey)
-
-    const session = issueRiderSession(rider)
-    return reply.status(200).send({ ...session, rider: riderPublic(rider) })
-  })
+  }
 
   // POST /rider-auth/refresh — rotate: the presented refresh token is revoked
   // and a new pair issued, once. The revocation is the claim (SET NX), so two

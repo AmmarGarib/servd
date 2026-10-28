@@ -9,6 +9,7 @@ export interface Rider {
   id: string
   name: string
   phone: string            // normalised 92… digits
+  email?: string | null    // the @gsfoods.pk sign-in
   vehicleType: VehicleType | string
   status: RiderStatus | string
   companyName: string | null

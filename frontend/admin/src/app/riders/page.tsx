@@ -42,6 +42,8 @@ interface Rider {
   id: string; name: string; phone: string; vehicleType: string
   status: 'available' | 'busy' | 'offline'; isActive: boolean
   totalDeliveries: number; notes: string | null
+  /** The rider's sign-in, same as staff (owner, 2026-10-28): @gsfoods.pk email + a password issued here. */
+  email?: string | null; hasPassword?: boolean
   tenantId?: string | null
   // From GET /riders: the rider's company (their employer) and their latest
   // job event. Until the API sends them, the company name comes from the
@@ -280,7 +282,10 @@ export default function RidersPage() {
   const [tab, setTab] = useState<'dispatch' | 'roster' | 'fleet'>('dispatch')
   const [showAdd, setShowAdd] = useState(false)
   const [viewingHistory, setViewingHistory] = useState<string | null>(null)
-  const [addForm, setAddForm] = useState({ name: '', phone: '', vehicleType: 'bike', notes: '' })
+  const [addForm, setAddForm] = useState({ name: '', phone: '', email: '', vehicleType: 'bike', notes: '' })
+  // Sign-in: edit a rider's email; a newly issued password is shown ONCE here.
+  const [emailEdit, setEmailEdit] = useState<{ id: string; value: string } | null>(null)
+  const [issued, setIssued] = useState<{ riderId: string; email: string; temporaryPassword: string } | null>(null)
   const [assigningOrder, setAssigningOrder] = useState<string | null>(null)
   const [fleetError, setFleetError] = useState<string | null>(null)
 
@@ -331,7 +336,7 @@ export default function RidersPage() {
 
   const addMutation = useMutation({
     mutationFn: (body: typeof addForm) => api.post<Rider>('/riders', body),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['riders'] }); setShowAdd(false); setAddForm({ name: '', phone: '', vehicleType: 'bike', notes: '' }) },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['riders'] }); setShowAdd(false); setAddForm({ name: '', phone: '', email: '', vehicleType: 'bike', notes: '' }) },
   })
 
   // Assigning, delivering and rider availability all go through /dispatch —
@@ -384,6 +389,15 @@ export default function RidersPage() {
     )) return
     deliveredMutation.mutate(order.id)
   }
+
+  const emailMutation = useMutation({
+    mutationFn: ({ id, email }: { id: string; email: string }) => api.patch<Rider>(`/riders/${id}`, { email }),
+    onSuccess: () => { setEmailEdit(null); void qc.invalidateQueries({ queryKey: ['riders'] }) },
+  })
+  const passwordMutation = useMutation({
+    mutationFn: (id: string) => api.post<{ riderId: string; email: string; temporaryPassword: string }>(`/riders/${id}/new-password`, {}),
+    onSuccess: (r) => { setIssued(r); void qc.invalidateQueries({ queryKey: ['riders'] }) },
+  })
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteWithUndo(`/riders/${id}`, { trashType: 'rider', id, onRestored: () => void qc.invalidateQueries({ queryKey: ['riders'] }) }),
@@ -503,6 +517,11 @@ export default function RidersPage() {
               <input value={addForm.phone} onChange={(e) => setAddForm({ ...addForm, phone: e.target.value })}
                 placeholder="+92 3XX XXXXXXX" inputMode="tel" autoComplete="off" className={inp} />
             </div>
+            <div className="col-span-2">
+              <label className="text-xs text-s-muted">Email (signs in with this)</label>
+              <input value={addForm.email} onChange={(e) => setAddForm({ ...addForm, email: e.target.value })}
+                placeholder="name@gsfoods.pk" type="email" inputMode="email" autoComplete="off" className={inp} />
+            </div>
             <div>
               <label className="text-xs text-s-muted">Vehicle</label>
               <Select value={addForm.vehicleType} onChange={(e) => setAddForm({ ...addForm, vehicleType: e.target.value })} className={inp}>
@@ -519,13 +538,13 @@ export default function RidersPage() {
             </div>
           </div>
           <p className="text-xs text-s-muted">
-            The rider signs in to the rider app with this number and a code sent on WhatsApp.
+            The rider signs in to the rider app with this @gsfoods.pk email and a password you issue on their card (New password).
           </p>
           {addMutation.isError && (
             <p className="text-xs text-s-red">{(addMutation.error as Error).message}</p>
           )}
           <div className="flex gap-2">
-            <button onClick={() => addMutation.mutate(addForm)} disabled={!addForm.name.trim() || !addForm.phone.trim() || addMutation.isPending}
+            <button onClick={() => addMutation.mutate(addForm)} disabled={!addForm.name.trim() || !addForm.phone.trim() || !addForm.email.trim() || addMutation.isPending}
               className="rounded-lg bg-primary text-primary-on font-bold px-4 py-2 text-sm disabled:opacity-50">
               {addMutation.isPending ? 'Saving…' : 'Add Rider'}
             </button>
@@ -750,12 +769,57 @@ export default function RidersPage() {
                       className="rounded-lg border border-s-border text-s-muted px-3 py-1.5 text-xs hover:text-s-text transition-colors">
                       History
                     </button>
+                    <button onClick={() => { if (window.confirm(`Issue a new password for ${rider.name}? Their old password and sign-in stop working now.`)) passwordMutation.mutate(rider.id) }}
+                      disabled={!rider.email || passwordMutation.isPending}
+                      title={rider.email ? undefined : 'Add their @gsfoods.pk email first'}
+                      className="rounded-lg border border-s-border text-s-muted px-3 py-1.5 text-xs hover:border-primary hover:text-primary-ink transition-colors disabled:opacity-40">
+                      New password
+                    </button>
                     <button onClick={() => { if (window.confirm(`Remove ${rider.name}? Their rider-app sign-in ends now.`)) deleteMutation.mutate(rider.id) }}
                       className="rounded-lg border border-s-border text-s-red px-3 py-1.5 text-xs hover:border-s-red transition-colors">
                       Remove
                     </button>
                   </div>
                 </div>
+
+                {/* Sign-in: @gsfoods.pk email + password, same as staff (owner, 2026-10-28) */}
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs min-w-0">
+                  <span className="text-s-muted">Sign-in:</span>
+                  {emailEdit?.id === rider.id ? (
+                    <>
+                      <input value={emailEdit.value} onChange={(e) => setEmailEdit({ id: rider.id, value: e.target.value })}
+                        placeholder="name@gsfoods.pk" type="email" autoFocus
+                        className="s-input w-auto min-w-0 flex-1 sm:flex-none sm:w-64 py-1.5 text-xs" />
+                      <button onClick={() => emailMutation.mutate({ id: rider.id, email: emailEdit.value })} disabled={emailMutation.isPending || !emailEdit.value.trim()}
+                        className="rounded-lg bg-primary text-primary-on font-bold px-3 py-1.5 disabled:opacity-50">Save</button>
+                      <button onClick={() => { setEmailEdit(null); emailMutation.reset() }} className="rounded-lg border border-s-border text-s-muted px-3 py-1.5">Cancel</button>
+                      {emailMutation.isError && <span className="w-full text-s-red">{(emailMutation.error as Error).message}</span>}
+                    </>
+                  ) : (
+                    <>
+                      {rider.email
+                        ? <span className="text-s-text break-all">{rider.email}</span>
+                        : <span className="text-s-red">No email — cannot sign in</span>}
+                      {rider.email && !rider.hasPassword && <span className="text-s-amber">· no password yet</span>}
+                      <button onClick={() => setEmailEdit({ id: rider.id, value: rider.email ?? '' })}
+                        className="font-bold text-primary-ink hover:underline min-h-[32px]">{rider.email ? 'Change email' : 'Add email'}</button>
+                    </>
+                  )}
+                </div>
+                {passwordMutation.isError && passwordMutation.variables === rider.id && (
+                  <p className="mt-2 text-xs text-s-red">{(passwordMutation.error as Error).message}</p>
+                )}
+                {issued?.riderId === rider.id && (
+                  <div className="mt-3 rounded-lg border border-primary bg-primary/10 p-3 text-xs space-y-1">
+                    <p className="font-bold text-s-text">New password for {issued.email}</p>
+                    <p className="font-mono text-sm text-s-text break-all select-all">{issued.temporaryPassword}</p>
+                    <p className="text-s-muted">Shown once. Give it to the rider in person; they sign in at servd.pk/rider with their email and this password.</p>
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => void navigator.clipboard?.writeText(issued.temporaryPassword)} className="rounded-lg border border-s-border px-3 py-1.5 font-bold text-s-text">Copy</button>
+                      <button onClick={() => setIssued(null)} className="rounded-lg border border-s-border px-3 py-1.5 text-s-muted">Done</button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Private documents (owner C16, 2026-10-27) */}
                 <div className="mt-4 border-t border-s-border pt-4">

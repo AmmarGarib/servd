@@ -1,5 +1,5 @@
-// Rider-app sign-in (docs/rider-app.md): phone number + password (owner, 2026-10-28: "riders also i want full
-// accounts"). A WhatsApp code only sets the password — the first time and after a forgotten one.
+// Rider-app sign-in (docs/rider-app.md): an @gsfoods.pk email + password, same as staff (owner, 2026-10-28:
+// "Riders same as staff — Gsfoods email + password"). A manager issues the password on Riders. No WhatsApp code.
 //
 // A rider is NOT a User. A User with a rider role would inherit every
 // ALL_STAFF route — the order lists, the dispatch board, the hand-over codes —
@@ -20,6 +20,7 @@ import jwt, { type SignOptions } from 'jsonwebtoken'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, UnauthorizedError } from '../../lib/errors.js'
 import { normalisePhone } from '../auth/otp.js'
+import { isStaffEmail, normaliseStaffEmail } from '../../lib/staffEmail.js'
 
 if (!process.env['JWT_SECRET'] || !process.env['JWT_REFRESH_SECRET']) {
   throw new Error('JWT_SECRET and JWT_REFRESH_SECRET environment variables must be set')
@@ -44,18 +45,19 @@ export interface RiderPublic {
   id: string
   name: string
   phone: string
+  email: string | null
   vehicleType: string
   status: string
   companyName: string | null
 }
 
 const RIDER_SELECT = {
-  id: true, name: true, phone: true, vehicleType: true, status: true, tenantId: true,
+  id: true, name: true, phone: true, email: true, vehicleType: true, status: true, tenantId: true,
   tenant: { select: { name: true } },
 } as const
 
 export type SignedInRider = {
-  id: string; name: string; phone: string; vehicleType: string; status: string
+  id: string; name: string; phone: string; email: string | null; vehicleType: string; status: string
   tenantId: string; tenant: { name: string } | null
 }
 
@@ -64,6 +66,7 @@ export function riderPublic(r: SignedInRider): RiderPublic {
     id: r.id,
     name: r.name,
     phone: r.phone,
+    email: r.email,
     vehicleType: r.vehicleType,
     status: r.status,
     companyName: r.tenant?.name ?? null,
@@ -91,6 +94,17 @@ export async function findLoginRider(phone: string): Promise<SignedInRider | nul
   if (hits.length !== 1) return null
   const r = hits[0]!
   return { ...r, tenantId: r.tenantId! }
+}
+
+/** The active rider who signs in with this email (an @gsfoods.pk address), or null. */
+export async function findLoginRiderByEmail(email: string): Promise<SignedInRider | null> {
+  const e = normaliseStaffEmail(email)
+  if (!isStaffEmail(e)) return null
+  const r = await prisma.rider.findFirst({
+    where: { email: e, deletedAt: null, isActive: true, tenantId: { not: null } },
+    select: RIDER_SELECT,
+  })
+  return r ? { ...r, tenantId: r.tenantId! } : null
 }
 
 /** A rider who may hold a session right now, or null. */
