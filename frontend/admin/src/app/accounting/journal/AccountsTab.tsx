@@ -195,7 +195,39 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
               Hide cancelled entries ({hiddenCount} lines: entries cancelled in this period and the entries that cancel them — they net to zero)
             </label>
           )}
-          <div className="s-card overflow-hidden">
+          {/* Phone: one compact row per line — date, particulars, Dr / Cr and the running balance, nothing to swipe
+              (owner, 2026-10-28). Laptops and tablets keep the table below. */}
+          <div className="s-card sm:hidden text-xs">
+            <div className="flex justify-between gap-2 px-3 py-2 bg-s-bg-soft">
+              <span className="text-s-muted">Opening balance</span>
+              <span className="font-mono font-semibold">{fmtPkr(first.openingCents)}</span>
+            </div>
+            <ul className="divide-y divide-s-border border-t border-s-border">
+              {lines.map((l) => (
+                <li key={l.lineId}>
+                  <button type="button" onClick={() => onOpen(l.entryId)} className="w-full text-left px-3 py-2 min-w-0 hover:bg-s-bg-soft">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="font-mono text-s-muted">{pktDate(l.date)}{l.voucherNo ? ` · ${l.voucherNo}` : ''}</span>
+                      <span className={`font-mono whitespace-nowrap ${l.debitCents ? '' : 'text-s-muted'}`}>{l.debitCents ? `Dr ${fmtPkr(l.debitCents)}` : `Cr ${fmtPkr(l.creditCents)}`}</span>
+                    </div>
+                    <span className="block text-s-text break-words">{l.particulars ?? readableDescription(l.description)}</span>
+                    {l.memo && <span className="block text-s-muted break-words">{l.memo}</span>}
+                    <div className="flex items-start justify-between gap-2 mt-0.5">
+                      <span className="min-w-0">{l.status && l.status !== 'live' && <StatusBadge status={l.status} reversedBy={l.reversedBy} reverses={l.reverses} />}</span>
+                      <span className="font-mono text-s-muted whitespace-nowrap">Balance {fmtPkr(l.balanceCents)}</span>
+                    </div>
+                  </button>
+                </li>
+              ))}
+              {lines.length === 0 && <li className="px-3 py-4 text-center text-s-muted">No entries in this period.</li>}
+            </ul>
+            <div className="border-t border-s-border px-3 py-2 space-y-1 font-semibold">
+              <div className="flex justify-between gap-2"><span>{st.hasNextPage ? 'Debits (whole period)' : 'Debits'}</span><span className="font-mono">{fmtPkr(first.totals.debitCents)}</span></div>
+              <div className="flex justify-between gap-2"><span>{st.hasNextPage ? 'Credits (whole period)' : 'Credits'}</span><span className="font-mono">{fmtPkr(first.totals.creditCents)}</span></div>
+              <div className="flex justify-between gap-2"><span>Closing balance</span><span className="font-mono">{fmtPkr(last.closingCents)}</span></div>
+            </div>
+          </div>
+          <div className="s-card overflow-hidden hidden sm:block">
             <div className="overflow-x-auto">
               <table className="w-full text-xs min-w-[44rem]">
                 <thead className="text-s-muted">
