@@ -124,8 +124,8 @@ export default function IngredientsPage() {
           {!isLoading && rows.length === 0 && <li className="px-3 py-6 text-center text-xs text-s-muted">No ingredients match.</li>}
           {isLoading && <li className="px-3 py-6 text-center text-xs text-s-muted">Loading…</li>}
         </ul>
-        <div className="s-card overflow-x-auto hidden sm:block">
-          <table className="w-full min-w-[68rem] text-sm">
+        <div className="s-card relative overflow-x-auto hidden sm:block">
+          <table className="w-full min-w-[60rem] text-sm">
             <thead className="text-xs text-s-muted">
               <tr>
                 <th className="px-3 py-2 text-left">Ingredient</th>
@@ -135,13 +135,13 @@ export default function IngredientsPage() {
                 {pricesShown && <th className="px-3 py-2 text-right">90-day average</th>}
                 {pricesShown && <th className="px-3 py-2 text-left">Last bought</th>}
                 <th className="px-3 py-2 text-left">Spec (what we buy)</th>
-                <th className="px-3 py-2"><span className="sr-only">Details</span></th>
+                <th className="px-1 py-2"><span className="sr-only">Details</span></th>
               </tr>
             </thead>
             <tbody>
               {rows.map((m) => (
                 <tr key={m.id} className="border-t border-s-border hover:bg-s-bg-soft align-top">
-                  <td className="px-2 py-1 text-s-text min-w-[12rem]">
+                  <td className="px-2 py-1 text-s-text min-w-[11rem]">
                     <InlineText value={m.name} label={`Name of ${m.name}`} disabled={!canEdit} required onSave={cell(m, 'name')} />
                     {(m.status === 'needs_review' || m.perishable) && (
                       <div className="px-1 pb-1 flex flex-wrap gap-1">
@@ -150,27 +150,27 @@ export default function IngredientsPage() {
                       </div>
                     )}
                   </td>
-                  <td className="px-2 py-1 text-s-muted min-w-[5.5rem]">
+                  <td className="px-2 py-1 text-s-muted min-w-[5rem]">
                     <InlineSelect value={m.stockUnit} label={`Unit of ${m.name}`} disabled={!isReviewer}
                       options={[...new Set([m.stockUnit, ...BASE_UNITS])].map((u) => ({ value: u, label: u }))} onSave={cell(m, 'unit')} />
                     {m.purchaseUnit && <p className="px-1 text-[11px] text-s-muted whitespace-nowrap">bought by {m.purchaseUnit} ({m.purchaseUnitFactor})</p>}
                   </td>
-                  <td className="px-2 py-1 text-s-muted min-w-[10rem]">
+                  <td className="px-2 py-1 text-s-muted min-w-[9.5rem]">
                     <InlineSelect value={m.category ?? ''} label={`Category of ${m.name}`} disabled={!isReviewer}
                       options={[{ value: '', label: 'Uncategorised' }, ...INVENTORY_CATEGORY_OPTIONS]} onSave={cell(m, 'category')} />
                   </td>
                   {pricesShown && (
-                    <td className="px-2 py-1 text-right min-w-[12rem]">
+                    <td className="px-2 py-1 text-right min-w-[11rem]">
                       <InlinePrice cents={m.price?.latestCents ?? null} unit={m.price?.displayUnit ?? 'kg'} label={`Price of ${m.name}`}
                         disabled={!canPrice} onSave={cell(m, 'price')} />
                     </td>
                   )}
                   {pricesShown && <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap text-s-muted">{priceText(m.price?.averageCents, m.price)}</td>}
-                  {pricesShown && <td className="px-3 py-2 text-xs text-s-muted min-w-[11rem]">{lastBought(m.price) ?? '—'}</td>}
-                  <td className="px-2 py-1 text-s-muted min-w-[16rem]">
+                  {pricesShown && <td className="px-3 py-2 text-xs text-s-muted min-w-[9rem]">{lastBought(m.price) ?? '—'}</td>}
+                  <td className="px-2 py-1 text-s-muted min-w-[12rem]">
                     <InlineText value={m.spec ?? ''} label={`Spec of ${m.name}`} placeholder="—" disabled={!canEdit} onSave={cell(m, 'spec')} />
                   </td>
-                  <td className="px-2 py-1 text-right">
+                  <td className="px-1 py-1 text-right">
                     <button type="button" onClick={() => setOpen(m)} className="text-xs font-semibold text-primary-ink hover:underline px-1 py-1.5 whitespace-nowrap">Details</button>
                   </td>
                 </tr>
