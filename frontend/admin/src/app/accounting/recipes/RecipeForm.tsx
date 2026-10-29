@@ -98,6 +98,8 @@ interface PreviewResult extends McFields {
   serviceVessel: string | null
   perPortionCents: number
   costPerGramCents: number | null
+  /** Price per g / ml / pcs of each picked stock item, as the server costed it (servd's ingredient price). */
+  itemCostPerMeasure?: Record<string, number>
 }
 
 // Component (sub-recipe) option for the ingredient picker. Cost-per-gram is
@@ -324,72 +326,6 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
     enabled: kind === 'plate' && !!brandId,
   })
 
-  // ── Live cost preview ───────────────────────────────────────────────────
-  // Per-line figures, computed here so the table answers as you type. The
-  // headline numbers (MC by class, target MC per order type, Q, warnings)
-  // come from the server's preview below — the one costing.
-  const computed = useMemo(() => {
-    const invById = new Map(inventory.map((i) => [i.id, i]))
-    const prepById = new Map(prepOptions.map((p) => [p.id, p]))
-    const rows = ings.map((row) => {
-      // Component (sub-recipe) row: cost-per-gram is precomputed by the batch
-      // (already yield-adjusted), so cost = cost/g × grams used. No row yield.
-      // An add-on line that removes an ingredient takes its cost off.
-      const qty = (row.quantity ?? 0) * (row.removes ? -1 : 1)
-      if (row.source === 'component') {
-        const prep = prepById.get(row.prepRecipeId)
-        const cpgCents  = prep?.costPerGramCents ?? 0
-        const costCents = Math.round(cpgCents * qty)
-        return {
-          ...row, inv: null, name: prep?.name ?? '— component —', isCount: false,
-          cpgCents, yieldPctApplied: 100, rawUsedG: qty,
-          costCents, portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
-          allergens: [] as string[],
-        }
-      }
-      const inv = invById.get(row.inventoryItemId)
-      if (!inv) {
-        return { ...row, inv: null, name: '—', isCount: false, cpgCents: 0,
-                 yieldPctApplied: 100, rawUsedG: 0, costCents: 0, portionCostCents: 0, allergens: [] as string[] }
-      }
-      const u = inv.unit.toLowerCase()
-      const isCount = (u === 'pcs' || u === 'unit' || u === 'each')
-      // Yield (0–100) raises cost: to get `quantity` usable you buy quantity ÷ yield.
-      // Packaging is used whole (saved at yield 1).
-      const yieldPct    = row.section === 'packaging' ? 100 : ((row.yieldPctOverride ?? inv.yieldPct) || 100)
-      const yieldFactor = Math.max(yieldPct / 100, 0.01)
-      // For count items, "cpg" is really cost-per-unit; for weighed items it's per gram.
-      const cpgCents    = isCount ? (inv.unitCostCents ?? 0) : invCostPerGramCents(inv)
-      const costCents   = Math.round((qty * cpgCents) / yieldFactor)
-      return {
-        ...row, inv, name: inv.name, isCount, cpgCents, yieldPctApplied: yieldPct,
-        rawUsedG: qty / yieldFactor, costCents,
-        portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
-        allergens: inv.allergens,
-      }
-    })
-    const inDish = rows.filter((r) => r.section !== 'packaging')
-    const totalIngredient = inDish.reduce((s, r) => s + r.costCents, 0)
-    const packagingTotal  = rows.reduce((s, r) => s + (r.section === 'packaging' ? r.costCents : 0), 0)
-    // The Q factor is a pricing allowance on the dish's ingredients (never
-    // its packaging) — the server's rule.
-    const qFactorCents    = Math.round(totalIngredient * (qFactor / 100))
-    const totalRecipe     = totalIngredient + qFactorCents
-    const plateCost       = Math.round(totalIngredient / Math.max(portions ?? 1, 1))
-    // Recipe weight = sum of gram-based ingredient quantities (count items and packaging excluded).
-    const recipeWeightG   = inDish.reduce((s, r) => s + (r.isCount ? 0 : (r.quantity ?? 0) * (r.removes ? -1 : 1)), 0)
-    const portionSizeG    = recipeWeightG / Math.max(portions ?? 1, 1)
-
-    return { rows, totalIngredient, packagingTotal, qFactorCents, totalRecipe, plateCost,
-             recipeWeightG, portionSizeG }
-  }, [ings, inventory, prepOptions, qFactor, portions])
-
-  const allAllergens = useMemo(() => {
-    const set = new Set<string>()
-    for (const r of computed.rows) r.allergens.forEach((a) => set.add(a))
-    return Array.from(set).sort()
-  }, [computed.rows])
-
   // The lines as the API takes them (save and the live preview). A row with
   // nothing picked or no quantity is not a line.
   const linesPayload = ings
@@ -444,6 +380,77 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
     meta: { inlineErrors: true },
   })
   const previewError = preview.error instanceof Error ? preview.error.message : null
+
+  // ── Live cost preview ───────────────────────────────────────────────────
+  // Per-line figures, computed here so the table answers as you type. The
+  // headline numbers (MC by class, target MC per order type, Q, warnings)
+  // come from the server's preview below — the one costing.
+  const serverCpm = preview.data?.itemCostPerMeasure
+  const computed = useMemo(() => {
+    const invById = new Map(inventory.map((i) => [i.id, i]))
+    const prepById = new Map(prepOptions.map((p) => [p.id, p]))
+    const rows = ings.map((row) => {
+      // Component (sub-recipe) row: cost-per-gram is precomputed by the batch
+      // (already yield-adjusted), so cost = cost/g × grams used. No row yield.
+      // An add-on line that removes an ingredient takes its cost off.
+      const qty = (row.quantity ?? 0) * (row.removes ? -1 : 1)
+      if (row.source === 'component') {
+        const prep = prepById.get(row.prepRecipeId)
+        const cpgCents  = prep?.costPerGramCents ?? 0
+        const costCents = Math.round(cpgCents * qty)
+        return {
+          ...row, inv: null, name: prep?.name ?? '— component —', isCount: false,
+          cpgCents, yieldPctApplied: 100, rawUsedG: qty,
+          costCents, portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
+          allergens: [] as string[],
+        }
+      }
+      const inv = invById.get(row.inventoryItemId)
+      if (!inv) {
+        return { ...row, inv: null, name: '—', isCount: false, cpgCents: 0,
+                 yieldPctApplied: 100, rawUsedG: 0, costCents: 0, portionCostCents: 0, allergens: [] as string[] }
+      }
+      const u = inv.unit.toLowerCase()
+      const isCount = (u === 'pcs' || u === 'unit' || u === 'each')
+      // Yield (0–100) raises cost: to get `quantity` usable you buy quantity ÷ yield.
+      // Packaging is used whole (saved at yield 1).
+      const yieldPct    = row.section === 'packaging' ? 100 : ((row.yieldPctOverride ?? inv.yieldPct) || 100)
+      const yieldFactor = Math.max(yieldPct / 100, 0.01)
+      // For count items, "cpg" is really cost-per-unit; for weighed items it's per gram.
+      // The server's price for the item (servd's ingredient price) once the preview has answered; the item's own
+      // cost until then.
+      const served      = serverCpm?.[inv.id]
+      const cpgCents    = served != null ? served : isCount ? (inv.unitCostCents ?? 0) : invCostPerGramCents(inv)
+      const costCents   = Math.round((qty * cpgCents) / yieldFactor)
+      return {
+        ...row, inv, name: inv.name, isCount, cpgCents, yieldPctApplied: yieldPct,
+        rawUsedG: qty / yieldFactor, costCents,
+        portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
+        allergens: inv.allergens,
+      }
+    })
+    const inDish = rows.filter((r) => r.section !== 'packaging')
+    const totalIngredient = inDish.reduce((s, r) => s + r.costCents, 0)
+    const packagingTotal  = rows.reduce((s, r) => s + (r.section === 'packaging' ? r.costCents : 0), 0)
+    // The Q factor is a pricing allowance on the dish's ingredients (never
+    // its packaging) — the server's rule.
+    const qFactorCents    = Math.round(totalIngredient * (qFactor / 100))
+    const totalRecipe     = totalIngredient + qFactorCents
+    const plateCost       = Math.round(totalIngredient / Math.max(portions ?? 1, 1))
+    // Recipe weight = sum of gram-based ingredient quantities (count items and packaging excluded).
+    const recipeWeightG   = inDish.reduce((s, r) => s + (r.isCount ? 0 : (r.quantity ?? 0) * (r.removes ? -1 : 1)), 0)
+    const portionSizeG    = recipeWeightG / Math.max(portions ?? 1, 1)
+
+    return { rows, totalIngredient, packagingTotal, qFactorCents, totalRecipe, plateCost,
+             recipeWeightG, portionSizeG }
+  }, [ings, inventory, prepOptions, qFactor, portions, serverCpm])
+
+  const allAllergens = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of computed.rows) r.allergens.forEach((a) => set.add(a))
+    return Array.from(set).sort()
+  }, [computed.rows])
+
 
   // ── Save (POST on create, PUT on edit) ─────────────────────────────────
   const save = useMutation({
@@ -550,7 +557,8 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
     }
     return (
       <div className="overflow-x-auto rounded-lg border border-s-border">
-        <table className="w-full text-xs">
+        {/* Scrolls sideways on a phone rather than squeezing the columns. */}
+        <table className="w-full min-w-[720px] text-xs">
           <thead className="text-s-muted">
             <tr className="border-b border-s-border">
               <th className="text-left  px-2 py-2 font-bold">{isPack ? 'Packaging item' : 'Ingredient'}</th>

@@ -57,6 +57,8 @@ interface SavedCosting extends McFields {
   warnings: CostWarnings
   recipe: { serviceVessel: string | null }
   brand: { name: string } | null
+  /** At servd's 90-day average ingredient prices (owner, 2026-10-29). */
+  cost?: { avgStandardCents?: number }
 }
 
 export default function EditRecipePage() {
@@ -135,6 +137,9 @@ export default function EditRecipePage() {
                 <p className="text-xs text-s-muted">
                   {data.kind === 'modifier' ? 'Per add-on' : 'Plate MC'}:{' '}
                   <span className="font-mono font-black text-s-text">{fmtPkrWhole(saved.standardCents)}</span>
+                  {saved.cost?.avgStandardCents != null && (
+                    <span className="ml-2">· 90-day average <span className="font-mono font-bold text-s-text">{fmtPkrWhole(saved.cost.avgStandardCents)}</span></span>
+                  )}
                   {saved.recipe.serviceVessel === 'packaging' && <span className="ml-2 s-badge-purple">Serves in packaging</span>}
                 </p>
               </div>

@@ -539,7 +539,7 @@ export default function RecipesPage() {
 
                   {/* Summary row */}
                   <div
-                    className="flex items-center gap-4 px-4 py-3 cursor-pointer select-none"
+                    className="flex flex-wrap sm:flex-nowrap items-center gap-x-4 gap-y-2 px-4 py-3 cursor-pointer select-none"
                     onClick={() => setExpanded(isOpen ? null : r.id)}
                     onMouseEnter={(e) => (e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.02)')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = '')}
@@ -621,7 +621,7 @@ export default function RecipesPage() {
                         Open
                       </Link>
                     ) : (
-                      <div className="flex items-center gap-5 shrink-0">
+                      <div className="flex flex-wrap items-center justify-end gap-x-5 gap-y-2 w-full sm:w-auto sm:flex-nowrap sm:shrink-0">
                         <Metric label="Ing. Cost"    value={fmtPkr(r.ingredientCostCents)} />
                         <Metric label="Q Factor"     value={fmtPkr(r.qFactorCents)}        dim />
                         <Metric label="Total Cost"   value={fmtPkr(r.totalCostCents)}       bold />

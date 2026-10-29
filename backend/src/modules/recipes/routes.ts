@@ -1434,7 +1434,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     const [items, { graph }] = await Promise.all([
       prisma.inventoryItem.findMany({
         where: { id: { in: itemIds } },
-        select: { id: true, unit: true, unitCostCents: true, tenantId: true, category: true },
+        // masterIngredientId: the draft prices at servd's ingredient price like a saved recipe (lib/ingredientPrices.ts).
+        select: { id: true, unit: true, unitCostCents: true, tenantId: true, category: true, masterIngredientId: true },
       }),
       loadRecipeGraph({ id: { in: subIds }, kind: 'component' }),
     ])
@@ -1469,6 +1470,12 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         costPerMeasureCents: l.costPerMeasureCents,
         costCents: Math.round(l.costCents),
         section: draft.ingredients[Number(l.ingredientId)]?.section ?? 'ingredients',
+      })),
+      // Each picked stock item's price per g / ml / pcs as this costing used it (servd's ingredient price — the
+      // form's grid shows these instead of the company item's own cost, so the grid and the totals agree).
+      itemCostPerMeasure: Object.fromEntries(cost.lines.flatMap((l) => {
+        const picked = draft.ingredients[Number(l.ingredientId)]?.inventoryItemId
+        return picked ? [[picked, l.costPerMeasureCents]] : []
       })),
       ingredientCents: Math.round(cost.ingredientCents),
       qFactorCents:    Math.round(cost.qCents),
@@ -1817,6 +1824,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           avgTotalRecipeCents:      Math.round(avgCost.totalCents),
           avgPerPortionCents:       Math.round(avgCost.perPortionCents),
           avgPerGramCents:          avgCost.perGramCents,
+          avgStandardCents:         Math.round(avgCost.standardCents),
           qCents:                   mc.qCents,
           opexPerPortionCents,
           brandMonthlyOpexCents,

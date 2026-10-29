@@ -394,4 +394,16 @@ describe('portfolio pricing and legacy duplicates (owner review N1, N5)', () => 
     const portfolio = await call(u.ceoFL!, 'GET', `/recipes/${sauceId}/costing`, undefined, PORTFOLIO)
     expect(mayo(portfolio.json())).toBe(90)                          // servd's latest (Flipd's newer delivery), in any view
   })
+  // Owner screenshot review (2026-10-29): the recipe FORM's preview priced a draft at the company item's own cost
+  // while the list used servd's price. The preview now prices like a saved recipe and hands the grid that price.
+  it('the form preview costs a draft at the servd price and tells the grid the price per g', async () => {
+    const gsMayo = await prisma.inventoryItem.findFirstOrThrow({ where: { tenantId: GS.tenantId, masterIngredientId: M.mayo!, deletedAt: null } })
+    const r = await call(u.chefGS!, 'POST', '/recipes/costing-preview', {
+      kind: 'component', servings: 1, yieldGrams: 100, qFactorPct: 0,
+      ingredients: [{ inventoryItemId: gsMayo.id, quantity: 100, yieldPct: 1, section: 'ingredients' }],
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().itemCostPerMeasure[gsMayo.id]).toBe(90)         // servd's latest, not GS Foods' own item cost
+    expect(r.json().totalCents).toBe(9_000)
+  })
 })
