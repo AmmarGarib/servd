@@ -711,8 +711,8 @@ export default function RecipesPage() {
                       </div>
 
                       {/* Ingredient breakdown table */}
-                      <div className="overflow-x-auto">
-                        <table className="w-full" style={{ fontSize: '12px' }}>
+                      <div className="overflow-x-auto max-w-full">
+                        <table className="w-full min-w-[640px]" style={{ fontSize: '12px' }}>
                           <thead>
                             <tr style={{ background: 'rgb(var(--fg-rgb) / 0.02)', borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
                               {[
