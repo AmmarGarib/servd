@@ -2112,7 +2112,12 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   rows carry `price` (null for `costsHiddenFor`); `GET /ingredient-master/:id/prices` = the history with date,
   company and supplier. Read only — stock, FIFO, cost of sales and food-cost actuals stay each company's own. The
   Sourcing sheet page is gone (`/sourcing` → `/kitchen/ingredients`); its "remove ingredients not in a recipe"
-  clean-up is on Inventory (CEO). Tests: `tests/ingredientMaster.test.ts`, `tests/recipeCompanyShare.test.ts`.
+  clean-up is on Inventory (CEO). **Editable in the table (owner, 2026-10-29: "just make this editable within the
+  table"):** name / spec (MASTER_EDITORS), category / unit (reviewers) through the existing PATCH, and the price —
+  `PUT /ingredient-master/:id/price {priceCents per kg / litre / pcs}` (MASTER_CREATORS: editors + buyer; never a
+  `costsHiddenFor` login; audit `ingredient_master.price`), stored in `IngredientMasterPrice` (platform table, no
+  tenantId, one row per edit, never edited): a typed price is the LATEST until a newer delivery comes in (source
+  `sheet`, in the history). Tests: `tests/ingredientMaster.test.ts`, `tests/recipeCompanyShare.test.ts`.
 - **Par in PORTIONS (K5)** — `Recipe.portionsPerBatch` (portions one batch makes; size = yield ÷ it,
   `lib/portions.ts`, never stored) + `portionLabel`. A prep batch may be logged in portions (`actualPortions`; 422
   `NO_PORTION_SIZE` without). Portions are what CAME OUT: the draw is whole batches (`batches`, default 1), expected =

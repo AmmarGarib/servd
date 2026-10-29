@@ -14,6 +14,7 @@
 //                                              Any staff with recipes / inventory / procurement / par_sheet.
 //   GET    /ingredient-master/:id
 //   GET    /ingredient-master/:id/prices          servd-wide price history, newest first (≤200).
+//   PUT    /ingredient-master/:id/price {priceCents}  type the servd price per kg / litre / pcs (editors + buyer).
 //   POST   /ingredient-master                  add a new one → 'needs_review' (K2). Dedupe by normalised name: an
 //                                              existing live row is returned (200, existing: true). Recipe editors
 //                                              (MANAGERS) and the buyer.
@@ -148,6 +149,27 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     if (costsHiddenFor(req)) return { ingredientId: m.id, costsHidden: true, points: [] }
     const points = await masterPriceHistory(m.id, m.stockUnit)
     return { ingredientId: m.id, displayUnit: displayUnitOf(m.stockUnit).unit, points: points.map((x) => ({ ...x, priceCents: Math.round(x.priceCents * 100) / 100 })) }
+  })
+
+  // Type the servd price on the sheet (owner, 2026-10-29: "just make this editable within the table"). Paisa per
+  // DISPLAY unit (per kg / litre / pcs, as the sheet shows it); stored per base unit as a new row, so the history
+  // keeps every typed price. It is the latest price until a newer delivery comes in (lib/ingredientPrices.ts).
+  fastify.put<{ Params: { id: string } }>('/:id/price', { preHandler: [requireAuth(...MASTER_CREATORS), requireModule(...READ_MODULES)] }, async (req) => {
+    if (costsHiddenFor(req)) throw new ForbiddenError('Prices are not shown to this login')
+    const { priceCents } = z.object({ priceCents: z.number().int().positive().max(100_000_000_00) }).parse(req.body)
+    const m = await loadLive(req.params.id)
+    if (m.mergedIntoId) throw new AppError('MASTER_MERGED', `${m.name} was merged into another ingredient — price that one`, 409)
+    const disp = displayUnitOf(m.stockUnit)
+    const before = (await masterPricesMany([m.id])).get(m.id)
+    await prisma.ingredientMasterPrice.create({ data: { masterIngredientId: m.id, perBaseCents: priceCents / disp.baseUnits, setById: req.staffUser!.id } })
+    await audit({
+      category: 'identity', action: 'ingredient_master.price', entity: 'IngredientMaster', entityId: m.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
+      before: { latestCents: before?.latestPerBase != null ? Math.round(before.latestPerBase * disp.baseUnits * 100) / 100 : null, source: before?.latestSource ?? null },
+      after: { priceCents, displayUnit: disp.unit, actorRole: req.staffUser!.role },
+    })
+    const mine = await companyItems(req, [m.id])
+    return shape(m, mine.get(m.id) ?? null, (await masterPricesMany([m.id])).get(m.id))
   })
 
   fastify.get<{ Params: { id: string } }>('/:id', readers, async (req) => {
@@ -293,7 +315,7 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
       after: { name: after.name, stockUnit: after.stockUnit, category: after.category, allergens: after.allergens, yieldPct: after.yieldPct, purchaseUnit: after.purchaseUnit, purchaseUnitFactor: after.purchaseUnitFactor, spec: after.spec, perishable: after.perishable, shelfLifeDays: after.shelfLifeDays, status: after.status, linkedItems: linkedIds.length },
     })
     const mine = await companyItems(req, [after.id])
-    return shape(after, mine.get(after.id) ?? null)
+    return shape(after, mine.get(after.id) ?? null, costsHiddenFor(req) ? null : (await masterPricesMany([after.id])).get(after.id))
   })
 
   fastify.post<{ Params: { id: string } }>('/:id/merge', { preHandler: requireAuth(...MASTER_REVIEWERS) }, async (req) => {

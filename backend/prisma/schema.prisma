@@ -2533,10 +2533,27 @@ model IngredientMaster {
   updatedAt          DateTime @updatedAt
 
   inventoryItems InventoryItem[]
+  prices         IngredientMasterPrice[]
 
   @@index([normalizedName])
   @@index([status])
   @@map("ingredient_masters")
+}
+
+// A price typed on the Ingredients sheet (owner, 2026-10-29: "just make this editable within the table"). servd-wide
+// like its ingredient — DELIBERATELY no tenantId (platform data: the one servd price, lib/ingredientPrices.ts). Rows
+// are never edited or deleted: each edit is a new row, so the history keeps every typed price. Paisa per BASE unit
+// (g / ml / pcs) — fractional, as a kg price is typed.
+model IngredientMasterPrice {
+  id                 String           @id @default(uuid())
+  masterIngredientId String
+  master             IngredientMaster @relation(fields: [masterIngredientId], references: [id])
+  perBaseCents       Float
+  setById            String?
+  setAt              DateTime         @default(now())
+
+  @@index([masterIngredientId, setAt])
+  @@map("ingredient_master_prices")
 }
 
 // Stock by site (owner, 2026-10-24): the per-site on-hand cache — Σ remainingQty of the item's lots at that location.

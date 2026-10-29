@@ -61,7 +61,8 @@ own `where` remains the only fence there. Tightening them to the row's
 company is table-by-table work with a two-company RLS test each.
 
 Tables deliberately WITHOUT a company policy (no `tenantId`; servd-wide or
-pre-sign-in): `ingredient_masters` (K1 servd-wide master),
+pre-sign-in): `ingredient_masters` (K1 servd-wide master) and its typed prices
+`ingredient_master_prices` (the one servd price, 2026-10-29),
 `role_module_access` (presets are one servd-wide set), `email_otps`,
 `staff_password_resets` (sign-in flows before anyone is known),
 `site_layout_versions`, `site_layout_stats` (children of `site_layouts`,

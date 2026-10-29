@@ -8,6 +8,10 @@
 // ingredient — the latest paid anywhere in servd, the 90-day average beside it, and the full history (date, company,
 // supplier). Recipes cost at that latest price. Stocking, stock in / out and pars are each outlet's, on Inventory.
 // It replaced the Sourcing sheet (owner, 2026-10-29).
+//   • Editable in the table (owner, 2026-10-29: "just make this editable within the table"): name and spec (recipe
+//     editors), category and unit (the CEO / F&B manager — they reach every company's books), and the servd price per
+//     kg / litre / pcs (editors and the buyer; PUT /ingredient-master/:id/price — the latest until a newer delivery).
+//     A cell saves when you leave it or press Enter; Esc puts it back. "Details" opens the rest.
 //   • Search runs on the server (GET /ingredient-master?q=).
 //   • A chef's new ingredient joins at once, marked "needs review" (K2). The CEO or the F&B manager marks it reviewed
 //     or MERGES a duplicate into the right one (a company that stocks both must merge its stock items first).
@@ -22,6 +26,8 @@ import { Button, Dialog, DialogFooter, ErrorBanner, Field, Input, SidePanel, Tex
 import type { MasterPrice, MasterRow } from '../../../components/kitchen/MasterIngredientPicker'
 
 const UNITS = ['g', 'ml', 'pcs', 'kg', 'litres', 'each']
+/** The master is kept in its family's base unit: changing kg → g is no change, so the table offers the bases. */
+const BASE_UNITS = ['g', 'ml', 'pcs']
 const REVIEWERS = new Set(['admin', 'fnb_manager'])
 
 interface Draft {
@@ -42,6 +48,8 @@ export default function IngredientsPage() {
   const managers = useManagerRoles()
   const canEdit = managers.has(role)
   const isReviewer = REVIEWERS.has(role)
+  // The buyer may type a price too (PROCUREMENT_TEAM on the API).
+  const canPrice = canEdit || role === 'procurement'
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
   const [tab, setTab] = useState<'all' | 'needs_review'>('all')
@@ -54,6 +62,24 @@ export default function IngredientsPage() {
     queryFn: () => api.get<MasterRow[]>(`/ingredient-master?limit=500${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}${tab === 'needs_review' ? '&status=needs_review' : ''}`),
   })
   const pricesShown = rows.some((r) => r.price != null)
+  const listKey = ['ingredient-master', 'page', debounced, tab]
+  const [cellError, setCellError] = useState('')
+  // One cell's save: PATCH the field (or PUT the price), then put the saved row back into the list.
+  const saveCell = useMutation({
+    mutationFn: ({ m, field, value }: { m: MasterRow; field: 'name' | 'spec' | 'category' | 'unit' | 'price'; value: string }) =>
+      field === 'price'
+        ? api.put<MasterRow>(`/ingredient-master/${m.id}/price`, { priceCents: Math.round(Number(value) * 100) })
+        : api.patch<MasterRow>(`/ingredient-master/${m.id}`, { [field]: field === 'category' || field === 'spec' ? (value || null) : value }),
+    onMutate: () => setCellError(''),
+    onSuccess: (saved) => {
+      qc.setQueryData<MasterRow[]>(listKey, (old) => old?.map((r) => (r.id === saved.id ? { ...r, ...saved } : r)))
+      void qc.invalidateQueries({ queryKey: ['ingredient-master', saved.id] })
+      void qc.invalidateQueries({ queryKey: ['inventory'] })
+    },
+    onError: (e, v) => setCellError(`${v.m.name}: ${stockErrorText(e)}`),
+  })
+  const cell = (m: MasterRow, field: 'name' | 'spec' | 'category' | 'unit' | 'price') => (value: string) =>
+    saveCell.mutateAsync({ m, field, value })
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -78,6 +104,8 @@ export default function IngredientsPage() {
             ))}
           </div>
         </div>
+        {cellError && <ErrorBanner message={cellError} />}
+        {(canEdit || canPrice) && <p className="hidden sm:block text-xs text-s-muted">Click a cell to change it — it saves when you leave the cell or press Enter; Esc puts it back. A price you type is the latest price until a newer delivery comes in.</p>}
         {/* Phone: one compact row per ingredient — name, price, average; nothing to swipe. */}
         <ul className="s-card sm:hidden divide-y divide-s-border">
           {rows.map((m) => (
@@ -107,32 +135,54 @@ export default function IngredientsPage() {
                 {pricesShown && <th className="px-3 py-2 text-right">90-day average</th>}
                 {pricesShown && <th className="px-3 py-2 text-left">Last bought</th>}
                 <th className="px-3 py-2 text-left">Spec (what we buy)</th>
+                <th className="px-3 py-2"><span className="sr-only">Details</span></th>
               </tr>
             </thead>
             <tbody>
               {rows.map((m) => (
-                <tr key={m.id} className="border-t border-s-border hover:bg-s-bg-soft cursor-pointer" onClick={() => setOpen(m)}>
-                  <td className="px-3 py-2 text-s-text">
-                    {m.name}
-                    {m.status === 'needs_review' && <span className="ml-2 s-badge-purple text-[10px] px-1.5 py-0.5 rounded">needs review</span>}
-                    {m.perishable && <span className="ml-2 s-badge-teal text-[10px] px-1.5 py-0.5 rounded">perishable{m.shelfLifeDays ? ` · ${m.shelfLifeDays} d` : ''}</span>}
+                <tr key={m.id} className="border-t border-s-border hover:bg-s-bg-soft align-top">
+                  <td className="px-2 py-1 text-s-text min-w-[12rem]">
+                    <InlineText value={m.name} label={`Name of ${m.name}`} disabled={!canEdit} required onSave={cell(m, 'name')} />
+                    {(m.status === 'needs_review' || m.perishable) && (
+                      <div className="px-1 pb-1 flex flex-wrap gap-1">
+                        {m.status === 'needs_review' && <span className="s-badge-purple text-[10px] px-1.5 py-0.5 rounded">needs review</span>}
+                        {m.perishable && <span className="s-badge-teal text-[10px] px-1.5 py-0.5 rounded">perishable{m.shelfLifeDays ? ` · ${m.shelfLifeDays} d` : ''}</span>}
+                      </div>
+                    )}
                   </td>
-                  <td className="px-3 py-2 text-s-muted">{m.stockUnit}{m.purchaseUnit ? ` · bought by ${m.purchaseUnit} (${m.purchaseUnitFactor})` : ''}</td>
-                  <td className="px-3 py-2 text-s-muted">{categoryLabel(m.category)}</td>
-                  {pricesShown && <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap">{priceText(m.price?.latestCents, m.price)}</td>}
+                  <td className="px-2 py-1 text-s-muted">
+                    <InlineSelect value={m.stockUnit} label={`Unit of ${m.name}`} disabled={!isReviewer}
+                      options={[...new Set([m.stockUnit, ...BASE_UNITS])].map((u) => ({ value: u, label: u }))} onSave={cell(m, 'unit')} />
+                    {m.purchaseUnit && <p className="px-1 text-[11px] text-s-muted whitespace-nowrap">bought by {m.purchaseUnit} ({m.purchaseUnitFactor})</p>}
+                  </td>
+                  <td className="px-2 py-1 text-s-muted">
+                    <InlineSelect value={m.category ?? ''} label={`Category of ${m.name}`} disabled={!isReviewer}
+                      options={[{ value: '', label: 'Uncategorised' }, ...INVENTORY_CATEGORY_OPTIONS]} onSave={cell(m, 'category')} />
+                  </td>
+                  {pricesShown && (
+                    <td className="px-2 py-1 text-right">
+                      <InlinePrice cents={m.price?.latestCents ?? null} unit={m.price?.displayUnit ?? 'kg'} label={`Price of ${m.name}`}
+                        disabled={!canPrice} onSave={cell(m, 'price')} />
+                    </td>
+                  )}
                   {pricesShown && <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap text-s-muted">{priceText(m.price?.averageCents, m.price)}</td>}
                   {pricesShown && <td className="px-3 py-2 text-xs text-s-muted">{lastBought(m.price) ?? '—'}</td>}
-                  <td className="px-3 py-2 text-s-muted max-w-xs truncate">{m.spec ?? '—'}</td>
+                  <td className="px-2 py-1 text-s-muted min-w-[12rem]">
+                    <InlineText value={m.spec ?? ''} label={`Spec of ${m.name}`} placeholder="—" disabled={!canEdit} onSave={cell(m, 'spec')} />
+                  </td>
+                  <td className="px-2 py-1 text-right">
+                    <button type="button" onClick={() => setOpen(m)} className="text-xs font-semibold text-primary-ink hover:underline px-1 py-1.5 whitespace-nowrap">Details</button>
+                  </td>
                 </tr>
               ))}
-              {!isLoading && rows.length === 0 && <tr><td colSpan={pricesShown ? 7 : 4} className="px-3 py-8 text-center text-xs text-s-muted">No ingredients match.</td></tr>}
-              {isLoading && <tr><td colSpan={pricesShown ? 7 : 4} className="px-3 py-8 text-center text-xs text-s-muted">Loading…</td></tr>}
+              {!isLoading && rows.length === 0 && <tr><td colSpan={pricesShown ? 8 : 5} className="px-3 py-8 text-center text-xs text-s-muted">No ingredients match.</td></tr>}
+              {isLoading && <tr><td colSpan={pricesShown ? 8 : 5} className="px-3 py-8 text-center text-xs text-s-muted">Loading…</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
 
-      {open && <Editor master={open} canEdit={canEdit} isReviewer={isReviewer} onClose={() => setOpen(null)} />}
+      {open && <Editor master={open} canEdit={canEdit} canPrice={canPrice} isReviewer={isReviewer} onClose={() => setOpen(null)} />}
       {adding && <AddDialog onClose={() => setAdding(false)} />}
     </div>
   )
@@ -164,7 +214,7 @@ function AddDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-function Editor({ master, canEdit, isReviewer, onClose }: { master: MasterRow; canEdit: boolean; isReviewer: boolean; onClose: () => void }) {
+function Editor({ master, canEdit, canPrice, isReviewer, onClose }: { master: MasterRow; canEdit: boolean; canPrice: boolean; isReviewer: boolean; onClose: () => void }) {
   const qc = useQueryClient()
   const [d, setD] = useState<Draft>(draftOf(master))
   const [mergeQ, setMergeQ] = useState('')
@@ -242,6 +292,7 @@ function Editor({ master, canEdit, isReviewer, onClose }: { master: MasterRow; c
               Latest {priceText(master.price.latestCents, master.price)}{lastBought(master.price) ? ` (${lastBought(master.price)})` : ''} — what recipes use.
               {' '}90-day average {priceText(master.price.averageCents, master.price)}{master.price.averageDeliveries ? ` over ${master.price.averageDeliveries} deliveries` : ''}.
             </p>
+            {canPrice && <SetPrice master={master} />}
             <ServdPriceHistory ingredientId={master.id} />
           </div>
         )}
@@ -273,7 +324,7 @@ function Editor({ master, canEdit, isReviewer, onClose }: { master: MasterRow; c
   )
 }
 
-const SOURCE_LABEL: Record<string, string> = { delivery: 'Delivery', bill: 'Bill', manual: 'Cost typed', estimate: 'Estimate' }
+const SOURCE_LABEL: Record<string, string> = { delivery: 'Delivery', sheet: 'Typed on sheet', bill: 'Bill', manual: 'Cost typed', estimate: 'Estimate' }
 
 /** "PKR 1,250.00 / kg" — or a dash. */
 function priceText(cents: number | null | undefined, p: MasterPrice | null | undefined): string {
@@ -289,7 +340,7 @@ function lastBought(p: MasterPrice | null | undefined): string | null {
   return [when, what, p.latestSupplier, p.latestCompany].filter(Boolean).join(' · ') || null
 }
 
-interface PricePoint { at: string; source: 'delivery' | 'bill' | 'manual'; priceCents: number; displayUnit: string; qty: number | null; supplier: string | null; company: string | null }
+interface PricePoint { at: string; source: 'delivery' | 'sheet' | 'bill' | 'manual'; priceCents: number; displayUnit: string; qty: number | null; supplier: string | null; company: string | null }
 
 /** Every price of the ingredient across servd, newest first (GET /ingredient-master/:id/prices). */
 function ServdPriceHistory({ ingredientId }: { ingredientId: string }) {
@@ -314,5 +365,92 @@ function ServdPriceHistory({ ingredientId }: { ingredientId: string }) {
         </li>
       ))}
     </ul>
+  )
+}
+
+/** Type the servd price from the side panel (the phone's way in). */
+function SetPrice({ master }: { master: MasterRow }) {
+  const qc = useQueryClient()
+  const unit = master.price?.displayUnit ?? 'kg'
+  const [v, setV] = useState('')
+  const save = useMutation({
+    mutationFn: () => api.put<MasterRow>(`/ingredient-master/${master.id}/price`, { priceCents: Math.round(Number(v) * 100) }),
+    onSuccess: () => { setV(''); void qc.invalidateQueries({ queryKey: ['ingredient-master'] }) },
+  })
+  const ok = Number(v) > 0
+  return (
+    <div className="mb-3">
+      <div className="flex items-end gap-2">
+        <Field label={`New servd price (PKR per ${unit})`}><Input inputMode="decimal" value={v} onChange={(e) => setV(e.target.value)} placeholder="e.g. 1250" /></Field>
+        <Button disabled={!ok || save.isPending} onClick={() => save.mutate()}>Set price</Button>
+      </div>
+      {save.error && <ErrorBanner message={stockErrorText(save.error)} />}
+    </div>
+  )
+}
+
+// ── Cells that edit in place ────────────────────────────────────────────────
+// Look like plain text until hovered / focused; save on blur or Enter when changed, Esc restores. A refused save puts
+// the old value back (the page shows why above the table).
+const cellCls = 'w-full rounded px-1 py-1.5 bg-transparent border border-transparent hover:border-s-border focus:border-primary focus:bg-s-surface outline-none disabled:hover:border-transparent disabled:cursor-default'
+
+function useCell(value: string, onSave: (v: string) => Promise<unknown>) {
+  const [v, setV] = useState(value)
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { setV(value) }, [value])
+  const commit = async (next: string) => {
+    if (next === value) return
+    setBusy(true)
+    try { await onSave(next) } catch { setV(value) } finally { setBusy(false) }
+  }
+  return { v, setV, busy, commit }
+}
+
+function InlineText({ value, onSave, label, disabled, placeholder, required }: {
+  value: string; onSave: (v: string) => Promise<unknown>; label: string; disabled?: boolean; placeholder?: string; required?: boolean
+}) {
+  const c = useCell(value, onSave)
+  return (
+    <input aria-label={label} className={`${cellCls} ${c.busy ? 'opacity-60' : ''}`} value={c.v} placeholder={placeholder} disabled={disabled || c.busy}
+      title={c.v || undefined}
+      onChange={(e) => c.setV(e.target.value)}
+      onBlur={() => { const t = c.v.trim(); if (required && !t) { c.setV(value); return } void c.commit(t) }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+        if (e.key === 'Escape') { c.setV(value); requestAnimationFrame(() => (e.target as HTMLInputElement).blur()) }
+      }} />
+  )
+}
+
+function InlineSelect({ value, onSave, label, disabled, options }: {
+  value: string; onSave: (v: string) => Promise<unknown>; label: string; disabled?: boolean; options: Array<{ value: string; label: string }>
+}) {
+  const c = useCell(value, onSave)
+  return (
+    <select aria-label={label} className={`${cellCls} ${c.busy ? 'opacity-60' : ''} ${disabled ? 'appearance-none' : ''}`} value={c.v} disabled={disabled || c.busy}
+      onChange={(e) => { c.setV(e.target.value); void c.commit(e.target.value) }}>
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  )
+}
+
+function InlinePrice({ cents, unit, onSave, label, disabled }: {
+  cents: number | null; unit: string; onSave: (v: string) => Promise<unknown>; label: string; disabled?: boolean
+}) {
+  const shown = cents != null ? (cents / 100).toFixed(2) : ''
+  const c = useCell(shown, onSave)
+  return (
+    <label className="flex items-center justify-end gap-1 font-mono text-xs whitespace-nowrap">
+      <span className="text-s-muted">PKR</span>
+      <input aria-label={label} inputMode="decimal" className={`${cellCls} w-24 text-right ${c.busy ? 'opacity-60' : ''}`} value={c.v} placeholder="—"
+        disabled={disabled || c.busy}
+        onChange={(e) => c.setV(e.target.value.replace(/[^0-9.]/g, ''))}
+        onBlur={() => { const n = Number(c.v); if (!c.v || !(n > 0)) { c.setV(shown); return } void c.commit(n.toFixed(2)) }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') { c.setV(shown); requestAnimationFrame(() => (e.target as HTMLInputElement).blur()) }
+        }} />
+      <span className="text-s-muted">/ {unit}</span>
+    </label>
   )
 }

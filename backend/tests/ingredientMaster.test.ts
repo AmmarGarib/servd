@@ -26,7 +26,7 @@ let A: Company
 let B: Company
 const u: Record<string, Who> = {}
 
-const call = (who: Who, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown) =>
+const call = (who: Who, method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, payload?: unknown) =>
   app.inject({ method, url, ...(payload !== undefined ? { payload: payload as Record<string, unknown> } : {}), headers: { authorization: `Bearer ${who.token}` } })
 
 beforeAll(async () => {
@@ -344,4 +344,39 @@ describe('the servd price (owner, 2026-10-29: "a pure ingredient availability an
     const cookH = await call(u.cookA!, 'GET', `/ingredient-master/${id}/prices`)
     expect(cookH.json()).toMatchObject({ costsHidden: true, points: [] })
   })
+
+  it('a price typed on the sheet is the latest until a newer delivery; history keeps it; the floor cannot type one', async () => {
+    const id = (await call(u.chefA!, 'GET', '/ingredient-master?q=pricing saffron')).json()[0].id as string
+    const cook = await call(u.cookA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 5_000_00 })
+    expect(cook.statusCode).toBe(403)
+    const r = await call(u.buyerA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 5_000_00 })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().price).toMatchObject({ latestCents: 5_000_00, latestSource: 'sheet', averageCents: 4000 })
+    // Editing the name keeps the price on the row the table puts back.
+    const renamed = await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { name: 'Pricing Saffron Threads' })
+    expect(renamed.statusCode, renamed.body).toBe(200)
+    expect(renamed.json().price.latestCents).toBe(5_000_00)
+    const h = (await call(u.chefA!, 'GET', `/ingredient-master/${id}/prices`)).json()
+    expect(h.points[0]).toMatchObject({ source: 'sheet', priceCents: 5_000_00, company: null })
+    expect(await prisma.auditLog.count({ where: { action: 'ingredient_master.price', entityId: id } })).toBe(1)
+    // A delivery after the typed price takes over.
+    const b = (await prisma.inventoryItem.findFirstOrThrow({ where: { masterIngredientId: id, tenantId: B.tenantId } })).id
+    await prisma.$transaction((tx) => addLotTx(tx, {
+      tenantId: B.tenantId, inventoryItemId: b, qty: 1, unitCostCents: 4_200, kind: 'receipt', lotSourceType: 'goods_receipt_line',
+      lotSourceId: 'px-after', movementSourceType: 'test', movementSourceId: 'px-after', receivedAt: new Date(Date.now() + 1000), locationId: B.locationId,
+    }))
+    const after = (await call(u.chefA!, 'GET', `/ingredient-master/${id}`)).json().price
+    expect(after).toMatchObject({ latestCents: 4_200, latestSource: 'delivery' })
+  })
+
+  it('an ingredient no company stocks takes its typed price; recipes would cost it at that price', async () => {
+    const m = (await call(u.chefA!, 'POST', '/ingredient-master', { name: 'Typed Only Sumac', unit: 'kg' })).json()
+    const r = await call(u.chefA!, 'PUT', `/ingredient-master/${m.id}/price`, { priceCents: 2_500_00 })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json().price).toMatchObject({ displayUnit: 'kg', latestCents: 2_500_00, latestSource: 'sheet' })
+    const { masterPricesMany } = await import('../src/lib/ingredientPrices.js')
+    expect((await masterPricesMany([m.id])).get(m.id)!.latestPerBase).toBeCloseTo(250)   // paisa per g
+    expect((await call(u.chefA!, 'PUT', `/ingredient-master/${m.id}/price`, { priceCents: 0 })).statusCode).toBe(400)
+  })
 })
+

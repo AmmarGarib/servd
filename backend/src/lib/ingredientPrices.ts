@@ -10,9 +10,10 @@
 // Prices are held per BASE unit of the ingredient's family (g / ml / pcs — lib/ingredientMaster.ts unitFamily), so
 // a kg-bought item and a g-bought item of one ingredient compare. Shown per kg / litre / pcs (displayUnitOf).
 //
-//   latest  = the newest delivery (a goods-receipt stock lot) of the ingredient anywhere in servd; with none, the
-//             newest billed price (item_price_history 'bill_match'), else the newest manual cost, else the highest
-//             typed estimate on a linked item.
+//   latest  = the newest delivery (a goods-receipt stock lot) of the ingredient anywhere in servd, or the newest price
+//             typed on the Ingredients sheet (ingredient_master_prices; owner, 2026-10-29: "just make this editable
+//             within the table") when that is newer; with neither, the newest billed price (item_price_history
+//             'bill_match'), else the newest manual cost, else the highest typed estimate on a linked item.
 //   average = the quantity-weighted average of deliveries in the last AVERAGE_DAYS days (null with none).
 
 import { Prisma } from '@prisma/client'
@@ -27,7 +28,7 @@ export interface MasterPrice {
   /** Paisa per base unit (g / ml / pcs) — fractional. */
   latestPerBase: number | null
   latestAt: Date | null
-  latestSource: 'delivery' | 'bill' | 'manual' | 'estimate' | null
+  latestSource: 'delivery' | 'sheet' | 'bill' | 'manual' | 'estimate' | null
   latestSupplier: string | null
   latestCompany: string | null
   /** Quantity-weighted average of deliveries in the last AVERAGE_DAYS days, paisa per base unit. */
@@ -79,7 +80,19 @@ export async function masterPricesMany(masterIds: string[], db: Db = serviceClie
   const itemById = new Map(items.map((i) => [i.id, i]))
   const itemIds = items.map((i) => i.id)
   for (const id of ids) out.set(id, { latestPerBase: null, latestAt: null, latestSource: null, latestSupplier: null, latestCompany: null, avgPerBase: null, avgDeliveries: 0 })
-  if (itemIds.length === 0) return out
+  // The newest price typed on the sheet, per ingredient.
+  const typed = new Map<string, { perBaseCents: number; setAt: Date }>()
+  for (const t of await db.ingredientMasterPrice.findMany({
+    where: { masterIngredientId: { in: ids } }, select: { masterIngredientId: true, perBaseCents: true, setAt: true }, orderBy: { setAt: 'desc' },
+  })) if (!typed.has(t.masterIngredientId)) typed.set(t.masterIngredientId, t)
+  const applyTyped = () => {
+    for (const [m, t] of typed) {
+      const p = out.get(m)!
+      if (p.latestSource === 'delivery' && p.latestAt && p.latestAt > t.setAt) continue
+      Object.assign(p, { latestPerBase: t.perBaseCents, latestAt: t.setAt, latestSource: 'sheet', latestSupplier: null, latestCompany: null })
+    }
+  }
+  if (itemIds.length === 0) { applyTyped(); return out }
 
   const since = new Date(Date.now() - AVERAGE_DAYS * 86_400_000)
   const lots = await db.stockLot.findMany({
@@ -125,7 +138,8 @@ export async function masterPricesMany(masterIds: string[], db: Db = serviceClie
     p.avgDeliveries = s.n
   }
 
-  // No delivery yet: the newest billed price, else the newest manual cost, else the typed estimate.
+  applyTyped()
+  // Neither a delivery nor a sheet price: the newest billed price, else the newest manual cost, else the estimate.
   const missing = ids.filter((m) => out.get(m)!.latestPerBase == null)
   if (missing.length) {
     const missingItems = items.filter((i) => i.masterIngredientId && missing.includes(i.masterIngredientId))
@@ -156,7 +170,7 @@ export async function masterPricesMany(masterIds: string[], db: Db = serviceClie
 
 export interface PricePoint {
   at: Date
-  source: 'delivery' | 'bill' | 'manual'
+  source: 'delivery' | 'sheet' | 'bill' | 'manual'
   /** Paisa per display unit (per kg / litre / pcs). */
   priceCents: number
   displayUnit: string
@@ -166,12 +180,15 @@ export interface PricePoint {
   company: string | null
 }
 
-/** Every price of one ingredient across servd, newest first (deliveries, bills, manual costs). */
+/** Every price of one ingredient across servd, newest first (deliveries, sheet prices, bills, manual costs). */
 export async function masterPriceHistory(masterId: string, stockUnit: string, limit = 200, db: Db = serviceClient): Promise<PricePoint[]> {
-  const items = await linkedItems(db, [masterId])
-  if (items.length === 0) return []
-  const itemById = new Map(items.map((i) => [i.id, i]))
   const disp = displayUnitOf(stockUnit)
+  const sheet: PricePoint[] = (await db.ingredientMasterPrice.findMany({
+    where: { masterIngredientId: masterId }, orderBy: { setAt: 'desc' }, take: limit, select: { perBaseCents: true, setAt: true },
+  })).map((t) => ({ at: t.setAt, source: 'sheet' as const, priceCents: t.perBaseCents * disp.baseUnits, displayUnit: disp.unit, qty: null, supplier: null, company: null }))
+  const items = await linkedItems(db, [masterId])
+  if (items.length === 0) return sheet
+  const itemById = new Map(items.map((i) => [i.id, i]))
   const toDisplay = (cents: number, unit: string) => perBaseOf(cents, unit) * disp.baseUnits
   const lots = await db.stockLot.findMany({
     where: { inventoryItemId: { in: items.map((i) => i.id) }, sourceType: 'goods_receipt_line' },
@@ -188,6 +205,7 @@ export async function masterPriceHistory(masterId: string, stockUnit: string, li
   const tenants = tenantIds.length ? await db.tenant.findMany({ where: { id: { in: tenantIds } }, select: { id: true, name: true } }) : []
   const companyName = new Map(tenants.map((t) => [t.id, t.name]))
   const points: PricePoint[] = [
+    ...sheet,
     ...lots.map((l) => {
       const item = itemById.get(l.inventoryItemId)!
       return {

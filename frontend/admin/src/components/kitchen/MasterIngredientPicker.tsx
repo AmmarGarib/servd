@@ -36,7 +36,7 @@ export interface MasterPrice {
   displayUnit: string
   latestCents: number | null
   latestAt: string | null
-  latestSource: 'delivery' | 'bill' | 'manual' | 'estimate' | null
+  latestSource: 'delivery' | 'sheet' | 'bill' | 'manual' | 'estimate' | null
   latestSupplier: string | null
   latestCompany: string | null
   averageCents: number | null
