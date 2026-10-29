@@ -166,8 +166,8 @@ export default function IngredientsPage() {
                     </td>
                   )}
                   {pricesShown && <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap text-s-muted">{priceText(m.price?.averageCents, m.price)}</td>}
-                  {pricesShown && <td className="px-3 py-2 text-xs text-s-muted min-w-[9rem]">{lastBought(m.price) ?? '—'}</td>}
-                  <td className="px-2 py-1 text-s-muted min-w-[12rem]">
+                  {pricesShown && <td className="px-3 py-2 text-xs text-s-muted min-w-[8rem]">{lastBought(m.price) ?? '—'}</td>}
+                  <td className="px-2 py-1 text-s-muted min-w-[10rem]">
                     <InlineText value={m.spec ?? ''} label={`Spec of ${m.name}`} placeholder="—" disabled={!canEdit} onSave={cell(m, 'spec')} />
                   </td>
                   <td className="px-1 py-1 text-right">
