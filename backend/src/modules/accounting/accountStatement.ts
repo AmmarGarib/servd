@@ -15,6 +15,16 @@
 // opening balance, each next page from the running balance where the last one
 // stopped — `pageOpeningCents`), and the route puts each line's entry status and
 // Edit / Cancel rights on it (journalsRegister.ts annotateEntries).
+//
+// Cancelled pairs are hidden by default (owner, 2026-10-29: "Hide all the entries
+// cancelling each other, and give option to show or hide adjustment entries, and
+// these should be hidden also when report is exported … Do this for all
+// accounts"): an entry and the entry that cancels it ("Reversal of …", reference
+// `<type>.reversal|void:<id>` of the original `<type>:<id>`), BOTH dated inside
+// the window, are left out of the lines, the totals and every export. They net
+// to zero on the account, so opening and closing never change. A cancellation
+// whose original is outside the window stays (it moved the balance then).
+// `hideCancelled: false` (route ?showCancelled=1) shows them.
 
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -63,6 +73,8 @@ export interface AccountStatement {
   account: { id: string; code: string; name: string; type: string; normal: 'debit' | 'credit'; companyName: string | null }
   dateFrom: string
   dateTo: string
+  /** Cancelled pairs left out (0 when shown): entries and their lines on this account. */
+  hiddenCancelled: { entries: number; lines: number }
   openingCents: number
   closingCents: number
   totals: { debitCents: number; creditCents: number }
@@ -84,6 +96,30 @@ export interface StatementOptions {
   cursor?: string | null
   /** One sub-account's own statement (its tagged amounts only; the whole window, no paging). Another account's → 404. */
   subAccountId?: string | null
+  /** Leave out entries cancelled inside the window together with their cancellations (default true). */
+  hideCancelled?: boolean
+}
+
+const REVERSAL_REF = /^([^:]+)\.(reversal|void):(.+)$/
+
+/**
+ * The entries in [from, to] with a line on this account that are one half of a
+ * cancelled pair whose other half is also in the window (see the header).
+ */
+async function cancelledPairIds(accountId: string, brand: Prisma.JournalLineWhereInput, from: Date, to: Date): Promise<string[]> {
+  const entries = await prisma.journalEntry.findMany({
+    where: { entryDate: { gte: from, lte: to }, lines: { some: { accountId, ...brand } } },
+    select: { id: true, tenantId: true, reference: true, description: true },
+  })
+  const byRef = new Map(entries.map((e) => [`${e.tenantId}|${e.reference ?? ''}`, e.id]))
+  const out = new Set<string>()
+  for (const e of entries) {
+    const m = REVERSAL_REF.exec(e.reference ?? '')
+    if (!m || !e.description.startsWith('Reversal of ')) continue
+    const original = byRef.get(`${e.tenantId}|${m[1]}:${m[3]}`)
+    if (original) { out.add(original); out.add(e.id) }
+  }
+  return [...out]
 }
 
 /**
@@ -150,10 +186,13 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
     const own = await prisma.concept.count({ where: { id: opts.conceptId, tenantId: account.tenantId ?? '__none__' } })
     if (!own) throw new NotFoundError('Concept', opts.conceptId)
   }
-  if (opts.subAccountId) return subAccountStatement(account, normal, from, to, opts.subAccountId, opts.conceptId ?? null)
   const brand: Prisma.JournalLineWhereInput = opts.conceptId ? { conceptId: opts.conceptId } : {}
+  const hiddenIds = opts.hideCancelled === false ? [] : await cancelledPairIds(account.id, brand, from, to)
+  if (opts.subAccountId) return subAccountStatement(account, normal, from, to, opts.subAccountId, opts.conceptId ?? null, hiddenIds)
+  const notHidden: Prisma.JournalLineWhereInput = hiddenIds.length ? { journalEntryId: { notIn: hiddenIds } } : {}
+  const hiddenLines = hiddenIds.length ? await prisma.journalLine.count({ where: { accountId: account.id, ...brand, journalEntryId: { in: hiddenIds } } }) : 0
   const sumBy = async (where: Prisma.JournalLineWhereInput) => {
-    const g = await prisma.journalLine.groupBy({ by: ['type'], where: { accountId: account.id, ...brand, ...where }, _sum: { amountCents: true } })
+    const g = await prisma.journalLine.groupBy({ by: ['type'], where: { accountId: account.id, ...brand, ...notHidden, ...where }, _sum: { amountCents: true } })
     const dr = sumCents(g.find((x) => x.type === 'debit')?._sum.amountCents ?? 0)
     const cr = sumCents(g.find((x) => x.type === 'credit')?._sum.amountCents ?? 0)
     return { dr, cr, net: (normal === 'debit' ? 1 : -1) * (dr - cr) }
@@ -183,7 +222,7 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
   }
 
   const raw = await prisma.journalLine.findMany({
-    where: { accountId: account.id, ...brand, AND: [inWindow, after] },
+    where: { accountId: account.id, ...brand, ...notHidden, AND: [inWindow, after] },
     select: {
       id: true, type: true, amountCents: true, memo: true, conceptId: true,
       journalEntry: { select: { id: true, entryDate: true, description: true, reference: true, createdAt: true } },
@@ -233,6 +272,7 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
   return {
     account: { id: account.id, code: account.code, name: account.name, type: account.type, normal, companyName: account.tenant?.name ?? null },
     dateFrom, dateTo, openingCents, closingCents: bal, totals: { debitCents: dr, creditCents: cr }, lines, truncated, rows,
+    hiddenCancelled: { entries: hiddenIds.length, lines: hiddenLines },
     pageOpeningCents, nextCursor: hasMore && lastRaw ? encodeStatementCursor(lastRaw) : null, hasMore,
     // Only while the account's sub-accounts are switched on (owner, 2026-10-23); tags stay as history.
     subAccounts: account.subAccountsEnabled
@@ -245,7 +285,7 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
 /** ONE sub-account's statement: its tagged amounts (a line's tag, on the line's side), running balance. */
 async function subAccountStatement(
   account: { id: string; code: string; name: string; type: string; tenantId: string | null; tenant: { name: string } | null },
-  normal: 'debit' | 'credit', from: Date, to: Date, subAccountId: string, conceptId: string | null,
+  normal: 'debit' | 'credit', from: Date, to: Date, subAccountId: string, conceptId: string | null, hiddenIds: string[],
 ): Promise<AccountStatement> {
   const sa = await prisma.subAccount.findFirst({ where: { id: subAccountId, accountId: account.id } })
   if (!sa) throw new NotFoundError('SubAccount', subAccountId)
@@ -257,7 +297,7 @@ async function subAccountStatement(
   })
   const openingCents = before.reduce((t, a) => t + sign(a.line.type) * toCents(a.amountCents), 0)
   const raw = await prisma.journalLineSubAccount.findMany({
-    where: { subAccountId: sa.id, line: { ...brand, journalEntry: { entryDate: { gte: from, lte: to } } } },
+    where: { subAccountId: sa.id, line: { ...brand, ...(hiddenIds.length ? { journalEntryId: { notIn: hiddenIds } } : {}), journalEntry: { entryDate: { gte: from, lte: to } } } },
     select: {
       amountCents: true,
       line: { select: { id: true, type: true, memo: true, conceptId: true, journalEntry: { select: { id: true, entryDate: true, description: true, reference: true, createdAt: true } } } },
@@ -292,6 +332,7 @@ async function subAccountStatement(
     account: { id: account.id, code: account.code, name: account.name, type: account.type, normal, companyName: account.tenant?.name ?? null },
     dateFrom, dateTo, openingCents, closingCents: bal, totals: { debitCents: dr, creditCents: cr }, lines, truncated, rows,
     pageOpeningCents: openingCents, nextCursor: null, hasMore: false, subAccounts: [],
+    hiddenCancelled: { entries: hiddenIds.length, lines: hiddenIds.length ? await prisma.journalLineSubAccount.count({ where: { subAccountId: sa.id, line: { journalEntryId: { in: hiddenIds } } } }) : 0 },
     subAccount: { id: sa.id, name: sa.name, code: sa.code, kind: sa.kind, employeeId: sa.employeeId, isActive: sa.isActive },
   }
 }

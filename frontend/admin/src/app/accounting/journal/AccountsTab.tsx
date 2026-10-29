@@ -47,6 +47,8 @@ interface Statement {
   totals: { debitCents: number; creditCents: number }
   lines: StLine[]
   truncated: boolean
+  /** Cancelled pairs the server left out (owner, 2026-10-29). */
+  hiddenCancelled?: { entries: number; lines: number }
   pageOpeningCents: number
   nextCursor: string | null
   hasMore: boolean
@@ -63,8 +65,9 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
   const [brandId, setBrandId] = useState('')
   const [subId, setSubId] = useState('')
   const [exportErr, setExportErr] = useState<string | null>(null)
-  // Hide an entry and the entry that cancels it when both are in the list (they net to zero; owner, 2026-10-28).
-  const [hideCancelled, setHideCancelled] = useState(false)
+  // Entries cancelled in the period and the entries that cancel them are hidden by the server — on screen and in
+  // every export — unless shown here (owner, 2026-10-29: "give option to show or hide adjustment entries").
+  const [showCancelled, setShowCancelled] = useState(false)
 
   const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ['concepts', 'picker'], queryFn: () => api.get('/concepts?view=picker') })
 
@@ -72,8 +75,9 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
     const sp = new URLSearchParams({ view: 'statement', accountId, from, to })
     if (brandId) sp.set('brandId', brandId)
     if (subId) sp.set('subAccountId', subId)
+    if (showCancelled) sp.set('showCancelled', '1')
     return sp.toString()
-  }, [accountId, from, to, brandId, subId])
+  }, [accountId, from, to, brandId, subId, showCancelled])
 
   const st = useInfiniteQuery({
     queryKey: ['account-statement', query],
@@ -86,18 +90,8 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
   const first = pages[0]
   const last = pages[pages.length - 1]
   const allLines = pages.flatMap((p) => p.lines)
-  // Each line's own movement, from the running balance (so balances can be re-run over the lines shown).
-  const withMove = allLines.map((l, i) => ({ ...l, move: l.balanceCents - (i === 0 ? (first?.openingCents ?? 0) : allLines[i - 1]!.balanceCents) }))
-  const inList = new Set(allLines.map((l) => l.entryId))
-  const pairedOut = (l: (typeof allLines)[number]) =>
-    (l.status === 'reversed' && !!l.reversedBy && inList.has(l.reversedBy.id)) || (l.status === 'reversal' && !!l.reverses && inList.has(l.reverses.id))
-  const hiddenCount = allLines.filter(pairedOut).length
-  const lines = hideCancelled
-    ? withMove.filter((l) => !pairedOut(l)).reduce<{ out: typeof withMove; bal: number }>((acc, l) => {
-        const bal = acc.bal + l.move
-        acc.out.push({ ...l, balanceCents: bal }); acc.bal = bal; return acc
-      }, { out: [], bal: first?.openingCents ?? 0 }).out
-    : withMove
+  const lines = allLines
+  const hiddenEntries = first?.hiddenCancelled?.entries ?? 0
   const subs = first?.subAccounts ?? []
   const selectedAccount: ChartAccount | null = picked && picked.id === accountId ? picked
     : first ? { id: first.account.id, tenantId: null, code: first.account.code, name: first.account.name, type: first.account.type, isActive: true } : null
@@ -189,10 +183,13 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
             </div>
           )}
 
-          {hiddenCount > 0 && (
-            <label className="flex items-center gap-2 text-xs text-s-muted">
-              <input type="checkbox" checked={hideCancelled} onChange={(e) => setHideCancelled(e.target.checked)} />
-              Hide cancelled entries ({hiddenCount} lines: entries cancelled in this period and the entries that cancel them — they net to zero)
+          {(hiddenEntries > 0 || showCancelled) && (
+            <label className="flex items-start gap-2 text-xs text-s-muted min-h-[32px]">
+              <input type="checkbox" className="mt-0.5" checked={showCancelled} onChange={(e) => setShowCancelled(e.target.checked)} />
+              <span>
+                Show adjustment entries — entries cancelled in this period and the entries that cancel them (they net to zero).
+                {!showCancelled && ` ${hiddenEntries} hidden here and in exports.`}
+              </span>
             </label>
           )}
           {/* Phone: one compact row per line — date, particulars, Dr / Cr and the running balance, nothing to swipe

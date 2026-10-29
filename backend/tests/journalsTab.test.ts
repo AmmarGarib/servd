@@ -372,6 +372,39 @@ describe('accounts: the statement is the account view', () => {
   })
 })
 
+describe('cancelled pairs are hidden from every account statement (owner, 2026-10-29)', () => {
+  it('an entry and its cancellation in the window: hidden on screen and in exports, shown on request; balances unchanged', async () => {
+    const e = await manual('ceo', 77_700, 'Cancelled pair check')
+    const rev = await call('ceo', 'POST', `/accounting/journal/${e.id}/reverse`, { reason: 'Posted twice by mistake' })
+    expect(rev.statusCode, rev.body).toBeLessThan(300)
+    const reversal = await reversalOf(e.reference)
+    expect(reversal).toBeTruthy()
+    const range = `from=${day}&to=${fmtPktDate(new Date())}`
+    for (const code6 of ['6010', '1020']) {
+      const acc = await acct(A, code6)
+      const hidden = await call('fin', 'GET', `/accounting/ledger?view=statement&accountId=${acc}&${range}`)
+      const shown = await call('fin', 'GET', `/accounting/ledger?view=statement&accountId=${acc}&${range}&showCancelled=1`)
+      expect(hidden.statusCode, hidden.body).toBe(200)
+      const ids = (r: typeof hidden) => (r.json().lines as Array<{ entryId: string }>).map((l) => l.entryId)
+      expect(ids(hidden)).not.toContain(e.id)
+      expect(ids(hidden)).not.toContain(reversal!.id)
+      expect(ids(shown)).toContain(e.id)
+      expect(ids(shown)).toContain(reversal!.id)
+      expect(hidden.json().hiddenCancelled.entries).toBeGreaterThanOrEqual(2)
+      expect(hidden.json().closingCents).toBe(shown.json().closingCents)
+      // What is left out nets to zero: equal debits and credits.
+      const dDr = shown.json().totals.debitCents - hidden.json().totals.debitCents
+      const dCr = shown.json().totals.creditCents - hidden.json().totals.creditCents
+      expect(dDr).toBe(dCr)
+      expect(dDr).toBeGreaterThanOrEqual(77_700)
+      const csvHidden = (await call('fin', 'GET', `/accounting/ledger?view=statement&accountId=${acc}&${range}&format=csv`)).body
+      const csvShown = (await call('fin', 'GET', `/accounting/ledger?view=statement&accountId=${acc}&${range}&format=csv&showCancelled=1`)).body
+      expect(csvHidden).not.toContain('Cancelled pair check')
+      expect(csvShown).toContain('Cancelled pair check')
+    }
+  })
+})
+
 // Owner, 2026-10-23: "at Voucher it should give option to opt Payment voucher (PV), journal voucher (JV),
 // Receiving voucher (RV) and adjustment voucher (AV)".
 describe('voucher types on manual entries', () => {

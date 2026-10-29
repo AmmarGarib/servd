@@ -1375,7 +1375,12 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
   `canTextEdit` / `canRequestChange`. The Accounts view is THE account
   statement (`GET /accounting/ledger?view=statement`, now with `from` / `to`,
   `brandId`, `limit` + `cursor`, the same per-line rights) — never a second
-  statement. Diff of a change: `GET /accounting/journal-requests/:id/diff`.
+  statement. **Cancelled pairs are hidden on every account (owner, 2026-10-29):**
+  an entry and its cancellation ("Reversal of …", `<type>.reversal|void:<id>`)
+  both dated in the window are left out of the lines, totals and every export
+  (`accountStatement.ts cancelledPairIds`, `hiddenCancelled` + an export note);
+  `?showCancelled=1` ("Show adjustment entries") brings them back; opening and
+  closing never change. Diff of a change: `GET /accounting/journal-requests/:id/diff`.
 - **Voucher types and Duplicate (owner, 2026-10-23: "at Voucher it should give option to opt Payment
   voucher (PV), journal voucher (JV), Receiving voucher (RV) and adjustment voucher (AV)"; "give option to
   generate duplicate voucher of existing entry").** A manual entry takes `voucherKind` PV | JV | RV | AV

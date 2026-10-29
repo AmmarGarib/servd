@@ -56,7 +56,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   // activity links (?id=) and the CSV export. (/finance/ledger listed the
   // sales register to every manager tier and had no caller; the /finance
   // Transactions tab called a GET /accounting/entries that never existed.)
-  fastify.get<{ Querystring: { id?: string; accountId?: string; source?: string; dateFrom?: string; dateTo?: string; from?: string; to?: string; brandId?: string; subAccountId?: string; limit?: string; cursor?: string; format?: string; view?: string } }>(
+  fastify.get<{ Querystring: { id?: string; accountId?: string; source?: string; dateFrom?: string; dateTo?: string; from?: string; to?: string; brandId?: string; subAccountId?: string; limit?: string; cursor?: string; format?: string; view?: string; showCancelled?: string } }>(
     '/ledger',
     { preHandler: requireAuth(...FINANCIALS_VIEWERS) },
     async (req, reply) => {
@@ -87,6 +87,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         const subAccountId = req.query.subAccountId ? z.string().uuid().parse(req.query.subAccountId) : null
         const st = await accountStatement((await resolveTenantScope(req)).tenantIds, accountId, range.from, range.to, {
           conceptId: brandId, subAccountId,
+          // Cancelled pairs are hidden — on screen and in every export — unless asked for (owner, 2026-10-29).
+          hideCancelled: !(req.query.showCancelled === '1' || req.query.showCancelled === 'true'),
           ...(!format && limitStr ? { limit: parseInt(limitStr, 10) || 100, cursor: cursor ?? null } : {}),
         })
         if (!format) {
@@ -131,7 +133,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           labels: { particulars: 'Particulars', chequeReference: 'Cheque reference' },
           wrapKeys: ['particulars', 'memo'],
           isTotal: (r) => r.particulars === 'OPENING BALANCE' || r.particulars === 'CLOSING BALANCE' || r.particulars === 'TOTAL MOVEMENT',
-          ...(st.truncated && { notes: ['This statement stops at the line limit — narrow the dates for the rest.'] }),
+          ...((st.truncated || st.hiddenCancelled.entries > 0) && { notes: [
+            ...(st.hiddenCancelled.entries > 0 ? [`${st.hiddenCancelled.entries} entries cancelled within these dates (with the entries that cancel them) are not shown — they net to zero.`] : []),
+            ...(st.truncated ? ['This statement stops at the line limit — narrow the dates for the rest.'] : []),
+          ] }),
         })
       }
 

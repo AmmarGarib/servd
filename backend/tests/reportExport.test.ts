@@ -339,7 +339,7 @@ describe('general ledger and the account statement', () => {
       tenantId: A, sourceType: 'manual.reversal', sourceId: `oops-${RUN}`, description: `Reversal of manual:${rentId}`, postedBy: 'test',
       lines: [{ accountCode: '1010', type: 'debit', amountCents: 1 }, { accountCode: '6040', type: 'credit', amountCents: 1 }],
     })
-    const csv2 = await get('finA', `/accounting/ledger?accountId=${cash.id}&view=statement&dateFrom=${monthStart}&dateTo=${today}&format=csv`)
+    const csv2 = await get('finA', `/accounting/ledger?accountId=${cash.id}&view=statement&dateFrom=${monthStart}&dateTo=${today}&format=csv&showCancelled=1`)
     expect(csv2.body).toContain('Reversal of the original entry')
     expect(csv2.body).not.toContain(rentId)
     expect(csv.body).toContain('OPENING BALANCE')
