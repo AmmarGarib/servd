@@ -125,7 +125,7 @@ export default function IngredientsPage() {
           {isLoading && <li className="px-3 py-6 text-center text-xs text-s-muted">Loading…</li>}
         </ul>
         <div className="s-card overflow-x-auto hidden sm:block">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[68rem] text-sm">
             <thead className="text-xs text-s-muted">
               <tr>
                 <th className="px-3 py-2 text-left">Ingredient</th>
@@ -150,24 +150,24 @@ export default function IngredientsPage() {
                       </div>
                     )}
                   </td>
-                  <td className="px-2 py-1 text-s-muted">
+                  <td className="px-2 py-1 text-s-muted min-w-[5.5rem]">
                     <InlineSelect value={m.stockUnit} label={`Unit of ${m.name}`} disabled={!isReviewer}
                       options={[...new Set([m.stockUnit, ...BASE_UNITS])].map((u) => ({ value: u, label: u }))} onSave={cell(m, 'unit')} />
                     {m.purchaseUnit && <p className="px-1 text-[11px] text-s-muted whitespace-nowrap">bought by {m.purchaseUnit} ({m.purchaseUnitFactor})</p>}
                   </td>
-                  <td className="px-2 py-1 text-s-muted">
+                  <td className="px-2 py-1 text-s-muted min-w-[10rem]">
                     <InlineSelect value={m.category ?? ''} label={`Category of ${m.name}`} disabled={!isReviewer}
                       options={[{ value: '', label: 'Uncategorised' }, ...INVENTORY_CATEGORY_OPTIONS]} onSave={cell(m, 'category')} />
                   </td>
                   {pricesShown && (
-                    <td className="px-2 py-1 text-right">
+                    <td className="px-2 py-1 text-right min-w-[12rem]">
                       <InlinePrice cents={m.price?.latestCents ?? null} unit={m.price?.displayUnit ?? 'kg'} label={`Price of ${m.name}`}
                         disabled={!canPrice} onSave={cell(m, 'price')} />
                     </td>
                   )}
                   {pricesShown && <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap text-s-muted">{priceText(m.price?.averageCents, m.price)}</td>}
-                  {pricesShown && <td className="px-3 py-2 text-xs text-s-muted">{lastBought(m.price) ?? '—'}</td>}
-                  <td className="px-2 py-1 text-s-muted min-w-[12rem]">
+                  {pricesShown && <td className="px-3 py-2 text-xs text-s-muted min-w-[11rem]">{lastBought(m.price) ?? '—'}</td>}
+                  <td className="px-2 py-1 text-s-muted min-w-[16rem]">
                     <InlineText value={m.spec ?? ''} label={`Spec of ${m.name}`} placeholder="—" disabled={!canEdit} onSave={cell(m, 'spec')} />
                   </td>
                   <td className="px-2 py-1 text-right">
@@ -182,7 +182,7 @@ export default function IngredientsPage() {
         </div>
       </div>
 
-      {open && <Editor master={open} canEdit={canEdit} canPrice={canPrice} isReviewer={isReviewer} onClose={() => setOpen(null)} />}
+      {open && <Editor master={open} canEdit={canEdit} canPrice={canPrice} isReviewer={isReviewer} onClose={() => setOpen(null)} onPriced={(saved) => setOpen({ ...open, ...saved })} />}
       {adding && <AddDialog onClose={() => setAdding(false)} />}
     </div>
   )
@@ -214,7 +214,7 @@ function AddDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-function Editor({ master, canEdit, canPrice, isReviewer, onClose }: { master: MasterRow; canEdit: boolean; canPrice: boolean; isReviewer: boolean; onClose: () => void }) {
+function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { master: MasterRow; canEdit: boolean; canPrice: boolean; isReviewer: boolean; onClose: () => void; onPriced: (saved: MasterRow) => void }) {
   const qc = useQueryClient()
   const [d, setD] = useState<Draft>(draftOf(master))
   const [mergeQ, setMergeQ] = useState('')
@@ -292,7 +292,7 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose }: { master: Ma
               Latest {priceText(master.price.latestCents, master.price)}{lastBought(master.price) ? ` (${lastBought(master.price)})` : ''} — what recipes use.
               {' '}90-day average {priceText(master.price.averageCents, master.price)}{master.price.averageDeliveries ? ` over ${master.price.averageDeliveries} deliveries` : ''}.
             </p>
-            {canPrice && <SetPrice master={master} />}
+            {canPrice && <SetPrice master={master} onSaved={onPriced} />}
             <ServdPriceHistory ingredientId={master.id} />
           </div>
         )}
@@ -369,13 +369,13 @@ function ServdPriceHistory({ ingredientId }: { ingredientId: string }) {
 }
 
 /** Type the servd price from the side panel (the phone's way in). */
-function SetPrice({ master }: { master: MasterRow }) {
+function SetPrice({ master, onSaved }: { master: MasterRow; onSaved: (saved: MasterRow) => void }) {
   const qc = useQueryClient()
   const unit = master.price?.displayUnit ?? 'kg'
   const [v, setV] = useState('')
   const save = useMutation({
     mutationFn: () => api.put<MasterRow>(`/ingredient-master/${master.id}/price`, { priceCents: Math.round(Number(v) * 100) }),
-    onSuccess: () => { setV(''); void qc.invalidateQueries({ queryKey: ['ingredient-master'] }) },
+    onSuccess: (saved) => { setV(''); onSaved(saved); void qc.invalidateQueries({ queryKey: ['ingredient-master'] }) },
   })
   const ok = Number(v) > 0
   return (
@@ -392,7 +392,7 @@ function SetPrice({ master }: { master: MasterRow }) {
 // ── Cells that edit in place ────────────────────────────────────────────────
 // Look like plain text until hovered / focused; save on blur or Enter when changed, Esc restores. A refused save puts
 // the old value back (the page shows why above the table).
-const cellCls = 'w-full rounded px-1 py-1.5 bg-transparent border border-transparent hover:border-s-border focus:border-primary focus:bg-s-surface outline-none disabled:hover:border-transparent disabled:cursor-default'
+const cellCls = 'rounded px-1 py-1.5 bg-transparent border border-transparent hover:border-s-border focus:border-primary focus:bg-s-surface outline-none disabled:hover:border-transparent disabled:cursor-default'
 
 function useCell(value: string, onSave: (v: string) => Promise<unknown>) {
   const [v, setV] = useState(value)
@@ -411,7 +411,7 @@ function InlineText({ value, onSave, label, disabled, placeholder, required }: {
 }) {
   const c = useCell(value, onSave)
   return (
-    <input aria-label={label} className={`${cellCls} ${c.busy ? 'opacity-60' : ''}`} value={c.v} placeholder={placeholder} disabled={disabled || c.busy}
+    <input aria-label={label} className={`${cellCls} w-full ${c.busy ? 'opacity-60' : ''}`} value={c.v} placeholder={placeholder} disabled={disabled || c.busy}
       title={c.v || undefined}
       onChange={(e) => c.setV(e.target.value)}
       onBlur={() => { const t = c.v.trim(); if (required && !t) { c.setV(value); return } void c.commit(t) }}
@@ -427,7 +427,7 @@ function InlineSelect({ value, onSave, label, disabled, options }: {
 }) {
   const c = useCell(value, onSave)
   return (
-    <select aria-label={label} className={`${cellCls} ${c.busy ? 'opacity-60' : ''} ${disabled ? 'appearance-none' : ''}`} value={c.v} disabled={disabled || c.busy}
+    <select aria-label={label} className={`${cellCls} w-full ${c.busy ? 'opacity-60' : ''} ${disabled ? 'appearance-none' : ''}`} value={c.v} disabled={disabled || c.busy}
       onChange={(e) => { c.setV(e.target.value); void c.commit(e.target.value) }}>
       {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
@@ -442,7 +442,7 @@ function InlinePrice({ cents, unit, onSave, label, disabled }: {
   return (
     <label className="flex items-center justify-end gap-1 font-mono text-xs whitespace-nowrap">
       <span className="text-s-muted">PKR</span>
-      <input aria-label={label} inputMode="decimal" className={`${cellCls} w-24 text-right ${c.busy ? 'opacity-60' : ''}`} value={c.v} placeholder="—"
+      <input aria-label={label} inputMode="decimal" className={`${cellCls} w-24 shrink-0 text-right ${c.busy ? 'opacity-60' : ''}`} value={c.v} placeholder="—"
         disabled={disabled || c.busy}
         onChange={(e) => c.setV(e.target.value.replace(/[^0-9.]/g, ''))}
         onBlur={() => { const n = Number(c.v); if (!c.v || !(n > 0)) { c.setV(shown); return } void c.commit(n.toFixed(2)) }}
