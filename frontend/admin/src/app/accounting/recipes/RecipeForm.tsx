@@ -82,6 +82,9 @@ export interface McFields {
   standardCents:  number
   qCents:         number
   targetMcCents:  { dine_in: number; takeout: number; delivery: number }
+  /** The same draft at servd's 90-day average ingredient prices (a line with no recent delivery keeps its latest). */
+  avgStandardCents?: number
+  avgPerGramCents?: number | null
 }
 export interface CostWarnings {
   outsideCompany: Array<{ lineId: string; itemName: string }>
@@ -1219,6 +1222,7 @@ function CostPanel({ computed, kind, yieldGrams, portionsPerBatch, mc, loading }
             <Line label="Batch cost" value={fmtPkrWhole(v.totalRecipe)} bold />
             <Line label="Batch yield" value={yieldGrams && yieldGrams > 0 ? `${yieldGrams.toLocaleString('en')} g` : 'set batch yield'} dim />
             <Line label="Cost per gram" value={cpg != null ? fmtPkrPerG(cpg) : '—'} bold highlight />
+            {mc?.avgPerGramCents != null && <Line label="Cost per gram — 90-day average" value={fmtPkrPerG(mc.avgPerGramCents)} dim />}
             <Line label="Portions / recipe" value={portionsPerBatch && portionsPerBatch >= 1 ? String(portionsPerBatch) : 'not set'} dim />
             <Line label="Cost / portion" value={portionsPerBatch && portionsPerBatch >= 1 ? fmtPkrWhole(Math.round(v.totalRecipe / portionsPerBatch)) : '—'} bold />
           </div>
@@ -1247,6 +1251,10 @@ function CostPanel({ computed, kind, yieldGrams, portionsPerBatch, mc, loading }
             <Line label="Q allowance — in menu pricing, not stock" value={fmtPkrWhole(v.qFactorCents)} dim />
           </div>
         )}
+        {mc?.avgStandardCents != null && (
+          <Line label={`At 90-day average prices ${kind === 'modifier' ? '/ add-on' : '/ plate'}`} value={fmtPkrWhole(mc.avgStandardCents)} dim />
+        )}
+        <p className="text-xs text-s-muted">Costed at the latest price paid anywhere in servd (Operations → Ingredients).</p>
         {loading && <p className="text-xs text-s-muted">Updating…</p>}
         <p className="text-xs text-s-muted">
           Selling price, contribution margin and profitability live in{' '}

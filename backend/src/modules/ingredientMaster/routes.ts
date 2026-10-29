@@ -2,13 +2,18 @@
 //
 // SERVD-WIDE by the owner's decision: a master row has NO company (lib/ingredientMaster.ts). It is a definition only —
 // name, stock unit, category, allergens, yield %, buying unit + factor and the SPEC (what we buy: "burger meat = 80/20,
-// coarse ground"). Price, supplier, par and stock stay on each company's own InventoryItem (masterIngredientId), and
-// nothing here reads or returns another company's item: the list says only whether the CALLER's active company stocks
-// it (`companyItemId`).
+// coarse ground"). Stock, par and suppliers stay on each company's own InventoryItem (masterIngredientId).
+//
+// PRICES are servd-wide (owner, 2026-10-29: "a pure ingredient availability and pricing sheet … for people to create
+// recipes on servd and see avg cost on that recipe basis historical prices"; ONE servd price): each row carries the
+// latest price paid anywhere in servd and the 90-day average (lib/ingredientPrices.ts), per kg / litre / pcs; GET
+// /:id/prices lists every price with its date, company and supplier. Hidden from the kitchen floor (costsHiddenFor).
+// `companyItemId` (the caller's active company's linked item) stays for the recipe picker; the sheet no longer shows it.
 //
 //   GET    /ingredient-master?q&status&limit   search (server-side; the recipe picker and the Ingredients page).
 //                                              Any staff with recipes / inventory / procurement / par_sheet.
 //   GET    /ingredient-master/:id
+//   GET    /ingredient-master/:id/prices          servd-wide price history, newest first (≤200).
 //   POST   /ingredient-master                  add a new one → 'needs_review' (K2). Dedupe by normalised name: an
 //                                              existing live row is returned (200, existing: true). Recipe editors
 //                                              (MANAGERS) and the buyer.
@@ -42,7 +47,8 @@ import { INVENTORY_CATEGORIES } from '../../lib/inventoryClass.js'
 import { audit } from '../../lib/audit.js'
 import { ensureFifoReady, lockItemsTx } from '../../lib/stockLedger.js'
 import { cleanIngredientName, factorForItemUnit, findOrCreateMasterTx, normalizeIngredientName, sameUnitFamily, unitFamily } from '../../lib/ingredientMaster.js'
-import { moveItemLotsToCategoryTx } from '../inventory/routes.js'
+import { moveItemLotsToCategoryTx, costsHiddenFor } from '../inventory/routes.js'
+import { AVERAGE_DAYS, displayUnitOf, masterPriceHistory, masterPricesMany, type MasterPrice } from '../../lib/ingredientPrices.js'
 
 /** Who fixes a master definition: the recipe editors (POST/PUT /recipes are MANAGERS). */
 export const MASTER_EDITORS = MANAGERS
@@ -82,13 +88,32 @@ async function companyItems(req: FastifyRequest, masterIds: string[]): Promise<M
   return new Map(rows.map((r) => [r.masterIngredientId!, r.id]))
 }
 
-function shape(m: MasterDb, companyItemId: string | null) {
+/** The row's servd price, per display unit (kg / litre / pcs); null when hidden from the caller. */
+function priceOf(m: MasterDb, p: MasterPrice | undefined | null) {
+  if (p === null) return null
+  const d = displayUnitOf(m.stockUnit)
+  const at = (perBase: number | null | undefined) => (perBase == null ? null : Math.round(perBase * d.baseUnits * 100) / 100)
+  return {
+    displayUnit: d.unit,
+    latestCents: at(p?.latestPerBase),
+    latestAt: p?.latestAt ?? null,
+    latestSource: p?.latestSource ?? null,
+    latestSupplier: p?.latestSupplier ?? null,
+    latestCompany: p?.latestCompany ?? null,
+    averageCents: at(p?.avgPerBase),
+    averageDays: AVERAGE_DAYS,
+    averageDeliveries: p?.avgDeliveries ?? 0,
+  }
+}
+
+function shape(m: MasterDb, companyItemId: string | null, price?: MasterPrice | null) {
   return {
     id: m.id, name: m.name, stockUnit: m.stockUnit, category: m.category, allergens: m.allergens, yieldPct: m.yieldPct,
     purchaseUnit: m.purchaseUnit, purchaseUnitFactor: m.purchaseUnitFactor, spec: m.spec, specFields: m.specFields,
     perishable: m.perishable, shelfLifeDays: m.shelfLifeDays,
     status: m.status, mergedIntoId: m.mergedIntoId, createdAt: m.createdAt, updatedAt: m.updatedAt,
     companyItemId,
+    price: priceOf(m, price),
   }
 }
 
@@ -113,13 +138,23 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     // Names that start with the query first (what a cook typing "chick" wants), then the rest.
     if (q) rows.sort((a, b) => Number(!a.normalizedName.startsWith(q)) - Number(!b.normalizedName.startsWith(q)))
     const mine = await companyItems(req, rows.map((r) => r.id))
-    return rows.map((r) => shape(r, mine.get(r.id) ?? null))
+    const hide = costsHiddenFor(req)
+    const prices = hide ? new Map<string, MasterPrice>() : await masterPricesMany(rows.map((r) => r.id))
+    return rows.map((r) => shape(r, mine.get(r.id) ?? null, hide ? null : prices.get(r.id)))
+  })
+
+  fastify.get<{ Params: { id: string } }>('/:id/prices', readers, async (req) => {
+    const m = await loadLive(req.params.id)
+    if (costsHiddenFor(req)) return { ingredientId: m.id, costsHidden: true, points: [] }
+    const points = await masterPriceHistory(m.id, m.stockUnit)
+    return { ingredientId: m.id, displayUnit: displayUnitOf(m.stockUnit).unit, points: points.map((x) => ({ ...x, priceCents: Math.round(x.priceCents * 100) / 100 })) }
   })
 
   fastify.get<{ Params: { id: string } }>('/:id', readers, async (req) => {
     const m = await loadLive(req.params.id)
     const mine = await companyItems(req, [m.id])
-    return shape(m, mine.get(m.id) ?? null)
+    const hide = costsHiddenFor(req)
+    return shape(m, mine.get(m.id) ?? null, hide ? null : (await masterPricesMany([m.id])).get(m.id))
   })
 
   fastify.post('/', { preHandler: requireAuth(...MASTER_CREATORS) }, async (req, reply) => {

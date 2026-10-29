@@ -68,7 +68,7 @@ export default function ShoppingListPage() {
         {notStocked.length > 0 && (
           <section className="s-card p-4">
             <h2 className="text-sm font-bold text-s-text">Not stocked yet</h2>
-            <p className="text-xs text-s-muted mb-2">Needed by the prep list, but this company has no stock item for them yet — create one, set its supplier on the Sourcing sheet, then order.</p>
+            <p className="text-xs text-s-muted mb-2">Needed by the prep list, but this company has no stock item for them yet — create one on Inventory, set its supplier, then order.</p>
             <ul className="space-y-1">
               {notStocked.map((x) => (
                 <li key={x.masterIngredientId ?? x.name} className="flex items-center justify-between text-sm">

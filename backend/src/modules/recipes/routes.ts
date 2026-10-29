@@ -7,7 +7,7 @@ import { requireAuth, MANAGERS, ALL_STAFF, FINANCE_TEAM } from '../auth/middlewa
 import { costsHiddenFor } from '../inventory/routes.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import {
-  buildRecipeGraph, loadRecipeGraph, localiseGraph, recipeCost, withLatestCosts,
+  buildRecipeGraph, loadRecipeGraph, localiseGraph, recipeCost, withLatestCosts, withAverageCosts,
   type CostRecipe, type RecipeCost, type RecipeGraph, type RecipeLineCost,
 } from '../../lib/recipeCost.js'
 import { costClassOf } from '../../lib/inventoryClass.js'
@@ -1141,6 +1141,9 @@ function recipeRowWithoutCosts<R extends { ingredients: Array<Record<string, unk
     foodCostPct:         null,
     costPerGramCents:    null,
     batchCostCents:      null,
+    avgTotalCostCents:   null,
+    avgCostPerPortionCents: null,
+    avgCostPerGramCents: null,
     mc:                  null,
     ...RECIPE_PRICING_NULLED,
     costsHidden:         true as const,
@@ -1259,10 +1262,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         : r.kind === 'modifier' ? (r.modifier?.group.menuItem.concept.tenantId ?? r.tenantId)
         : (r.menuItem?.concept.tenantId ?? pendingTenant.get((r.pendingMenuItem as { conceptId?: string } | null)?.conceptId ?? '') ?? r.tenantId)
       const atOf = new Map(await Promise.all(recipes.map(async (r) => [r.id, await pricingAt(req, ownOf(r))] as const)))
-      const priced = new Map<string, { graph: RecipeGraph; latest: Map<string, LineInfo>; memo: Map<string, RecipeCost>; name: string }>()
+      const priced = new Map<string, { graph: RecipeGraph; avgGraph: RecipeGraph; latest: Map<string, LineInfo>; memo: Map<string, RecipeCost>; avgMemo: Map<string, RecipeCost>; name: string }>()
       for (const at of new Set(atOf.values())) {
         const g = await costingGraphAt(req, graph, at)
-        priced.set(at ?? '', { graph: g, latest: latestByLine(g), memo: new Map(), name: await companyName(at) })
+        priced.set(at ?? '', { graph: g, avgGraph: withAverageCosts(g), latest: latestByLine(g), memo: new Map(), avgMemo: new Map(), name: await companyName(at) })
       }
       const hideCosts = costsHiddenFor(req)
       // Warnings per row (outside company / costed while unapproved / no
@@ -1278,6 +1281,8 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         const latest = P.latest
         const viewer = P.name
         const cost = recipeCost(P.graph, r.id, P.memo)
+        // The same recipe at servd's 90-day AVERAGE prices, shown beside the latest (owner, 2026-10-29).
+        const avgCost = recipeCost(P.avgGraph, r.id, P.avgMemo)
         const byLine = linesById(cost)
         const ingDetails = r.ingredients.map((ing0) => {
           const line = byLine.get(ing0.id)
@@ -1346,6 +1351,9 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           // Component headline:
           costPerGramCents,
           batchCostCents: r.kind === 'component' ? totalCostCents : null,
+          avgTotalCostCents: Math.round(avgCost.totalCents),
+          avgCostPerPortionCents: (r.kind === 'plate' || r.kind === 'modifier') && r.servings > 0 ? Math.round(avgCost.perPortionCents) : null,
+          avgCostPerGramCents: r.kind === 'component' ? avgCost.perGramCents : null,
         }
       })
       return hideCosts ? rows.map(recipeRowWithoutCosts) : rows
@@ -1451,6 +1459,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     }
     const previewGraph = await costingGraphAt(req, buildRecipeGraph([draft, ...graph.values()]), await pricingAt(req, owners[0]))
     const cost = recipeCost(previewGraph, PREVIEW)
+    const avgCost = recipeCost(withAverageCosts(previewGraph), PREVIEW)
     const outside = linesOutside(previewGraph, PREVIEW, new Set(owners))
     const names = await itemNames(outside.map((o) => o.itemId))
     return {
@@ -1468,6 +1477,12 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       plateCostCents:  Math.round(cost.standardCents),
       perPortionCents: Math.round(cost.perPortionCents),
       costPerGramCents: cost.perGramCents,
+      // At servd's 90-day average prices (owner, 2026-10-29).
+      avgTotalCents: Math.round(avgCost.totalCents),
+      avgPerPortionCents: Math.round(avgCost.perPortionCents),
+      avgPerGramCents: avgCost.perGramCents,
+      // The plate MC (food + drinks) at the average — what the form shows beside its MC headline.
+      avgStandardCents: Math.round(avgCost.standardCents),
       serviceVessel,
       ...mcReadout(cost),
       warnings: costWarnings(previewGraph, PREVIEW, { owners: new Set(owners), kind, status, live, serviceVessel }, names),
@@ -1628,6 +1643,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       const graph = await costingGraphAt(req, rawGraph, at)
       const latest = latestByLine(graph)
       const cost = recipeCost(graph, recipe.id)
+      const avgCost = recipeCost(withAverageCosts(graph), recipe.id)
       const viewer = await companyName(at)
       const mc = mcReadout(cost)
       const byLine = linesById(cost)
@@ -1797,6 +1813,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           totalRecipeCents,
           plateCostCents,
           perPortionCents:          Math.round(cost.perPortionCents),
+          // At servd's 90-day average prices (owner, 2026-10-29): shown beside the latest.
+          avgTotalRecipeCents:      Math.round(avgCost.totalCents),
+          avgPerPortionCents:       Math.round(avgCost.perPortionCents),
+          avgPerGramCents:          avgCost.perGramCents,
           qCents:                   mc.qCents,
           opexPerPortionCents,
           brandMonthlyOpexCents,

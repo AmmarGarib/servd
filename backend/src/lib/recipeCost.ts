@@ -153,6 +153,8 @@ export interface CostItem {
   /** Set by withLatestCosts: the latest cost (unitCostCents then carries it) and when it was paid / typed. */
   latestCostCents?: number | null
   latestCostAt?: Date | null
+  /** Set by withLatestCosts: servd's 90-day average price, in this item's unit (null with no deliveries in 90 days). */
+  avgCostCents?: number | null
   /**
    * Set by localiseGraph `strict`: the viewing / selling company does not stock this ingredient — the line shows
    * no price (never another company's) and the item here is still the other company's (do not draw it).
@@ -605,30 +607,64 @@ export async function localiseGraph(graph: RecipeGraph, tenantId: string, db: Db
 }
 
 /**
- * Recipes cost at the LATEST cost (owner, 2026-10-26): every raw line of the graph priced at its item's latest cost
- * (lib/stockLedger.ts latestCostsMany — the latest purchase price, else the latest manual cost, else the typed
- * estimate) instead of the FIFO head (InventoryItem.unitCostCents). For the recipe / sub-recipe costing screens, the
- * pricing and target price, and menu engineering — call it AFTER localiseGraph so each company prices at its own
- * latest cost. NEVER for stock value, FIFO lots, cost of sales, food-cost actuals or anything posted (those stay FIFO
- * at the price paid). Returns a new graph; prep items keep their own (made) cost.
+ * Recipes cost at servd's LATEST price (owner, 2026-10-26 "latest cost"; 2026-10-29 "ONE servd price, the average
+ * shown beside"): every raw line whose ingredient is a servd master is priced at the master's servd-wide latest
+ * price (lib/ingredientPrices.ts — the newest delivery anywhere in servd), converted into the line item's own unit;
+ * `avgCostCents` carries the 90-day average the same way (withAverageCosts prices a graph at it). A line with no
+ * master, or a master never priced, falls back to its company's own latest cost (lib/stockLedger.ts latestCostsMany
+ * — latest purchase, else manual cost, else the typed estimate). A line `strict` localisation masked as not stocked is
+ * priced too: servd's price is the same for every company. For the recipe / sub-recipe costing screens, pricing and
+ * menu engineering only — NEVER stock value, FIFO lots, cost of sales, food-cost actuals or anything posted (those
+ * stay FIFO at the price paid). Returns a new graph; prep items keep their own (made) cost.
  */
 export async function withLatestCosts(graph: RecipeGraph, db: Db = prisma): Promise<RecipeGraph> {
-  const ids = new Set<string>()
-  for (const r of graph.values()) for (const l of r.ingredients) if (l.inventoryItem && !l.inventoryItem.notStocked) ids.add(l.inventoryItem.id)
-  if (ids.size === 0) return graph
+  const masterOfLine = (l: CostLine): string | null => l.masterIngredientId ?? l.inventoryItem?.masterIngredientId ?? null
+  const masterIds = new Set<string>()
+  const itemIds = new Set<string>()
+  for (const r of graph.values()) for (const l of r.ingredients) {
+    if (!l.inventoryItem) continue
+    const m = masterOfLine(l)
+    if (m) masterIds.add(m)
+    if (!l.inventoryItem.notStocked) itemIds.add(l.inventoryItem.id)
+  }
+  if (masterIds.size === 0 && itemIds.size === 0) return graph
+  const { masterPricesMany } = await import('./ingredientPrices.js')
   const { latestCostsMany } = await import('./stockLedger.js')
-  const latest = await latestCostsMany(db, [...ids])
+  const { unitFamily } = await import('./ingredientMaster.js')
+  const [servd, latest] = await Promise.all([masterPricesMany([...masterIds]), latestCostsMany(db, [...itemIds])])
+  const inItemUnit = (perBase: number, unit: string | null) => perBase * (unitFamily(unit ?? '').perUnit || 1)
   const out: RecipeGraph = new Map()
   for (const [id, r] of graph) {
     out.set(id, {
       ...r,
       ingredients: r.ingredients.map((l) => {
-        if (!l.inventoryItem || l.inventoryItem.notStocked) return l
+        if (!l.inventoryItem) return l
+        const m = masterOfLine(l)
+        const sp = m ? servd.get(m) : undefined
+        if (sp?.latestPerBase != null) {
+          const cents = inItemUnit(sp.latestPerBase, l.inventoryItem.unit)
+          return { ...l, inventoryItem: {
+            ...l.inventoryItem, unitCostCents: cents, latestCostCents: cents, latestCostAt: sp.latestAt, notStocked: false,
+            avgCostCents: sp.avgPerBase != null ? inItemUnit(sp.avgPerBase, l.inventoryItem.unit) : null,
+          } }
+        }
+        if (l.inventoryItem.notStocked) return l
         const c = latest.get(l.inventoryItem.id)
         if (!c) return l
         return { ...l, inventoryItem: { ...l.inventoryItem, unitCostCents: c.cents, latestCostCents: c.cents, latestCostAt: c.at } }
       }),
     })
+  }
+  return out
+}
+
+/** A graph from withLatestCosts priced at the 90-day AVERAGE instead (a line with no average keeps its latest). */
+export function withAverageCosts(graph: RecipeGraph): RecipeGraph {
+  const out: RecipeGraph = new Map()
+  for (const [id, r] of graph) {
+    out.set(id, { ...r, ingredients: r.ingredients.map((l) => (l.inventoryItem?.avgCostCents != null
+      ? { ...l, inventoryItem: { ...l.inventoryItem, unitCostCents: l.inventoryItem.avgCostCents } }
+      : l)) })
   }
   return out
 }

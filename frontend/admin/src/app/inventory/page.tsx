@@ -12,6 +12,7 @@ import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
 import { useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
+import { UnusedCleanupModal } from './UnusedCleanupModal'
 import { INVENTORY_CATEGORY_OPTIONS, categoryOptionText, categoryLabel, categoryValueOf, stockErrorText } from '../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
 import { FormField } from '../../components/ui/FormField'
@@ -186,6 +187,8 @@ export default function InventoryPage() {
   const [assignItemId, setAssignItemId] = useState<string | null>(null)
   const [assignForm, setAssignForm] = useState({ tenantId: '', costPkr: '' })
   const me = useAuthStore((s) => s.user)
+  // The CEO's "Remove ingredients not in a recipe" (moved here from the retired Sourcing sheet, 2026-10-29).
+  const [cleaning, setCleaning] = useState(false)
   const managerRoles = useManagerRoles()
   const { data: perms } = usePermissions()
   const canOpen = (path: string) => !!perms && canOpenPath(path, perms.role, perms.modules ?? [])
@@ -457,6 +460,12 @@ export default function InventoryPage() {
               Purchase order
             </Link>
           )}
+          {!kitchenView && me?.role === 'admin' && (
+            <button onClick={() => setCleaning(true)}
+              className="rounded-xl border border-s-border text-s-text font-bold px-4 py-2 text-sm hover:border-primary">
+              Remove ingredients not in a recipe
+            </button>
+          )}
           {!kitchenView && (
             <button onClick={() => { setTried(false); setShowAdd(true) }}
               className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
@@ -465,6 +474,7 @@ export default function InventoryPage() {
           )}
         </div>
       </header>
+      {cleaning && <UnusedCleanupModal onClose={() => setCleaning(false)} />}
 
       {alertCount > 0 && (
         <div className="mx-6 mt-4 rounded-xl border border-s-red/40 bg-red-100/15 px-4 py-3 flex items-center gap-3 cursor-pointer"

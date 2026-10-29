@@ -248,18 +248,16 @@ describe('owner review fixes: viewer prices, owner active, twins, not stocked', 
     expect(plate.statusCode, plate.body).toBe(201)
   })
 
-  it('costing shows ONLY the viewing company\'s prices: GS sees honey; Flipd sees "Not stocked by …", no price', async () => {
+  // ONE servd price (owner, 2026-10-29): every company costs a recipe at servd's price for the ingredient — Flipd,
+  // which never stocked honey, sees the same honey price as GS Foods. Company stock stays private.
+  it('costing uses ONE servd price for every company: Flipd prices honey like GS Foods', async () => {
     const gs = (await call(u.chefGS!, 'GET', `/recipes/${X.glaze}/costing`)).json()
     expect(gs.ingredients[0]).toMatchObject({ ingredientCostCents: 40_000, notStockedBy: null })
     const fl = (await call(u.chefFL!, 'GET', `/recipes/${X.glaze}/costing`)).json()
-    expect(fl.ingredients[0]).toMatchObject({ ingredientCostCents: 0, latestCostCents: null, notStockedBy: 'Co rcs-fl' })
-    const list = (await call(u.chefFL!, 'GET', '/recipes')).json() as Array<{ id: string; ingredients: Array<{ inventoryItem: { unitCostCents: number | null } | null; notStockedBy: string | null }> }>
-    const row = list.find((r) => r.id === X.glaze)!
-    expect(row.ingredients[0]!.inventoryItem!.unitCostCents).toBeNull()
-    expect(row.ingredients[0]!.notStockedBy).toBe('Co rcs-fl')
+    expect(fl.ingredients[0]).toMatchObject({ ingredientCostCents: 40_000, notStockedBy: null })
     // The detail never shows GS Foods' item (id, stock, category) to Flipd: Flipd does not stock honey → none.
     const detail = (await call(u.chefFL!, 'GET', `/recipes/${X.glaze}`)).json()
-    expect(detail.ingredients[0]).toMatchObject({ inventoryItem: null, inventoryItemId: null, notStockedBy: 'Co rcs-fl' })
+    expect(detail.ingredients[0]).toMatchObject({ inventoryItem: null, inventoryItemId: null })
     const hidden = (await call(u.cookFL!, 'GET', `/recipes/${X.glaze}`)).json()
     expect(hidden.ingredients[0]).toMatchObject({ inventoryItem: null, inventoryItemId: null })
     expect(JSON.stringify(hidden)).not.toContain(X.honeyMaster ? (await prisma.inventoryItem.findFirstOrThrow({ where: { tenantId: GS.tenantId, masterIngredientId: X.honeyMaster } })).id : 'x')
@@ -311,7 +309,7 @@ describe('owner review fixes: viewer prices, owner active, twins, not stocked', 
 
 describe('portfolio pricing and legacy duplicates (owner review N1, N5)', () => {
   const Y: Record<string, string> = {}
-  it('the CEO sees a GS Foods dish at GS prices and a Flipd dish at Flipd prices, whichever company is active', async () => {
+  it('every dish is priced at servd\'s latest price for the ingredient, whichever company is viewing', async () => {
     // GS Foods' own dish (its brand) with the same chicken line.
     const gsChicken = (await prisma.inventoryItem.findFirstOrThrow({ where: { tenantId: GS.tenantId, name: 'Chicken thigh' } })).id
     const gsPlate = await prisma.recipe.create({ data: {
@@ -322,9 +320,9 @@ describe('portfolio pricing and legacy duplicates (owner review N1, N5)', () => 
     Y.flPlate = (await prisma.recipe.findFirstOrThrow({ where: { menuItem: { name: 'Flipd wings' } } })).id
     const chickenCost = (c: { ingredients: Array<{ name: string; ingredientCostCents: number }> }) => c.ingredients.find((i) => /chicken/i.test(i.name))!.ingredientCostCents
     for (const who of [u.ceo!, u.ceoFL!]) {
-      // GS: 200 g at PKR 900 / kg (typed) = 18,000; Flipd: 200 g at its lot's PKR 1 / g = 20,000.
-      // The CEO's portfolio view, whichever company is active.
-      expect(chickenCost((await call(who, 'GET', `/recipes/${Y.gsPlate}/costing`, undefined, PORTFOLIO)).json())).toBe(18_000)
+      // servd's latest chicken price is Flipd's delivery (PKR 1 / g; GS Foods only typed PKR 900 / kg) → 200 g = 20,000
+      // on BOTH dishes, whichever company is active.
+      expect(chickenCost((await call(who, 'GET', `/recipes/${Y.gsPlate}/costing`, undefined, PORTFOLIO)).json())).toBe(20_000)
       expect(chickenCost((await call(who, 'GET', `/recipes/${Y.flPlate}/costing`, undefined, PORTFOLIO)).json())).toBe(20_000)
     }
     // A Flipd-only viewer: Flipd's own price, and GS Foods' own dish is not even visible.
@@ -385,7 +383,7 @@ describe('portfolio pricing and legacy duplicates (owner review N1, N5)', () => 
     expect(made.created).toBe(true)
   })
 
-  it('pricing follows the company being VIEWED: single-company Flipd prices GS Foods\' sub-recipe at Flipd', async () => {
+  it('the newest delivery anywhere in servd prices the sub-recipe, single-company or portfolio', async () => {
     const { ensureCompanyItemForMasterTx } = await import('../src/lib/ingredientMaster.js')
     const flMayo = await prisma.$transaction((tx) => ensureCompanyItemForMasterTx(tx, FL.tenantId, M.mayo!))
     await lot(FL.tenantId, flMayo.id, 1000, 90, FL.locationId, 0)   // Flipd's latest: PKR 0.90 / g
@@ -394,6 +392,6 @@ describe('portfolio pricing and legacy duplicates (owner review N1, N5)', () => 
     expect(single.statusCode, single.body).toBe(200)
     expect(mayo(single.json())).toBe(90)
     const portfolio = await call(u.ceoFL!, 'GET', `/recipes/${sauceId}/costing`, undefined, PORTFOLIO)
-    expect(mayo(portfolio.json())).toBe(60)                          // its own company, GS Foods, in portfolio view
+    expect(mayo(portfolio.json())).toBe(90)                          // servd's latest (Flipd's newer delivery), in any view
   })
 })

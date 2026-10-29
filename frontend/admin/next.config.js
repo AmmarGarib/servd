@@ -58,6 +58,8 @@ const nextConfig = {
       { source: '/accounting/food-cost', destination: '/reports/food-cost', permanent: true },
       // One prep list (kitchen flow, owner 2026-10-26): the old per-brand /ops/prep-list forwards to it.
       { source: '/ops/prep-list', destination: '/kitchen/prep-list', permanent: true },
+      // One ingredient and pricing sheet (owner, 2026-10-29): the Sourcing sheet folded into Operations → Ingredients.
+      { source: '/sourcing', destination: '/kitchen/ingredients', permanent: true },
     ]
   },
   async rewrites() {

@@ -1,4 +1,4 @@
-// Shared bits of the stock pages (Inventory, Count, Prep, Sourcing, Receiving,
+// Shared bits of the stock pages (Inventory, Count, Prep, Receiving,
 // Procurement bills, Received-not-billed): the item categories with the stock
 // account each one lands in, and the API's error codes in plain words.
 //
@@ -60,7 +60,7 @@ const NEXT_STEP: Record<string, string> = {
   OPENING_COST_REQUIRED: 'Type the unit cost for this line.',
   OPENING_COUNT_ROLE: 'Ask finance, the CEO or management to record it.',
   COUNT_REASON_REQUIRED: 'Type the reason on that line (at least 3 characters). Differences then wait for the CEO.',
-  ITEM_HAS_NO_COMPANY: 'Give it a company on the Sourcing sheet first.',
+  ITEM_HAS_NO_COMPANY: 'Give it a company on Inventory first.',
   BRAND_NOT_IN_COMPANY: 'Pick a brand of the item’s own company.',
   LOCATION_NOT_IN_COMPANY: 'Pick one of this company’s outlets.',
   INSUFFICIENT_STOCK: 'Count or receive stock first, or lower the quantities.',

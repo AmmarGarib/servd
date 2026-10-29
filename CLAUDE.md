@@ -2099,6 +2099,20 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   cost of sales, food-cost actuals or anything posted — those stay FIFO at the price paid. Items and recipe lines
   expose `latestCostCents` / `latestCostAt`; price history: `GET /inventory/:id/price-history` (the one store,
   ItemPriceHistory; inventory auth).
+- **The Ingredients sheet is servd's PRICING sheet, ONE servd price (owner, 2026-10-29: "the servd master sheet is
+  not concerned with stocked or not stocked … a pure ingredient availability and pricing sheet … the stock in stock
+  out business is at the per brand / per outlet level"; answers: one servd price, latest with the average shown,
+  REPLACES the Sourcing sheet).** `lib/ingredientPrices.ts` is the one reader, DELIBERATELY servd-wide (every
+  company's purchases count): latest = the newest goods-receipt lot of the master anywhere in servd (else the newest
+  billed price, else manual cost, else the highest typed estimate); average = quantity-weighted deliveries of the last
+  `AVERAGE_DAYS` (90). Held per base unit (g / ml / pcs), shown per kg / litre / pcs. `withLatestCosts` prices every
+  recipe line WITH a master at it (converted into the item's unit; never "not stocked"); a line with no master keeps
+  the company's `latestCostsMany`. `withAverageCosts` gives the recipe screens' "90-day average" beside the latest
+  (`avg*` fields on the recipe list, detail and preview; a line with no recent delivery keeps its latest). Master
+  rows carry `price` (null for `costsHiddenFor`); `GET /ingredient-master/:id/prices` = the history with date,
+  company and supplier. Read only — stock, FIFO, cost of sales and food-cost actuals stay each company's own. The
+  Sourcing sheet page is gone (`/sourcing` → `/kitchen/ingredients`); its "remove ingredients not in a recipe"
+  clean-up is on Inventory (CEO). Tests: `tests/ingredientMaster.test.ts`, `tests/recipeCompanyShare.test.ts`.
 - **Par in PORTIONS (K5)** — `Recipe.portionsPerBatch` (portions one batch makes; size = yield ÷ it,
   `lib/portions.ts`, never stored) + `portionLabel`. A prep batch may be logged in portions (`actualPortions`; 422
   `NO_PORTION_SIZE` without). Portions are what CAME OUT: the draw is whole batches (`batches`, default 1), expected =

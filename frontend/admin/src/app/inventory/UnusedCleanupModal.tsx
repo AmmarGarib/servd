@@ -1,6 +1,6 @@
 'use client'
-// "Remove ingredients not in a recipe" — the CEO's clean-up on the Sourcing
-// sheet (owner, 2026-10-16). Preview → Confirm → result. API:
+// "Remove ingredients not in a recipe" — the CEO's clean-up (owner, 2026-10-16); on Inventory since the Sourcing
+// sheet was folded into Operations → Ingredients (owner, 2026-10-29). Preview → Confirm → result. API:
 // GET/POST /inventory/unused-cleanup (backend modules/inventory/unusedCleanup.ts).
 // Everything moved goes to the Trash and can be restored there; ingredients
 // holding stock or with purchase history are skipped and listed with why.

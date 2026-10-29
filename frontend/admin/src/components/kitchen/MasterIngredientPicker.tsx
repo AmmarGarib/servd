@@ -4,7 +4,7 @@
 // Server-side search (GET /ingredient-master?q=), never the full list. Picking one makes sure the ACTIVE company has
 // its stock item (POST /inventory/from-master — the master's unit, category, allergens, yield and buying unit fill
 // it, K3) and hands that item back. "Add new ingredient" puts a name that is not there yet into servd's master at
-// once, flagged for review (K2), then does the same. Price, supplier and par stay the company's (Sourcing sheet).
+// once, flagged for review (K2), then does the same. Prices are servd's (Operations → Ingredients); supplier and par stay the company's.
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
@@ -28,6 +28,20 @@ export interface MasterRow {
   specFields: Record<string, string> | null
   status: 'approved' | 'needs_review'
   companyItemId: string | null
+  /** servd's price (owner, 2026-10-29): one price across servd, per kg / litre / pcs. Null when hidden (kitchen floor). */
+  price?: MasterPrice | null
+}
+
+export interface MasterPrice {
+  displayUnit: string
+  latestCents: number | null
+  latestAt: string | null
+  latestSource: 'delivery' | 'bill' | 'manual' | 'estimate' | null
+  latestSupplier: string | null
+  latestCompany: string | null
+  averageCents: number | null
+  averageDays: number
+  averageDeliveries: number
 }
 
 export interface PickedItem { id: string; name: string; unit: string; category: string | null; yieldPct: number; masterIngredientId: string }

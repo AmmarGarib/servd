@@ -3,11 +3,14 @@
 //
 // The master is servd-wide: one definition per ingredient — unit, category, allergens, yield %, buying unit and the
 // SPEC (what we buy, e.g. "burger meat = 80/20, coarse ground", printed on purchase orders and the shopping list).
-// Each company keeps its own price, supplier, par and stock on its stock item (Sourcing sheet / Inventory).
+// It is servd's ingredient AND PRICING sheet (owner, 2026-10-29: "a pure ingredient availability and pricing sheet …
+// for people to create recipes on servd and see avg cost on that recipe basis historical prices"): ONE servd price per
+// ingredient — the latest paid anywhere in servd, the 90-day average beside it, and the full history (date, company,
+// supplier). Recipes cost at that latest price. Stocking, stock in / out and pars are each outlet's, on Inventory.
+// It replaced the Sourcing sheet (owner, 2026-10-29).
 //   • Search runs on the server (GET /ingredient-master?q=).
 //   • A chef's new ingredient joins at once, marked "needs review" (K2). The CEO or the F&B manager marks it reviewed
 //     or MERGES a duplicate into the right one (a company that stocks both must merge its stock items first).
-//   • "Add to my company" makes the active company's stock item from the definition (POST /inventory/from-master).
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -16,8 +19,7 @@ import { useAuthStore } from '../../../store/auth'
 import { useManagerRoles } from '../../../lib/roles'
 import { INVENTORY_CATEGORY_OPTIONS, categoryLabel, stockErrorText } from '../../../lib/stockUi'
 import { Button, Dialog, DialogFooter, ErrorBanner, Field, Input, SidePanel, Textarea } from '../../../components/finance/ui'
-import type { MasterRow } from '../../../components/kitchen/MasterIngredientPicker'
-import { ItemPriceHistory } from '../../../components/kitchen/ItemPriceHistory'
+import type { MasterPrice, MasterRow } from '../../../components/kitchen/MasterIngredientPicker'
 
 const UNITS = ['g', 'ml', 'pcs', 'kg', 'litres', 'each']
 const REVIEWERS = new Set(['admin', 'fnb_manager'])
@@ -51,10 +53,7 @@ export default function IngredientsPage() {
     queryKey: ['ingredient-master', 'page', debounced, tab],
     queryFn: () => api.get<MasterRow[]>(`/ingredient-master?limit=500${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}${tab === 'needs_review' ? '&status=needs_review' : ''}`),
   })
-  const stock = useMutation({
-    mutationFn: (id: string) => api.post('/inventory/from-master', { masterIngredientId: id }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['ingredient-master'] }); void qc.invalidateQueries({ queryKey: ['inventory'] }) },
-  })
+  const pricesShown = rows.some((r) => r.price != null)
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -62,7 +61,7 @@ export default function IngredientsPage() {
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-success">Operations</p>
           <h1 className="text-xl font-bold text-s-text">Ingredients</h1>
-          <p className="text-xs text-s-muted">servd&rsquo;s one list of ingredients and their specs. Prices, suppliers and pars are each company&rsquo;s — on the <Link href="/sourcing" className="text-primary-ink underline">Sourcing sheet</Link>.</p>
+          <p className="text-xs text-s-muted">servd&rsquo;s ingredients and their prices. Recipes are costed at the latest price paid anywhere in servd; the 90-day average is beside it. Stock in and out is on <Link href="/inventory" className="text-primary-ink underline">Inventory</Link>.</p>
         </div>
         {canEdit && <Button onClick={() => setAdding(true)}>Add ingredient</Button>}
       </header>
@@ -79,18 +78,35 @@ export default function IngredientsPage() {
             ))}
           </div>
         </div>
-        {stock.error && <ErrorBanner message={stockErrorText(stock.error)} />}
-        <div className="s-card overflow-x-auto">
+        {/* Phone: one compact row per ingredient — name, price, average; nothing to swipe. */}
+        <ul className="s-card sm:hidden divide-y divide-s-border">
+          {rows.map((m) => (
+            <li key={m.id}>
+              <button type="button" onClick={() => setOpen(m)} className="w-full text-left px-3 py-2.5 min-w-0">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-sm text-s-text break-words">{m.name}</span>
+                  <span className="text-sm font-mono whitespace-nowrap">{priceText(m.price?.latestCents, m.price)}</span>
+                </div>
+                <p className="text-xs text-s-muted break-words">
+                  {[categoryLabel(m.category), m.price?.averageCents != null ? `avg ${priceText(m.price.averageCents, m.price)}` : null, lastBought(m.price), m.status === 'needs_review' ? 'needs review' : null].filter(Boolean).join(' · ')}
+                </p>
+              </button>
+            </li>
+          ))}
+          {!isLoading && rows.length === 0 && <li className="px-3 py-6 text-center text-xs text-s-muted">No ingredients match.</li>}
+          {isLoading && <li className="px-3 py-6 text-center text-xs text-s-muted">Loading…</li>}
+        </ul>
+        <div className="s-card overflow-x-auto hidden sm:block">
           <table className="w-full text-sm">
             <thead className="text-xs text-s-muted">
               <tr>
                 <th className="px-3 py-2 text-left">Ingredient</th>
                 <th className="px-3 py-2 text-left">Unit</th>
                 <th className="px-3 py-2 text-left">Category</th>
+                {pricesShown && <th className="px-3 py-2 text-right">Latest price</th>}
+                {pricesShown && <th className="px-3 py-2 text-right">90-day average</th>}
+                {pricesShown && <th className="px-3 py-2 text-left">Last bought</th>}
                 <th className="px-3 py-2 text-left">Spec (what we buy)</th>
-                <th className="px-3 py-2 text-left">Allergens</th>
-                <th className="px-3 py-2 text-right">Yield</th>
-                <th className="px-3 py-2 text-left">This company</th>
               </tr>
             </thead>
             <tbody>
@@ -103,17 +119,14 @@ export default function IngredientsPage() {
                   </td>
                   <td className="px-3 py-2 text-s-muted">{m.stockUnit}{m.purchaseUnit ? ` · bought by ${m.purchaseUnit} (${m.purchaseUnitFactor})` : ''}</td>
                   <td className="px-3 py-2 text-s-muted">{categoryLabel(m.category)}</td>
+                  {pricesShown && <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap">{priceText(m.price?.latestCents, m.price)}</td>}
+                  {pricesShown && <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap text-s-muted">{priceText(m.price?.averageCents, m.price)}</td>}
+                  {pricesShown && <td className="px-3 py-2 text-xs text-s-muted">{lastBought(m.price) ?? '—'}</td>}
                   <td className="px-3 py-2 text-s-muted max-w-xs truncate">{m.spec ?? '—'}</td>
-                  <td className="px-3 py-2 text-s-muted">{m.allergens.join(', ') || '—'}</td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">{m.yieldPct}%</td>
-                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                    {m.companyItemId ? <span className="text-xs text-success">Stocked</span>
-                      : <button type="button" disabled={stock.isPending} onClick={() => stock.mutate(m.id)} className="text-xs font-semibold text-primary-ink hover:underline disabled:opacity-50">Add to my company</button>}
-                  </td>
                 </tr>
               ))}
-              {!isLoading && rows.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-xs text-s-muted">No ingredients match.</td></tr>}
-              {isLoading && <tr><td colSpan={7} className="px-3 py-8 text-center text-xs text-s-muted">Loading…</td></tr>}
+              {!isLoading && rows.length === 0 && <tr><td colSpan={pricesShown ? 7 : 4} className="px-3 py-8 text-center text-xs text-s-muted">No ingredients match.</td></tr>}
+              {isLoading && <tr><td colSpan={pricesShown ? 7 : 4} className="px-3 py-8 text-center text-xs text-s-muted">Loading…</td></tr>}
             </tbody>
           </table>
         </div>
@@ -222,10 +235,14 @@ function Editor({ master, canEdit, isReviewer, onClose }: { master: MasterRow; c
           ))}
           {canEdit && <button type="button" className="text-xs font-semibold text-primary-ink" onClick={() => setD({ ...d, specFields: [...d.specFields, { k: '', v: '' }] })}>Add a spec line</button>}
         </div>
-        {master.companyItemId && (
+        {master.price != null && (
           <div className="border-t border-s-border pt-3">
-            <p className="text-sm font-semibold text-s-text mb-2">This company&rsquo;s price history</p>
-            <ItemPriceHistory itemId={master.companyItemId} />
+            <p className="text-sm font-semibold text-s-text">Price across servd</p>
+            <p className="text-xs text-s-muted mb-2">
+              Latest {priceText(master.price.latestCents, master.price)}{lastBought(master.price) ? ` (${lastBought(master.price)})` : ''} — what recipes use.
+              {' '}90-day average {priceText(master.price.averageCents, master.price)}{master.price.averageDeliveries ? ` over ${master.price.averageDeliveries} deliveries` : ''}.
+            </p>
+            <ServdPriceHistory ingredientId={master.id} />
           </div>
         )}
         {save.error && <ErrorBanner message={stockErrorText(save.error)} />}
@@ -253,5 +270,49 @@ function Editor({ master, canEdit, isReviewer, onClose }: { master: MasterRow; c
         )}
       </div>
     </SidePanel>
+  )
+}
+
+const SOURCE_LABEL: Record<string, string> = { delivery: 'Delivery', bill: 'Bill', manual: 'Cost typed', estimate: 'Estimate' }
+
+/** "PKR 1,250.00 / kg" — or a dash. */
+function priceText(cents: number | null | undefined, p: MasterPrice | null | undefined): string {
+  if (cents == null || !p) return '—'
+  return `PKR ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / ${p.displayUnit}`
+}
+
+/** "12 Oct · Karachi Meat · GS Foods" for the latest price. */
+function lastBought(p: MasterPrice | null | undefined): string | null {
+  if (!p || p.latestCents == null) return null
+  const when = p.latestAt ? new Date(p.latestAt).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'Asia/Karachi' }) : null
+  const what = p.latestSource && p.latestSource !== 'delivery' ? SOURCE_LABEL[p.latestSource] : null
+  return [when, what, p.latestSupplier, p.latestCompany].filter(Boolean).join(' · ') || null
+}
+
+interface PricePoint { at: string; source: 'delivery' | 'bill' | 'manual'; priceCents: number; displayUnit: string; qty: number | null; supplier: string | null; company: string | null }
+
+/** Every price of the ingredient across servd, newest first (GET /ingredient-master/:id/prices). */
+function ServdPriceHistory({ ingredientId }: { ingredientId: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['ingredient-master', ingredientId, 'prices'],
+    queryFn: () => api.get<{ displayUnit?: string; points: PricePoint[] }>(`/ingredient-master/${ingredientId}/prices`),
+  })
+  if (isLoading) return <p className="text-xs text-s-muted">Loading prices…</p>
+  const points = data?.points ?? []
+  if (points.length === 0) return <p className="text-xs text-s-muted">No deliveries or bills yet.</p>
+  const fmt = (c: number) => (c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return (
+    <ul className="divide-y divide-s-border text-xs max-h-80 overflow-y-auto">
+      {points.map((x, i) => (
+        <li key={i} className="py-1.5 flex items-baseline justify-between gap-3 min-w-0">
+          <span className="min-w-0 break-words text-s-muted">
+            <span className="text-s-text">{new Date(x.at).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: '2-digit', timeZone: 'Asia/Karachi' })}</span>
+            {' · '}{SOURCE_LABEL[x.source]}{x.supplier ? ` · ${x.supplier}` : ''}{x.company ? ` · ${x.company}` : ''}
+            {x.qty != null ? ` · ${x.qty.toLocaleString('en-PK', { maximumFractionDigits: 2 })} ${x.displayUnit}` : ''}
+          </span>
+          <span className="font-mono whitespace-nowrap">PKR {fmt(x.priceCents)} / {x.displayUnit}</span>
+        </li>
+      ))}
+    </ul>
   )
 }

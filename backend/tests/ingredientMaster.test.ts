@@ -302,3 +302,46 @@ describe('buying units and the twin trail (owner review N3, N4)', () => {
     expect(locked.json().error.code).toBe('MASTER_FIELD_LOCKED')
   })
 })
+
+describe('the servd price (owner, 2026-10-29: "a pure ingredient availability and pricing sheet")', () => {
+  it('latest = the newest delivery anywhere in servd; average = 90-day quantity-weighted; history names company', async () => {
+    const m = await call(u.chefA!, 'POST', '/ingredient-master', { name: 'Pricing Saffron', unit: 'g', category: 'dry_goods' })
+    expect(m.statusCode, m.body).toBe(201)
+    const id = m.json().id as string
+    // Not stocked anywhere yet: no price, never an error.
+    const none = await call(u.chefA!, 'GET', `/ingredient-master/${id}`)
+    expect(none.json().price).toMatchObject({ displayUnit: 'kg', latestCents: null, averageCents: null })
+
+    const a = (await call(u.chefA!, 'POST', '/inventory/from-master', { masterIngredientId: id })).json().id as string
+    const b = (await call(u.chefB!, 'POST', '/inventory/from-master', { masterIngredientId: id })).json().id as string
+    await prisma.inventoryItem.update({ where: { id: b }, data: { unit: 'kg' } })   // B buys by the kg — same family
+    const day = (n: number) => new Date(Date.now() - n * 86_400_000)
+    const lot = (tenantId: string, item: string, qty: number, cost: number, at: Date, key: string, locationId: string) =>
+      prisma.$transaction((tx) => addLotTx(tx, {
+        tenantId, inventoryItemId: item, qty, unitCostCents: cost, kind: 'receipt', lotSourceType: 'goods_receipt_line',
+        lotSourceId: key, movementSourceType: 'test', movementSourceId: key, receivedAt: at, locationId,
+      }))
+    await lot(A.tenantId, a, 1000, 1, day(120), 'px-old', A.locationId)        // PKR 10 / kg, outside 90 days
+    await lot(A.tenantId, a, 1000, 3, day(50), 'px-mid', A.locationId)         // PKR 30 / kg
+    await lot(B.tenantId, b, 2, 4500, day(10), 'px-new', B.locationId)         // PKR 45 / kg — the newest, company B
+
+    const r = await call(u.chefA!, 'GET', `/ingredient-master/${id}`)
+    expect(r.statusCode, r.body).toBe(200)
+    const p = r.json().price
+    expect(p.latestCents).toBe(4500)                    // B's delivery, though A is asking
+    expect(p.latestSource).toBe('delivery')
+    expect(p.averageCents).toBe(4000)                   // (1 kg × 3000 + 2 kg × 4500) / 3 kg
+    expect(p.averageDeliveries).toBe(2)
+
+    const h = await call(u.chefA!, 'GET', `/ingredient-master/${id}/prices`)
+    expect(h.statusCode, h.body).toBe(200)
+    expect(h.json().points.map((x: { priceCents: number }) => x.priceCents)).toEqual([4500, 3000, 1000])
+    expect(h.json().points[0].company).toBeTruthy()
+
+    // The kitchen floor never sees prices.
+    const cook = await call(u.cookA!, 'GET', `/ingredient-master/${id}`)
+    expect(cook.json().price).toBeNull()
+    const cookH = await call(u.cookA!, 'GET', `/ingredient-master/${id}/prices`)
+    expect(cookH.json()).toMatchObject({ costsHidden: true, points: [] })
+  })
+})

@@ -120,8 +120,6 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   procurement:    [
     { label: 'Procurement', href: '/procurement', icon: 'factory', hint: 'Purchase orders, bills, payments' },
     { label: 'Receiving', href: '/procurement/receiving', sub: true },
-    // Owner 2026-10-16: "Move sourcing sheet inside procurement section".
-    { label: 'Sourcing sheet', href: '/sourcing', sub: true, hint: 'Ingredient catalogue and supplier prices' },
     // Kitchen flow (owner, 2026-10-26, part E): what the prep list needs → draft POs; what we buy and how (K6).
     { label: 'Shopping list', href: '/kitchen/shopping-list', sub: true, hint: 'What the prep list needs, less stock and orders — by supplier, with specs' },
     { label: 'Spec list', href: '/kitchen/spec-list', sub: true, hint: 'What we buy and how it must come, by supplier' },

@@ -106,6 +106,10 @@ interface Recipe {
   // Component-only:
   costPerGramCents: number | null     // sub-cent precision (e.g. 0.85)
   batchCostCents:   number | null
+  // The same recipe at servd's 90-day average ingredient prices (null = no deliveries in 90 days).
+  avgTotalCostCents?: number | null
+  avgCostPerPortionCents?: number | null
+  avgCostPerGramCents?: number | null
 }
 
 // Lightweight option for the prep-recipe picker on ingredient rows.
@@ -133,6 +137,12 @@ interface IngRow {
 const BLANK_ING: IngRow = {
   source: 'raw', inventoryItemId: '', prepRecipeId: '',
   quantity: '', yieldPct: '100', unit: '', notes: '',
+}
+
+/** The recipe's headline cost at servd's 90-day average ingredient prices (latest is the main figure). */
+function avgHeadline(r: Recipe): string {
+  if (r.kind === 'plate' || r.kind === 'modifier') return r.avgCostPerPortionCents != null ? fmtPkr(r.avgCostPerPortionCents) : '—'
+  return r.avgCostPerGramCents != null ? `PKR ${(r.avgCostPerGramCents / 100).toFixed(3)}/g` : '—'
 }
 
 export default function RecipesPage() {
@@ -628,6 +638,7 @@ export default function RecipesPage() {
                             value={r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—'}
                             teal />
                         )}
+                        <Metric label="90-day avg" value={avgHeadline(r)} dim />
                         <div className="flex gap-1 ml-1" onClick={(e) => e.stopPropagation()}>
                           {/* Testing recipes can be pushed straight to the CEO's
                               approval inbox from here — no need to open the editor. */}
@@ -689,6 +700,7 @@ export default function RecipesPage() {
                             : r.kind === 'modifier'
                             ? [{ label: 'COST / ADD-ON',  value: fmtPkr(r.costPerPortionCents ?? 0) }]
                             : [{ label: 'COST / GRAM',    value: r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—' }]),
+                          { label: '90-DAY AVERAGE', value: avgHeadline(r) },
                         ].map(({ label, value }) => (
                           <div key={label}>
                             <p style={{ fontSize: '12px', letterSpacing: '0.18em' }}
@@ -822,6 +834,7 @@ export default function RecipesPage() {
                             <span className="text-xs">
                               <span className="text-s-muted">Plate cost: </span>
                               <span className="font-bold text-s-text">{fmtPkr(r.costPerPortionCents ?? 0)}</span>
+                              <span className="text-s-dim"> at the latest prices · 90-day average {avgHeadline(r)}</span>
                             </span>
                             <span className="text-xs ml-auto text-s-muted italic">
                               Selling price &amp; margins live in{' '}
