@@ -23,6 +23,7 @@ import { CV_BASE, CV_ROOT, errorWords, fmtDateTime, useCategories, type CashVouc
 import { attachmentPath, kb, preparePhoto } from './photo'
 import { Button, CheckLabel, ErrorBanner, fieldCls, FieldLabel, Input, LinkButton, primaryBtn, secondaryBtn, Textarea } from './ui'
 import { Select } from '@/components/ui/Select'
+import { ExpenseAccountOptions, useExpenseAccounts } from './expenseAccounts'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { Modal } from '../../../components/ui/Modal'
 
@@ -272,6 +273,7 @@ function HoldVerifyPanel({ v }: { v: CashVoucher }) {
   const confirm = useConfirm()
   const { data: cats } = useCategories()
   const categories = (cats?.categories ?? []).filter((c) => c.kind === 'expense')
+  const accounts = useExpenseAccounts(v.tenantId)
   const [category, setCategory] = useState(v.category ?? '')
   const changed = category !== (v.category ?? '')
   const verify = useMutation({
@@ -302,9 +304,10 @@ function HoldVerifyPanel({ v }: { v: CashVoucher }) {
         <FieldLabel htmlFor="hv-category">Expense account</FieldLabel>
         <div className="mt-1">
           <Select id="hv-category" value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
-            {!categories.some((c) => c.key === category) && category && <option value={category}>{category}</option>}
+            {!categories.some((c) => c.key === category) && !accounts.some((a) => a.code === category) && category && <option value={category}>{category}</option>}
             <option value="">— pick —</option>
             {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
+            <ExpenseAccountOptions accounts={accounts} exclude={new Set(categories.map((c) => c.code))} />
           </Select>
         </div>
       </div>

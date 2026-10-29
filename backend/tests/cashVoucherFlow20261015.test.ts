@@ -835,4 +835,13 @@ describe('closed when the supporting documents are attached; finance checks afte
     // The documents stay on it for reference, for the requester too.
     expect((await get('cookA', v.id)).documents).toHaveLength(3)
   })
+
+  // Owner screenshot 2026-10-29: "In cash request, it's not showing all expense heads to select". The finance picker now
+  // lists every 6xxx head of the company; the approval books to any of them as accountCode.
+  it('finance approval may book a cash request to any expense head of the company, not only a voucher category', async () => {
+    const v = await raise('cookA', { amountCents: 2_000 })
+    const fa = await ok('finA', 'POST', `${V}/${v.id}/finance-approve`, { accountCode: '6170' })
+    expect(fa).toMatchObject({ status: 'finance_approved', category: '6170' })
+  })
 })
+

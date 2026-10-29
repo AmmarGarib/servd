@@ -24,6 +24,7 @@ import { SettlePanel, Thumbs } from './SettlePanel'
 import { DocumentsPanel, ResolveByJournalPanel, VerifyPanel } from './DocsPanel'
 import { Button, CheckLabel, dangerOutlineBtn, ErrorBanner, fieldCls, FieldLabel, primaryBtn, secondaryBtn, StatusBadge, Textarea } from './ui'
 import { Select } from '@/components/ui/Select'
+import { ExpenseAccountOptions, useExpenseAccounts } from './expenseAccounts'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
@@ -427,6 +428,7 @@ function Steps({ v }: { v: CashVoucher }) {
 function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   const { data: cats } = useCategories()
   const categories = (cats?.categories ?? []).filter((c) => c.kind === 'expense')
+  const accounts = useExpenseAccounts(v.tenantId)
   const [category, setCategory] = useState(v.category ?? '')
   const [discountCents, setDiscountCents] = useState(v.discountCents ?? 0)
   const gross = v.grossOrAmountCents ?? v.grossCents ?? v.amountCents + (v.discountCents ?? 0)
@@ -453,9 +455,10 @@ function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void
             {asset ? (
               <p id="fa-category" className="text-sm text-white/80">{accountWords(v, categories)} — change it with Edit.</p>
             ) : <Select id="fa-category" value={category} onChange={(e) => setCategory(e.target.value)} className={fieldCls}>
-              {!categories.some((c) => c.key === category) && category && <option value={category}>{category}</option>}
+              {!categories.some((c) => c.key === category) && !accounts.some((a) => a.code === category) && category && <option value={category}>{category}</option>}
               <option value="">— pick —</option>
               {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({c.code})</option>)}
+              <ExpenseAccountOptions accounts={accounts} exclude={new Set(categories.map((c) => c.code))} />
             </Select>}
           </div>
         </div>
