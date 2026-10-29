@@ -40,6 +40,8 @@ export interface AccountStatementLine {
   date: string
   lineId: string
   entryId: string
+  /** The entry's voucher number (JV- / PV- / RV- / AV-…), null when it has none. */
+  voucherNo: string | null
   conceptId: string | null
   description: string
   /** The document's own narration (particulars.ts) — what the statement shows. */
@@ -85,7 +87,7 @@ export interface AccountStatement {
   nextCursor: string | null
   hasMore: boolean
   /** The flat rows the exports print: opening, every line, totals, closing. */
-  rows: Array<{ date: string; description: string; particulars: string; reference: string | null; memo: string | null; debitCents: number; creditCents: number; balanceCents: number }>
+  rows: Array<{ date: string; voucherNo: string | null; description: string; particulars: string; reference: string | null; memo: string | null; debitCents: number; creditCents: number; balanceCents: number }>
 }
 
 export interface StatementOptions {
@@ -225,7 +227,7 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
     where: { accountId: account.id, ...brand, ...notHidden, AND: [inWindow, after] },
     select: {
       id: true, type: true, amountCents: true, memo: true, conceptId: true,
-      journalEntry: { select: { id: true, entryDate: true, description: true, reference: true, createdAt: true } },
+      journalEntry: { select: { id: true, entryDate: true, description: true, reference: true, createdAt: true, voucherNo: true } },
     },
     orderBy: [{ journalEntry: { entryDate: 'asc' } }, { journalEntry: { createdAt: 'asc' } }, { id: 'asc' }],
     take: take + 1,
@@ -247,6 +249,7 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
       date: fmtPktDate(l.journalEntry.entryDate),
       lineId: l.id,
       entryId: l.journalEntry.id,
+      voucherNo: l.journalEntry.voucherNo,
       conceptId: l.conceptId,
       description: l.journalEntry.description,
       particulars: l.journalEntry.description,
@@ -264,10 +267,10 @@ export async function accountStatement(tenantIds: string[], accountId: string, f
   // Unpaged and complete: the totals are the lines'. Paged or truncated: the window's (so closing is the real one).
   if (paged || truncated) { dr = win.dr; cr = win.cr; bal = openingCents + win.net }
   const rows = [
-    { date: dateFrom, description: 'OPENING BALANCE', particulars: 'OPENING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: openingCents },
-    ...lines.map((l) => ({ date: l.date, description: l.description, particulars: l.particulars, reference: l.reference, memo: l.memo, debitCents: l.debitCents, creditCents: l.creditCents, balanceCents: l.balanceCents })),
-    { date: '', description: 'TOTAL MOVEMENT', particulars: 'TOTAL MOVEMENT', reference: null, memo: null, debitCents: dr, creditCents: cr, balanceCents: bal - openingCents },
-    { date: dateTo, description: 'CLOSING BALANCE', particulars: 'CLOSING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: bal },
+    { date: dateFrom, voucherNo: null, description: 'OPENING BALANCE', particulars: 'OPENING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: openingCents },
+    ...lines.map((l) => ({ date: l.date, voucherNo: l.voucherNo, description: l.description, particulars: l.particulars, reference: l.reference, memo: l.memo, debitCents: l.debitCents, creditCents: l.creditCents, balanceCents: l.balanceCents })),
+    { date: '', voucherNo: null, description: 'TOTAL MOVEMENT', particulars: 'TOTAL MOVEMENT', reference: null, memo: null, debitCents: dr, creditCents: cr, balanceCents: bal - openingCents },
+    { date: dateTo, voucherNo: null, description: 'CLOSING BALANCE', particulars: 'CLOSING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: bal },
   ]
   return {
     account: { id: account.id, code: account.code, name: account.name, type: account.type, normal, companyName: account.tenant?.name ?? null },
@@ -300,7 +303,7 @@ async function subAccountStatement(
     where: { subAccountId: sa.id, line: { ...brand, ...(hiddenIds.length ? { journalEntryId: { notIn: hiddenIds } } : {}), journalEntry: { entryDate: { gte: from, lte: to } } } },
     select: {
       amountCents: true,
-      line: { select: { id: true, type: true, memo: true, conceptId: true, journalEntry: { select: { id: true, entryDate: true, description: true, reference: true, createdAt: true } } } },
+      line: { select: { id: true, type: true, memo: true, conceptId: true, journalEntry: { select: { id: true, entryDate: true, description: true, reference: true, createdAt: true, voucherNo: true } } } },
     },
     orderBy: [{ line: { journalEntry: { entryDate: 'asc' } } }, { line: { journalEntry: { createdAt: 'asc' } } }, { journalLineId: 'asc' }],
     take: STATEMENT_MAX_LINES + 1,
@@ -314,7 +317,7 @@ async function subAccountStatement(
     if (l.type === 'debit') dr += amt; else cr += amt
     bal += sign(l.type) * amt
     return {
-      date: fmtPktDate(l.journalEntry.entryDate), lineId: l.id, entryId: l.journalEntry.id, conceptId: l.conceptId,
+      date: fmtPktDate(l.journalEntry.entryDate), lineId: l.id, entryId: l.journalEntry.id, voucherNo: l.journalEntry.voucherNo, conceptId: l.conceptId,
       description: l.journalEntry.description, particulars: l.journalEntry.description, reference: l.journalEntry.reference, memo: l.memo,
       debitCents: l.type === 'debit' ? amt : 0, creditCents: l.type === 'credit' ? amt : 0, balanceCents: bal,
     }
@@ -323,10 +326,10 @@ async function subAccountStatement(
   for (const l of lines) l.particulars = narrate(l)
   const dateFrom = fmtPktDate(from), dateTo = fmtPktDate(to)
   const rows = [
-    { date: dateFrom, description: 'OPENING BALANCE', particulars: 'OPENING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: openingCents },
-    ...lines.map((l) => ({ date: l.date, description: l.description, particulars: l.particulars, reference: l.reference, memo: l.memo, debitCents: l.debitCents, creditCents: l.creditCents, balanceCents: l.balanceCents })),
-    { date: '', description: 'TOTAL MOVEMENT', particulars: 'TOTAL MOVEMENT', reference: null, memo: null, debitCents: dr, creditCents: cr, balanceCents: bal - openingCents },
-    { date: dateTo, description: 'CLOSING BALANCE', particulars: 'CLOSING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: bal },
+    { date: dateFrom, voucherNo: null, description: 'OPENING BALANCE', particulars: 'OPENING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: openingCents },
+    ...lines.map((l) => ({ date: l.date, voucherNo: l.voucherNo, description: l.description, particulars: l.particulars, reference: l.reference, memo: l.memo, debitCents: l.debitCents, creditCents: l.creditCents, balanceCents: l.balanceCents })),
+    { date: '', voucherNo: null, description: 'TOTAL MOVEMENT', particulars: 'TOTAL MOVEMENT', reference: null, memo: null, debitCents: dr, creditCents: cr, balanceCents: bal - openingCents },
+    { date: dateTo, voucherNo: null, description: 'CLOSING BALANCE', particulars: 'CLOSING BALANCE', reference: null, memo: null, debitCents: 0, creditCents: 0, balanceCents: bal },
   ]
   return {
     account: { id: account.id, code: account.code, name: account.name, type: account.type, normal, companyName: account.tenant?.name ?? null },

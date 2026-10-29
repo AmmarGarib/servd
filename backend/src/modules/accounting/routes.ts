@@ -118,20 +118,22 @@ export async function accountingRoutes(fastify: FastifyInstance) {
             ...st.rows.map((r) => {
               const split = (r.reference ?? '').startsWith(MANUAL_PREFIX) ? splitDescription(r.description) : { description: r.description, reference: null }
               return {
-              date: r.date, particulars: r.particulars, chequeReference: split.reference ?? '', memo: readableDescription(r.memo ?? ''),
+              date: r.date, voucherNo: r.voucherNo ?? '', particulars: r.particulars, chequeReference: split.reference ?? '', memo: readableDescription(r.memo ?? ''),
               debit: r.debitCents ? fmtPkr(r.debitCents) : '', credit: r.creditCents ? fmtPkr(r.creditCents) : '',
               balance: fmtPkr(r.balanceCents),
             } }),
             // The sub-ledger (2026-10-23): each sub-account's opening, movement and closing; Unassigned ties it out.
-            ...(st.subAccounts.length ? [{ date: '', particulars: 'SUB-ACCOUNTS', chequeReference: '', memo: 'Opening', debit: 'Debits', credit: 'Credits', balance: 'Closing' }] : []),
+            ...(st.subAccounts.length ? [{ date: '', voucherNo: '', particulars: 'SUB-ACCOUNTS', chequeReference: '', memo: 'Opening', debit: 'Debits', credit: 'Credits', balance: 'Closing' }] : []),
             ...st.subAccounts.map((x) => ({
-              date: '', particulars: x.name, chequeReference: x.code ?? '', memo: fmtPkr(x.openingCents),
+              date: '', voucherNo: '', particulars: x.name, chequeReference: x.code ?? '', memo: fmtPkr(x.openingCents),
               debit: fmtPkr(x.debitCents), credit: fmtPkr(x.creditCents), balance: fmtPkr(x.closingCents),
             })),
           ],
           types: { debit: 'pkr', credit: 'pkr', balance: 'pkr' },
-          labels: { particulars: 'Particulars', chequeReference: 'Cheque reference' },
+          labels: { voucherNo: 'Voucher no.', particulars: 'Particulars', chequeReference: 'Cheque reference' },
           wrapKeys: ['particulars', 'memo'],
+          // Memo stays narrow so Particulars gets the room (owner, 2026-10-29).
+          narrowKeys: ['memo', 'chequeReference'],
           isTotal: (r) => r.particulars === 'OPENING BALANCE' || r.particulars === 'CLOSING BALANCE' || r.particulars === 'TOTAL MOVEMENT',
           ...((st.truncated || st.hiddenCancelled.entries > 0) && { notes: [
             ...(st.hiddenCancelled.entries > 0 ? [`${st.hiddenCancelled.entries} entries cancelled within these dates (with the entries that cancel them) are not shown — they net to zero.`] : []),
@@ -178,6 +180,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
             // A line with no memo of its own shows its entry's description.
             flat.push({
               date: fmtPktDate(e.entryDate),
+              // Owner, 2026-10-29: the voucher number on every report row.
+              voucherNo: e.voucherNo ?? '',
               accountCode: l.account.code,
               accountName: l.account.name,
               memo: l.memo?.trim() || e.description,
@@ -188,10 +192,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         }
         // Owner, 2026-10-20: a TOTAL line at the foot (debits and credits of every line exported).
         const sumOf = (t: 'debit' | 'credit') => entries.reduce((s, e) => s + e.lines.reduce((x, l) => x + (l.type === t ? toCents(l.amountCents) : 0), 0), 0)
-        if (flat.length) flat.push({ date: '', accountCode: '', accountName: 'TOTAL', memo: '', debit: fmtPkr(sumOf('debit')), credit: fmtPkr(sumOf('credit')) })
+        if (flat.length) flat.push({ date: '', voucherNo: '', accountCode: '', accountName: 'TOTAL', memo: '', debit: fmtPkr(sumOf('debit')), credit: fmtPkr(sumOf('credit')) })
         return sendReportFor(req, reply, format, { base: 'ledger', suffix: `${fmtPktDate(from)}-${fmtPktDate(to)}` }, {
           title: 'General ledger', period: `${fmtPktDate(from)} to ${fmtPktDate(to)}`,
-          rows: flat, types: { debit: 'pkr', credit: 'pkr' }, labels: { accountCode: 'Code', accountName: 'Account' },
+          rows: flat, types: { debit: 'pkr', credit: 'pkr' }, labels: { voucherNo: 'Voucher no.', accountCode: 'Code', accountName: 'Account' },
+          wrapKeys: ['memo'],
           ...(hasMore && { notes: [`Only the newest ${limit} entries are included — narrow the dates for the rest.`] }),
         })
       }

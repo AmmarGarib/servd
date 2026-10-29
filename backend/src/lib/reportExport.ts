@@ -85,6 +85,9 @@ export interface ReportTable {
   columnsBySection?: Record<string, ReportColumn[]>
   /** PDF: text columns shown in full over as many lines as they need, never cut to "…" (e.g. a statement's narration). */
   wrapKeys?: string[]
+  /** PDF: text columns kept narrow — no share of the page's spare room, at most ~110pt, wrapping if in wrapKeys
+   *  (a statement's Memo, so Particulars gets the room; owner, 2026-10-29). */
+  narrowKeys?: string[]
   /** Excel / PDF: which rows are totals (bold). Default: a text cell in CAPITALS such as "TOTAL ASSETS". */
   isTotal?: (row: ReportRow) => boolean
   notes?: string[]
@@ -352,7 +355,7 @@ export async function reportPdf(t: ReportTable): Promise<Buffer> {
     const head = bold.widthOfTextAtSize(safe(c.label ?? humanize(c.key)), size)
     let w = head
     for (const r of sample) w = Math.max(w, font.widthOfTextAtSize(safe(displayOf(r[c.key], c.type)), size))
-    return Math.min(Math.max(w + 8, 28), isNumeric(c.type) ? 110 : 260)
+    return Math.min(Math.max(w + 8, 28), isNumeric(c.type) || (t.narrowKeys ?? []).includes(c.key) ? 110 : 260)
   })
   const sum = natural.reduce((s, w) => s + w, 0) || 1
   let widths = natural.map((w) => (w / sum) * usable)
@@ -366,7 +369,11 @@ export async function reportPdf(t: ReportTable): Promise<Buffer> {
   }
   if (sum < usable) {
     // Spare room goes to the text columns.
-    const textIdx = cols.map((c, i) => (isNumeric(c.type) ? -1 : i)).filter((i) => i >= 0)
+    // The wrapped narration columns take it when the report names any (a statement's Particulars), so dates,
+    // voucher numbers and codes stay snug; otherwise every text column shares it.
+    const roomy = (c: ReportColumn) => !isNumeric(c.type) && !(t.narrowKeys ?? []).includes(c.key)
+    const wrapIdx = cols.map((c, i) => (roomy(c) && (t.wrapKeys ?? []).includes(c.key) ? i : -1)).filter((i) => i >= 0)
+    const textIdx = wrapIdx.length ? wrapIdx : cols.map((c, i) => (roomy(c) ? i : -1)).filter((i) => i >= 0)
     const spare = usable - sum
     widths = natural.map((w, i) => w + (textIdx.length ? (textIdx.includes(i) ? spare / textIdx.length : 0) : spare / cols.length))
   }

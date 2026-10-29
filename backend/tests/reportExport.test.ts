@@ -231,20 +231,20 @@ function legacyPl(report: Pl): string {
   flat.push({ section: 'Result', code: '', name: 'NET PROFIT', amount: fmtPkr(t['netProfitCents']!) })
   return toCsv(flat)
 }
-type Entry = { description: string; reference: string | null; entryDate: string; lines: Array<{ type: string; amountCents: number; memo: string | null; account: { code: string; name: string } }> }
+type Entry = { description: string; voucherNo?: string | null; reference: string | null; entryDate: string; lines: Array<{ type: string; amountCents: number; memo: string | null; account: { code: string; name: string } }> }
 function legacyLedger(entries: Entry[]): string {
   const flat: Array<Record<string, string | number>> = []
   for (const e of entries) {
     for (const l of e.lines) {
       flat.push({
-        date: fmtPktDate(new Date(e.entryDate)), accountCode: l.account.code, accountName: l.account.name,
+        date: fmtPktDate(new Date(e.entryDate)), voucherNo: e.voucherNo ?? '', accountCode: l.account.code, accountName: l.account.name,
         memo: l.memo?.trim() || e.description,
         debit: l.type === 'debit' ? fmtPkr(l.amountCents) : '', credit: l.type === 'credit' ? fmtPkr(l.amountCents) : '',
       })
     }
   }
   const sum = (t: string) => entries.reduce((s, e) => s + e.lines.reduce((x, l) => x + (l.type === t ? l.amountCents : 0), 0), 0)
-  if (flat.length) flat.push({ date: '', accountCode: '', accountName: 'TOTAL', memo: '', debit: fmtPkr(sum('debit')), credit: fmtPkr(sum('credit')) })
+  if (flat.length) flat.push({ date: '', voucherNo: '', accountCode: '', accountName: 'TOTAL', memo: '', debit: fmtPkr(sum('debit')), credit: fmtPkr(sum('credit')) })
   return toCsv(flat)
 }
 
@@ -309,7 +309,7 @@ describe('balance sheet, P&L, trial balance: CSV unchanged, Excel and PDF added'
 })
 
 describe('general ledger and the account statement', () => {
-  it('ledger: Date, Code, Account, Memo, Debit, Credit in every format', async () => {
+  it('ledger: Date, Voucher no., Code, Account, Memo, Debit, Credit in every format', async () => {
     const json = await get('finA', `/accounting/ledger?dateFrom=${earlier}&dateTo=${today}&limit=1000`)
     expect(json.statusCode).toBe(200)
     const csv = await get('finA', `/accounting/ledger?dateFrom=${earlier}&dateTo=${today}&limit=1000&format=csv`)
@@ -329,7 +329,7 @@ describe('general ledger and the account statement', () => {
     expect(s.closingCents).toBe(1_170_050)
     const csv = await get('finA', `/accounting/ledger?accountId=${cash.id}&view=statement&dateFrom=${monthStart}&dateTo=${today}&format=csv`)
     expect(csv.statusCode).toBe(200)
-    expect(csv.body.split('\r\n')[0]).toBe('﻿date,particulars,chequeReference,memo,debit,credit,balance')
+    expect(csv.body.split('\r\n')[0]).toBe('﻿date,voucherNo,particulars,chequeReference,memo,debit,credit,balance')
     // The cheque reference typed on the entry, never the system key "manual:<id>" (owner, 2026-10-23).
     expect(csv.body).toContain('Manual rent,CH# 77,')
     expect(csv.body).not.toContain('manual:')
