@@ -2931,7 +2931,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
   })
 
   // Finance enters the income tax of a payslip (owner, 2026-10-30: "Finance will put tax figures"). While the run is
-  // with finance (the CEO also on a draft). Never on your own payslip (403 OWN_PAYSLIP; the CEO excepted).
+  // with finance (the CEO also on a draft). Finance enters EVERY payslip's tax, its own included (owner, 2026-10-30:
+  // "should we hire another finance to put tax for finance?") — the CEO's approval of the run is the check.
   fastify.put<{ Params: { id: string } }>('/payroll/payslips/:id/tax', { preHandler: [requireAuth('finance', 'admin'), financeNeedsAccounting] }, async (req) => {
     const { taxCents } = z.object({ taxCents: z.number().int().min(0).max(INT4_MAX_CENTS) }).strict().parse(req.body)
     const su = req.staffUser!
@@ -2940,9 +2941,6 @@ export async function hrRoutes(fastify: FastifyInstance) {
       include: { run: { select: { id: true, tenantId: true, status: true, period: true } }, employee: { select: { userId: true, fullName: true } } },
     })
     if (!slip) throw new NotFoundError('Payslip', req.params.id)
-    if (su.role !== 'admin' && slip.employee.userId === su.id) {
-      throw new AppError('OWN_PAYSLIP', 'This is your own payslip — someone else enters its tax', 403)
-    }
     const statuses = su.role === 'admin' ? ['finance_review', 'draft'] : ['finance_review']
     const r = await setPayslipTax(slip.id, taxCents, su.id, statuses)
     await audit({

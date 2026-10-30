@@ -159,8 +159,8 @@ describe('payroll: HR → finance → CEO', () => {
     const own = slips.find((x) => x.employeeId === E['finEmp'])!
     const cook = slips.find((x) => x.employeeId === E['cook'])!
     const self = await call('fin', 'PUT', `/hr/payroll/payslips/${own.id}/tax`, { taxCents: 0 })
-    expect(self.statusCode).toBe(403)
-    expect(code(self)).toBe('OWN_PAYSLIP')
+    // Finance enters its own tax too; the CEO's approval is the check.
+    expect(self.statusCode).toBe(200)
     expect((await call('finB', 'PUT', `/hr/payroll/payslips/${cook.id}/tax`, { taxCents: 0 })).statusCode).toBe(404)
     expect((await call('hr', 'PUT', `/hr/payroll/payslips/${cook.id}/tax`, { taxCents: 0 })).statusCode).toBe(403)
     expect((await call('fin', 'PUT', `/hr/payroll/payslips/${cook.id}/tax`, { taxCents: -1 })).statusCode).toBe(400)

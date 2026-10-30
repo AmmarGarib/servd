@@ -1843,8 +1843,8 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   only in draft (409 `RUN_NOT_DRAFT`). `PUT /hr/payroll/payslips/:id/tax
   {taxCents}` — finance (accounting) while `finance_review`, the CEO also on a
   draft; stored as `inputs.taxOverrideCents` (wins over `monthlyTaxCents`, kept
-  through Recalculate); never your own payslip (403 `OWN_PAYSLIP`; the CEO
-  excepted); audit `hr.payroll.tax_set`. The inbox and bell: `payroll_finance_review`
+  through Recalculate); finance enters every payslip's tax, its own included
+  (owner, 2026-10-30 — the CEO's approval is the check); audit `hr.payroll.tax_set`. The inbox and bell: `payroll_finance_review`
   (finance) then `payroll_run` (`finance_checked` only). EOBI stays HR's (off by
   default). Tests: `tests/payrollFinanceReview.test.ts`.
 - **Tip pools: finance pays after the CEO's approval (owner, 2026-10-17).**
