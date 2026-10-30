@@ -590,7 +590,23 @@ type LoanLine = { loanId: string; cents: number }
 const loanLinesOf = (inputs: unknown): LoanLine[] => ((inputs as Record<string, unknown> | null)?.['loans'] as LoanLine[] | undefined) ?? []
 
 /** Every payroll run status — a payslip on any of them has claimed its installment. */
-export const ALL_RUN_STATUSES = ['draft', 'approved', 'locked']
+export const ALL_RUN_STATUSES = ['draft', 'finance_review', 'finance_checked', 'approved', 'locked']
+/** Runs HR may still change only through a return: with finance or waiting for the approver (owner, 2026-10-30). */
+export const RUN_IN_REVIEW = ['finance_review', 'finance_checked'] as const
+
+/**
+ * Income tax on a payslip (owner, 2026-10-30: "Finance will put tax figures"): the figure finance typed on this
+ * payslip (inputs.taxOverrideCents, PUT /hr/payroll/payslips/:id/tax) wins over the employee's monthlyTaxCents. It
+ * is kept through a Recalculate (calculateRun carries it over), so a run returned to HR keeps finance's figure.
+ */
+export function taxOverrideOf(inputs: unknown): number | null {
+  const v = ((inputs ?? {}) as Record<string, unknown>)['taxOverrideCents']
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null
+}
+const withTax = <E extends { monthlyTaxCents: number }>(emp: E, inputs: unknown): E => {
+  const t = taxOverrideOf(inputs)
+  return t == null ? emp : { ...emp, monthlyTaxCents: t }
+}
 
 /** The loan recoveries an approved full & final booked (data._loans), written
  *  when its accrual posts — the same split a payslip keeps in inputs.loans. */
@@ -1039,15 +1055,19 @@ export async function calculateRun(tenantId: string, runId: string, actorId?: st
   // and unpaid. Payslips from before OT was opt-in (no otAvailable) took every
   // record automatically — they start again from none (owner, 2026-10-21).
   const kept = new Map<string, string[]>()
+  // Finance's tax figure on a payslip (taxOverrideCents) is kept too (owner, 2026-10-30).
+  const keptTax = new Map<string, { taxOverrideCents: number; taxSetById?: unknown; taxSetAt?: unknown }>()
   for (const sl of await prisma.hrPayslip.findMany({ where: { runId }, select: { employeeId: true, inputs: true } })) {
     const inp = (sl.inputs ?? {}) as Record<string, unknown>
     if (Array.isArray(inp['otAvailable']) && Array.isArray(inp['otRecordIds'])) kept.set(sl.employeeId, (inp['otRecordIds'] as unknown[]).map(String))
+    const tax = taxOverrideOf(inp)
+    if (tax != null) keptTax.set(sl.employeeId, { taxOverrideCents: tax, taxSetById: inp['taxSetById'], taxSetAt: inp['taxSetAt'] })
   }
   const slips: Prisma.HrPayslipCreateManyInput[] = []
   for (const emp of emps) {
-    const inputs = await prefillInputs(tenantId, emp, run.period, s, runId, kept.get(emp.id))
+    const inputs = { ...(await prefillInputs(tenantId, emp, run.period, s, runId, kept.get(emp.id))), ...(keptTax.get(emp.id) ?? {}) }
     const salaryCents = await salaryForPeriod(emp, run.period)
-    const r = computePayslip({ ...emp, grossSalaryCents: salaryCents }, run.period, inputs, s)
+    const r = computePayslip(withTax({ ...emp, grossSalaryCents: salaryCents }, inputs), run.period, inputs, s)
     slips.push({
       runId, tenantId, employeeId: emp.id,
       // How this person is paid, as it stood when the month was worked out:
@@ -1131,7 +1151,7 @@ export async function recalcPayslip(payslipId: string, overrides: Partial<Payrol
     }
     inputs.loans = split
   }
-  const r = computePayslip({ ...slip.employee, grossSalaryCents: salaryCents }, slip.run.period, inputs, s)
+  const r = computePayslip(withTax({ ...slip.employee, grossSalaryCents: salaryCents }, inputs), slip.run.period, inputs, s)
   const staffing = (await staffingWarnings([slip.employee])).get(slip.employeeId) ?? []
   await prisma.$transaction(async (tx) => {
     await claimDraft(tx, slip.runId, actorId)
@@ -1170,7 +1190,7 @@ export async function setPayslipOvertime(payslipId: string, recordIds: string[],
     const sel = otSelection(otAvailable, recordIds, true)
     const fresh = await tx.hrPayslip.findUniqueOrThrow({ where: { id: payslipId } })
     const inputs = { ...(fresh.inputs as unknown as PrefilledInputs), otAvailable, ...sel }
-    const r = computePayslip({ ...slip.employee, grossSalaryCents: salaryCents }, slip.run.period, inputs, s)
+    const r = computePayslip(withTax({ ...slip.employee, grossSalaryCents: salaryCents }, inputs), slip.run.period, inputs, s)
     const updated = await tx.hrPayslip.update({
       where: { id: payslipId },
       data: { inputs: { ...inputs, salaryCents, payBasis: r.basis, warnings: [...r.warnings, ...staffing] } as unknown as Prisma.InputJsonValue, ...payslipData(r) },
@@ -1178,6 +1198,36 @@ export async function setPayslipOvertime(payslipId: string, recordIds: string[],
     await refreshRunTotals(slip.runId, undefined, tx)
     return { payslip: updated, ...sel }
   })
+}
+
+/**
+ * Finance enters the income tax of one payslip (owner, 2026-10-30: "Finance will put tax figures"). Stored as
+ * inputs.taxOverrideCents (+ who / when) and the payslip and run totals recomputed through computePayslip, as
+ * recalcPayslip does. Only while the run is in one of `statuses` (finance_review; the CEO also in draft), claimed
+ * conditionally in the write. The caller is NOT added to preparedByIds: finance passes the run on, and the approver's
+ * separation of duties is about HR's preparers (the audit row records who set the tax).
+ */
+export async function setPayslipTax(payslipId: string, taxCents: number, actorId: string, statuses: readonly string[]) {
+  const slip = await prisma.hrPayslip.findUniqueOrThrow({ where: { id: payslipId }, include: { run: true, employee: true } })
+  if (!statuses.includes(slip.run.status)) throw new AppError('RUN_NOT_IN_FINANCE_REVIEW', 'Tax is entered while the payroll is with finance for review', 409)
+  const s = await getSettings(slip.tenantId)
+  const cur = slip.inputs as unknown as PrefilledInputs & { salaryCents?: number }
+  const before = taxOverrideOf(cur) ?? slip.employee.monthlyTaxCents
+  const inputs = { ...cur, taxOverrideCents: taxCents, taxSetById: actorId, taxSetAt: new Date().toISOString() }
+  const salaryCents = typeof cur.salaryCents === 'number' ? cur.salaryCents : await salaryForPeriod(slip.employee, slip.run.period)
+  const r = computePayslip(withTax({ ...slip.employee, grossSalaryCents: salaryCents }, inputs), slip.run.period, inputs, s)
+  const staffing = (await staffingWarnings([slip.employee])).get(slip.employeeId) ?? []
+  const updated = await prisma.$transaction(async (tx) => {
+    const n = await tx.hrPayrollRun.updateMany({ where: { id: slip.runId, status: { in: [...statuses] } }, data: { updatedAt: new Date() } })
+    if (n.count === 0) throw new AppError('RUN_NOT_IN_FINANCE_REVIEW', 'This payroll has moved on — reload it', 409)
+    const u = await tx.hrPayslip.update({
+      where: { id: payslipId },
+      data: { inputs: { ...inputs, salaryCents, payBasis: r.basis, warnings: [...r.warnings, ...staffing] } as unknown as Prisma.InputJsonValue, ...payslipData(r) },
+    })
+    await refreshRunTotals(slip.runId, undefined, tx)
+    return u
+  })
+  return { payslip: updated, beforeCents: before, run: slip.run, employeeUserId: slip.employee.userId }
 }
 
 /** "Add all available overtime" on a draft run: every payslip (or those

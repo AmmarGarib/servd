@@ -338,6 +338,10 @@ describe('payroll through head office', () => {
     // A second run for the month: the company's own stays the company's.
     expect((await call('hoHr', 'POST', '/payroll/runs', { lens: A, payload: { period: '2026-07' } })).statusCode).toBe(409)
     expect((await call('hoHr', 'POST', `/payroll/runs/${run.id}/recalculate`, { lens: A })).statusCode).toBe(200)
+    // HR sends it to finance through the lens; it came through head office, so the CEO checks it (owner, 2026-10-30).
+    const sent = await call('hoHr', 'POST', `/payroll/runs/${run.id}/send-to-finance`, { lens: A })
+    expect(sent.statusCode, sent.body).toBe(200)
+    expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/finance-pass`, { payload: {} })).statusCode).toBe(200)
 
     expect((await call('hoHr', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(403)        // the preparer
     const gm = await call('gmA', 'POST', `/payroll/runs/${run.id}/approve`)
@@ -375,6 +379,8 @@ describe('payroll through head office', () => {
   it("OWN_PAY_IN_RUN does not touch a company GM approving their company's own run", async () => {
     const run = (await call('hrA', 'POST', '/payroll/runs', { payload: { period: '2026-10' } })).json() as { id: string }
     expect(await prisma.hrPayslip.count({ where: { runId: run.id, employee: { userId: U.gmA!.id } } })).toBe(1)
+    expect((await call('hrA', 'POST', `/payroll/runs/${run.id}/send-to-finance`)).statusCode).toBe(200)
+    expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/finance-pass`, { payload: {} })).statusCode).toBe(200)
     const ok = await call('gmA', 'POST', `/payroll/runs/${run.id}/approve`)
     expect(ok.statusCode, ok.body).toBe(200)
     // §7.8: every payroll decision writes approval.decide, in the run's company.
@@ -387,6 +393,8 @@ describe('payroll through head office', () => {
     await ensureChartOfAccounts(HO)
     const run = (await call('hoHr', 'POST', '/payroll/runs', { payload: { period: '2026-07' } })).json() as { id: string; tenantId: string }
     expect(run.tenantId).toBe(HO)
+    expect((await call('hoHr', 'POST', `/payroll/runs/${run.id}/send-to-finance`)).statusCode).toBe(200)
+    expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/finance-pass`, { payload: {} })).statusCode).toBe(200)
     const own = await call('hoMgr', 'POST', `/payroll/runs/${run.id}/approve`)
     expect(own.statusCode).toBe(403)
     expect(code(own)).toBe('OWN_PAY_IN_RUN')

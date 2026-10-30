@@ -523,20 +523,22 @@ const payrollRuns: ApprovalProvider = {
       createdAt: string; updatedAt: string
       totals: { employees?: number; grossCents?: number; netCents?: number; warnings?: string[] } | null
       viaHeadOfficeId?: string | null
+      sentToFinanceById?: string | null; financeCheckedAt?: string | null; financeNote?: string | null
     }
     const rows = await ctx.read<Row[]>('/hr/payroll/runs')
     if (rows === null) return null
     const me = ctx.user.id
+    // Only runs finance has checked (owner, 2026-10-30: "HR sends to finance, then CEO").
     return rows
-      .filter((r) => r.status === 'draft')
-      .filter((r) => ctx.user.role === 'admin' || (r.createdById !== me && !(r.preparedByIds ?? []).includes(me)))
+      .filter((r) => r.status === 'finance_checked')
+      .filter((r) => ctx.user.role === 'admin' || (r.createdById !== me && !(r.preparedByIds ?? []).includes(me) && r.sentToFinanceById !== me))
       .map((r): ApprovalItem => {
         const t = r.totals ?? {}
         return {
           type: 'payroll_run',
           id: r.id,
           tenantId: r.tenantId,
-          submittedByIds: idList(r.createdById, r.preparedByIds ?? []),
+          submittedByIds: idList(r.createdById, r.preparedByIds ?? [], r.sentToFinanceById),
           viaHeadOfficeId: r.viaHeadOfficeId ?? null,
           title: `Payroll ${r.period}`,
           subtitle: t.employees != null ? `${t.employees} employees` : null,
@@ -546,9 +548,10 @@ const payrollRuns: ApprovalProvider = {
             ['Gross', t.grossCents != null ? pkr(t.grossCents) : null],
             ['Net pay', t.netCents != null ? pkr(t.netCents) : null],
             ['Warnings', t.warnings?.length ? String(t.warnings.length) : null],
+            ['Finance note', r.financeNote],
           ]),
           amountCents: t.netCents ?? null,
-          waitingSince: iso(r.updatedAt ?? r.createdAt),
+          waitingSince: iso(r.financeCheckedAt ?? r.updatedAt ?? r.createdAt),
           link: `/hr/payroll/${r.id}`,
           actions: [
             { kind: 'approve', label: 'Approve', method: 'POST', path: `/hr/payroll/runs/${r.id}/approve`, body: {},
@@ -556,6 +559,65 @@ const payrollRuns: ApprovalProvider = {
           ],
         }
       })
+  },
+}
+
+// ── Payroll — finance review (owner, 2026-10-30: "HR sends to finance, then CEO") ──
+// hr/routes.ts: GET /hr/payroll/runs (finance reads it with its 'payroll' module),
+// POST /hr/payroll/runs/:id/finance-pass {note?} | finance-return {note ≥10} —
+// role finance with 'accounting', or the CEO; never whoever created, prepared or
+// sent it. Tax is entered on the payroll screen, so the item links there too.
+const payrollFinanceReviews: ApprovalProvider = {
+  type: 'payroll_finance_review',
+  label: 'Payroll — finance review',
+  module: 'accounting',
+  link: '/hr/payroll',
+  ...rightsOf('payroll_finance_review'),
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; period: string; status: string; createdById: string | null; preparedByIds: string[]
+      sentToFinanceById?: string | null; sentToFinanceAt?: string | null; createdAt: string; updatedAt: string
+      totals: { employees?: number; grossCents?: number; deductionsCents?: number; netCents?: number; warnings?: string[] } | null
+      viaHeadOfficeId?: string | null
+    }
+    const rows = await ctx.read<Row[]>('/hr/payroll/runs')
+    if (rows === null) return null
+    const me = ctx.user.id
+    const runs = rows.filter((r) => r.status === 'finance_review')
+    const names = await userNames(runs.map((r) => r.sentToFinanceById))
+    return runs.map((r): ApprovalItem => {
+      const t = r.totals ?? {}
+      const own = ctx.user.role !== 'admin' && (r.createdById === me || (r.preparedByIds ?? []).includes(me) || r.sentToFinanceById === me)
+      const base = `/hr/payroll/runs/${r.id}`
+      return {
+        type: 'payroll_finance_review',
+        id: r.id,
+        tenantId: r.tenantId,
+        submittedByIds: idList(r.createdById, r.preparedByIds ?? [], r.sentToFinanceById),
+        viaHeadOfficeId: r.viaHeadOfficeId ?? null,
+        title: `Payroll ${r.period}`,
+        subtitle: t.employees != null ? `${t.employees} employees — sent by HR` : 'Sent by HR',
+        facts: facts([
+          ['Period', r.period],
+          ['Employees', t.employees != null ? String(t.employees) : null],
+          ['Gross', t.grossCents != null ? pkr(t.grossCents) : null],
+          ['Deductions', t.deductionsCents != null ? pkr(t.deductionsCents) : null],
+          ['Net pay', t.netCents != null ? pkr(t.netCents) : null],
+          ['Sent by', r.sentToFinanceById ? names.get(r.sentToFinanceById) : null],
+        ]),
+        amountCents: t.netCents ?? null,
+        waitingSince: iso(r.sentToFinanceAt ?? r.updatedAt),
+        link: `/hr/payroll/${r.id}`,
+        actions: [
+          { kind: 'approve', label: 'Pass to CEO', method: 'POST', path: `${base}/finance-pass`, body: {},
+            confirm: 'Pass this payroll to the CEO? Enter the income tax on the payroll screen first.',
+            ...(own && { disabledReason: 'You prepared or sent this payroll — someone else in finance checks it' }) },
+          { kind: 'return', label: 'Return to HR', method: 'POST', path: `${base}/finance-return`, body: {},
+            input: { field: 'note', label: 'What HR needs to correct (at least 10 characters)', required: true },
+            ...(own && { disabledReason: 'You prepared or sent this payroll — someone else in finance checks it' }) },
+        ],
+      }
+    })
   },
 }
 
@@ -1391,6 +1453,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   purchaseOrders,
   recipes,
   hrRequests,
+  payrollFinanceReviews,
   payrollRuns,
   tipPools,
   stockTransfers,

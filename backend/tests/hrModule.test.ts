@@ -592,6 +592,13 @@ async function mkUser(key: string, role: string) {
 
 const call = (who: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: unknown) =>
   app.inject({ method, url: `/hr${url}`, payload: payload as never, headers: { authorization: `Bearer ${users[who]!.token}` } })
+/** HR sends the run to finance and it is checked (here by the CEO) — it then waits for the approver (owner, 2026-10-30). */
+async function toApprover(runId: string, sender = 'hr') {
+  const sent = await call(sender, 'POST', `/payroll/runs/${runId}/send-to-finance`)
+  expect(sent.statusCode, sent.body).toBe(200)
+  const passed = await call('ceo', 'POST', `/payroll/runs/${runId}/finance-pass`, {})
+  expect(passed.statusCode, passed.body).toBe(200)
+}
 
 beforeAll(async () => {
   tenantId = (await prisma.tenant.create({ data: { name: 'HR Test Co', slug: 'hr-test-co' } })).id
@@ -709,6 +716,7 @@ describe('HR through the API', () => {
     expect(slip.netCents).toBe(RS(52000) + SEPT_OT - RS(400) - 333333)
 
     // The preparer cannot approve their own payroll.
+    await toApprover(run.id)
     expect((await call('hr', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(403)
     expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/lock`)).statusCode).toBe(200)
@@ -1184,6 +1192,8 @@ describe('HR through the API', () => {
     expect((await call('mgmt', 'POST', `/payroll/runs/${run.id}/recalculate`)).statusCode).toBe(200)
     expect((await call('mgmt', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(403)
     expect((await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: run.id } })).preparedByIds).toEqual(expect.arrayContaining([users['hr']!.id, users['mgmt']!.id]))
+    await toApprover(run.id)
+    expect((await call('mgmt', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(403)
     expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(200)
     // Approved: neither an edit nor a recalculation lands.
     const fresh = await slipOf(run.id, cookEmp)
@@ -1192,14 +1202,16 @@ describe('HR through the API', () => {
     expect((await call('hr', 'POST', `/payroll/runs/${run.id}/recalculate`)).statusCode).toBe(409)
     expect((await slipOf(run.id, cookEmp)).inputs.earningAdjustmentsCents).toBe(0)
 
-    // A recalculation racing an approval never rewrites an approved run.
+    // A recalculation racing the send to finance never rewrites a run that left HR.
     await call('ceo', 'POST', `/payroll/runs/${run.id}/reopen`)
-    const [recalc, approve] = await Promise.all([
+    const [recalc, send] = await Promise.all([
       call('hr', 'POST', `/payroll/runs/${run.id}/recalculate`),
-      call('ceo', 'POST', `/payroll/runs/${run.id}/approve`),
+      call('hr', 'POST', `/payroll/runs/${run.id}/send-to-finance`),
     ])
-    expect(approve.statusCode).toBe(200)
+    expect(send.statusCode).toBe(200)
     expect([200, 409]).toContain(recalc.statusCode)
+    expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/finance-pass`, {})).statusCode).toBe(200)
+    expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(200)
     const after = (await call('hr', 'GET', `/payroll/runs/${run.id}`)).json()
     expect(after.run.status).toBe('approved')
     expect(after.payslips.length).toBe(after.run.totals.employees)
@@ -1216,12 +1228,15 @@ describe('HR through the API', () => {
       const slip = await slipOf(run.id, cookEmp)
       await call('hr', 'PATCH', `/payroll/payslips/${slip.id}`, { absentDays: 1 })
       expect((await call('hr', 'GET', `/payroll/runs/${run.id}`)).json().run.totals.warnings).toContain(EOBI_NOT_CALCULATED)
-      const refused = await call('ceo', 'POST', `/payroll/runs/${run.id}/approve`)
+      // It cannot even go to finance (owner, 2026-10-30), nor be approved.
+      const refused = await call('hr', 'POST', `/payroll/runs/${run.id}/send-to-finance`)
       expect(refused.statusCode).toBe(409)
       expect(refused.json().error.code).toBe('RUN_INCOMPLETE')
+      expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(409)
       // Set the base and recalculate: it goes through.
       await call('hr', 'PUT', '/settings', good)
       await call('hr', 'POST', `/payroll/runs/${run.id}/recalculate`)
+      await toApprover(run.id)
       expect((await call('ceo', 'POST', `/payroll/runs/${run.id}/approve`)).statusCode).toBe(200)
       await call('ceo', 'POST', `/payroll/runs/${run.id}/reopen`)
       expect((await call('hr', 'DELETE', `/payroll/runs/${run.id}`)).statusCode).toBe(204)
@@ -1273,6 +1288,7 @@ describe('HR through the API', () => {
     expect((await slipOf(july.id, zed)).inputs.otRecordIds).toEqual([])
     expect((await call('hr', 'POST', `/payroll/payslips/${(await slipOf(july.id, zed)).id}/overtime`, { recordIds: [julyOt.id] })).statusCode).toBe(200)
     expect((await slipOf(july.id, zed)).inputs.otRecordIds).toContain(julyOt.id)
+    await toApprover(july.id)
     expect((await call('ceo', 'POST', `/payroll/runs/${july.id}/approve`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${july.id}/lock`)).statusCode).toBe(200)
     const augOt = await approvedByChain('overtime', { employee: zed, date: '2027-08-05', otHours: 3 })
@@ -1292,7 +1308,7 @@ describe('HR through the API', () => {
     const aug = (await call('hr', 'POST', '/payroll/runs', { period: '2027-08' })).json()
     expect(await slipOf(aug.id, zed)).toBeDefined()
     await prisma.hrRecord.create({ data: { tenantId, section: 'final_settlement', formVersion: 0, employeeId: zed, status: 'approved', endDate: new Date('2027-08-10'), amountCents: ff.netAmount, data: {} } })
-    const stale = await call('ceo', 'POST', `/payroll/runs/${aug.id}/approve`)
+    const stale = await call('hr', 'POST', `/payroll/runs/${aug.id}/send-to-finance`)
     expect(stale.statusCode).toBe(409)
     expect(stale.json().error.message).toMatch(/full & final/)
     await call('hr', 'POST', `/payroll/runs/${aug.id}/recalculate`)

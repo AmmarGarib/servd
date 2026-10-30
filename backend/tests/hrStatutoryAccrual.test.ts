@@ -73,6 +73,9 @@ async function runFor(who: string, approver: string, period: string, lock = true
   const r = await call(who, 'POST', '/payroll/runs', { period })
   expect(r.statusCode, r.body).toBe(201)
   const id = r.json().id as string
+  // HR sends it to finance; it is checked (here by the approving CEO) first (owner, 2026-10-30).
+  expect((await call(who, 'POST', `/payroll/runs/${id}/send-to-finance`)).statusCode).toBe(200)
+  expect((await call(approver, 'POST', `/payroll/runs/${id}/finance-pass`, {})).statusCode).toBe(200)
   expect((await call(approver, 'POST', `/payroll/runs/${id}/approve`)).statusCode).toBe(200)
   if (lock) expect((await call(approver, 'POST', `/payroll/runs/${id}/lock`)).statusCode).toBe(200)
   return id
@@ -156,6 +159,8 @@ describe('payroll and F&F credit the statutory payables', () => {
 
   it('refuses with 422 ACCOUNT_CODE_TAKEN when the company took 2043 for its own account — the run stays approved; B is unaffected', async () => {
     const aug = (await call('hr', 'POST', '/payroll/runs', { period: '2026-08' })).json().id
+    expect((await call('hr', 'POST', `/payroll/runs/${aug}/send-to-finance`)).statusCode).toBe(200)
+    expect((await call('ceo', 'POST', `/payroll/runs/${aug}/finance-pass`, {})).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${aug}/approve`)).statusCode).toBe(200)
     await prisma.account.updateMany({ where: { tenantId: tenantA, code: '2043' }, data: { type: 'expense', name: 'Office tea' } })
     try {

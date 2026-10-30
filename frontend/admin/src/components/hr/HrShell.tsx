@@ -8,7 +8,7 @@ import { Modal as DialogModal } from '../ui/Modal'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
-import { HR_ADMIN_ROLES, PAYROLL_APPROVER_ROLES, PAYROLL_PAYER_ROLES, type HrFormat, type HrSectionInfo, type Lookups, type OrgData } from '../../lib/hr'
+import { HR_ADMIN_ROLES, PAYROLL_APPROVER_ROLES, PAYROLL_PAYER_ROLES, PAYROLL_FINANCE_REVIEW_ROLES, type HrFormat, type HrSectionInfo, type Lookups, type OrgData } from '../../lib/hr'
 
 // `staff` tabs are open to every login (the API only shows them their own
 // requests and the ones waiting on them); the rest are HR's and would only 403.
@@ -31,7 +31,7 @@ const NAV: Array<{ href: string; label: string; staff?: boolean }> = [
 export function useHrAccess() {
   const user = useAuthStore((s) => s.user)
   const role = user?.role ?? ''
-  return { userId: user?.id ?? null, role, isHrAdmin: HR_ADMIN_ROLES.includes(role), isPayrollApprover: PAYROLL_APPROVER_ROLES.includes(role), isPayrollPayer: PAYROLL_PAYER_ROLES.includes(role) }
+  return { userId: user?.id ?? null, role, isHrAdmin: HR_ADMIN_ROLES.includes(role), isPayrollApprover: PAYROLL_APPROVER_ROLES.includes(role), isPayrollPayer: PAYROLL_PAYER_ROLES.includes(role), isFinanceReviewer: PAYROLL_FINANCE_REVIEW_ROLES.includes(role) }
 }
 
 const navBase = (href: string) => href.split('?')[0] ?? href

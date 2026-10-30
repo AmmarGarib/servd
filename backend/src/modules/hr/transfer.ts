@@ -221,7 +221,7 @@ async function stateBlockers(q: Tx | typeof prisma, emp: HrEmployee, hoId: strin
   const [open, conflict, already, leaving] = await Promise.all([
     q.hrRecord.count({ where: { tenantId: emp.tenantId, employeeId: emp.id, status: 'submitted' } }),
     q.hrPayslip.findMany({
-      where: { employeeId: emp.id, tenantId: emp.tenantId, run: { tenantId: emp.tenantId, status: { in: ['approved', 'locked'] }, period: { gte: period } } },
+      where: { employeeId: emp.id, tenantId: emp.tenantId, run: { tenantId: emp.tenantId, status: { in: ['finance_review', 'finance_checked', 'approved', 'locked'] }, period: { gte: period } } },
       select: { run: { select: { period: true, status: true } } },
     }),
     emp.userId ? q.hrEmployee.findFirst({ where: { tenantId: hoId, userId: emp.userId }, select: { employeeCode: true } }) : Promise.resolve(null),

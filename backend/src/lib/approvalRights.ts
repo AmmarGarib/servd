@@ -73,6 +73,7 @@ export const APPROVAL_TYPES = [
   'recipe',
   'hr_request',
   'payroll_run',
+  'payroll_finance_review', // a payroll HR sent to finance for review (owner, 2026-10-30) — finance passes or returns it
   'tip_pool',
   'stock_transfer',
   'cash_voucher',
@@ -192,6 +193,13 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     label: 'Payroll', section: 'hr', queueModule: 'staff_hr', roles: PAYROLL_APPROVERS,
     delegable: true, mustHoldModule: 'staff_hr', ownership: 'company',
     delegableNote: 'Approve, lock and reopen (never marking paid); never a run with your own payslip',
+  },
+  payroll_finance_review: {
+    // Owner, 2026-10-30: "HR sends to finance, then CEO". POST /hr/payroll/runs/:id/finance-pass | finance-return —
+    // role finance holding 'accounting' (the route's guard), or the CEO; never by whoever created, prepared or sent
+    // the run. Then the run waits as payroll_run for the approver. Never handed over.
+    label: 'Payroll — finance review', section: 'finance', queueModule: 'accounting', roles: ['finance', 'admin'],
+    delegable: false, mustHoldModule: null, ownership: 'company',
   },
   tip_pool: {
     label: 'Tip pools', section: 'finance', queueModule: 'payroll', roles: APPROVERS,
@@ -1029,9 +1037,10 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const h = await db.hrRecord.findUnique({ where: { id }, select: { tenantId: true, createdById: true, status: true, viaHeadOfficeId: true, createdAt: true, section: true } })
       return h && subject({ companyIds: [h.tenantId], ownerTenantId: h.tenantId, submitterIds: [h.createdById], viaHeadOfficeId: h.viaHeadOfficeId, status: h.status, submittedAt: h.createdAt, kind: h.section })
     }
-    case 'payroll_run': {
-      const p = await db.hrPayrollRun.findUnique({ where: { id }, select: { tenantId: true, createdById: true, preparedByIds: true, status: true, viaHeadOfficeId: true, updatedAt: true } })
-      return p && subject({ companyIds: [p.tenantId], ownerTenantId: p.tenantId, submitterIds: [p.createdById, ...p.preparedByIds], viaHeadOfficeId: p.viaHeadOfficeId, status: p.status, submittedAt: null })
+    case 'payroll_run':
+    case 'payroll_finance_review': {
+      const p = await db.hrPayrollRun.findUnique({ where: { id }, select: { tenantId: true, createdById: true, preparedByIds: true, sentToFinanceById: true, status: true, viaHeadOfficeId: true, updatedAt: true } })
+      return p && subject({ companyIds: [p.tenantId], ownerTenantId: p.tenantId, submitterIds: [p.createdById, ...p.preparedByIds, p.sentToFinanceById], viaHeadOfficeId: p.viaHeadOfficeId, status: p.status, submittedAt: null })
     }
     case 'tip_pool': {
       const t = await db.tipPool.findUnique({ where: { id }, select: { tenantId: true, createdById: true, status: true } })
@@ -1227,7 +1236,8 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   purchase_order: ['pending_approval'],
   recipe: ['pending_approval'],
   hr_request: ['submitted'],
-  payroll_run: ['draft'],
+  payroll_run: ['finance_checked'],
+  payroll_finance_review: ['finance_review'],
   stock_transfer: ['requested'],
   stock_brand_move: ['requested'],
   cash_request_finance: ['submitted', 'draft'],

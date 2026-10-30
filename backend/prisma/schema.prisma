@@ -7838,24 +7838,36 @@ model HrRecord {
 }
 
 model HrPayrollRun {
-  id              String    @id @default(uuid())
-  tenantId        String
-  period          String // YYYY-MM
-  status          String    @default("draft") // draft | approved | locked
-  settings        Json // the rates in force when it was calculated
-  totals          Json      @default("{}")
-  createdById     String?
+  id                  String    @id @default(uuid())
+  tenantId            String
+  period              String // YYYY-MM
+  // draft → finance_review (HR sent it) → finance_checked (finance passed it)
+  // → approved (CEO / co-owner / management) → locked (owner, 2026-10-30).
+  status              String    @default("draft") // draft | finance_review | finance_checked | approved | locked
+  settings            Json // the rates in force when it was calculated
+  totals              Json      @default("{}")
+  createdById         String?
   // Everyone who recalculated it or edited a payslip on it. None of them may
   // approve it (the CEO excepted) — nor may the creator.
-  preparedByIds   String[]  @default([])
-  approvedById    String?
-  approvedAt      DateTime?
-  lockedAt        DateTime?
+  preparedByIds       String[]  @default([])
+  // Finance review (owner, 2026-10-30: "HR sends to finance, then CEO").
+  sentToFinanceById   String?
+  sentToFinanceAt     DateTime?
+  financeCheckedById  String?
+  financeCheckedAt    DateTime?
+  financeNote         String? // finance's note when passing it on
+  // The last return to HR (kept after HR sends it again, so the note stays visible).
+  financeReturnNote   String?
+  financeReturnedById String?
+  financeReturnedAt   DateTime?
+  approvedById        String?
+  approvedAt          DateTime?
+  lockedAt            DateTime?
   // Marked paid: the wages-payable clearance is posted then.
-  paidAt          DateTime?
-  viaHeadOfficeId String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  paidAt              DateTime?
+  viaHeadOfficeId     String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   payslips HrPayslip[]
 
@@ -8965,19 +8977,19 @@ model PosConnectorChange {
 /// company (422 LOCATION_NOT_IN_COMPANY otherwise). The time clock measures a punch against the nearest of these
 /// (radius: this row's, else the Location's, else the company's OperationsConfig). No rows = the company's locations.
 model HrWorkLocation {
-  id           String   @id @default(uuid())
-  tenantId     String
-  employeeId   String
+  id                   String    @id @default(uuid())
+  tenantId             String
+  employeeId           String
   // EITHER a company Location (locationId) OR a custom map pin of this employee only (label + latitude + longitude;
   // owner, 2026-10-27: "make work locations a system in which i can add multiple pin locations"). CHECK
   // hr_work_locations_kind_chk. For a Location, radiusMetres is the per-employee radius; for a pin it is the pin's
   // radius as entered (null = the company's).
-  locationId   String?
-  label        String?
-  latitude     Float?
-  longitude    Float?
-  radiusMetres Int?
-  isPrimary    Boolean  @default(false)
+  locationId           String?
+  label                String?
+  latitude             Float?
+  longitude            Float?
+  radiusMetres         Int?
+  isPrimary            Boolean   @default(false)
   // A custom pin's fence the CEO APPROVED (approval type work_pin, mirroring Location.fence*): the time clock measures
   // from these only; a new / moved pin waits and the old approved one stays in force meanwhile. fencePinRejected =
   // the pin the CEO turned down ({lat, lng, radius, at, byId, note}).
@@ -8987,9 +8999,9 @@ model HrWorkLocation {
   fencePinApprovedAt   DateTime?
   fencePinApprovedById String?
   fencePinRejected     Json?
-  createdById  String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @default(now()) @updatedAt
+  createdById          String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @default(now()) @updatedAt
 
   tenant   Tenant     @relation("TenantHrWorkLocations", fields: [tenantId], references: [id])
   employee HrEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)

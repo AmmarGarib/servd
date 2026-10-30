@@ -27,6 +27,7 @@ import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { linkBankLedgerAccount } from '../src/lib/bankAccounts.js'
 import { postJournalEntry } from '../src/modules/accounting/journal.js'
 import { hrRoutes } from '../src/modules/hr/routes.js'
+import { getSettings, saveSettings } from '../src/modules/hr/service.js'
 import {
   finalSettlement, computePayslip, settlementNet, settledFromPeriod, mergeSettings, EMPTY_INPUTS, DEFAULT_HR_SETTINGS, pktToday,
 } from '../src/modules/hr/logic.js'
@@ -125,12 +126,21 @@ async function raise(section: string, data: Record<string, unknown>) {
 }
 const decide = (who: string, section: string, id: string, extra: Record<string, unknown> = {}) =>
   call(who, 'POST', `/records/${section}/${id}/decide`, { decision: 'approved', ...extra })
+/** HR sends the run to finance and it is checked (here by the CEO) before it is approved (owner, 2026-10-30). */
+async function toApprover(runId: string) {
+  const sent = await call('hr', 'POST', `/payroll/runs/${runId}/send-to-finance`)
+  expect(sent.statusCode, sent.body).toBe(200)
+  const passed = await call('ceo', 'POST', `/payroll/runs/${runId}/finance-pass`, {})
+  expect(passed.statusCode, passed.body).toBe(200)
+}
 
 beforeAll(async () => {
   tenantA = (await prisma.tenant.create({ data: { name: 'GS Foods (fnf)', slug: `gs-fnf-${stamp}` } })).id
   tenantB = (await prisma.tenant.create({ data: { name: 'Karachi Bites (fnf)', slug: `kb-fnf-${stamp}` } })).id
   await ensureChartOfAccounts(tenantA)
   await ensureChartOfAccounts(tenantB)
+  // These tests are about the ledger, not attendance: no day is docked for a missing punch.
+  for (const t of [tenantA, tenantB]) await saveSettings(t, { ...(await getSettings(t)), absentWithoutPunchFrom: null })
   bankA1 = (await mkBank(tenantA, 'HBL Operations')).id
   const a2 = await mkBank(tenantA, 'Meezan Payroll')
   bankA2 = a2.id; codeA2 = a2.code
@@ -159,6 +169,7 @@ beforeAll(async () => {
     ...DEFAULT_HR_SETTINGS,
     eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) },
     sessi: { employerPct: 6, wageCeilingCents: null },
+    absentWithoutPunchFrom: null, // about the ledger, not attendance: a day with no punch is not docked
   })
   expect(settings.statusCode).toBe(200)
 }, 60_000)
@@ -236,6 +247,7 @@ describe('payroll is paid from the right place, on the day it was paid', () => {
 
   it('locks August, then refuses a foreign bank, an unnamed bank among several, and a closed day', async () => {
     aug = (await call('hr', 'POST', '/payroll/runs', { period: '2026-08' })).json().id
+    await toApprover(aug)
     expect((await call('ceo', 'POST', `/payroll/runs/${aug}/approve`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${aug}/lock`)).statusCode).toBe(200)
 
@@ -320,6 +332,7 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     expect(open.json().error.code).toBe('FNF_PAYROLL_OPEN')
     expect(await entry(tenantA, `hr.final_settlement.accrual:${fnf}`)).toBeNull()
 
+    await toApprover(sep)
     expect((await call('ceo', 'POST', `/payroll/runs/${sep}/approve`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${sep}/lock`)).statusCode).toBe(200)
     const ok = await decide('mgmt', 'final_settlement', fnf)

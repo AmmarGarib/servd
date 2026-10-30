@@ -630,6 +630,9 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // Finance reads the payroll register with its 'payroll' module (BOOKS-02);
   // preparing, approving and paying it stay with the HR_ADMIN / approver
   // role arrays in hr/routes.ts.
+  // Finance's review of a payroll (owner, 2026-10-30): pass / return and the payslip tax, with 'accounting' too —
+  // the routes hold finance to 'accounting' themselves. Reading the run stays 'payroll' (finance holds it by default).
+  { prefix: '/hr/payroll/runs/:id/finance-pass|finance-return, /hr/payroll/payslips/:id/tax', anyOf: ['staff_hr', 'payroll', 'accounting'], pattern: /^\/hr\/payroll\/(?:runs\/[^/]+\/finance-(?:pass|return)|payslips\/[^/]+\/tax)\/?$/ },
   { prefix: '/hr/payroll',          anyOf: ['staff_hr', 'payroll'] },
   { prefix: '/hr/letters',          anyOf: ['staff_hr'] },
   { prefix: '/hr/reports',          anyOf: ['staff_hr'] },

@@ -161,12 +161,15 @@ export const STATUS_COLOR: Record<string, string> = {
   draft: 'rgb(var(--fg-rgb) / 0.45)', submitted: 'var(--erp-warning)', approved: 'var(--erp-success)', rejected: 'var(--erp-danger)', cancelled: 'rgb(var(--fg-rgb) / 0.3)',
   active: 'var(--erp-success)', on_leave: 'var(--erp-primary-ink)', resigned: 'var(--erp-warning)', terminated: 'var(--erp-danger)', separated: 'rgb(var(--fg-rgb) / 0.4)',
   locked: 'var(--erp-success)',
+  // Payroll finance review (owner, 2026-10-30).
+  finance_review: 'var(--erp-warning)', finance_checked: 'var(--erp-primary-ink)',
 }
 /** Standard badge classes (globals.css s-badge-*) per HR status. */
 export const STATUS_BADGE: Record<string, string> = {
   draft: 's-badge-muted', submitted: 's-badge-amber', approved: 's-badge-green', rejected: 's-badge-red', cancelled: 's-badge-muted',
   active: 's-badge-green', on_leave: 's-badge-purple', resigned: 's-badge-amber', terminated: 's-badge-red', separated: 's-badge-muted',
   locked: 's-badge-green',
+  finance_review: 's-badge-amber', finance_checked: 's-badge-purple',
 }
 
 export const ROLE_LABEL: Record<string, string> = { hod: 'Reporting manager', hr: 'HR', management: 'Management' }
@@ -179,6 +182,9 @@ export const PAYROLL_APPROVER_ROLES = ['admin', 'owner', 'management']
  *  and finance (owner, 2026-10-16; API hr/routes.ts PAYROLL_PAYERS). Nobody
  *  pays a run or a settlement carrying their own pay (403 OWN_PAY_IN_RUN). */
 export const PAYROLL_PAYER_ROLES = [...PAYROLL_APPROVER_ROLES, 'finance']
+/** Who checks a payroll HR sent for review — enters the tax, passes it to the CEO or returns it (owner, 2026-10-30).
+ *  The API also holds finance to its 'accounting' module. */
+export const PAYROLL_FINANCE_REVIEW_ROLES = ['finance', 'admin']
 
 /** Today in the browser's own calendar, YYYY-MM-DD — not the UTC date, which
  *  is still yesterday in Karachi until 05:00. */

@@ -122,6 +122,10 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
     },
   }),
   payroll_run: spec((id) => `/hr/payroll/${encodeURIComponent(id)}`),
+  // Owner, 2026-10-30: HR sends a payroll to finance; finance passes it to the CEO or returns it to HR.
+  payroll_finance_review: spec((id) => `/hr/payroll/${encodeURIComponent(id)}`, {
+    waitingTitle: (_s, f) => `${f.ref} sent by HR for your review${f.companyName ? ` (${f.companyName})` : ''}`,
+  }),
   tip_pool: spec(() => '/tip-pools', { eventless: true }),
   stock_transfer: spec(() => null),
   cash_voucher: spec((id) => `/finance/cash-vouchers?id=${encodeURIComponent(id)}`),
@@ -214,7 +218,8 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       const u = await db.user.findUnique({ where: { id: r.requestedById }, select: { name: true } })
       return { ref: `${r.kind === 'waitlist' ? 'Waitlist download' : 'Guest-list download'} with phones and emails`, detail: u?.name ? `Asked by ${u.name}` : null }
     }
-    case 'payroll_run': {
+    case 'payroll_run':
+    case 'payroll_finance_review': {
       const p = await db.hrPayrollRun.findUnique({ where: { id }, select: { period: true } })
       return p && { ref: `Payroll ${p.period}` }
     }
@@ -413,7 +418,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
   let final = e.final
   if (final === undefined && outcome === 'approved') {
     if (type === 'hr_request') final = s.status === 'approved'
-    else if (type === 'cash_request_finance') final = false
+    else if (type === 'cash_request_finance' || type === 'payroll_finance_review') final = false
   }
   const nonFinal = outcome === 'approved' && final === false
 
@@ -428,7 +433,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
       verb = 'approved'
       if (nonFinal) {
         const next = await nextStepLabel(type, e.id)
-        verb = type === 'cash_request_finance' ? 'approved by finance' : 'approved at this step'
+        verb = type === 'cash_request_finance' ? 'approved by finance' : type === 'payroll_finance_review' ? 'checked by finance' : 'approved at this step'
         body = next ? `Now with ${next}.` : null
       } else if (type === 'storefront_publish') {
         const at = iso(e.publishAt)
@@ -471,7 +476,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
 
 /** "HR", "the CEO" … — who a multi-step item is with now. */
 async function nextStepLabel(type: ApprovalType, id: string): Promise<string | null> {
-  if (type === 'cash_request_finance') return 'the CEO'
+  if (type === 'cash_request_finance' || type === 'payroll_finance_review') return 'the CEO'
   if (type !== 'hr_request') return null
   try {
     const rec = await serviceClient.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, formVersion: true, currentStep: true, status: true, data: true, amountCents: true } })

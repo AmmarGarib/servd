@@ -125,9 +125,13 @@ async function seedCompany(co: 'A' | 'B', hod: string, owner: string) {
   })
   ids[co]['hr_request'] = rec.id
 
-  // A payroll run waiting on approval.
-  const run = await prisma.hrPayrollRun.create({ data: { tenantId, period: '2026-09', settings: {}, totals: { employees: 2, grossCents: 9_000_00, netCents: 8_000_00 } } })
+  // A payroll run finance has checked, waiting on approval; and one HR sent to finance (owner, 2026-10-30).
+  const run = await prisma.hrPayrollRun.create({ data: { tenantId, period: '2026-09', status: 'finance_checked', settings: {}, totals: { employees: 2, grossCents: 9_000_00, netCents: 8_000_00 } } })
   ids[co]['payroll_run'] = run.id
+  const review = await prisma.hrPayrollRun.create({ data: { tenantId, period: '2026-08', status: 'finance_review', settings: {}, totals: { employees: 2, grossCents: 9_000_00, netCents: 8_000_00 } } })
+  ids[co]['payroll_finance_review'] = review.id
+  // A draft is HR's own: never in an inbox.
+  await prisma.hrPayrollRun.create({ data: { tenantId, period: '2026-07', settings: {}, totals: {} } })
 
   // A posted tip pool waiting to be paid out.
   const pool = await prisma.tipPool.create({ data: { tenantId, conceptId: concept.id, name: `${P} week ${co}`, periodStart: new Date('2026-09-01'), periodEnd: new Date('2026-09-08'), status: 'posted', totalTipsCents: 12_000_00 } })
@@ -251,7 +255,7 @@ describe('two companies', () => {
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
-      'bad_debt', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_run',
+      'bad_debt', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
       'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_brand_move', 'stock_transfer', 'storefront_publish', 'tip_pool',
       // Wage changes at the CEO's step (owner, 2026-10-27) read the same /hr/approvals queue: listed, none waiting.
       'wage_change',
@@ -260,7 +264,7 @@ describe('two companies', () => {
     ])
     expect(countOf(body, 'wage_change')).toBe(0)
     expect(countOf(body, 'work_pin')).toBe(0)
-    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'stock_transfer', 'cash_voucher',
+    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'payroll_finance_review', 'tip_pool', 'stock_transfer', 'cash_voucher',
       'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'on_account_client']) {
       expect(countOf(body, t), t).toBe(1)
       expect(body.items.find((i) => i.type === t)?.id, t).toBe(ids.A[t])
@@ -318,7 +322,8 @@ describe('each role sees only the types it can approve', () => {
     // The HOD: their team's request, and the kitchen's transfers.
     expect(await typesOf('hodA')).toEqual(['hr_request', 'stock_transfer'])
     // Finance: the cash-voucher finance step (2026-10-15 flow).
-    expect(await typesOf('finance')).toEqual(['cash_request_finance'])
+    // …and a payroll HR sent for review (owner, 2026-10-30).
+    expect(await typesOf('finance')).toEqual(['cash_request_finance', 'payroll_finance_review'])
     for (const r of ['cashier', 'foh', 'boh', 'kitchen', 'expediter', 'procurement', 'marketing', 'brand_manager', 'it']) {
       expect(await typesOf(r), r).toEqual([])
     }

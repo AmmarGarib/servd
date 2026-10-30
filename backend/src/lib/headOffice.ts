@@ -148,6 +148,7 @@ export const HO_SUBMIT_ROUTES: ReadonlyArray<{ method: string; path: string }> =
   { method: 'POST',   path: '/hr/payroll/payslips/:id/overtime' },            // add OT to a draft payslip (2026-10-21)
   { method: 'POST',   path: '/hr/payroll/runs/:id/overtime' },                // add all available OT, draft only
   { method: 'DELETE', path: '/hr/payroll/runs/:id' },
+  { method: 'POST',   path: '/hr/payroll/runs/:id/send-to-finance' },        // HR sends a draft to finance (2026-10-30)
   // Finance (JournalRequest, wave 2)
   { method: 'POST',   path: '/accounting/journal-requests' },
   { method: 'PATCH',  path: '/accounting/journal-requests/:id' },
@@ -204,6 +205,9 @@ export const HO_PASSTHROUGH: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'POST',   path: '/site-layouts/:slug/approve' },
   { method: 'POST',   path: '/site-layouts/:slug/reject' },
   { method: 'POST',   path: '/hr/records/:section/:id/decide' },
+  { method: 'POST',   path: '/hr/payroll/runs/:id/finance-pass' },           // finance's review (2026-10-30)
+  { method: 'POST',   path: '/hr/payroll/runs/:id/finance-return' },
+  { method: 'PUT',    path: '/hr/payroll/payslips/:id/tax' },
   { method: 'POST',   path: '/hr/payroll/runs/:id/approve' },
   { method: 'POST',   path: '/hr/payroll/runs/:id/lock' },
   { method: 'POST',   path: '/hr/payroll/runs/:id/reopen' },

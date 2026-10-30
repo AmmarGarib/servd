@@ -20,6 +20,7 @@ import { hrRoutes } from '../src/modules/hr/routes.js'
 import { crmRoutes } from '../src/modules/crm/routes.js'
 import { waitlistRoutes } from '../src/modules/waitlist/routes.js'
 import { approvalSubject, APPROVAL_RIGHTS } from '../src/lib/approvalRights.js'
+import { getSettings, saveSettings } from '../src/modules/hr/service.js'
 
 const RS = (r: number) => r * 100
 const stamp = Date.now()
@@ -54,6 +55,9 @@ beforeAll(async () => {
   tenantA = (await prisma.tenant.create({ data: { name: `WX A ${stamp}`, slug: `wx-a-${stamp}` } })).id
   tenantB = (await prisma.tenant.create({ data: { name: `WX B ${stamp}`, slug: `wx-b-${stamp}` } })).id
   for (const t of [tenantA, tenantB]) await ensureChartOfAccounts(t)
+  // These payrolls are about the wage change, not attendance: no punches are made, so the October no-punch rule
+  // (owner, 2026-10-30) is off for these companies.
+  for (const t of [tenantA, tenantB]) await saveSettings(t, { ...(await getSettings(t)), absentWithoutPunchFrom: null })
   conceptA = (await prisma.concept.create({ data: { name: `WX Brand A ${stamp}`, slug: `wx-brand-a-${stamp}`, type: 'restaurant', tenantId: tenantA } as never })).id
   conceptB = (await prisma.concept.create({ data: { name: `WX Brand B ${stamp}`, slug: `wx-brand-b-${stamp}`, type: 'restaurant', tenantId: tenantB } as never })).id
   await mkUser('ceoA', 'admin', tenantA)

@@ -129,9 +129,11 @@ describe('PPL-07 pay inputs are never negative, and payroll pays exactly what it
     const run = await call('hr', 'POST', '/hr/payroll/runs', { period: '2026-09' })
     expect(run.statusCode).toBe(201)
     runId = run.json().id
-    const approve = await call('ceo', 'POST', `/hr/payroll/runs/${runId}/approve`)
-    expect(approve.statusCode).toBe(409)
-    expect(approve.json().error.message).toMatch(/Typo Salary/)
+    // It cannot even go to finance (owner, 2026-10-30: HR sends to finance, then CEO).
+    const send = await call('hr', 'POST', `/hr/payroll/runs/${runId}/send-to-finance`)
+    expect(send.statusCode).toBe(409)
+    expect(send.json().error.message).toMatch(/Typo Salary/)
+    expect((await call('ceo', 'POST', `/hr/payroll/runs/${runId}/approve`)).statusCode).toBe(409)
     expect((await call('ceo', 'POST', `/hr/payroll/runs/${runId}/lock`)).statusCode).toBe(409)
   })
 
@@ -150,6 +152,8 @@ describe('PPL-07 pay inputs are never negative, and payroll pays exactly what it
     // The CEO's own wage change applies at once (HR's would wait for the CEO).
     expect((await call('ceo', 'PATCH', `/hr/employees/${emps['Typo Salary']}`, { data: { grossSalaryCents: RS(30000) } })).statusCode).toBe(200)
     expect((await call('hr', 'POST', `/hr/payroll/runs/${runId}/recalculate`)).statusCode).toBe(200)
+    expect((await call('hr', 'POST', `/hr/payroll/runs/${runId}/send-to-finance`)).statusCode).toBe(200)
+    expect((await call('fin', 'POST', `/hr/payroll/runs/${runId}/finance-pass`, {})).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/hr/payroll/runs/${runId}/approve`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/hr/payroll/runs/${runId}/lock`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/hr/payroll/runs/${runId}/paid`, { from: 'bank' })).statusCode).toBe(200)

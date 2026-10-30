@@ -20,6 +20,7 @@ import { normalisePhone } from '../auth/otp.js'
 import { csv } from '../accounting/csv.js'
 import { exportFormatOf, fromMatrix, sendReportFor, type ReportColumnType, type ReportRow } from '../../lib/reportExport.js'
 import { audit } from '../../lib/audit.js'
+import { INT4_MAX_CENTS } from '../../lib/money.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 import { assertInt4Fits } from '../../lib/money.js'
@@ -32,7 +33,7 @@ import {
   applyDueEffects, onFinalApproval, leaveBalancesFor, checkLeave, lockEmployeeLeave, loansFor, loanStatement, settlementLoansOf,
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
   salaryForPeriod, availableOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
-  otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime, ATTENDANCE_DAY_TAKEN, workflowOf, isOutOfAreaHold,
+  otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime, setPayslipTax, taxOverrideOf, ATTENDANCE_DAY_TAKEN, workflowOf, isOutOfAreaHold,
   isWageChange, wageAtCeoStep, WAGE_SECTIONS,
 } from './service.js'
 import {
@@ -201,7 +202,7 @@ async function stampRunVia(req: FastifyRequest, run: { id: string; tenantId: str
  */
 async function payrollDecision(
   req: FastifyRequest, id: string, action: 'approve' | 'lock' | 'reopen',
-  preparer?: (run: { createdById: string | null; preparedByIds: string[] }) => void,
+  preparer?: (run: { createdById: string | null; preparedByIds: string[]; sentToFinanceById: string | null }) => void,
 ) {
   const subj = await approvalSubjectOf('payroll_run', id)
   if (!subj) throw new NotFoundError('Payroll', id)
@@ -225,6 +226,27 @@ async function payrollDecision(
       throw new AppError('OWN_PAY_IN_RUN', 'Your own pay is on this payroll — the CEO decides it', 403)
     }
   }
+  return { run: found, grant }
+}
+
+/**
+ * Finance's review of a payroll (owner, 2026-10-30: "HR sends to finance, then CEO"): pass it on to the approver or
+ * return it to HR. Role finance holding 'accounting' (the guard), or the CEO; approval type payroll_finance_review —
+ * the role path in the run's company, never by whoever created or prepared it (SELF_APPROVAL_BLOCKED, the CEO
+ * excepted). Foreign runs 404.
+ */
+async function financeReviewDecision(req: FastifyRequest, id: string, action: 'pass' | 'return') {
+  const subj = await approvalSubjectOf('payroll_finance_review', id)
+  if (!subj) throw new NotFoundError('Payroll', id)
+  const found = await prisma.hrPayrollRun.findUnique({ where: { id } })
+  const su = req.staffUser!
+  if (!found || !su.memberTenantIds.includes(found.tenantId)) throw new NotFoundError('Payroll', id)
+  if (found.status !== 'finance_review') {
+    throw new AppError('NOT_WITH_FINANCE', `This payroll is ${found.status.replace('_', ' ')}, not with finance for review`, 409)
+  }
+  const grant = await assertCanApprove(req, approvalInputOf('payroll_finance_review', id, subj, {
+    entity: 'HrPayrollRun', action: `${action === 'pass' ? 'pass' : 'return'} a payroll for review`,
+  }))
   return { run: found, grant }
 }
 
@@ -725,7 +747,7 @@ async function approveSettlement(tx: Tx, rec: HrRecord, postedBy: string) {
   // approvals at the same moment cannot both pass.
   await assertOnlySettlement(tx, rec)
   const open = await tx.hrPayslip.findFirst({
-    where: { tenantId: rec.tenantId, employeeId: rec.employeeId, run: { status: { in: ['draft', 'approved'] } } },
+    where: { tenantId: rec.tenantId, employeeId: rec.employeeId, run: { status: { in: ['draft', 'finance_review', 'finance_checked', 'approved'] } } },
     select: { run: { select: { period: true, status: true } } },
     orderBy: { run: { period: 'desc' } },
   })
@@ -2636,9 +2658,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (via) {
       await audit({ category: 'identity', action: 'hr.payroll.create', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: { period }, metadata: { viaHeadOfficeId: via } })
     }
+    // A draft is HR's until HR sends it to finance (the bell starts there).
     const created = await prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
-    // The bell (queued, after the commit): a draft payroll is in the approval queue.
-    approvalWaiting('payroll_run', run.id, { round: `create:${(created?.updatedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
     return reply.status(201).send(created)
   })
 
@@ -2722,22 +2743,124 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return { updated: added.length, otCents: added.reduce((s2, a) => s2 + a.otCents, 0), payslips: added }
   })
 
+  // ── Finance review (owner, 2026-10-30: "HR sends to finance, then CEO") ──
+  // HR sends a complete draft to finance; finance enters the income tax, then
+  // passes it on to the approver or returns it to HR with a note. HR edits only
+  // in draft; the approver approves only a run finance has checked.
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/send-to-finance', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
+    if (!run) throw new NotFoundError('Payroll', req.params.id)
+    if (isReachOnly(req, run.tenantId)) await assertHoMayPropose(req, run.tenantId, run.status === 'draft', 'sending a payroll that is no longer a draft')
+    if (run.status !== 'draft') throw new AppError('RUN_NOT_DRAFT', 'Only a draft payroll can be sent to finance', 409)
+    const blocker = await runBlocker(run.id)
+    if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
+    await stampRunVia(req, run)
+    const at = new Date()
+    const n = await prisma.hrPayrollRun.updateMany({
+      where: { id: run.id, status: 'draft' },
+      data: { status: 'finance_review', sentToFinanceById: req.staffUser!.id, sentToFinanceAt: at, financeCheckedById: null, financeCheckedAt: null, financeNote: null },
+    })
+    if (n.count === 0) throw new AppError('RUN_NOT_DRAFT', 'Only a draft payroll can be sent to finance', 409)
+    await audit({
+      category: 'identity', action: 'hr.payroll.send_to_finance', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId,
+      after: { period: run.period, totals: run.totals }, metadata: { actorRole: req.staffUser!.role },
+    })
+    // The bell (after the commit): finance is told a payroll waits for its review.
+    approvalWaiting('payroll_finance_review', run.id, { round: `send:${at.toISOString()}`, actorId: req.staffUser!.id })
+    return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+  })
+
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/finance-pass', { preHandler: [requireAuth('finance', 'admin'), financeNeedsAccounting] }, async (req) => {
+    const { note } = z.object({ note: z.string().trim().max(1000).optional() }).parse(req.body ?? {})
+    const { run, grant } = await financeReviewDecision(req, req.params.id, 'pass')
+    const blocker = await runBlocker(run.id)
+    if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
+    const at = new Date()
+    const n = await prisma.hrPayrollRun.updateMany({
+      where: { id: run.id, status: 'finance_review' },
+      data: { status: 'finance_checked', financeCheckedById: req.staffUser!.id, financeCheckedAt: at, financeNote: note || null },
+    })
+    if (n.count === 0) throw new AppError('NOT_WITH_FINANCE', 'This payroll is no longer with finance for review', 409)
+    await audit({
+      category: 'accounting', action: 'hr.payroll.finance_pass', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId,
+      after: { period: run.period, note: note || null }, metadata: { actorRole: req.staffUser!.role },
+    })
+    // HR hears "approved by finance — now with the CEO"; the approvers that it waits for them.
+    await auditApproval(req, {
+      type: 'payroll_finance_review', id: run.id, tenantId: run.tenantId, decision: 'approve', grant, entity: 'HrPayrollRun',
+      metadata: { period: run.period, decidedAt: at.toISOString(), final: false, ...(note && { note }) },
+    })
+    approvalWaiting('payroll_run', run.id, { round: `finance:${at.toISOString()}`, actorId: req.staffUser!.id })
+    return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+  })
+
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/finance-return', { preHandler: [requireAuth('finance', 'admin'), financeNeedsAccounting] }, async (req) => {
+    const { note } = z.object({ note: z.string().trim().max(1000).optional() }).parse(req.body ?? {})
+    if (!note || note.length < 10) throw new AppError('NOTE_TOO_SHORT', 'Say what HR needs to correct (at least 10 characters)', 422)
+    const { run, grant } = await financeReviewDecision(req, req.params.id, 'return')
+    const at = new Date()
+    const n = await prisma.hrPayrollRun.updateMany({
+      where: { id: run.id, status: 'finance_review' },
+      data: { status: 'draft', financeReturnNote: note, financeReturnedById: req.staffUser!.id, financeReturnedAt: at, financeCheckedById: null, financeCheckedAt: null, financeNote: null },
+    })
+    if (n.count === 0) throw new AppError('NOT_WITH_FINANCE', 'This payroll is no longer with finance for review', 409)
+    await audit({
+      category: 'accounting', action: 'hr.payroll.finance_return', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId,
+      after: { period: run.period, note }, metadata: { actorRole: req.staffUser!.role },
+    })
+    // The bell: HR's preparers (and whoever sent it) are told it came back, with the note.
+    await auditApproval(req, {
+      type: 'payroll_finance_review', id: run.id, tenantId: run.tenantId, decision: 'return', grant, entity: 'HrPayrollRun',
+      metadata: { period: run.period, decidedAt: at.toISOString(), note, waitingUserIds: [...new Set([run.createdById, run.sentToFinanceById, ...run.preparedByIds].filter((x): x is string => !!x))] },
+    })
+    return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+  })
+
+  // Finance enters the income tax of a payslip (owner, 2026-10-30: "Finance will put tax figures"). While the run is
+  // with finance (the CEO also on a draft). Never on your own payslip (403 OWN_PAYSLIP; the CEO excepted).
+  fastify.put<{ Params: { id: string } }>('/payroll/payslips/:id/tax', { preHandler: [requireAuth('finance', 'admin'), financeNeedsAccounting] }, async (req) => {
+    const { taxCents } = z.object({ taxCents: z.number().int().min(0).max(INT4_MAX_CENTS) }).strict().parse(req.body)
+    const su = req.staffUser!
+    const slip = await prisma.hrPayslip.findFirst({
+      where: { id: req.params.id, tenantId: { in: su.memberTenantIds } },
+      include: { run: { select: { id: true, tenantId: true, status: true, period: true } }, employee: { select: { userId: true, fullName: true } } },
+    })
+    if (!slip) throw new NotFoundError('Payslip', req.params.id)
+    if (su.role !== 'admin' && slip.employee.userId === su.id) {
+      throw new AppError('OWN_PAYSLIP', 'This is your own payslip — someone else enters its tax', 403)
+    }
+    const statuses = su.role === 'admin' ? ['finance_review', 'draft'] : ['finance_review']
+    const r = await setPayslipTax(slip.id, taxCents, su.id, statuses)
+    await audit({
+      category: 'accounting', action: 'hr.payroll.tax_set', entity: 'HrPayslip', entityId: slip.id, userId: su.id, userEmail: su.email, tenantId: slip.run.tenantId,
+      before: { taxCents: r.beforeCents }, after: { taxCents, runId: slip.run.id, period: slip.run.period, employeeId: slip.employeeId },
+      metadata: { actorRole: su.role },
+    })
+    return r.payslip
+  })
+
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/approve', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     // Whoever prepared payroll — created it, recalculated it or edited a
     // payslip on it — does not also approve it, except the CEO, who is
     // allowed to run a one-person office.
     const me = req.staffUser!.id
     const { run, grant } = await payrollDecision(req, req.params.id, 'approve', (r) => {
-      if ((r.createdById === me || r.preparedByIds.includes(me)) && req.staffUser!.role !== 'admin') {
+      if ((r.createdById === me || r.preparedByIds.includes(me) || r.sentToFinanceById === me) && req.staffUser!.role !== 'admin') {
         throw new ForbiddenError('Payroll must be approved by someone other than the people who prepared or edited it')
       }
     })
+    // Finance checks it first (owner, 2026-10-30: "HR sends to finance, then CEO").
+    if (run.status === 'draft' || run.status === 'finance_review') {
+      throw new AppError('NOT_FINANCE_CHECKED', run.status === 'draft'
+        ? 'HR has not sent this payroll to finance yet — finance checks it before it is approved'
+        : 'This payroll is with finance for review — it can be approved once finance passes it on', 409)
+    }
     const blocker = await runBlocker(run.id)
     if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
     // …and not in between: an edit of theirs landing after the check above.
     const unedited = req.staffUser!.role === 'admin' ? {} : { NOT: { preparedByIds: { has: me } } }
-    const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'draft', ...unedited }, data: { status: 'approved', approvedById: req.staffUser!.id, approvedAt: new Date() } })
-    if (n.count === 0) throw new AppError('NOT_DRAFT', 'This payroll is not a draft', 409)
+    const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'finance_checked', ...unedited }, data: { status: 'approved', approvedById: req.staffUser!.id, approvedAt: new Date() } })
+    if (n.count === 0) throw new AppError('NOT_FINANCE_CHECKED', 'This payroll is not waiting for approval', 409)
     await audit({ category: 'identity', action: 'hr.payroll.approve', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period, totals: run.totals } })
     await auditPayrollDecision(req, run, grant, 'approve')
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
@@ -2745,13 +2868,14 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/reopen', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const { run, grant } = await payrollDecision(req, req.params.id, 'reopen')
-    const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'approved' }, data: { status: 'draft', approvedById: null, approvedAt: null } })
+    // Back to HR as a draft: it goes through finance again (the finance check is cleared).
+    const n = await prisma.hrPayrollRun.updateMany({
+      where: { id: run.id, status: 'approved' },
+      data: { status: 'draft', approvedById: null, approvedAt: null, sentToFinanceById: null, sentToFinanceAt: null, financeCheckedById: null, financeCheckedAt: null, financeNote: null },
+    })
     if (n.count === 0) throw new AppError('NOT_APPROVED', 'Only an approved (not locked) payroll can be reopened', 409)
     await auditPayrollDecision(req, run, grant, 'reopen')
-    const reopened = await prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
-    // The bell: a reopened payroll is a draft in the queue again (a new round).
-    approvalWaiting('payroll_run', run.id, { round: `reopen:${(reopened?.updatedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
-    return reopened
+    return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
 
   // Lock: final. Loans show as recovered from here (payroll already treats an

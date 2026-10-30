@@ -193,6 +193,8 @@ describe('payroll: a month with no paid days', () => {
     expect(normal).toMatchObject({ salary: RS(52000), tax: RS(1000), eobi_employee: RS(400), eobi_employer: RS(2000), sessi_employer: RS(3120) })
     expect(of('Normal').netCents).toBe(RS(52000 - 1400))
 
+    expect((await call('hr', 'POST', `/payroll/runs/${runId}/send-to-finance`)).statusCode).toBe(200)
+    expect((await call('ceo', 'POST', `/payroll/runs/${runId}/finance-pass`, {})).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${runId}/approve`)).statusCode).toBe(200)
     const lock = await call('ceo', 'POST', `/payroll/runs/${runId}/lock`)
     expect(lock.statusCode, lock.body).toBe(200)

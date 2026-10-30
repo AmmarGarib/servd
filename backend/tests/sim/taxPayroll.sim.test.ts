@@ -200,6 +200,8 @@ describe('set-up (30 Sep)', () => {
         ...cur,
         eobi: { enabled: true, employeePct: 1, employerPct: 5, base: 'fixed', fixedWageCents: RS(40000) },
         sessi: { employerPct: 6, wageCeilingCents: null },
+        // The simulation models October as written before 30 Oct: a day with no punch is not docked.
+        absentWithoutPunchFrom: null,
       }), 200)
       expect(put.eobi.enabled).toBe(true)
     }
@@ -460,6 +462,9 @@ describe('the October payroll (31 Oct – 1 Nov)', () => {
   it('HR cannot approve its own payroll; management (the second person) approves and locks → the accrual', async () => {
     const { A } = sim
     expect((await hr().post(`/hr/payroll/runs/${st.runId}/approve`, {})).statusCode).toBe(403)
+    // HR sends it to finance; finance (with accounting) checks it and passes it on (owner, 2026-10-30).
+    expect(ok(await hr().post(`/hr/payroll/runs/${st.runId}/send-to-finance`, {}), 200).status).toBe('finance_review')
+    expect(ok(await sim.as(A.finance, A).post(`/hr/payroll/runs/${st.runId}/finance-pass`, {}), 200).status).toBe('finance_checked')
     const mg = sim.as(people.mgmtA!, A)
     expect(ok(await mg.post(`/hr/payroll/runs/${st.runId}/approve`, {}), 200).status).toBe('approved')
     expect(ok(await mg.post(`/hr/payroll/runs/${st.runId}/lock`, {}), 200).status).toBe('locked')

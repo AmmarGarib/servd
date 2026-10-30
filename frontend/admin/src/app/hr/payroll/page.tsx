@@ -80,7 +80,7 @@ export default function PayrollRunsPage() {
             <span className="text-white/80">Net {rs(r.totals.netCents ?? 0)}</span>
             {(r.totals.warnings?.length ?? 0) > 0 && <span className="text-xs text-s-amber">{r.totals.warnings!.length} warning(s)</span>}
             {r.paymentClassification && <ClassificationChip value={r.paymentClassification} />}
-            <span className="ml-auto text-xs font-bold" style={{ color: STATUS_COLOR[r.status] ?? 'var(--erp-warning)' }}>{human(r.status)}</span>
+            <span className="ml-auto text-xs font-bold" style={{ color: STATUS_COLOR[r.status] ?? 'var(--erp-warning)' }}>{r.status === 'finance_review' ? 'With finance' : r.status === 'finance_checked' ? 'Waiting for the CEO' : human(r.status)}</span>
           </Link>
         ))}
       </div>

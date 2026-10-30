@@ -45,7 +45,8 @@ something). The old "My approvals" (`/hr/approvals`) redirects there.
 | `purchase_order` | `GET /procurement/approvals` | `POST /procurement/purchase-orders/:id/approve`, `/reject` (reason) | admin |
 | `recipe` | `GET /recipes/pending-approval` | `POST /recipes/:id/approve`, `/reject` | admin, owner (never your own submission) |
 | `hr_request` | `GET /hr/approvals` | `POST /hr/records/:section/:id/decide` | per record step: reporting manager, HR, management |
-| `payroll_run` | `GET /hr/payroll/runs` (drafts) | `POST /hr/payroll/runs/:id/approve` | admin, owner, management (never whoever prepared it) |
+| `payroll_finance_review` ("Payroll — finance review", 2026-10-30) | `GET /hr/payroll/runs` (`finance_review`) | `POST /hr/payroll/runs/:id/finance-pass` (note?), `/finance-return` (note ≥10) | finance with accounting, or the CEO (never whoever created, prepared or sent it) |
+| `payroll_run` | `GET /hr/payroll/runs` (`finance_checked` — finance checked it) | `POST /hr/payroll/runs/:id/approve` | admin, owner, management (never whoever prepared or sent it) |
 | `tip_pool` | `GET /tip-pools` (window over, or posted) | opens /tip-pools (post / pay need review) | admin, owner |
 | `stock_transfer` | `GET /stock-transfers?status=requested` | `PATCH /stock-transfers/:id/approve`, `/cancel` | managers |
 | `cash_request_finance` ("Cash vouchers — finance approval") | `GET /trustops/cash-vouchers?view=finance` (rows with `canFinanceApprove`) | `POST /trustops/cash-vouchers/:id/finance-approve`, `/return` (note), `/reject` (note) | finance (role finance with the accounting module; never on a voucher they raised or hold — 409 SELF_APPROVE). Replaces the retired `cash_request_hod` (2026-10-15; the type id still parses, no provider) |
@@ -123,6 +124,7 @@ queue routes and the hand-over catalogue all read it.
 | `purchase_order` | procurement | procurement | admin | yes | procurement |
 | `recipe` | operations; **ceo** when it has no company (A21) | recipes | admin, owner | yes | recipes |
 | `hr_request` | hr | staff_hr | per step | the final step | staff_hr |
+| `payroll_finance_review` | finance | accounting | finance, admin | **never** | — |
 | `payroll_run` | hr | staff_hr | admin, owner, management | approve / lock / reopen | staff_hr |
 | `tip_pool` | finance | payroll | admin, owner | post / pay | payroll |
 | `stock_transfer` | operations | inventory | managers | **never** (the company's managers; exempt from the through-head-office rule) | — |
