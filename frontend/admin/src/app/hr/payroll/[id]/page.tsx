@@ -55,6 +55,16 @@ const RUN_STATUS_LABEL: Record<string, string> = {
 }
 /** The income tax on a payslip: the deduction line (finance's figure once it entered one). */
 const taxOf = (s: Slip) => s.lines.filter((l) => l.code === 'tax').reduce((a, l) => a + l.amountCents, 0)
+// How the run table reads (owner, 2026-10-30: "gross amount should be total salary … Gross − tax − deductions =
+// Net"): Gross = the full monthly salary + overtime + other earnings; Deductions = the salary not paid for days
+// absent / unpaid / not employed + lates, loans and other deductions (never income tax or EOBI, their own columns).
+// Display only — the payslip engine's figures are unchanged, and Gross − tax − deductions − EOBI = its net.
+const salaryEarnedOf = (s: Slip) => s.lines.filter((l) => l.code === 'salary').reduce((a, l) => a + l.amountCents, 0)
+const fullGrossOf = (s: Slip) => {
+  const monthly = basisOf(s)?.monthlyGrossCents ?? salaryEarnedOf(s)
+  return monthly + (s.earningsCents - salaryEarnedOf(s))
+}
+const tableDeductionsOf = (s: Slip) => fullGrossOf(s) - taxOf(s) - s.eobiEmployeeCents - s.netCents
 
 /** Cash staff are paid from the safe; bank and cheque staff from the bank —
  *  by the method snapshotted when the month was calculated. */
@@ -150,10 +160,11 @@ export default function PayrollRunPage() {
       {loadErr && <p className="text-sm text-s-red" role="alert">{(loadErr as Error).message}</p>}
       {run && (
         <div className="space-y-5">
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
             <Stat label="Employees" value={t['employees'] ?? 0} />
-            <Stat label="Gross" value={rs(t['grossCents'])} />
-            <Stat label="Deductions" value={rs(t['deductionsCents'])} />
+            <Stat label="Gross" value={rs((data?.payslips ?? []).reduce((a, s) => a + fullGrossOf(s), 0))} />
+            <Stat label="Income tax" value={rs((data?.payslips ?? []).reduce((a, s) => a + taxOf(s), 0))} />
+            <Stat label="Deductions" value={rs((data?.payslips ?? []).reduce((a, s) => a + tableDeductionsOf(s), 0))} />
             <Stat label="Net pay" value={rs(t['netCents'])} tone="good" />
             <Stat label="EOBI employee" value={rs(t['eobiEmployeeCents'])} />
             <Stat label="EOBI employer" value={rs(t['eobiEmployerCents'])} />
@@ -211,7 +222,7 @@ export default function PayrollRunPage() {
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
-                {['Employee', 'Paid days', 'Per-day rate', 'Overtime', 'Gross', 'Earnings', 'Income tax', 'Deductions', 'EOBI (1%)', 'Net', ''].map((h, i) => <th key={h} className={`px-4 py-3 font-bold whitespace-nowrap${i === 0 ? ' sticky left-0 z-[1] bg-s-surface' : ''}${i === 10 ? ' pr-6' : ''}`}>{h}</th>)}
+                {['Employee', 'Paid days', 'Per-day rate', 'Overtime', 'Gross', 'Income tax', 'Deductions', 'EOBI (1%)', 'Net', ''].map((h, i) => <th key={h} className={`px-4 py-3 font-bold whitespace-nowrap${i === 0 ? ' sticky left-0 z-[1] bg-s-surface' : ''}${i === 9 ? ' pr-6' : ''}`}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {data!.payslips.map((s) => {
@@ -222,15 +233,14 @@ export default function PayrollRunPage() {
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">{basisOf(s) ? `${basisOf(s)!.paidDays} of ${basisOf(s)!.daysInMonth}` : '—'}</td>
                       <td className="px-4 py-3 text-white/70">{basisOf(s) ? rs(basisOf(s)!.dailyRateCents) : '—'}</td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">{otCell(s)}</td>
-                      <td className="px-4 py-3 text-white/70">{rs(s.grossCents)}</td>
-                      <td className="px-4 py-3 text-white/70">{rs(s.earningsCents)}</td>
+                      <td className="px-4 py-3 text-white/70">{rs(fullGrossOf(s))}</td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">
                         {canSetTax
                           ? <button type="button" className="font-bold text-primary-ink underline decoration-dotted underline-offset-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={() => { setErr(''); setTaxSlipId(s.id) }} aria-label={`Income tax for ${s.employee.fullName}: ${rs(taxOf(s))} — change`}>{rs(taxOf(s))}</button>
                           : rs(taxOf(s))}
                         {typeof s.inputs['taxOverrideCents'] === 'number' && <span className="ml-1 text-[10px] text-white/40">set by finance</span>}
                       </td>
-                      <td className="px-4 py-3 text-white/70">{rs(s.deductionsCents)}</td>
+                      <td className="px-4 py-3 text-white/70" title="Salary not paid for days absent, on unpaid leave or not employed, plus lates, loans and other deductions">{rs(tableDeductionsOf(s))}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.eobiEmployeeCents)}</td>
                       <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-s-amber" title={w.join('\n')}><NavIcon name="warn" size={13} className="inline" /></span>}</td>
                       <td className="pl-4 pr-6 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditingId(s.id)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
