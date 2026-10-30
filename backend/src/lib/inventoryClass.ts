@@ -18,6 +18,8 @@ import { ACCT } from '../modules/accounting/journal.js'
 
 export const INVENTORY_CATEGORIES = [
   'protein', 'produce', 'dairy', 'dry_goods', 'sauce', 'beverage', 'packaging', 'other',
+  // Added 2026-10-30 (owner: "spices, sweetener.. etc") — all food class.
+  'spices', 'sweetener', 'oil_fat', 'flour_grain', 'bakery', 'frozen',
 ] as const
 export type InventoryCategory = typeof INVENTORY_CATEGORIES[number]
 
@@ -36,6 +38,8 @@ export function normalizeInventoryCategory(raw: string | null | undefined): Inve
   if ((INVENTORY_CATEGORIES as readonly string[]).includes(c)) return c as InventoryCategory
   if (c === 'drink' || c === 'drinks' || c === 'beverages' || c === 'bev') return 'beverage'
   if (c === 'packing') return 'packaging'
+  if (c === 'spice') return 'spices'
+  if (c === 'sweeteners' || c === 'sugar') return 'sweetener'
   return 'other'
 }
 

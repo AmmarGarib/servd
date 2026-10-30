@@ -2421,7 +2421,7 @@ model InventoryItem {
   yieldPct           Float     @default(100)
   // Dietary tags surfaced on Recipe / Menu pages — e.g. ['dairy','gluten'].
   allergens          String[]  @default([])
-  // Classification: protein | produce | dairy | dry_goods | sauce | beverage | packaging | other — z.enum in the
+  // Classification: protein | produce | dairy | dry_goods | sauce | spices | sweetener | oil_fat | flour_grain | bakery | frozen | beverage | packaging | other — z.enum in the
   // route (lib/inventoryClass.ts INVENTORY_CATEGORIES; legacy values normalised by migration 20261014090000).
   // Cost class: beverage → 1220/5020, packaging → 1230/5030, everything else food (1210/5010).
   category           String?

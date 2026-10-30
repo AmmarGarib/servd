@@ -27,6 +27,12 @@ export const INVENTORY_CATEGORY_OPTIONS: readonly CategoryOption[] = [
   { value: 'dairy',     label: 'Dairy',       stock: FOOD },
   { value: 'dry_goods', label: 'Dry goods',   stock: FOOD },
   { value: 'sauce',     label: 'Sauces',      stock: FOOD },
+  { value: 'spices',    label: 'Spices',      stock: FOOD },
+  { value: 'sweetener', label: 'Sweeteners',  stock: FOOD },
+  { value: 'oil_fat',   label: 'Oils & fats', stock: FOOD },
+  { value: 'flour_grain', label: 'Flour & grains', stock: FOOD },
+  { value: 'bakery',    label: 'Bakery',      stock: FOOD },
+  { value: 'frozen',    label: 'Frozen',      stock: FOOD },
   { value: 'beverage',  label: 'Drinks',      stock: DRINKS },
   { value: 'packaging', label: 'Packaging',   stock: PACKAGING },
   { value: 'other',     label: 'Other food',  stock: FOOD },
@@ -43,6 +49,8 @@ export function categoryValueOf(raw: string | null | undefined): string {
   if (INVENTORY_CATEGORY_OPTIONS.some((o) => o.value === c)) return c
   if (c === 'drink' || c === 'drinks' || c === 'beverages' || c === 'bev') return 'beverage'
   if (c === 'packing') return 'packaging'
+  if (c === 'spice') return 'spices'
+  if (c === 'sweeteners' || c === 'sugar') return 'sweetener'
   return 'other'
 }
 
