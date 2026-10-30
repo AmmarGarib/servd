@@ -70,6 +70,93 @@ export interface HrSettings {
   /** Office networks; `locationId` = the location the network counts as being AT (owner, 2026-10-22: "Office Wi-Fi =
    *  Head Office location") — a check-in from it needs no map reading. */
   officeNetworks: { address: string; label: string; locationId?: string | null }[]
+  /** Deduction types HR picks from on a payslip (owner, 2026-10-30: "Make sub categories for deductions column,
+   *  e.g: Late, Advances, loan, IPD, etc to select by HR"). Per company; switched off, never deleted while in use. */
+  deductionTypes: DeductionType[]
+}
+
+/**
+ * A kind of deduction HR adds to a draft payslip (inputs.deductionItems). `posting` decides the books
+ * (hr/ledger.ts): `recovery` = money the employee owes the company (advances, loans) — recovered from their open
+ * loan / advance records and credited to Staff loans 1350 like the loan installment; `deduction` = pay not paid —
+ * netted off the wages expense like the old "Other deductions" line.
+ */
+export interface DeductionType {
+  key: string
+  label: string
+  posting: 'recovery' | 'deduction'
+  active: boolean
+}
+
+export const DEFAULT_DEDUCTION_TYPES: DeductionType[] = [
+  { key: 'late', label: 'Late coming', posting: 'deduction', active: true },
+  { key: 'advance', label: 'Advance', posting: 'recovery', active: true },
+  { key: 'loan', label: 'Loan', posting: 'recovery', active: true },
+  { key: 'ipd', label: 'IPD (medical)', posting: 'deduction', active: true },
+  { key: 'other', label: 'Other', posting: 'deduction', active: true },
+]
+
+/** One deduction HR added to a payslip. `label` / `posting` are the type's as it stood when added (a later rename
+ *  or switch-off never moves a payslip); `loans` = how a recovery was split over the employee's open loans. */
+export interface DeductionItem {
+  id: string
+  typeKey: string
+  label: string
+  posting: 'recovery' | 'deduction'
+  amountCents: number
+  note?: string | null
+  loans?: Array<{ loanId: string; cents: number }>
+}
+
+/** The deduction items on a payslip's inputs (garbage dropped). */
+export function deductionItemsOf(inputs: unknown): DeductionItem[] {
+  const v = ((inputs ?? {}) as Record<string, unknown>)['deductionItems']
+  if (!Array.isArray(v)) return []
+  return (v as DeductionItem[]).filter((d) => d && typeof d.typeKey === 'string' && typeof d.amountCents === 'number' && d.amountCents > 0)
+    .map((d) => ({ ...d, posting: d.posting === 'recovery' ? 'recovery' : 'deduction' }))
+}
+
+/** The payslip line code of a typed deduction. */
+export const deductionLineCode = (typeKey: string) => `ded:${typeKey}`
+/** The label a typed deduction prints with — a typed "Late" says it is HR's amount, apart from the engine's lates. */
+export function deductionLineLabel(d: Pick<DeductionItem, 'typeKey' | 'label'>): string {
+  return d.typeKey === 'late' ? `${d.label} (added by HR)` : d.label
+}
+
+/** The deduction type a payslip line belongs to, for reports (owner, 2026-10-30): the engine's own lines by name,
+ *  a typed line by the company's type label (its key when the type is gone). */
+export function dedTypeLabel(code: string, types: Array<Pick<DeductionType, 'key' | 'label'>>): string {
+  if (code.startsWith('ded:')) {
+    const key = code.slice(4)
+    const t = types.find((x) => x.key === key)
+    return deductionLineLabel({ typeKey: key, label: t?.label ?? key })
+  }
+  return ({ late: 'Late coming', absence: 'Absence', unpaid_leave: 'Unpaid leave', tax: 'Income tax', eobi_employee: 'EOBI employee', loan: 'Loan / advance installment', other: 'Other deductions' } as Record<string, string>)[code] ?? code
+}
+
+/**
+ * Split the recovery items over the employee's open loans (outstanding AFTER the installment split `taken`):
+ * loans of the item's own kind (advance / loan by type key) first, then the rest, oldest first. Returns the items
+ * with `loans` set, or the first item that does not fit (null split).
+ */
+export function allocateRecoveries(
+  open: Array<{ loanId: string; outstandingCents: number; type?: string | null }>,
+  taken: Array<{ loanId: string; cents: number }>,
+  items: DeductionItem[],
+): { items: DeductionItem[]; failed: DeductionItem | null } {
+  const left = new Map(open.map((l) => [l.loanId, Math.max(0, l.outstandingCents)]))
+  for (const t of taken) left.set(t.loanId, Math.max(0, (left.get(t.loanId) ?? 0) - t.cents))
+  const out: DeductionItem[] = []
+  let failed: DeductionItem | null = null
+  for (const d of items) {
+    if (d.posting !== 'recovery') { const { loans: _l, ...rest } = d; out.push(rest); continue }
+    const ordered = [...open.filter((l) => l.type === d.typeKey), ...open.filter((l) => l.type !== d.typeKey)]
+    const split = allocateLoanCents(ordered.map((l) => ({ loanId: l.loanId, outstandingCents: left.get(l.loanId) ?? 0 })), d.amountCents)
+    if (!split) { failed ??= d; out.push({ ...d, loans: [] }); continue }
+    for (const x of split) left.set(x.loanId, (left.get(x.loanId) ?? 0) - x.cents)
+    out.push({ ...d, loans: split })
+  }
+  return { items: out, failed }
 }
 
 export interface DefaultRota {
@@ -128,6 +215,7 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   otMinimumMinutes: 30,
   defaultRota: DEFAULT_ROTA,
   officeNetworks: [],
+  deductionTypes: DEFAULT_DEDUCTION_TYPES,
 }
 
 export function mergeSettings(stored: Partial<HrSettings> | null | undefined): HrSettings {
@@ -146,6 +234,11 @@ export function mergeSettings(stored: Partial<HrSettings> | null | undefined): H
       : s.defaultRota ? { ...DEFAULT_ROTA, ...s.defaultRota, weeklyOff: Array.isArray(s.defaultRota.weeklyOff) ? [...s.defaultRota.weeklyOff] : [...DEFAULT_ROTA.weeklyOff] }
       : { ...DEFAULT_ROTA, weeklyOff: [...DEFAULT_ROTA.weeklyOff] },
     officeNetworks: Array.isArray(s.officeNetworks) ? s.officeNetworks.map((n) => ({ address: n.address, label: n.label, locationId: n.locationId ?? null })) : [],
+    // A stored list replaces the defaults; a missing one takes them.
+    deductionTypes: Array.isArray(s.deductionTypes)
+      ? s.deductionTypes.filter((t) => t && typeof t.key === 'string' && typeof t.label === 'string')
+        .map((t) => ({ key: t.key, label: t.label, posting: t.posting === 'recovery' ? 'recovery' as const : 'deduction' as const, active: t.active !== false }))
+      : DEFAULT_DEDUCTION_TYPES.map((t) => ({ ...t })),
   }
 }
 
@@ -519,6 +612,8 @@ export interface PayrollInputs {
   earningAdjustmentsCents: number
   deductionAdjustmentsCents: number
   loanInstallmentsCents: number
+  /** Deductions HR added by type (owner, 2026-10-30) — see DeductionItem. */
+  deductionItems?: DeductionItem[]
 }
 
 export const EMPTY_INPUTS: PayrollInputs = {
@@ -526,7 +621,11 @@ export const EMPTY_INPUTS: PayrollInputs = {
   earningAdjustmentsCents: 0, deductionAdjustmentsCents: 0, loanInstallmentsCents: 0,
 }
 
-export interface PayLine { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
+export interface PayLine {
+  kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number
+  /** A typed deduction (code `ded:<typeKey>`): how it posts (hr/ledger.ts) and HR's note. */
+  posting?: 'recovery' | 'deduction'; note?: string | null
+}
 
 /**
  * How a payslip's salary was worked out (owner HR-1 / HR-2, 2026-10-16),
@@ -653,6 +752,10 @@ export function computePayslip(
   if (noPaidDays && s.eobi.enabled) lines.push({ kind: 'deduction', code: 'eobi_employee', label: NO_EOBI_NO_PAID_DAYS, amountCents: 0 })
   if (inputs.loanInstallmentsCents > 0) lines.push({ kind: 'deduction', code: 'loan', label: 'Loan / advance installment', amountCents: inputs.loanInstallmentsCents })
   if (inputs.deductionAdjustmentsCents > 0) lines.push({ kind: 'deduction', code: 'other', label: 'Other deductions', amountCents: inputs.deductionAdjustmentsCents })
+  // Deductions HR added by type (owner, 2026-10-30), one line each.
+  for (const d of deductionItemsOf(inputs)) {
+    lines.push({ kind: 'deduction', code: deductionLineCode(d.typeKey), label: deductionLineLabel(d), amountCents: d.amountCents, posting: d.posting, ...(d.note ? { note: d.note } : {}) })
+  }
 
   if (eobi.employerCents > 0) lines.push({ kind: 'employer', code: 'eobi_employer', label: `EOBI employer (${s.eobi.employerPct}%)`, amountCents: eobi.employerCents })
   const sessi = employedCents > 0 && !noPaidDays ? sessiEmployerCents(employedCents, s) : 0

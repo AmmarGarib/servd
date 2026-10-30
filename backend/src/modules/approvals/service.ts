@@ -2,8 +2,13 @@
 // companies in view (plus what a live hand-over covers), group by section and
 // count per type. Read-only — see README.md.
 //
-// Who sees what (spec §7.6):
-//  • The CEO: every item in their companies. Items a live hand-over covers
+// Who sees what (spec §7.6; owner, 2026-10-30: each request only in the tab of
+// whoever must act on it NOW):
+//  • The CEO: every item in their companies at the CEO's step — never one of a
+//    type where the CEO is only an override (APPROVAL_RIGHTS.overrideRoles:
+//    finance's payroll review / voucher approval, a manager's stock transfer)
+//    while someone else may decide it (lib/approvalRights.ts ceoMustSee, the
+//    bell's rule). HR steps: /hr/approvals already applies hrStepApprovers. Items a live hand-over covers
 //    (and whose delegate did not submit them) are "handed over": collapsed per
 //    section, counted in `handedOver`, never in `total`; the CEO can still act
 //    on them. `view: 'all'` lists them inline.
@@ -20,7 +25,7 @@ import { prisma } from '../../lib/prisma.js'
 import { APPROVAL_PROVIDERS } from './providers.js'
 import { testTenantIds } from '../../lib/testCompany.js'
 import {
-  APPROVAL_RIGHTS, APPROVAL_SECTIONS, APPROVAL_SECTION_TITLES, delegationCovers, sectionOf, throughHeadOfficeBatch,
+  APPROVAL_RIGHTS, APPROVAL_SECTIONS, APPROVAL_SECTION_TITLES, adminIsOverride, ceoMustSee, delegationCovers, sectionOf, throughHeadOfficeBatch,
 } from '../../lib/approvalRights.js'
 import { NO_DELEGATIONS, type ApprovalDelegations, type HandOverIndex } from './delegations.js'
 import type {
@@ -78,10 +83,20 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
 
   const results = await Promise.all(eligible.map(async (p) => {
     try {
-      const rows = await p.load(ctx)
+      const loaded = await p.load(ctx)
       // The module's queue route refused this user (their role, or the CEO's
       // Module Access switch): not one of their types.
-      if (rows === null) return { p, kept: [] as Kept[], elsewhere: 0, error: false, refused: true }
+      if (loaded === null) return { p, kept: [] as Kept[], elsewhere: 0, error: false, refused: true }
+      // Owner, 2026-10-30: the CEO sees an item of a type where the CEO is only
+      // an override (finance's review, a store manager's transfer) once it is at
+      // the CEO's end or nobody else may decide it — never at someone else's step.
+      let rows = loaded
+      if (isAdmin && adminIsOverride(p.type)) {
+        const see = await ceoMustSee(p.type, loaded.map((i) => ({
+          tenantId: i.tenantId, submittedByIds: i.submittedByIds ?? [], viaHeadOfficeId: i.viaHeadOfficeId ?? null, submittedAt: i.waitingSince,
+        })))
+        rows = loaded.filter((_, n) => see[n])
+      }
       const byRole = p.approverRoles === null || (p.approverRoles as readonly string[]).includes(ctx.user.role)
       const del = delegatedTenants.get(p.type)
       // Counts are per company in view — except a type whose module's queue

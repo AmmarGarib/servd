@@ -34,10 +34,10 @@ import {
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
   salaryForPeriod, availableOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
   otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime, setPayslipTax, taxOverrideOf, ATTENDANCE_DAY_TAKEN, workflowOf, isOutOfAreaHold,
-  isWageChange, wageAtCeoStep, WAGE_SECTIONS,
+  isWageChange, wageAtCeoStep, WAGE_SECTIONS, payslipLoanLines,
 } from './service.js'
 import {
-  mergeSettings, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
+  mergeSettings, dedTypeLabel, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
   nextPeriod, settlementParts, settlementNet, settlementSalaryStart,
   type ApprovalEntry, actedOnBy, type HrSettings, type SettlementPayBasis,
 } from './logic.js'
@@ -1159,9 +1159,60 @@ export async function hrRoutes(fastify: FastifyInstance) {
       otMinimumMinutes: body.otMinimumMinutes ?? before.otMinimumMinutes,
       defaultRota: body.defaultRota !== undefined ? body.defaultRota : before.defaultRota,
       officeNetworks: body.officeNetworks ?? before.officeNetworks,
+      // Deduction types have their own routes (/hr/deduction-types); this screen never changes them.
+      deductionTypes: before.deductionTypes,
     } as Partial<HrSettings>)
     await saveSettings(tenantId, next)
     await audit({ category: 'identity', action: 'hr.settings.update', entity: 'Setting', entityId: `hr.settings.${tenantId}`, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, before, after: next })
+    return next
+  })
+
+  // ── Deduction types (owner, 2026-10-30: "Make sub categories for deductions column, e.g: Late, Advances, loan,
+  // IPD, etc to select by HR") ──────────────────────────────────────────────
+  // Per company, kept in the company's HR settings (settings.deductionTypes). HR adds, renames and switches types
+  // off; nothing is ever deleted (a payslip keeps the label and posting it was added with). The posting of a type
+  // already used on a payslip cannot change (409 DEDUCTION_TYPE_IN_USE).
+  const DED_LABEL = z.string().trim().min(1).max(40)
+  const DED_POSTING = z.enum(['recovery', 'deduction'])
+  const deductionTypeInUse = async (tenantId: string, key: string) =>
+    (await prisma.hrPayslip.count({ where: { tenantId, inputs: { path: ['deductionItems'], array_contains: [{ typeKey: key }] } } })) > 0
+
+  fastify.get('/deduction-types', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const s = await getSettings(activeTenant(req))
+    return { types: s.deductionTypes }
+  })
+
+  fastify.post('/deduction-types', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+    const tenantId = activeTenant(req)
+    const body = z.object({ label: DED_LABEL, posting: DED_POSTING }).parse(req.body)
+    const s = await getSettings(tenantId)
+    if (s.deductionTypes.some((t) => t.label.toLowerCase() === body.label.toLowerCase())) {
+      throw new AppError('DEDUCTION_TYPE_EXISTS', `There is already a deduction type called "${body.label}"`, 409)
+    }
+    if (s.deductionTypes.length >= 40) throw new AppError('TOO_MANY_TYPES', 'A company can have at most 40 deduction types', 409)
+    const slug = body.label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 20) || 'type'
+    const key = `${slug}_${randomBytes(3).toString('hex')}`
+    const type = { key, label: body.label, posting: body.posting, active: true }
+    await saveSettings(tenantId, { ...s, deductionTypes: [...s.deductionTypes, type] })
+    await audit({ category: 'identity', action: 'hr.deduction_type.create', entity: 'Setting', entityId: `hr.settings.${tenantId}`, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, after: type, metadata: { actorRole: req.staffUser!.role } })
+    return reply.status(201).send(type)
+  })
+
+  fastify.patch<{ Params: { key: string } }>('/deduction-types/:key', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
+    const tenantId = activeTenant(req)
+    const body = z.object({ label: DED_LABEL.optional(), posting: DED_POSTING.optional(), active: z.boolean().optional() }).strict().parse(req.body)
+    const s = await getSettings(tenantId)
+    const cur = s.deductionTypes.find((t) => t.key === req.params.key)
+    if (!cur) throw new NotFoundError('Deduction type', req.params.key)
+    if (body.label && s.deductionTypes.some((t) => t.key !== cur.key && t.label.toLowerCase() === body.label!.toLowerCase())) {
+      throw new AppError('DEDUCTION_TYPE_EXISTS', `There is already a deduction type called "${body.label}"`, 409)
+    }
+    if (body.posting && body.posting !== cur.posting && await deductionTypeInUse(tenantId, cur.key)) {
+      throw new AppError('DEDUCTION_TYPE_IN_USE', `"${cur.label}" is on a payslip already, so how it posts cannot change — switch it off and add a new type`, 409)
+    }
+    const next = { ...cur, ...(body.label && { label: body.label }), ...(body.posting && { posting: body.posting }), ...(body.active !== undefined && { active: body.active }) }
+    await saveSettings(tenantId, { ...s, deductionTypes: s.deductionTypes.map((t) => (t.key === cur.key ? next : t)) })
+    await audit({ category: 'identity', action: 'hr.deduction_type.update', entity: 'Setting', entityId: `hr.settings.${tenantId}`, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, before: cur, after: next, metadata: { actorRole: req.staffUser!.role } })
     return next
   })
 
@@ -2287,7 +2338,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
         where: { tenantId: rec.tenantId, ...(rec.employeeId && { employeeId: rec.employeeId }) },
         select: { inputs: true, run: { select: { period: true, status: true } } },
       })
-      const on = slips.find((sl) => (((sl.inputs as Record<string, unknown>)['loans'] as Array<{ loanId: string; cents: number }> | undefined) ?? [])
+      const on = slips.find((sl) => payslipLoanLines(sl.inputs)
         .some((l) => l.loanId === rec.id && l.cents > 0))
       if (on) {
         throw new AppError('ON_PAYROLL', `An installment of this loan is on the ${on.run.period} payroll (${on.run.status}) — take it off that payroll before cancelling the loan`, 409)
@@ -2709,7 +2760,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!run) throw new NotFoundError('Payroll', req.params.id)
     const slips = await prisma.hrPayslip.findMany({ where: { runId: run.id }, include: { employee: { select: { fullName: true, employeeCode: true, bankName: true, iban: true, paymentMethod: true, eobiNo: true } } }, orderBy: { employee: { employeeCode: 'asc' } } })
     const c = run.paidAt ? (await classificationsOfReferences(prisma, [run.tenantId], [`hr.payroll.payment:${run.id}`])).get(`hr.payroll.payment:${run.id}`) : undefined
-    return { run: { ...run, paymentClassification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }, payslips: slips }
+    // The run's company's deduction types, for HR's "Add deduction" picker (owner, 2026-10-30).
+    const deductionTypes = (await getSettings(run.tenantId)).deductionTypes
+    return { run: { ...run, paymentClassification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }, payslips: slips, deductionTypes }
   })
 
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/recalculate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -2731,13 +2784,33 @@ export async function hrRoutes(fastify: FastifyInstance) {
       earningAdjustmentsCents: z.number().int().min(0).optional(),
       deductionAdjustmentsCents: z.number().int().min(0).optional(),
       loanInstallmentsCents: z.number().int().min(0).optional(),
+      // Deductions by type (owner, 2026-10-30): REPLACES the payslip's list; omitted = keep. Each line is a type of
+      // the payslip's company (422 DEDUCTION_TYPE_UNKNOWN) — or an item already on it, by id.
+      deductionItems: z.array(z.object({
+        id: z.string().uuid().nullable().optional(),
+        typeKey: z.string().min(1).max(60),
+        amountCents: z.number().int().min(1).max(INT4_MAX_CENTS),
+        note: z.string().trim().max(200).nullable().optional(),
+      })).max(30).optional(),
     }).parse(req.body)
     const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, ...writeTenants(req) }, include: { run: { select: { id: true, tenantId: true, status: true, viaHeadOfficeId: true } } } })
     if (!slip) throw new NotFoundError('Payslip', req.params.id)
     if (isReachOnly(req, slip.run.tenantId)) await assertHoMayPropose(req, slip.run.tenantId, slip.run.status === 'draft', 'editing a payslip on a payroll that is no longer a draft')
+    if (slip.run.status !== 'draft') throw new AppError('RUN_NOT_DRAFT', 'This payroll is no longer a draft', 409)
     await stampRunVia(req, slip.run)
-    await recalcPayslip(slip.id, body, req.staffUser!.id)
-    return prisma.hrPayslip.findUnique({ where: { id: slip.id } })
+    const { deductionItems, ...plain } = body
+    const before = deductionItems ? ((slip.inputs ?? {}) as Record<string, unknown>)['deductionItems'] ?? [] : undefined
+    await recalcPayslip(slip.id, plain, req.staffUser!.id, deductionItems)
+    const updated = await prisma.hrPayslip.findUnique({ where: { id: slip.id } })
+    if (deductionItems) {
+      await audit({
+        category: 'identity', action: 'hr.payroll.deductions_set', entity: 'HrPayslip', entityId: slip.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: slip.run.tenantId,
+        before: { deductionItems: before }, after: { runId: slip.run.id, employeeId: slip.employeeId, deductionItems: ((updated?.inputs ?? {}) as Record<string, unknown>)['deductionItems'] ?? [] },
+        metadata: { actorRole: req.staffUser!.role },
+      })
+    }
+    return updated
   })
 
   // Overtime is opt-in (owner, 2026-10-21): approved OT is paid only when HR
@@ -2999,6 +3072,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!run) throw new NotFoundError('Payroll', req.params.id)
     const slips = await prisma.hrPayslip.findMany({ where: { runId: run.id }, include: { employee: true }, orderBy: { employee: { employeeCode: 'asc' } } })
     const kind = req.query.kind ?? 'register'
+    const s0 = await getSettings(run.tenantId)
     const r = (c: number) => (c / 100).toFixed(2)
     let rows: unknown[][]
     if (kind === 'bank') {
@@ -3006,20 +3080,33 @@ export async function hrRoutes(fastify: FastifyInstance) {
     } else if (kind === 'eobi') {
       rows = [['Employee ID', 'Name', 'CNIC', 'EOBI no.', 'Employee 1%', 'Employer 5%', 'Total'], ...slips.map((s) => [s.employee.employeeCode, s.employee.fullName, s.employee.cnic, s.employee.eobiNo, r(s.eobiEmployeeCents), r(s.eobiEmployerCents), r(s.eobiEmployeeCents + s.eobiEmployerCents)])]
     } else if (kind === 'deductions') {
-      rows = [['Employee ID', 'Name', 'Deduction', 'Amount'], ...slips.flatMap((s) => (s.lines as Array<{ kind: string; label: string; amountCents: number }>).filter((l) => l.kind === 'deduction').map((l) => [s.employee.employeeCode, s.employee.fullName, l.label, r(l.amountCents)]))]
+      // By type (owner, 2026-10-30): each line's deduction type, HR's note, and a total per type at the end.
+      const typeOf = (l: { code: string }) => dedTypeLabel(l.code, s0.deductionTypes)
+      type L = { kind: string; code: string; label: string; amountCents: number; note?: string | null }
+      const lines = slips.flatMap((sl) => (sl.lines as unknown as L[]).filter((l) => l.kind === 'deduction' && l.amountCents !== 0).map((l) => ({ sl, l })))
+      const byType = new Map<string, number>()
+      for (const { l } of lines) byType.set(typeOf(l), (byType.get(typeOf(l)) ?? 0) + l.amountCents)
+      rows = [['Employee ID', 'Name', 'Type', 'Deduction', 'Note', 'Amount'],
+        ...lines.map(({ sl, l }) => [sl.employee.employeeCode, sl.employee.fullName, typeOf(l), l.label, l.note ?? null, r(l.amountCents)]),
+        ...Array.from(byType).sort((a, b) => a[0].localeCompare(b[0])).map(([t, c]) => [null, `Total — ${t}`, t, null, null, r(c)])]
     } else {
       // The pay basis (HR-1): salary = monthly gross ÷ days in month × paid
       // days. Blank for a payslip from before the basis was kept.
       const basis = (inputs: unknown) => ((inputs as Record<string, unknown> | null)?.['payBasis'] ?? null) as { daysInMonth: number; paidDays: number; dailyRateCents: number; monthlyGrossCents: number } | null
-      rows = [['Employee ID', 'Name', 'Monthly gross', 'Days in month', 'Paid days', 'Per-day rate', 'Gross', 'Earnings', 'Deductions', 'EOBI employee', 'EOBI employer', 'Net'], ...slips.map((s) => {
+      // Deductions by type (owner, 2026-10-30): one column per type on this run, after the total.
+      type L = { kind: string; code: string; amountCents: number }
+      const typeOf = (l: L) => dedTypeLabel(l.code, s0.deductionTypes)
+      const dedCols = Array.from(new Set(slips.flatMap((sl) => (sl.lines as unknown as L[]).filter((l) => l.kind === 'deduction' && l.amountCents !== 0).map(typeOf)))).sort()
+      rows = [['Employee ID', 'Name', 'Monthly gross', 'Days in month', 'Paid days', 'Per-day rate', 'Gross', 'Earnings', 'Deductions', ...dedCols.map((c) => `Ded: ${c}`), 'EOBI employee', 'EOBI employer', 'Net'], ...slips.map((s) => {
         const b = basis(s.inputs)
-        return [s.employee.employeeCode, s.employee.fullName, b ? r(b.monthlyGrossCents) : null, b?.daysInMonth ?? null, b?.paidDays ?? null, b ? r(b.dailyRateCents) : null, r(s.grossCents), r(s.earningsCents), r(s.deductionsCents), r(s.eobiEmployeeCents), r(s.eobiEmployerCents), r(s.netCents)]
+        const per = dedCols.map((c) => r((s.lines as unknown as L[]).filter((l) => l.kind === 'deduction' && typeOf(l) === c).reduce((a, l) => a + l.amountCents, 0)))
+        return [s.employee.employeeCode, s.employee.fullName, b ? r(b.monthlyGrossCents) : null, b?.daysInMonth ?? null, b?.paidDays ?? null, b ? r(b.dailyRateCents) : null, r(s.grossCents), r(s.earningsCents), r(s.deductionsCents), ...per, r(s.eobiEmployeeCents), r(s.eobiEmployerCents), r(s.netCents)]
       })]
     }
     // ?format=xlsx|pdf: the same sheet through lib/reportExport.ts (CSV unchanged — the bank file stays CSV-exact).
     const head = rows[0] as string[]
     const MONEY = new Set(['Net pay', 'Employee 1%', 'Employer 5%', 'Total', 'Amount', 'Monthly gross', 'Per-day rate', 'Gross', 'Earnings', 'Deductions', 'EOBI employee', 'EOBI employer', 'Net'])
-    const types: ReportColumnType[] = head.map((h) => (MONEY.has(h) ? 'pkr' : h === 'Days in month' || h === 'Paid days' ? 'number' : 'text'))
+    const types: ReportColumnType[] = head.map((h) => (MONEY.has(h) || h.startsWith('Ded: ') ? 'pkr' : h === 'Days in month' || h === 'Paid days' ? 'number' : 'text'))
     const title = { register: 'Payroll register', bank: 'Payroll bank file', eobi: 'EOBI', deductions: 'Payroll deductions' }[kind] ?? `Payroll ${kind}`
     return sendReportFor(req, reply, exportFormatOf(req.query.format, 'csv')!, `payroll-${run.period}-${kind}`, {
       title: `${title} — ${run.period}`, period: `Pay period ${run.period}`, ...fromMatrix(head, rows.slice(1), types), csv: csv(rows),

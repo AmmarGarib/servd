@@ -26,7 +26,7 @@ import type { HrEmployee, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { buildXlsx, colName, type XlsxCell } from '../../lib/xlsxWriter.js'
-import { employeeLabelsAcross, managerLabelOf, getSettings, leaveBalancesFor, payableEmployees, STANDING_ATTENDANCE } from './service.js'
+import { employeeLabelsAcross, managerLabelOf, getSettings, leaveBalancesFor, payableEmployees, STANDING_ATTENDANCE, payslipLoanLines } from './service.js'
 import { attendanceInputs, daysInPeriod, inclusiveDays, leaveDaysWithin, periodOf, periodStart, periodEnd, pktToday, type HrSettings } from './logic.js'
 import { noPunchWorkingDays, punchOvertimeRows } from './attendanceDays.js'
 import type { HrField } from './forms.js'
@@ -400,7 +400,7 @@ async function attendanceLeaves(def: ReportDef, tenantIds: string[], q: ReportQu
 
 // ─── 4. Payroll Report ──────────────────────────────────────────────────────
 
-type Line = { kind: string; code: string; amountCents: number }
+type Line = { kind: string; code: string; amountCents: number; posting?: string }
 
 /**
  * Where a payslip line goes in Danish's sheet. Earnings with no column of
@@ -470,7 +470,9 @@ async function payrollReport(def: ReportDef, tenantIds: string[], q: ReportQuery
         else if (col === 'OT Amount') c.ot += amt
         else c.arrears += amt
       } else if (l.kind === 'deduction') {
-        if (l.code === 'loan') loanLine += amt
+        // A typed recovery (advance / loan, owner 2026-10-30) is a loan recovery; a typed "Late" sits with lates.
+        if (l.code === 'loan' || (l.code.startsWith('ded:') && l.posting === 'recovery')) loanLine += amt
+        else if (l.code === 'ded:late') c.late += amt
         else if (DED_COL[l.code] === 'Late Deduction') c.late += amt
         else if (DED_COL[l.code] === 'Unpaid Leave Ded.') c.unpaid += amt
         else if (DED_COL[l.code] === 'Income Tax') c.tax += amt
@@ -514,10 +516,8 @@ const paidDaysOf = (inputs: unknown): number | null => {
   return b && typeof b.paidDays === 'number' ? b.paidDays : null
 }
 
-const loanLinesOf = (inputs: unknown): Array<{ loanId: string; cents: number }> => {
-  const v = (inputs as Record<string, unknown> | null)?.['loans']
-  return Array.isArray(v) ? (v as Array<{ loanId: string; cents: number }>).filter((l) => l && typeof l.loanId === 'string' && typeof l.cents === 'number') : []
-}
+// Installments AND typed recoveries (service.ts payslipLoanLines, the one reading).
+const loanLinesOf = payslipLoanLines
 
 // ─── Entry points ───────────────────────────────────────────────────────────
 

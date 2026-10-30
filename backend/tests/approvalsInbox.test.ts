@@ -255,7 +255,7 @@ describe('two companies', () => {
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
-      'bad_debt', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
+      'bad_debt', 'cash_request_finance', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
       'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_brand_move', 'stock_transfer', 'storefront_publish', 'tip_pool',
       // Wage changes at the CEO's step (owner, 2026-10-27) read the same /hr/approvals queue: listed, none waiting.
       'wage_change',
@@ -264,7 +264,11 @@ describe('two companies', () => {
     ])
     expect(countOf(body, 'wage_change')).toBe(0)
     expect(countOf(body, 'work_pin')).toBe(0)
-    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'payroll_finance_review', 'tip_pool', 'stock_transfer', 'cash_voucher',
+    // Owner, 2026-10-30: only what is at the CEO's step. Finance's payroll review and a manager's stock
+    // transfer are listed (the CEO may be their stranded approver) but none is waiting on the CEO: company A
+    // has a finance login and managers.
+    for (const t of ['payroll_finance_review', 'stock_transfer', 'cash_request_finance']) expect(countOf(body, t), t).toBe(0)
+    for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'cash_voucher',
       'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'on_account_client']) {
       expect(countOf(body, t), t).toBe(1)
       expect(body.items.find((i) => i.type === t)?.id, t).toBe(ids.A[t])
@@ -293,7 +297,10 @@ describe('two companies', () => {
     expect(countOf(one, 'cash_voucher')).toBe(1)
     const both = (await counts('ceoBoth', { 'x-servd-portfolio': '1' })).json() as Inbox
     expect(countOf(both, 'purchase_order')).toBe(2)
-    expect(countOf(both, 'stock_transfer')).toBe(2)
+    // Each company's managers decide its transfers (owner, 2026-10-30): never in the CEO's tab.
+    expect(countOf(both, 'stock_transfer')).toBe(0)
+    // Company B has no finance login: its payroll review is stranded → the CEO's; A's is finance's.
+    expect(countOf(both, 'payroll_finance_review')).toBe(1)
     expect(countOf(both, 'cash_voucher')).toBe(2)
     expect(both.total).toBeGreaterThan(one.total)
     // /counts carries no items.

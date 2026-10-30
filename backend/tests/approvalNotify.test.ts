@@ -171,7 +171,8 @@ describe('approval.waiting recipients (approverIdsFor)', () => {
     const v = await mkVoucher('submitted', 1)
     const f = (await R.approverIdsFor('cash_request_finance', v.id))!
     expect(sorted(f.userIds)).toEqual(ids('finA', 'prep'))
-    expect(sorted(f.userIds)).toEqual(await parity('cash_request_finance', v.id))
+    // Parity minus the CEO: the CEO may approve finance's step but is only told when no finance login can (owner, 2026-10-30).
+    expect(sorted(f.userIds)).toEqual((await parity('cash_request_finance', v.id)).filter((x) => x !== id('ceoA')))
     expect(await N.sendApprovalWaiting('cash_request_finance', v.id, 'r0', id('staff'))).toBe(2)
     expect((await notes(id('finA'), v.id))[0]!.title).toMatch(/needs finance approval/)
     await prisma.cashVoucher.update({ where: { id: v.id }, data: { status: 'finance_approved' } })

@@ -147,6 +147,16 @@ export interface ApprovalRight {
   roles: readonly string[]
   /** The module decides per item (HR steps, the cash request HOD) — no role list. */
   perItem?: boolean
+  /**
+   * Roles in `roles` the approve route admits only as an OVERRIDE of someone
+   * else's step (owner, 2026-10-30: "The CEO's Approval tab should display only
+   * those requests that have been specifically forwarded to the CEO"). Such an
+   * item is theirs to SEE — inbox, counts, bell — only when it is at their end
+   * (section ceo, item CEO-only, no company, came through a head office) or
+   * nobody else may decide it (stranded): `atOverrideEnd` / `ceoMustSee`.
+   * Their approve route still admits them.
+   */
+  overrideRoles?: readonly string[]
   /** May the section be handed to a delegate for this type? */
   delegable: boolean
   /** A delegate must also hold this module. */
@@ -199,7 +209,7 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // role finance holding 'accounting' (the route's guard), or the CEO; never by whoever created, prepared or sent
     // the run. Then the run waits as payroll_run for the approver. Never handed over.
     label: 'Payroll — finance review', section: 'finance', queueModule: 'accounting', roles: ['finance', 'admin'],
-    delegable: false, mustHoldModule: null, ownership: 'company',
+    overrideRoles: ['admin'], delegable: false, mustHoldModule: null, ownership: 'company',
   },
   tip_pool: {
     label: 'Tip pools', section: 'finance', queueModule: 'payroll', roles: APPROVERS,
@@ -207,7 +217,8 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
   },
   stock_transfer: {
     label: 'Stock transfers', section: 'operations', queueModule: 'inventory', roles: MANAGERS,
-    delegable: false, mustHoldModule: null, ownership: 'company', exemptThroughHeadOffice: true,
+    // The company's managers decide; the CEO only when no manager can (Q7).
+    overrideRoles: ['admin'], delegable: false, mustHoldModule: null, ownership: 'company', exemptThroughHeadOffice: true,
   },
   cash_voucher: {
     label: 'Cash requests', section: 'ceo', queueModule: 'accounting', roles: ADMIN_ONLY,
@@ -246,9 +257,10 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
   cash_request_finance: {
     // Finance's approval of a cash voucher (POST /trustops/cash-vouchers/:id/finance-approve): role finance holding
     // the accounting module (the CEO may also act, but then never gives the final approval on the same voucher —
-    // the CEO's own step is cash_voucher). Never handed over.
-    label: 'Cash vouchers — finance approval', section: 'finance', queueModule: 'accounting', roles: ['finance'],
-    delegable: false, mustHoldModule: null, ownership: 'company',
+    // the CEO's own step is cash_voucher). Never handed over. The CEO sees it only when no finance login can
+    // approve it (owner, 2026-10-30).
+    label: 'Cash vouchers — finance approval', section: 'finance', queueModule: 'accounting', roles: ['finance', 'admin'],
+    overrideRoles: ['admin'], delegable: false, mustHoldModule: null, ownership: 'company',
   },
   stock_difference: {
     label: 'Stock differences', section: 'ceo', queueModule: 'accounting', roles: ADMIN_ONLY,
@@ -1352,6 +1364,68 @@ async function delegatesNaming(type: ApprovalType): Promise<string[]> {
   return uniq((await allLiveDelegations()).filter((d) => d.types.includes(type)).map((d) => d.delegateUserId))
 }
 
+/** Is the CEO only an OVERRIDE approver of this type (APPROVAL_RIGHTS.overrideRoles)? */
+export function adminIsOverride(type: string): boolean {
+  return isApprovalType(type) && (APPROVAL_RIGHTS[type].overrideRoles ?? []).includes('admin')
+}
+
+export interface CeoSeeItem {
+  tenantId: string | null
+  submittedByIds?: Array<string | null | undefined>
+  viaHeadOfficeId?: string | null
+  submittedAt?: Date | string | null
+}
+
+/**
+ * The approvals inbox's rule for the CEO (owner, 2026-10-30: "Items pending
+ * review or approval with Finance or any other designated user should not
+ * appear in the CEO's Approval tab … Each request should appear exclusively
+ * in the Approval tab of the user currently responsible"). For a type whose
+ * CEO is only an override (adminIsOverride: payroll_finance_review,
+ * cash_request_finance, stock_transfer), the CEO sees an item only when it is
+ * at the CEO's end — section ceo, no company, came through a head office
+ * (A3) — or when NOBODY else may decide it (stranded): no active login of the
+ * type's designated roles (roles − overrideRoles), member of the item's
+ * company, holding the queue module, who is not among its submitters. Every
+ * other type: true. The bell's approverIdsFor applies the same rule
+ * (byRole = the designated approvers decideApproval admits). Batched: one
+ * user query, one module check per user, one head-office lookup.
+ */
+export async function ceoMustSee(type: string, items: readonly CeoSeeItem[]): Promise<boolean[]> {
+  if (!adminIsOverride(type)) return items.map(() => true)
+  const r = APPROVAL_RIGHTS[type as ApprovalType]
+  const out = items.map((i) => i.tenantId === null || sectionOf(type, { tenantId: i.tenantId }) === 'ceo')
+  const open = items.map((i, n) => (out[n] ? -1 : n)).filter((n) => n >= 0)
+  if (open.length === 0) return out
+  if (!r.exemptThroughHeadOffice) {
+    const through = await throughHeadOfficeBatch(open.map((n) => ({
+      tenantId: items[n]!.tenantId, submittedByIds: items[n]!.submittedByIds ?? [], viaHeadOfficeId: items[n]!.viaHeadOfficeId ?? null,
+      submittedAt: items[n]!.submittedAt ?? null,
+    })))
+    open.forEach((n, k) => { if ((through[k] ?? []).length > 0) out[n] = true })
+  }
+  const pending = open.filter((n) => !out[n])
+  if (pending.length === 0) return out
+  const designated = (r.roles as readonly string[]).filter((x) => !(r.overrideRoles ?? []).includes(x))
+  const companies = uniq(pending.map((n) => items[n]!.tenantId!))
+  const users = designated.length === 0 ? [] : await serviceClient.user.findMany({
+    where: {
+      isActive: true, accountStatus: 'active', deletedAt: null, role: { in: designated as never[] },
+      OR: [{ tenantId: { in: companies } }, { tenantMemberships: { some: { tenantId: { in: companies } } } }],
+    },
+    select: { id: true, tenantId: true, tenantMemberships: { select: { tenantId: true } } },
+  })
+  const listing = await holdingModule(users.map((u) => u.id), r.queueModule)
+  const approvers = users.filter((u) => listing.has(u.id))
+    .map((u) => ({ id: u.id, members: new Set(clean([u.tenantId, ...u.tenantMemberships.map((m) => m.tenantId)])) }))
+  for (const n of pending) {
+    const i = items[n]!
+    const submitters = new Set(clean(i.submittedByIds ?? []))
+    out[n] = !approvers.some((a) => a.members.has(i.tenantId!) && !submitters.has(a.id))
+  }
+  return out
+}
+
 /**
  * Every active login who may decide this item NOW and whose inbox would list
  * it — the bell's "approval.waiting" recipients. Null when the item is gone
@@ -1391,7 +1465,9 @@ export async function approverIdsFor(type: ApprovalType, id: string): Promise<{ 
       ? await throughHeadOfficeIds({ tenantId: input.tenantId, submittedByIds: input.submittedByIds, submittedAt: input.submittedAt, viaHeadOfficeId: input.viaHeadOfficeId })
       : []
     const ceoEnd = section === 'ceo' || !!input.ceoOnly || input.tenantId === null || through.length > 0
-    const keepCeo = ceoEnd || byRole.length === 0 || byDelegation.length > 0
+    // The CEO's role path is one of the item's designated approvers (payroll_run, recipe, tip_pool, the ADMIN_ONLY
+    // types) unless 'admin' is an override role of the type (atOverrideEnd — the inbox's ceoMustSee is the same rule).
+    const keepCeo = ceoEnd || !adminIsOverride(type) || byRole.length === 0 || byDelegation.length > 0
     return { subject: s, userIds: uniq([...(keepCeo ? admins : []), ...byRole, ...byDelegation]) }
   })
 }

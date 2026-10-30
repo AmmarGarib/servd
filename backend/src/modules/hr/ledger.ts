@@ -4,7 +4,10 @@
 //   lock     Dr wages (by department) + employer EOBI/SESSI
 //            Cr wages payable 2020 (net), salary tax 2042, EOBI 2043
 //               (employee + employer), SESSI/PESSI 2044, staff loans 1350
-//               (installments recovered)
+//               (installments recovered, and typed `recovery` deductions)
+//            Typed deductions HR adds (`ded:<typeKey>`, owner 2026-10-30): a
+//            `deduction` type nets off the wages debit like 'other'; a
+//            `recovery` type (advance / loan) credits 1350 like the installment.
 //   paid     Dr wages payable / Cr the safe (cash slips) and the bank picked
 //            (bank and cheque slips), on the day it was paid
 //   loan     Dr staff loans / Cr the bank or the safe it was paid from — when
@@ -58,10 +61,17 @@ async function assertLineAccounts(tx: Tx, tenantId: string, lines: JournalLineIn
 export const FNF_ACCRUAL = 'hr.final_settlement.accrual'
 export const FNF_PAYMENT = 'hr.final_settlement.payment'
 
-interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; amountCents: number }
+interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; amountCents: number; posting?: 'recovery' | 'deduction' }
 
 /** Deductions that are pay not earned, rather than money withheld for someone. */
 const PAY_REDUCING = new Set(['absence', 'unpaid_leave', 'late', 'other'])
+
+/** A deduction HR added by type (code `ded:<typeKey>`, owner 2026-10-30). */
+const isTyped = (l: Line) => l.kind === 'deduction' && l.code.startsWith('ded:')
+/** Pay not earned: nets off the wages expense (the old 'other' line's posting) — typed `deduction` lines included. */
+export const isPayReducing = (l: Line) => l.kind === 'deduction' && (PAY_REDUCING.has(l.code) || (isTyped(l) && l.posting !== 'recovery'))
+/** Recovered from the employee's loans / advances: credits Staff loans 1350 — the installment and typed `recovery` lines. */
+export const isLoanRecovery = (l: Line) => l.kind === 'deduction' && (l.code === 'loan' || (isTyped(l) && l.posting === 'recovery'))
 
 /** Which wages account a department's pay lands on. Unknown → front of house. */
 export function wageAccountFor(department: string | null | undefined): string {
@@ -96,7 +106,7 @@ export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string
     const lines = s.lines as unknown as Line[]
     const sum = (f: (l: Line) => boolean) => lines.filter(f).reduce((a, l) => a + l.amountCents, 0)
     const wages = wageAccountFor(s.employee.departmentId ? deptName.get(s.employee.departmentId) : null)
-    const earned = sum((l) => l.kind === 'earning') - sum((l) => l.kind === 'deduction' && PAY_REDUCING.has(l.code))
+    const earned = sum((l) => l.kind === 'earning') - sum(isPayReducing)
     const employer = sum((l) => l.kind === 'employer')
     const eobiEmployer = sum((l) => l.kind === 'employer' && l.code === 'eobi_employer')
     add(wages, earned + employer)
@@ -104,7 +114,7 @@ export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string
     // Every other employer contribution a payslip carries is SESSI / PESSI.
     add(SOCIAL_SECURITY_PAYABLE, -(employer - eobiEmployer))
     add(SALARY_TAX_PAYABLE, -sum((l) => l.code === 'tax'))
-    add(STAFF_LOANS, -sum((l) => l.code === 'loan'))
+    add(STAFF_LOANS, -sum(isLoanRecovery))
     add(ACCT.WAGES_PAYABLE, -s.netCents)
   }
   const drift = Array.from(signed.values()).reduce((a, v) => a + v, 0)
@@ -164,10 +174,10 @@ export async function payrollRunShares(tx: Tx, runId: string): Promise<{ accrual
     const lines = s.lines as unknown as Line[]
     const sum = (f: (l: Line) => boolean) => lines.filter(f).reduce((a, l) => a + l.amountCents, 0)
     const wages = wageAccountFor(s.employee.departmentId ? deptName.get(s.employee.departmentId) : null)
-    const earned = sum((l) => l.kind === 'earning') - sum((l) => l.kind === 'deduction' && PAY_REDUCING.has(l.code))
+    const earned = sum((l) => l.kind === 'earning') - sum(isPayReducing)
     share(accrual, wages, 'debit', s.employeeId, earned + sum((l) => l.kind === 'employer'))
     share(accrual, ACCT.WAGES_PAYABLE, 'credit', s.employeeId, s.netCents)
-    share(accrual, STAFF_LOANS, 'credit', s.employeeId, sum((l) => l.code === 'loan'))
+    share(accrual, STAFF_LOANS, 'credit', s.employeeId, sum(isLoanRecovery))
     share(payment, ACCT.WAGES_PAYABLE, 'debit', s.employeeId, s.netCents)
   }
   return { accrual, payment }

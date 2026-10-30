@@ -14,12 +14,18 @@ import { card, btn, btnGhost, btnDanger, inp, rs, human, day, localDate, STATUS_
 import { HrShell, Modal, Stat, useHrAccess } from '../../../../components/hr/HrShell'
 import { BankAccountSelect } from '../../../../components/finance/BankAccountSelect'
 import { NumberField } from '@/components/ui/NumberField'
+import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { OvertimePicker, otAvailableOf, otSummary } from '../../../../components/hr/OvertimePicker'
 import { NavIcon } from '../../../../components/ui/NavIcon'
 
-interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number }
+interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number; posting?: 'recovery' | 'deduction'; note?: string | null }
+/** A company's deduction type (backend hr/logic.ts DeductionType; owner, 2026-10-30). */
+interface DeductionType { key: string; label: string; posting: 'recovery' | 'deduction'; active: boolean }
+/** A deduction HR added to a payslip by type (inputs.deductionItems). */
+interface DeductionItem { id?: string; typeKey: string; label: string; posting: 'recovery' | 'deduction'; amountCents: number; note?: string | null }
+const deductionItemsOf = (s: Slip): DeductionItem[] => (Array.isArray(s.inputs['deductionItems']) ? s.inputs['deductionItems'] as DeductionItem[] : [])
 /** How the salary was worked out (backend hr/logic.ts PayBasis, owner HR-1):
  *  monthly gross ÷ days in month × paid days. Absent on payslips from before. */
 interface PayBasis { daysInMonth: number; employedDays: number; absentDays: number; unpaidLeaveDays: number; paidDays: number; dailyRateCents: number; monthlyGrossCents: number }
@@ -47,6 +53,7 @@ interface Detail {
     totals: Record<string, number | string[] | RunPayment>
   }
   payslips: Slip[]
+  deductionTypes?: DeductionType[]
 }
 
 /** The run's status in plain words. */
@@ -65,6 +72,12 @@ const fullGrossOf = (s: Slip) => {
   return monthly + (s.earningsCents - salaryEarnedOf(s))
 }
 const tableDeductionsOf = (s: Slip) => fullGrossOf(s) - taxOf(s) - s.eobiEmployeeCents - s.netCents
+/** What makes up the Deductions cell, by type: the days not paid, then each deduction line (not tax or EOBI). */
+const deductionBreakdown = (s: Slip): Array<{ label: string; cents: number }> => {
+  const lines = s.lines.filter((l) => l.kind === 'deduction' && l.code !== 'tax' && l.code !== 'eobi_employee' && l.amountCents !== 0)
+  const daysNotPaid = tableDeductionsOf(s) - lines.reduce((a, l) => a + l.amountCents, 0)
+  return [...(daysNotPaid !== 0 ? [{ label: 'Days not paid', cents: daysNotPaid }] : []), ...lines.map((l) => ({ label: l.label, cents: l.amountCents }))]
+}
 
 /** Cash staff are paid from the safe; bank and cheque staff from the bank —
  *  by the method snapshotted when the month was calculated. */
@@ -84,7 +97,7 @@ function otCell(s: Slip): string {
 const INPUTS: Array<[string, string, boolean]> = [
   ['absentDays', 'Absent days', false], ['unpaidLeaveDays', 'Unpaid leave days', false], ['lateCount', 'Lates', false],
   ['otHours', 'OT hours (prices the OT amount)', false], ['otCents', 'OT amount', true], ['earningAdjustmentsCents', 'Bonuses & allowances', true],
-  ['deductionAdjustmentsCents', 'Other deductions', true], ['loanInstallmentsCents', 'Loan installment', true],
+  ['deductionAdjustmentsCents', 'Other deductions (no type)', true], ['loanInstallmentsCents', 'Loan installment', true],
 ]
 
 export default function PayrollRunPage() {
@@ -240,7 +253,10 @@ export default function PayrollRunPage() {
                           : rs(taxOf(s))}
                         {typeof s.inputs['taxOverrideCents'] === 'number' && <span className="ml-1 text-[10px] text-white/40">set by finance</span>}
                       </td>
-                      <td className="px-4 py-3 text-white/70" title="Salary not paid for days absent, on unpaid leave or not employed, plus lates, loans and other deductions">{rs(tableDeductionsOf(s))}</td>
+                      <td className="px-4 py-3 text-white/70" title={deductionBreakdown(s).map((b) => `${b.label}: ${rs(b.cents)}`).join('\n') || 'No deductions'}>
+                        {rs(tableDeductionsOf(s))}
+                        {deductionItemsOf(s).length > 0 && <p className="text-[10px] text-white/40 max-w-[12rem] truncate">{deductionItemsOf(s).map((d) => d.label).join(' · ')}</p>}
+                      </td>
                       <td className="px-4 py-3 text-white/70">{rs(s.eobiEmployeeCents)}</td>
                       <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-s-amber" title={w.join('\n')}><NavIcon name="warn" size={13} className="inline" /></span>}</td>
                       <td className="pl-4 pr-6 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditingId(s.id)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
@@ -252,7 +268,7 @@ export default function PayrollRunPage() {
           </div>
         </div>
       )}
-      {editing && run && <SlipModal key={`${editing.id}:${((editing.inputs['otRecordIds'] as string[] | undefined) ?? []).join(',')}:${Number(editing.inputs['otCents'] ?? 0)}`} slip={editing} period={run.period} draft={run.status === 'draft'} onClose={() => setEditingId(null)} />}
+      {editing && run && <SlipModal key={`${editing.id}:${((editing.inputs['otRecordIds'] as string[] | undefined) ?? []).join(',')}:${Number(editing.inputs['otCents'] ?? 0)}`} slip={editing} period={run.period} draft={run.status === 'draft'} types={data?.deductionTypes ?? []} onClose={() => setEditingId(null)} />}
       {returning && run && <ReturnModal runId={run.id} period={run.period} onClose={() => setReturning(false)} />}
       {taxSlip && run && <TaxModal slip={taxSlip} period={run.period} onClose={() => setTaxSlipId(null)} />}
       {paying && run && data && <PayRunModal runId={run.id} tenantId={run.tenantId} period={run.period} slips={data.payslips} onClose={() => setPaying(false)} />}
@@ -370,19 +386,39 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
   )
 }
 
-function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: string; draft: boolean; onClose: () => void }) {
+function SlipModal({ slip, period, draft, types, onClose }: { slip: Slip; period: string; draft: boolean; types: DeductionType[]; onClose: () => void }) {
   const qc = useQueryClient()
   const initial = Object.fromEntries(INPUTS.map(([k]) => [k, Number(slip.inputs[k] ?? 0)])) as Record<string, number>
   const basis = basisOf(slip)
   // null = the box was emptied. It is never turned into 0 behind the user's back.
   const [vals, setVals] = useState<Record<string, number | null>>(initial)
   const [err, setErr] = useState('')
+  // Deductions by type (owner, 2026-10-30): HR picks a type, an amount and an optional note; several lines allowed.
+  const initialItems = deductionItemsOf(slip)
+  const [items, setItems] = useState<DeductionItem[]>(initialItems)
+  const activeTypes = types.filter((t) => t.active)
+  const [newType, setNewType] = useState(activeTypes[0]?.key ?? '')
+  const [newAmount, setNewAmount] = useState<number | null>(null)
+  const [newNote, setNewNote] = useState('')
+  const itemsKey = (xs: DeductionItem[]) => JSON.stringify(xs.map((d) => [d.id ?? null, d.typeKey, d.amountCents, d.note ?? '']))
+  const itemsChanged = itemsKey(items) !== itemsKey(initialItems)
+  const addItem = () => {
+    const t = activeTypes.find((x) => x.key === newType)
+    if (!t) { setErr('Pick a deduction type.'); return }
+    if (newAmount == null || newAmount <= 0) { setErr('Type the deduction amount.'); return }
+    setErr('')
+    setItems([...items, { typeKey: t.key, label: t.label, posting: t.posting, amountCents: Math.round(newAmount * 100), note: newNote.trim() || null }])
+    setNewAmount(null); setNewNote('')
+  }
   const changed = Object.entries(vals).filter(([k, v]) => v !== initial[k])
   const emptied = INPUTS.filter(([k]) => vals[k] == null)
   // Only what was changed: new OT hours are priced at the OT rate unless the
   // amount was changed too, and an untouched loan total keeps its split.
   const save = useMutation({
-    mutationFn: () => api.patch(`/hr/payroll/payslips/${slip.id}`, Object.fromEntries(changed)),
+    mutationFn: () => api.patch(`/hr/payroll/payslips/${slip.id}`, {
+      ...Object.fromEntries(changed),
+      ...(itemsChanged && { deductionItems: items.map((d) => ({ id: d.id ?? null, typeKey: d.typeKey, amountCents: d.amountCents, note: d.note ?? null })) }),
+    }),
     onSuccess: () => { void qc.invalidateQueries(); onClose() },
     onError: (e: Error) => setErr(e.message),
   })
@@ -401,18 +437,19 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
     save.mutate()
   }
   const print = () => {
-    const row = (l: Line) => `<tr><td>${l.label}</td><td style="text-align:right">${rs(l.amountCents)}</td></tr>`
+    const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const row = (l: Line) => `<tr><td>${esc(l.label)}${l.note ? ` <span style="color:#666">— ${esc(l.note)}</span>` : ''}</td><td style="text-align:right">${rs(l.amountCents)}</td></tr>`
     const html = `<h2>Payslip — ${period}</h2><p><strong>${slip.employee.fullName}</strong> (${slip.employee.employeeCode})</p>${basis ? `<p>Salary = ${rs(basis.monthlyGrossCents)} ÷ ${basis.daysInMonth} days × ${basis.paidDays} paid days (per-day rate ${rs(basis.dailyRateCents)})</p>` : ''}
       <h4>Earnings</h4><table>${slip.lines.filter((l) => l.kind === 'earning').map(row).join('')}</table>
       <h4>Deductions</h4><table>${slip.lines.filter((l) => l.kind === 'deduction').map(row).join('')}</table>
       <p><strong>Net pay: ${rs(slip.netCents)}</strong></p>
       <p style="font-size:12px;color:#666">Employer contributions: ${slip.lines.filter((l) => l.kind === 'employer').map((l) => `${l.label} ${rs(l.amountCents)}`).join(', ') || 'none'}</p>`
     const w = window.open('', '_blank'); if (!w) return
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Payslip</title><style>body{font-family:system-ui;max-width:600px;margin:40px auto;color:#111}table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid #eee}</style></head><body>${html.replace(/<(?!\/?(h2|h4|p|strong|table|tr|td)\b)/g, '&lt;')}</body></html>`)
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Payslip</title><style>body{font-family:system-ui;max-width:600px;margin:40px auto;color:#111}table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid #eee}</style></head><body>${html.replace(/<(?!\/?(h2|h4|p|strong|table|tr|td|span)\b)/g, '&lt;')}</body></html>`)
     w.document.close(); setTimeout(() => w.print(), 300)
   }
   return (
-    <Modal title={`${slip.employee.fullName} — ${period}`} wide onClose={onClose} dirty={draft && changed.length > 0}>
+    <Modal title={`${slip.employee.fullName} — ${period}`} wide onClose={onClose} dirty={draft && (changed.length > 0 || itemsChanged)}>
       <form onSubmit={submit} noValidate className="grid md:grid-cols-2 gap-5">
         <div>
           <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-2">Payslip</p>
@@ -425,7 +462,7 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
           )}
           {slip.lines.map((l) => (
             <div key={l.code + l.label} className="flex justify-between text-sm py-1 border-b border-white/[0.04]">
-              <span style={{ color: l.kind === 'deduction' ? 'var(--erp-danger)' : l.kind === 'employer' ? 'rgb(var(--fg-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.8)' }}>{l.label}</span>
+              <span className="min-w-0 break-words" style={{ color: l.kind === 'deduction' ? 'var(--erp-danger)' : l.kind === 'employer' ? 'rgb(var(--fg-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.8)' }}>{l.label}{l.note ? <span className="text-white/40"> — {l.note}</span> : null}</span>
               <span className="text-white/85">{l.kind === 'deduction' ? '−' : ''}{rs(l.amountCents)}</span>
             </div>
           ))}
@@ -447,9 +484,43 @@ function SlipModal({ slip, period, draft, onClose }: { slip: Slip; period: strin
               </label>
             ))}
           </div>
+          <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mt-4 mb-2">Deductions by type</p>
+          {items.length === 0 && <p className="text-xs text-white/40">None added.</p>}
+          <ul className="space-y-1">
+            {items.map((d, i) => (
+              <li key={`${d.id ?? 'new'}-${i}`} className="flex items-center gap-2 text-sm py-1 border-b border-white/[0.04]">
+                <span className="min-w-0 flex-1 break-words text-white/80">
+                  {d.typeKey === 'late' ? `${d.label} (added by HR)` : d.label}
+                  <span className="text-[10px] text-white/40"> · {d.posting === 'recovery' ? 'recovered from loans / advances' : 'deducted from pay'}</span>
+                  {d.note ? <span className="block text-[11px] text-white/45">{d.note}</span> : null}
+                </span>
+                <span className="text-white/85 whitespace-nowrap">−{rs(d.amountCents)}</span>
+                {draft && <button type="button" className="text-xs font-bold text-s-red [@media(pointer:coarse)]:min-h-[44px] px-1" aria-label={`Remove ${d.label} ${rs(d.amountCents)}`} onClick={() => setItems(items.filter((_, j) => j !== i))}>Remove</button>}
+              </li>
+            ))}
+          </ul>
+          {draft && (activeTypes.length === 0
+            ? <p className="text-xs text-white/40 mt-2">No deduction types are switched on — add them in HR → Settings.</p>
+            : (
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <label className="text-[11px] text-white/50">Type
+                  <Select className={`${inp} mt-1`} value={newType} onChange={(e) => setNewType(e.target.value)}>
+                    {activeTypes.map((t) => <option key={t.key} value={t.key}>{t.label}{t.key === 'late' ? ' (extra, on top of lates)' : ''}</option>)}
+                  </Select>
+                </label>
+                <label className="text-[11px] text-white/50">Amount
+                  <NumberField className={`${inp} mt-1`} decimals={2} min={0} value={newAmount} onValueChange={(n) => setNewAmount(n)} />
+                </label>
+                <label className="text-[11px] text-white/50 col-span-2">Note (optional)
+                  <input className={`${inp} mt-1`} maxLength={200} value={newNote} onChange={(e) => setNewNote(e.target.value)} />
+                </label>
+                <button type="button" className={`${btnGhost} col-span-2 justify-self-start`} onClick={addItem}>Add deduction</button>
+              </div>
+            ))}
+          {draft && <p className="text-[11px] text-white/40 mt-1">Advances and loans are recovered from the employee&rsquo;s open loans / advances. A &ldquo;Late coming&rdquo; deduction here is an extra amount on top of the lates the payroll works out itself.</p>}
           {err && <p className="text-xs text-s-red mt-2" role="alert">{err}</p>}
-          {draft && <button type="submit" className={`${btn} mt-3`} disabled={save.isPending || changed.length === 0}>{save.isPending ? 'Recalculating…' : 'Recalculate this payslip'}</button>}
-          <p className="text-xs text-white/55 mt-2">Changing the OT hours prices the OT amount at the employee&rsquo;s OT rate; change the amount too to set it by hand. Prefilled from attendance, approved leave, adjustments and loans; overtime is paid only when you add it above. “Recalculate from records” on the run replaces any edits.</p>
+          {draft && <button type="submit" className={`${btn} mt-3`} disabled={save.isPending || (changed.length === 0 && !itemsChanged)}>{save.isPending ? 'Recalculating…' : 'Recalculate this payslip'}</button>}
+          <p className="text-xs text-white/55 mt-2">Changing the OT hours prices the OT amount at the employee&rsquo;s OT rate; change the amount too to set it by hand. Prefilled from attendance, approved leave, adjustments and loans; overtime is paid only when you add it above. “Recalculate from records” on the run replaces any edits — except deductions added by type, added overtime and finance&rsquo;s tax.</p>
         </div>
       </form>
     </Modal>

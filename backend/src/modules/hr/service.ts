@@ -2,6 +2,7 @@
 // payroll runs, the dashboard. The arithmetic lives in logic.ts; this file
 // fetches the numbers and puts the results back.
 
+import { randomUUID } from 'node:crypto'
 import type { Prisma, PrismaClient, HrEmployee, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
@@ -12,7 +13,7 @@ import {
   CEO_STEP,
 } from './forms.js'
 import {
-  mergeSettings, type HrSettings, type PayrollInputs, EMPTY_INPUTS,
+  mergeSettings, type HrSettings, type PayrollInputs, EMPTY_INPUTS, deductionItemsOf, allocateRecoveries, type DeductionItem,
   computePayslip, overtimeCents, otMultiplierFor, hourlyRateCents, periodStart, periodEnd, periodOf, pktToday,
   leaveYear, leaveBalance, leaveQuantity, leaveDaysWithin, leaveYearsBetween, carriedForwardDays, attendanceInputs,
   loanInstallmentCents, allocateLoanCents, isDueWithin, salaryInForce, EOBI_NOT_CALCULATED, settledFromPeriod, settlementParts,
@@ -587,7 +588,14 @@ export async function checkLeave(tenantId: string, rec: { employeeId: string | n
 // ─── Loans ──────────────────────────────────────────────────────────────────
 
 type LoanLine = { loanId: string; cents: number }
-const loanLinesOf = (inputs: unknown): LoanLine[] => ((inputs as Record<string, unknown> | null)?.['loans'] as LoanLine[] | undefined) ?? []
+/** Every loan recovery a payslip makes: the installment split (inputs.loans) plus each typed recovery deduction's
+ *  split (inputs.deductionItems[].loans, owner 2026-10-30) — the ONE reading of what a payslip takes off loans. */
+export const payslipLoanLines = (inputs: unknown): LoanLine[] => {
+  const base = ((inputs as Record<string, unknown> | null)?.['loans'] as LoanLine[] | undefined) ?? []
+  const typed = deductionItemsOf(inputs).filter((d) => d.posting === 'recovery').flatMap((d) => d.loans ?? [])
+  return [...base, ...typed].filter((l) => l && typeof l.loanId === 'string' && typeof l.cents === 'number')
+}
+const loanLinesOf = payslipLoanLines
 
 /** Every payroll run status — a payslip on any of them has claimed its installment. */
 export const ALL_RUN_STATUSES = ['draft', 'finance_review', 'finance_checked', 'approved', 'locked']
@@ -1042,6 +1050,16 @@ export async function staffingWarnings(emps: Array<Pick<HrEmployee, 'id' | 'user
   return out
 }
 
+/** Split a payslip's typed recovery deductions over the employee's open loans / advances, after the installment
+ *  split `installments` (every other run counted, as the installment split counts them). */
+async function withRecoveries(tenantId: string, employeeId: string, runId: string, installments: LoanLine[], items: DeductionItem[]) {
+  if (!items.some((d) => d.posting === 'recovery')) return { items, failed: null }
+  const open = await loansFor(tenantId, employeeId, { runStatuses: ALL_RUN_STATUSES, exceptRunId: runId })
+  return allocateRecoveries(open.map((l) => ({ loanId: l.id, outstandingCents: l.outstandingCents, type: l.type })), installments, items)
+}
+const recoveryWarning = (name: string, d: DeductionItem) =>
+  `${name}: the ${d.label} deduction of Rs ${(d.amountCents / 100).toFixed(2)} is more than the loans / advances still owed — lower it or take it off`
+
 export async function calculateRun(tenantId: string, runId: string, actorId?: string) {
   const run = await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: runId } })
   if (run.status !== 'draft') throw new AppError('RUN_NOT_DRAFT', 'Only a draft payroll can be recalculated', 409)
@@ -1057,15 +1075,27 @@ export async function calculateRun(tenantId: string, runId: string, actorId?: st
   const kept = new Map<string, string[]>()
   // Finance's tax figure on a payslip (taxOverrideCents) is kept too (owner, 2026-10-30).
   const keptTax = new Map<string, { taxOverrideCents: number; taxSetById?: unknown; taxSetAt?: unknown }>()
+  const keptItems = new Map<string, DeductionItem[]>()
   for (const sl of await prisma.hrPayslip.findMany({ where: { runId }, select: { employeeId: true, inputs: true } })) {
     const inp = (sl.inputs ?? {}) as Record<string, unknown>
     if (Array.isArray(inp['otAvailable']) && Array.isArray(inp['otRecordIds'])) kept.set(sl.employeeId, (inp['otRecordIds'] as unknown[]).map(String))
     const tax = taxOverrideOf(inp)
     if (tax != null) keptTax.set(sl.employeeId, { taxOverrideCents: tax, taxSetById: inp['taxSetById'], taxSetAt: inp['taxSetAt'] })
+    // The deductions HR added by type are kept too (owner, 2026-10-30); a recovery is split over the loans again.
+    const items = deductionItemsOf(inp)
+    if (items.length) keptItems.set(sl.employeeId, items)
   }
   const slips: Prisma.HrPayslipCreateManyInput[] = []
   for (const emp of emps) {
-    const inputs = { ...(await prefillInputs(tenantId, emp, run.period, s, runId, kept.get(emp.id))), ...(keptTax.get(emp.id) ?? {}) }
+    const prefilled = await prefillInputs(tenantId, emp, run.period, s, runId, kept.get(emp.id))
+    const itemWarnings: string[] = []
+    const items = keptItems.get(emp.id)
+    if (items) {
+      const r2 = await withRecoveries(tenantId, emp.id, runId, prefilled.loans, items)
+      prefilled.deductionItems = r2.items
+      if (r2.failed) itemWarnings.push(recoveryWarning(emp.fullName, r2.failed))
+    }
+    const inputs = { ...prefilled, ...(keptTax.get(emp.id) ?? {}) }
     const salaryCents = await salaryForPeriod(emp, run.period)
     const r = computePayslip(withTax({ ...emp, grossSalaryCents: salaryCents }, inputs), run.period, inputs, s)
     slips.push({
@@ -1074,7 +1104,7 @@ export async function calculateRun(tenantId: string, runId: string, actorId?: st
       // paying the run credits cash slips to the safe and bank / cheque slips
       // to the bank picked (finance gaps #9) — a later change on the master
       // must not move a month already calculated.
-      inputs: { ...inputs, salaryCents, payBasis: r.basis, paymentMethod: emp.paymentMethod ?? 'bank', warnings: [...r.warnings, ...(staffing.get(emp.id) ?? [])] } as unknown as Prisma.InputJsonValue,
+      inputs: { ...inputs, salaryCents, payBasis: r.basis, paymentMethod: emp.paymentMethod ?? 'bank', warnings: [...r.warnings, ...itemWarnings, ...(staffing.get(emp.id) ?? [])] } as unknown as Prisma.InputJsonValue,
       ...payslipData(r),
     })
   }
@@ -1117,6 +1147,10 @@ export async function runBlocker(runId: string): Promise<string | null> {
   if (negative.length > 0) {
     return `${negative.length} payslip(s) come to less than nothing (${negative.map((sl) => sl.employee.fullName).join(', ')}) — correct the salary or the deductions and recalculate`
   }
+  // A typed recovery (advance / loan) that no longer fits the loans still owed would credit Staff loans 1350 for
+  // money nobody owes (owner, 2026-10-30).
+  const unsplit = slips.filter((sl) => deductionItemsOf(sl.inputs).some((d) => d.posting === 'recovery' && (d.loans ?? []).reduce((a, l) => a + l.cents, 0) !== d.amountCents))
+  if (unsplit.length > 0) return `${unsplit.length} payslip(s) recover more from loans / advances than is still owed (${unsplit.map((sl) => sl.employee.fullName).join(', ')}) — correct the deduction`
   const noEobi = slips.filter((sl) => (((sl.inputs as Record<string, unknown>)['warnings'] as string[] | undefined) ?? []).includes(EOBI_NOT_CALCULATED)).length
   if (noEobi > 0) return `EOBI is not calculated on ${noEobi} payslip(s) — set the EOBI wage base in HR settings and recalculate`
   // Calculated before their full & final was approved: the settlement pays it.
@@ -1126,12 +1160,28 @@ export async function runBlocker(runId: string): Promise<string | null> {
 }
 
 /** Recompute one payslip after HR edits its inputs. */
-export async function recalcPayslip(payslipId: string, overrides: Partial<PayrollInputs>, actorId?: string) {
+/** A deduction HR asks for on a payslip: an existing item (`id`) or a new one of an ACTIVE type of the company. */
+export interface DeductionItemInput { id?: string | null; typeKey: string; amountCents: number; note?: string | null }
+
+export async function recalcPayslip(payslipId: string, overrides: Partial<PayrollInputs>, actorId?: string, deductionItems?: DeductionItemInput[]) {
   const slip = await prisma.hrPayslip.findUniqueOrThrow({ where: { id: payslipId }, include: { run: true, employee: true } })
   if (slip.run.status !== 'draft') throw new AppError('RUN_NOT_DRAFT', 'This payroll is no longer a draft', 409)
   const s = await getSettings(slip.tenantId)
   const cur = slip.inputs as unknown as PrefilledInputs & { salaryCents?: number }
-  const inputs = { ...cur, ...overrides, edited: true }
+  const { deductionItems: _ignored, ...plain } = overrides
+  const inputs: PrefilledInputs & { salaryCents?: number; edited?: boolean } = { ...cur, ...plain, edited: true }
+  if (deductionItems) {
+    // Types are the payslip's COMPANY's (its run's settings store); an item already on the payslip keeps the label and
+    // posting it was added with, even if its type was renamed or switched off since.
+    const had = new Map(deductionItemsOf(cur).map((d) => [d.id, d]))
+    inputs.deductionItems = deductionItems.map((x) => {
+      const prev = x.id ? had.get(x.id) : undefined
+      if (prev && prev.typeKey === x.typeKey) return { ...prev, amountCents: x.amountCents, note: x.note?.trim() || null, loans: [] }
+      const t = s.deductionTypes.find((d) => d.key === x.typeKey && d.active)
+      if (!t) throw new AppError('DEDUCTION_TYPE_UNKNOWN', `"${x.typeKey}" is not a deduction type this company uses — pick one from the list`, 422)
+      return { id: randomUUID(), typeKey: t.key, label: t.label, posting: t.posting, amountCents: x.amountCents, note: x.note?.trim() || null }
+    })
+  }
   const salaryCents = typeof cur.salaryCents === 'number' ? cur.salaryCents : await salaryForPeriod(slip.employee, slip.run.period)
   // New OT hours are paid at the OT rate — unless HR typed the amount too.
   const hoursEdited = overrides.otHours !== undefined && overrides.otHours !== cur.otHours
@@ -1150,6 +1200,15 @@ export async function recalcPayslip(payslipId: string, overrides: Partial<Payrol
         : 'This employee has no loan outstanding to deduct', 400)
     }
     inputs.loans = split
+  }
+  // Typed recoveries are split over what the loans still owe after the installments (422 when they do not fit).
+  const items = deductionItemsOf(inputs)
+  if (items.length) {
+    const r2 = await withRecoveries(slip.tenantId, slip.employeeId, slip.runId, inputs.loans ?? [], items)
+    if (r2.failed) {
+      throw new AppError('LOAN_OVER_OUTSTANDING', `The ${r2.failed.label} deduction is more than the loans / advances this employee still owes`, 422)
+    }
+    inputs.deductionItems = r2.items
   }
   const r = computePayslip(withTax({ ...slip.employee, grossSalaryCents: salaryCents }, inputs), slip.run.period, inputs, s)
   const staffing = (await staffingWarnings([slip.employee])).get(slip.employeeId) ?? []

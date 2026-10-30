@@ -349,7 +349,20 @@ module id must be placed in a workspace in the same change.
   publishes, POs over the limit, recipes, HR steps, payroll, tip pools, stock
   transfers) and every button calls the module's EXISTING approve/reject
   route, whose own guard decides — never add a second approval engine. A new
-  approval type is a provider in that module. `/hr/approvals` ("My
+  approval type is a provider in that module. **Each item shows only to
+  whoever must act on it NOW (owner, 2026-10-30: "The CEO's Approval tab
+  should display only those requests that have been specifically forwarded to
+  the CEO").** Where the CEO is only an override of someone else's step
+  (`APPROVAL_RIGHTS[type].overrideRoles: ['admin']` — `payroll_finance_review`,
+  `cash_request_finance`, `stock_transfer`) the CEO's inbox, counts and bell
+  list an item only at the CEO's end (section ceo, no company, through a head
+  office) or when nobody else may decide it (stranded: no active designated
+  login of that company holding the queue module who is not its submitter) —
+  `lib/approvalRights.ts ceoMustSee`, the same rule as `approverIdsFor`; HR
+  steps via `hrStepApprovers`. A handed-over item counts only for the
+  delegate (the CEO keeps the collapsed "handed over" summary; the bell still
+  tells both). A new type where the CEO merely overrides adds `overrideRoles`.
+  Tests: `tests/approvalsInboxHierarchy.test.ts`. `/hr/approvals` ("My
   approvals") redirects to `/ceo/approvals?type=hr_request`. Hand-over of
   approval types to head-office HODs comes with head office (after Monday).
 - **Module Access binds managers too (owner C2, 2026-10-26: "Make my Module Access ticks apply to managers
@@ -2767,6 +2780,21 @@ on its next recalculation. The F&F stores the days its salary pays as
 `data._payBasis` (one row per month: from–to, days employed, absent, unpaid
 leave, paid days, salary) — shown on the form and printed as "Days paid".
 Tests: `tests/payrollOvertimeOptIn.test.ts`.
+**Deductions by type (owner, 2026-10-30: "Make sub categories for deductions column, e.g: Late, Advances, loan,
+IPD, etc to select by HR").** Per-company types in HR settings `deductionTypes` (`logic.ts DEFAULT_DEDUCTION_TYPES`:
+Late coming, Advance, Loan, IPD (medical), Other; each `posting` `recovery` | `deduction`); `GET|POST /hr/deduction-types`,
+`PATCH /:key {label?, posting?, active?}` (HR_ADMIN, active company; never deleted — switched off; a posting change
+of a type on any payslip 409 `DEDUCTION_TYPE_IN_USE`; the settings PUT never touches them). HR adds lines to a DRAFT
+payslip with `PATCH /hr/payroll/payslips/:id {deductionItems:[{id?, typeKey, amountCents, note?}]}` (replaces the
+list; 409 `RUN_NOT_DRAFT`; a type not active in the payslip's company 422 `DEDUCTION_TYPE_UNKNOWN`; audit
+`hr.payroll.deductions_set`), stored as `inputs.deductionItems` (label + posting snapshotted), kept through Recalculate,
+one `ded:<typeKey>` line each in `computePayslip`. Books (`ledger.ts isPayReducing` / `isLoanRecovery`): `deduction`
+nets off the wages debit like `other`; `recovery` credits 1350 like the installment and is split over the employee's
+open loans / advances (`allocateRecoveries`, own kind first; more than owed 422 `LOAN_OVER_OUTSTANDING`, and a
+Recalculate that no longer fits warns + `runBlocker` blocks) — `service.ts payslipLoanLines` is the one reading of a
+payslip's loan recoveries. A typed "Late" is HR's extra amount ("(added by HR)"), apart from the engine's lates.
+`deductionAdjustmentsCents` still works ("Other deductions"). Register / Deduction report exports list by type
+(`dedTypeLabel`). F&F untouched. Tests: `tests/payrollDeductionTypes.test.ts`.
 **Absent without a punch, punch overtime, Attendance & Leaves (owner,
 2026-10-22: "Total days … should show days of the whole month, and days worked
 should show as per attendance … calculate accurate Overtime, again OT should

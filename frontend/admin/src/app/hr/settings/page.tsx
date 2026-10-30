@@ -69,6 +69,81 @@ function OfficeNetworksPanel({ value, onSet }: { value: OfficeNetwork[]; onSet: 
     </Panel>
   )
 }
+/** A deduction type HR picks on a payslip (backend hr/logic.ts DeductionType; owner, 2026-10-30). */
+interface DeductionType { key: string; label: string; posting: 'recovery' | 'deduction'; active: boolean }
+const POSTING_LABEL: Record<DeductionType['posting'], string> = {
+  recovery: 'Recovered from loans / advances',
+  deduction: 'Deducted from pay',
+}
+
+/** Deduction types (owner, 2026-10-30: "Make sub categories for deductions column, e.g: Late, Advances, loan, IPD").
+ *  Saved at once through /hr/deduction-types — not with the page's Save. Types are switched off, never deleted. */
+function DeductionTypesPanel() {
+  const qc = useQueryClient()
+  const { data, error } = useQuery({ queryKey: ['hr-deduction-types'], queryFn: () => api.get<{ types: DeductionType[] }>('/hr/deduction-types') })
+  const [label, setLabel] = useState('')
+  const [posting, setPosting] = useState<DeductionType['posting']>('deduction')
+  const [editing, setEditing] = useState<Record<string, string>>({})
+  const [err, setErr] = useState('')
+  const done = () => { setErr(''); void qc.invalidateQueries({ queryKey: ['hr-deduction-types'] }) }
+  const add = useMutation({
+    mutationFn: () => api.post<DeductionType>('/hr/deduction-types', { label: label.trim(), posting }),
+    onSuccess: () => { setLabel(''); done() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  const patch = useMutation({
+    mutationFn: ({ key, body }: { key: string; body: Partial<Pick<DeductionType, 'label' | 'posting' | 'active'>> }) => api.patch<DeductionType>(`/hr/deduction-types/${encodeURIComponent(key)}`, body),
+    onSuccess: (_r, v) => { setEditing(({ [v.key]: _gone, ...rest }) => rest); done() },
+    onError: (e: Error) => setErr(e.message),
+  })
+  const types = data?.types ?? []
+  return (
+    <Panel title="Deduction types">
+      <p className="text-xs text-white/55">What HR picks from when adding a deduction to a payslip. &ldquo;Recovered from loans / advances&rdquo; takes the amount off the employee&rsquo;s open loans and advances; &ldquo;Deducted from pay&rdquo; simply pays less. Changes here save at once. A type is switched off rather than deleted, so old payslips keep it.</p>
+      {error && <p className="text-xs text-s-red" role="alert">{(error as Error).message}</p>}
+      <ul className="space-y-2">
+        {types.map((t) => {
+          const draft = editing[t.key]
+          return (
+            <li key={t.key} className="flex flex-wrap items-center gap-2">
+              {draft !== undefined ? (
+                <>
+                  <input className={`${inp} flex-1 min-w-[160px]`} aria-label={`New name for ${t.label}`} maxLength={40} value={draft} onChange={(e) => setEditing({ ...editing, [t.key]: e.target.value })} />
+                  <button type="button" className="text-xs font-bold text-primary-ink [@media(pointer:coarse)]:min-h-[44px]" disabled={!draft.trim() || patch.isPending} onClick={() => patch.mutate({ key: t.key, body: { label: draft.trim() } })}>Save name</button>
+                  <button type="button" className="text-xs font-bold text-white/50 [@media(pointer:coarse)]:min-h-[44px]" onClick={() => setEditing(({ [t.key]: _gone, ...rest }) => rest)}>Cancel</button>
+                </>
+              ) : (
+                <>
+                  <span className={`flex-1 min-w-[160px] text-sm break-words ${t.active ? 'text-white/85' : 'text-white/40 line-through'}`}>{t.label}</span>
+                  <span className="text-xs text-white/50">{POSTING_LABEL[t.posting]}</span>
+                  <button type="button" className="text-xs font-bold text-primary-ink [@media(pointer:coarse)]:min-h-[44px]" onClick={() => setEditing({ ...editing, [t.key]: t.label })}>Rename</button>
+                  <button type="button" className={`text-xs font-bold [@media(pointer:coarse)]:min-h-[44px] ${t.active ? 'text-s-red' : 'text-success'}`} disabled={patch.isPending}
+                    onClick={() => patch.mutate({ key: t.key, body: { active: !t.active } })}>{t.active ? 'Switch off' : 'Switch on'}</button>
+                </>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      <div className="flex flex-wrap items-end gap-2 pt-1">
+        <label className="flex-1 min-w-[160px]">
+          <span className="block text-[11px] font-bold text-white/55 mb-1">New type</span>
+          <input className={inp} maxLength={40} placeholder="e.g. Mess charges" value={label} onChange={(e) => setLabel(e.target.value)} />
+        </label>
+        <label className="min-w-[200px]">
+          <span className="block text-[11px] font-bold text-white/55 mb-1">How it is taken</span>
+          <Select className={inp} value={posting} onChange={(e) => setPosting(e.target.value as DeductionType['posting'])}>
+            <option value="deduction">{POSTING_LABEL.deduction}</option>
+            <option value="recovery">{POSTING_LABEL.recovery}</option>
+          </Select>
+        </label>
+        <button type="button" className={`${btn} [@media(pointer:coarse)]:min-h-[44px]`} disabled={!label.trim() || add.isPending} onClick={() => add.mutate()}>{add.isPending ? 'Adding…' : 'Add type'}</button>
+      </div>
+      {err && <p className="text-xs text-s-red" role="alert">{err}</p>}
+    </Panel>
+  )
+}
+
 const WEEKDAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
 
 /** Gratuity at exit (backend hr/logic.ts GratuitySettings, accountant default H6). */
@@ -263,6 +338,8 @@ export default function HrSettingsPage() {
                 onSet={(v) => setS({ ...s, gratuity: { ...s.gratuity, daysPerYear: v } })} />
             </>}
           </Panel>
+
+          <DeductionTypesPanel />
 
           <Panel title="Employee IDs">
             <label className="block">
