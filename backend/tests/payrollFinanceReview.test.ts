@@ -6,7 +6,7 @@
 //   back to draft; PUT /payslips/:id/tax {taxCents} while it is with finance (the CEO also on a draft) is kept
 //   through a later Recalculate.
 //
-//   - approve from draft: 409 NOT_FINANCE_CHECKED; from finance_review only the CEO (owner 2026-10-30)
+//   - approve from draft / finance_review: 409 NOT_FINANCE_CHECKED
 //   - HR cannot pass; finance without the accounting module cannot; finance cannot set tax on its own payslip
 //   - edits (recalculate, payslip PATCH, overtime, delete) refused outside draft
 //   - company B: 404 on A's run and payslip
@@ -126,6 +126,8 @@ describe('payroll: HR → finance → CEO', () => {
     expect(sent.statusCode, sent.body).toBe(200)
     expect(sent.json().status).toBe('finance_review')
     expect(code(await call('hr', 'POST', `/hr/payroll/runs/${runA}/send-to-finance`))).toBe('RUN_NOT_DRAFT')
+    const mid = await call('ceo', 'POST', `/hr/payroll/runs/${runA}/approve`)
+    expect(code(mid)).toBe('NOT_FINANCE_CHECKED')
   })
 
   it('the inbox lists it for finance under payroll_finance_review; the bell tells finance', async () => {
@@ -243,20 +245,5 @@ describe('payroll: HR → finance → CEO', () => {
     expect((await call('finB', 'PUT', `/hr/payroll/payslips/${bSlip.id}/tax`, { taxCents: RS(100) })).statusCode).toBe(200)
     expect((await call('finB', 'POST', `/hr/payroll/runs/${runB}/finance-pass`, {})).statusCode).toBe(200)
     expect((await runOf('hrB', runB)).run.status).toBe('finance_checked')
-  })
-})
-
-describe('the CEO approves a run still with finance (owner, 2026-10-30: "i am ceo??")', () => {
-  it('approves in one step and signs the finance check', async () => {
-    const c = await call('hr', 'POST', '/hr/payroll/runs', { period: '2027-05' })
-    expect(c.statusCode, c.body).toBe(201)
-    const id = c.json().id
-    expect((await call('hr', 'POST', `/hr/payroll/runs/${id}/send-to-finance`)).statusCode).toBe(200)
-    expect(await inboxIds('ceo', 'payroll_finance_review')).toContain(id)
-    const ok = await call('ceo', 'POST', `/hr/payroll/runs/${id}/approve`)
-    expect(ok.statusCode, ok.body).toBe(200)
-    const row = await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id } })
-    expect(row.status).toBe('approved')
-    expect(row.financeCheckedById).toBe(row.approvedById)
   })
 })

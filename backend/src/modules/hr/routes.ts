@@ -2890,11 +2890,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
         throw new ForbiddenError('Payroll must be approved by someone other than the people who prepared or edited it')
       }
     })
-    // Finance checks it first (owner, 2026-10-30: "HR sends to finance, then CEO") —
-    // except the CEO, who may approve a run still with finance in one step (owner,
-    // 2026-10-30: "i am ceo??"); the CEO's approval then signs the finance check too.
-    const ceoSkipsFinance = req.staffUser!.role === 'admin' && run.status === 'finance_review'
-    if (run.status === 'draft' || (run.status === 'finance_review' && !ceoSkipsFinance)) {
+    // Finance checks it first (owner, 2026-10-30: "HR sends to finance, then CEO").
+    if (run.status === 'draft' || run.status === 'finance_review') {
       throw new AppError('NOT_FINANCE_CHECKED', run.status === 'draft'
         ? 'HR has not sent this payroll to finance yet — finance checks it before it is approved'
         : 'This payroll is with finance for review — it can be approved once finance passes it on', 409)
@@ -2903,14 +2900,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
     // …and not in between: an edit of theirs landing after the check above.
     const unedited = req.staffUser!.role === 'admin' ? {} : { NOT: { preparedByIds: { has: me } } }
-    const now = new Date()
-    const n = await prisma.hrPayrollRun.updateMany({
-      where: { id: run.id, status: ceoSkipsFinance ? 'finance_review' : 'finance_checked', ...unedited },
-      data: {
-        status: 'approved', approvedById: req.staffUser!.id, approvedAt: now,
-        ...(ceoSkipsFinance && { financeCheckedById: req.staffUser!.id, financeCheckedAt: now }),
-      },
-    })
+    const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'finance_checked', ...unedited }, data: { status: 'approved', approvedById: req.staffUser!.id, approvedAt: new Date() } })
     if (n.count === 0) throw new AppError('NOT_FINANCE_CHECKED', 'This payroll is not waiting for approval', 409)
     await audit({ category: 'identity', action: 'hr.payroll.approve', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period, totals: run.totals } })
     await auditPayrollDecision(req, run, grant, 'approve')

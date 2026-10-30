@@ -609,11 +609,7 @@ const payrollFinanceReviews: ApprovalProvider = {
         waitingSince: iso(r.sentToFinanceAt ?? r.updatedAt),
         link: `/hr/payroll/${r.id}`,
         actions: [
-          // The CEO approves it outright (owner, 2026-10-30: "i am ceo??") — no "pass to CEO" step for the CEO.
-          ctx.user.role === 'admin'
-            ? { kind: 'approve', label: 'Approve payroll', method: 'POST', path: `${base}/approve`, body: {},
-                confirm: 'Approve this payroll? Finance has not checked it yet — your approval covers the finance check too. Enter any income tax on the payroll screen first.' }
-            : { kind: 'approve', label: 'Pass to CEO', method: 'POST', path: `${base}/finance-pass`, body: {},
+          { kind: 'approve', label: 'Pass to CEO', method: 'POST', path: `${base}/finance-pass`, body: {},
             confirm: 'Pass this payroll to the CEO? Enter the income tax on the payroll screen first.',
             ...(own && { disabledReason: 'You prepared or sent this payroll — someone else in finance checks it' }) },
           { kind: 'return', label: 'Return to HR', method: 'POST', path: `${base}/finance-return`, body: {},
