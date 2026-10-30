@@ -170,10 +170,10 @@ export default function PayrollRunPage() {
           )}
           <div className="flex flex-wrap gap-2">
             {run.status === 'draft' && <>
-              <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('recalculate')}>Recalculate from records</button>
-              {otLeft.count > 0 && <button className={btnGhost} disabled={addAllOt.isPending} onClick={() => addAllOt.mutate()}>{addAllOt.isPending ? 'Adding…' : `Add all available overtime (${Math.round(otLeft.hours * 100) / 100} h, ${rs(otLeft.cents)})`}</button>}
+              {isHrAdmin && <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('recalculate')}>Recalculate from records</button>}
+              {isHrAdmin && otLeft.count > 0 && <button className={btnGhost} disabled={addAllOt.isPending} onClick={() => addAllOt.mutate()}>{addAllOt.isPending ? 'Adding…' : `Add all available overtime (${Math.round(otLeft.hours * 100) / 100} h, ${rs(otLeft.cents)})`}</button>}
               {isHrAdmin && <button className={btn} disabled={act.isPending} onClick={() => void ask('send-to-finance')}>Send to finance</button>}
-              <button className={`${btnDanger} ml-2 !text-xs [@media(pointer:coarse)]:min-h-[44px]`} disabled={act.isPending} onClick={() => void ask("delete")}>Delete draft</button>
+              {isHrAdmin && <button className={`${btnDanger} ml-2 !text-xs [@media(pointer:coarse)]:min-h-[44px]`} disabled={act.isPending} onClick={() => void ask("delete")}>Delete draft</button>}
             </>}
             {run.status === 'finance_review' && canReview && <>
               <button className={btn} disabled={act.isPending} onClick={() => void ask('finance-pass')}>Pass to CEO</button>
@@ -211,14 +211,14 @@ export default function PayrollRunPage() {
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
-                {['Employee', 'Paid days', 'Per-day rate', 'Overtime', 'Gross', 'Earnings', 'Income tax', 'Deductions', 'EOBI (1%)', 'Net', ''].map((h) => <th key={h} className="px-4 py-3 font-bold whitespace-nowrap">{h}</th>)}
+                {['Employee', 'Paid days', 'Per-day rate', 'Overtime', 'Gross', 'Earnings', 'Income tax', 'Deductions', 'EOBI (1%)', 'Net', ''].map((h, i) => <th key={h} className={`px-4 py-3 font-bold whitespace-nowrap${i === 0 ? ' sticky left-0 z-[1] bg-s-surface' : ''}${i === 10 ? ' pr-6' : ''}`}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {data!.payslips.map((s) => {
                   const w = (s.inputs['warnings'] as string[] | undefined) ?? []
                   return (
                     <tr key={s.id} className="border-t border-white/[0.05]">
-                      <td className="px-4 py-3"><p className="font-bold text-white/85">{s.employee.fullName}</p><p className="text-[11px] text-white/40">{s.employee.employeeCode}{s.inputs['edited'] ? ' · edited' : ''}</p></td>
+                      <td className="px-4 py-3 sticky left-0 z-[1] bg-s-surface min-w-[9rem]"><p className="font-bold text-white/85">{s.employee.fullName}</p><p className="text-[11px] text-white/40">{s.employee.employeeCode}{s.inputs['edited'] ? ' · edited' : ''}</p></td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">{basisOf(s) ? `${basisOf(s)!.paidDays} of ${basisOf(s)!.daysInMonth}` : '—'}</td>
                       <td className="px-4 py-3 text-white/70">{basisOf(s) ? rs(basisOf(s)!.dailyRateCents) : '—'}</td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">{otCell(s)}</td>
@@ -233,7 +233,7 @@ export default function PayrollRunPage() {
                       <td className="px-4 py-3 text-white/70">{rs(s.deductionsCents)}</td>
                       <td className="px-4 py-3 text-white/70">{rs(s.eobiEmployeeCents)}</td>
                       <td className="px-4 py-3 font-black" style={{ color: s.netCents < 0 ? 'var(--erp-danger)' : 'rgb(var(--fg-rgb) / 0.9)' }}>{rs(s.netCents)}{w.length > 0 && <span className="ml-1 text-s-amber" title={w.join('\n')}><NavIcon name="warn" size={13} className="inline" /></span>}</td>
-                      <td className="px-4 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditingId(s.id)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
+                      <td className="pl-4 pr-6 py-3 text-right"><button className="text-xs font-bold text-primary-ink" onClick={() => setEditingId(s.id)}>{run.status === 'draft' ? 'Payslip / edit' : 'Payslip'}</button></td>
                     </tr>
                   )
                 })}
@@ -268,7 +268,8 @@ function ReturnModal({ runId, period, onClose }: { runId: string; period: string
           <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">What HR needs to correct</span>
           <textarea className={`${inp} min-h-[96px]`} value={note} maxLength={1000} onChange={(e) => setNote(e.target.value)} aria-invalid={!!err || undefined} />
         </label>
-        <p className="text-[11px] text-white/40">At least 10 characters. HR sees this note on the payroll and in the bell, edits the payroll and sends it again.</p>
+        <p className="text-[11px] text-white/60">At least 10 characters. HR sees this note on the payroll and in the bell, edits the payroll and sends it again.</p>
+        {short && note.trim().length > 0 && <p className="text-xs text-s-amber">Write a little more — {10 - note.trim().length} more character{10 - note.trim().length === 1 ? '' : 's'} needed.</p>}
         {err && <p className="text-xs text-s-red" role="alert">{err}</p>}
         <div className="flex flex-wrap gap-2">
           <button type="submit" className={btn} disabled={short || send.isPending}>{send.isPending ? 'Sending…' : 'Return to HR'}</button>
