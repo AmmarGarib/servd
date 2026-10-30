@@ -247,6 +247,17 @@ module id must be placed in a workspace in the same change.
   sign-off on what HR raised. Never a request about the raiser (its HR step
   waits as usual). `actedOnBy` ignores
   `auto` entries, so the raiser can still edit / cancel / recalculate.
+  **The CEO always sees it (owner, 2026-10-30: "keep ceo for ALL … needs to
+  show up on my approval page"):** a CEO step is never an "override" for the
+  CEO, even when the CEO signed an earlier step (`logic.ts canActOnStep`; e.g.
+  someone who reports to the CEO), and `/hr/approvals` lists for the CEO any
+  step nobody else can take (`approvalRights.ts hrStepApprovers`, the bell's
+  rule — no manager login, only the raising HR login, …); it reads up to 5,000
+  waiting records. **Re-raise:** `POST /hr/records/:section/:id/reraise
+  {data?, note?}` (HR_BACK_OFFICE; the record's own company, else 404) raises a
+  rejected / cancelled request again as a new record (`_reraisedFrom`; one live
+  copy, 409 `ALREADY_RERAISED`; approved → 409 `CANCEL_FIRST`; attendance → edit
+  it); admin "Re-raise" on the record. Tests: `tests/hrRaisedCeoInbox.test.ts`.
 - **HODs raise manpower requisitions for their own department (owner,
   2026-10-22: "Give manpower requisition option on screen of all HODs, for
   their own department only").** An HOD = a login whose own active employee

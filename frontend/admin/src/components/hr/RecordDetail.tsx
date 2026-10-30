@@ -70,6 +70,8 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
   const qc = useQueryClient()
   const { userId, isHrAdmin } = useHrAccess()
   const [editing, setEditing] = useState(false)
+  // Editing a COPY to raise again (POST /reraise), not the record itself.
+  const [reraising, setReraising] = useState(false)
   const [draft, setDraft] = useState<Record<string, unknown>>(record.data)
   const [note, setNote] = useState('')
   // An earlier approver's hours, when one cut the claim — otherwise the hours claimed.
@@ -102,6 +104,11 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
   const cancellable = !fromCashRequest && (isHrAdmin
     ? !['approved', 'cancelled', 'rejected'].includes(record.status) || (record.status === 'approved' && !record.appliedAt)
     : record.createdById === userId && ['draft', 'submitted'].includes(record.status) && record.approvals.every((a) => a.auto))
+  // Re-raise (owner, 2026-10-30): HR raises a rejected / cancelled request
+  // again as a new record (corrections allowed) — it walks the workflow back
+  // to the CEO. An approved one not yet in effect is cancelled first.
+  const reraisable = admin && isHrAdmin && !fromCashRequest && record.section !== 'attendance' && format.workflow.length > 0
+    && (['rejected', 'cancelled'].includes(record.status) || (record.status === 'approved' && !record.appliedAt))
   // Decisions recorded outside the format's steps (a cash request's advance is
   // approved by the CEO when it is moved) — shown under the steps.
   const otherApprovals = record.approvals.filter((a) => !format.workflow.some((w) => w.key === a.step))
@@ -120,6 +127,14 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
   })
   const stage = useMutation({ mutationFn: (s: string) => api.post(`${base}/stage`, { stage: s }), onSuccess: done, onError: fail })
   const cancel = useMutation({ mutationFn: () => api.post(`${base}/cancel`, {}), onSuccess: done, onError: fail })
+  const reraise = useMutation({
+    mutationFn: async () => {
+      if (record.status === 'approved') await api.post(`${base}/cancel`, {})
+      return api.post<{ id: string }>(`${base}/reraise`, { data: draft })
+    },
+    onSuccess: () => { setEditing(false); setReraising(false); setMsg('Raised again — it goes back through the approval steps.'); done() },
+    onError: fail,
+  })
   const hire = useMutation({
     mutationFn: () => api.post<{ id: string; employeeCode: string }>(`/hr/records/offer/${record.id}/create-employee`, {}),
     onSuccess: (e) => { setMsg(`Employee ${e.employeeCode} created.`); done() }, onError: fail,
@@ -202,8 +217,10 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
           <FormRenderer fields={leaveFields(record.section, format.fields, draft)} value={draft}
             onChange={(x) => setDraft(withLeaveDays(record.section, format.fields, draft, x))} ctx={{ lookups, org, tenantId: record.tenantId }} />
           <div className="flex gap-2 mt-4">
-            <button className={btn} disabled={save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save'}</button>
-            <button className={btnGhost} onClick={() => { setEditing(false); setDraft(record.data) }}>Cancel</button>
+            {reraising
+              ? <button className={btn} disabled={reraise.isPending} onClick={() => reraise.mutate()}>{reraise.isPending ? 'Raising…' : record.status === 'approved' ? 'Cancel this one and raise again' : 'Raise again'}</button>
+              : <button className={btn} disabled={save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save'}</button>}
+            <button className={btnGhost} onClick={() => { setEditing(false); setReraising(false); setDraft(record.data) }}>Cancel</button>
           </div>
         </div>
       ) : (
@@ -321,6 +338,10 @@ export function RecordDetail({ record, format, lookups, org, admin, onChanged }:
 
       <div className="flex flex-wrap gap-2 pt-2 border-t border-white/[0.06]">
         {editable && !editing && <button className={btnGhost} onClick={() => { setDraft(record.data); setEditing(true) }}>Edit</button>}
+        {reraisable && !editing && (
+          <button className={btnGhost} title="Raise it again as a new request — fix anything first; it goes back through the approval steps"
+            onClick={() => { setDraft(record.data); setReraising(true); setEditing(true) }}>Re-raise</button>
+        )}
         {admin && record.status === 'draft' && <button className={btn} disabled={submit.isPending} onClick={() => submit.mutate()}>Submit for approval</button>}
         {editable && record.section === 'final_settlement' && (
           <button className={btnGhost} disabled={calc.isPending} onClick={() => calc.mutate(undefined)}>{calc.isPending ? 'Calculating…' : 'Calculate'}</button>

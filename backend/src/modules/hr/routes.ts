@@ -65,7 +65,7 @@ import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { assertHoMayPropose, isHeadOfficeTenant, isReachOnly, viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
 import {
   approvalSubject as approvalSubjectOf, approvalInputOf, assertCanApprove, auditApproval, delegatedTenantsByType,
-  throughHeadOfficeBatch, type ApprovalGrant,
+  throughHeadOfficeBatch, hrStepApprovers, type ApprovalGrant,
 } from '../../lib/approvalRights.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { headOfficeSetupApplied } from '../headOffices/books.js'
@@ -2340,6 +2340,47 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrRecord.findUniqueOrThrow({ where: { id: rec.id } })
   })
 
+  // Re-raise (owner, 2026-10-30: "if approved and HR needs to re-raise
+  // something, give him rights to re-raise to me"). HR (back office, staff_hr)
+  // raises a rejected or cancelled request again as a NEW record — the same
+  // form data, with any corrections in `data` — in the ORIGINAL record's company
+  // (a member company of the caller; anything else 404), submitted through
+  // createRecord, so it walks the same workflow again and, raised by HR, its
+  // last HR step is the CEO's (decideRight). The original stays as it was
+  // (history); the copy carries `_reraisedFrom`. An approved request is
+  // cancelled first (its own cancel route and rules), then re-raised. A
+  // hand-keyed attendance day is edited instead (PATCH sends it back to the CEO).
+  fastify.post<{ Params: { section: string; id: string } }>('/records/:section/:id/reraise', { preHandler: HR_BACK_OFFICE }, async (req, reply) => {
+    const body = z.object({ data: z.record(z.unknown()).default({}), note: z.string().trim().max(500).optional() }).parse(req.body ?? {})
+    const su = req.staffUser!
+    const rec = await prisma.hrRecord.findFirst({ where: { id: req.params.id, section: req.params.section, tenantId: { in: su.memberTenantIds } } })
+    if (!rec) throw new NotFoundError('HR record', req.params.id)
+    if (rec.section === 'attendance') throw new AppError('USE_EDIT', 'Open the attendance day and edit it — the change goes back to the CEO', 409)
+    if (rec.status === 'approved') throw new AppError('CANCEL_FIRST', 'This request is approved — cancel it first, then re-raise it', 409)
+    if (rec.status !== 'rejected' && rec.status !== 'cancelled') throw new AppError('NOT_CLOSED', 'Only a rejected or cancelled request can be re-raised', 409)
+    if (fromCashRequest(rec)) throw new AppError('LOAN_FROM_CASH_REQUEST', 'This staff advance was moved from a cash request — raise a new one from there', 409)
+    // One live copy at a time: a second click never raises it twice.
+    const live = await prisma.hrRecord.findFirst({
+      where: { tenantId: rec.tenantId, section: rec.section, status: { in: ['draft', 'submitted', 'approved'] }, data: { path: ['_reraisedFrom'], equals: rec.id } },
+      select: { id: true },
+    })
+    if (live) throw new AppError('ALREADY_RERAISED', 'This request has already been raised again', 409, { recordId: live.id })
+    // The form's own fields only — never what logic wrote (keys starting with _).
+    const original = Object.fromEntries(Object.entries((rec.data ?? {}) as Record<string, unknown>).filter(([k]) => !k.startsWith('_')))
+    const input = { ...original, ...Object.fromEntries(Object.entries(body.data).filter(([k]) => !k.startsWith('_'))) }
+    const via = await viaFor(req, rec.tenantId)
+    const created = await createRecord(req, rec.tenantId, rec.section, input, {
+      submit: true, viaHeadOfficeId: via,
+      extraData: { _reraisedFrom: rec.id, ...(body.note && { _reraiseNote: body.note }) },
+    })
+    await audit({
+      category: 'identity', action: `hr.${rec.section}.reraise`, entity: 'HrRecord', entityId: created.id,
+      userId: su.id, userEmail: su.email, tenantId: rec.tenantId,
+      before: { recordId: rec.id, status: rec.status }, after: { recordId: created.id, status: created.status, ...(body.note && { note: body.note }) },
+    })
+    return reply.status(201).send(created)
+  })
+
   fastify.get<{ Querystring: { from?: string; to?: string; employeeId?: string; locationId?: string; status?: string; format?: string } }>('/attendance/register', { preHandler: HR_BACK_OFFICE }, async (req, reply) => {
     const { from, to, employeeId, locationId, status } = req.query
     const reg = await buildAttendanceRegister(req, { from, to, employeeId, locationId, status })
@@ -3256,7 +3297,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
       where: { tenantId: { in: tenants }, status: 'submitted' },
       include: { employee: { select: { id: true, fullName: true, employeeCode: true } } },
       orderBy: { createdAt: 'asc' },
-      take: 500,
+      // Bulk-keyed attendance days (up to 3,000 a call) wait here too: a cap of
+      // 500 oldest hid newer requests from the CEO (owner, 2026-10-30).
+      take: 5000,
     })
     // Which records came through a head office (A3), in one batch — the
     // final-step rule needs it. Nothing to read for the CEO.
@@ -3267,8 +3310,16 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // HR steps wait on HR only while HR holds the back-office module — the
     // same rule /decide applies (PPL-R2-01). Read once, only if needed.
     let staffHr: boolean | null = null
+    // One read per (company, section, version) — bulk-keyed days share it.
+    const formats = new Map<string, ReturnType<typeof getFormat>>()
+    const formatOf = (r: { tenantId: string; section: string; formVersion: number }) => {
+      const k = `${r.tenantId}|${r.section}|${r.formVersion}`
+      let f = formats.get(k)
+      if (!f) { f = getFormat(r.tenantId, r.section, r.formVersion).catch(() => getFormat(r.tenantId, r.section)); formats.set(k, f) }
+      return f
+    }
     for (const [i, rec] of pending.entries()) {
-      const fmt = await getFormat(rec.tenantId, rec.section, rec.formVersion).catch(() => getFormat(rec.tenantId, rec.section))
+      const fmt = await formatOf(rec)
       const step = workflowOf(rec, fmt)[rec.currentStep]
       if (!step) continue
       const subject = await approvalSubject(rec)
@@ -3276,7 +3327,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
       const who = await decideRight(req, rec, step, isLast, { subject, decision: null, through: through[i] ?? [], delegatedTenants: delegated.get('hr_request') ?? new Set<string>() })
       // An admin override is possible on everything; only list it for the CEO
       // when it is genuinely theirs, or nothing would ever leave their queue.
-      if (!who.ok || who.override) continue
+      // A step NOBODY else can take (the HOD has no login, the only HR login
+      // raised it, …) is the CEO's — the same rule the bell uses
+      // (approvalRights.ts hrStepApprovers), so a request is never stranded
+      // out of sight (owner, 2026-10-30).
+      if (!who.ok) continue
+      if (who.override && !(su.role === 'admin' && (await hrStepApprovers(rec.id)).includes(su.id))) continue
       if (stepIsHrWork(step.role, req.staffUser!, subject.managerUserId)) {
         if (staffHr === null) staffHr = await holdsStaffHr(req)
         if (!staffHr) continue

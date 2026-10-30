@@ -1406,7 +1406,7 @@ export async function approverIdsFor(type: ApprovalType, id: string): Promise<{ 
  * can decide the step at all. HR's own work needs the staff_hr module, the
  * same rule /hr/approvals applies (PPL-R2-01).
  */
-async function hrStepApprovers(id: string): Promise<string[]> {
+export async function hrStepApprovers(id: string): Promise<string[]> {
   const rec = await serviceClient.hrRecord.findUnique({ where: { id } })
   if (!rec || rec.status !== 'submitted') return []
   // The record's company only: getFormat / the HR helpers read through it.

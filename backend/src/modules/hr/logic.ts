@@ -952,6 +952,12 @@ export function canActOnStep(
   actor: { id: string; role: string },
   subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[] },
 ): { ok: boolean; override: boolean; reason?: string } {
+  // A CEO step is the CEO's own call even when the CEO signed an earlier step
+  // (an employee who reports to the CEO: the CEO signs the HOD step, then the
+  // final step of an HR-raised request) — nobody else may take it, so it is
+  // never an "override" that would hide it from the CEO's inbox (owner,
+  // 2026-10-30: "whatever it is needs to show up on my approval page").
+  if (role === 'ceo' && actor.role === 'admin') return { ok: true, override: false }
   const own = (subject.employeeUserId && subject.employeeUserId === actor.id) || (subject.createdById && subject.createdById === actor.id)
   const again = (subject.priorApproverIds ?? []).includes(actor.id)
   if (own || again) {
