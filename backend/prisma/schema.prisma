@@ -8748,7 +8748,7 @@ model HeadOfficeLink {
 model HeadOfficeBooks {
   tenantId              String    @id // the head office
   rechargeAccountId     String? // HO chart; default 4220 Head Office Recharge Income (HO-Q3, 2026-10-26; was 6990); the CA may re-map
-  costPool              Json      @default("{\"include\":[{\"from\":5000,\"to\":6999}],\"includeCodes\":[],\"excludeCodes\":[\"6990\"]}")
+  costPool              Json      @default("{\"include\":[{\"from\":6030,\"to\":6036}],\"includeCodes\":[],\"excludeCodes\":[]}") // salaries only (owner, 2026-10-30)
   accountsConfirmedAt   DateTime? // NULL = "Confirm with your CA". Cleared by ANY change to accounts, pool or links
   accountsConfirmedById String?
   accountsConfirmedNote String? // the CEO's note

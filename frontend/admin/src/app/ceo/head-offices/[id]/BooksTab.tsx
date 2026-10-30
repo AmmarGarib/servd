@@ -172,9 +172,11 @@ export default function BooksTab({ hoId, detail, reload }: { hoId: string; detai
       </section>
 
       <section className="rounded-2xl p-4" style={card}>
-        <h3 className="text-sm font-black text-white/85">Cost pool</h3>
-        <p className="text-[11px] text-white/45 mb-3">The head office accounts whose month&rsquo;s total is shared between the companies.</p>
-        <PoolEditor key={JSON.stringify(books.costPool)} hoId={hoId} pool={books.costPool} onDone={reload} />
+        <h3 className="text-sm font-black text-white/85">What is shared</h3>
+        <p className="text-xs text-white/70">
+          Salaries only: wages {books.costPool.include.map((r) => `${r.from}–${r.to}`).join(', ')} (with the employer EOBI / SESSI payroll books there) and gratuity.
+          Nothing else the head office books is charged to the companies.
+        </p>
       </section>
 
       <section className="rounded-2xl p-4" style={card}>

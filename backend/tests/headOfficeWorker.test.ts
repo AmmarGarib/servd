@@ -62,7 +62,7 @@ async function cost(tenantId: string, date: string, cents: number) {
   await postJournalEntry({
     tenantId, sourceType: 'test.cost', sourceId: randomUUID(), description: 'test cost',
     entryDate: new Date(`${date}T12:00:00+05:00`), postedBy: 'system',
-    lines: [{ accountCode: '6010', type: 'debit', amountCents: cents }, { accountCode: '1010', type: 'credit', amountCents: cents }],
+    lines: [{ accountCode: '6032', type: 'debit', amountCents: cents }, { accountCode: '1010', type: 'credit', amountCents: cents }],
   })
 }
 

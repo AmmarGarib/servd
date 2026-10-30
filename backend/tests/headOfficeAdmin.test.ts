@@ -190,7 +190,7 @@ describe('CEO only', () => {
       ['DELETE', `/head-offices/${HO}/splits/x`],
       ['GET', `/head-offices/${HO}/books`],
       ['PUT', `/head-offices/${HO}/books/accounts`, { rechargeAccountId: 'x' }],
-      ['PUT', `/head-offices/${HO}/books/pool`, { include: [{ from: 5000, to: 6999 }] }],
+      ['PUT', `/head-offices/${HO}/books/pool`, { include: [{ from: 6030, to: 6036 }] }],
       ['POST', `/head-offices/${HO}/books/confirm`, { note: '0123456789', taxAnswer: '0123456789' }],
       ['PUT', `/head-offices/${HO}/books/recharge`, { enabled: true, fromPeriod: '2026-09' }],
     ]
@@ -305,17 +305,21 @@ describe('books: any account, pool or link change clears the confirmation and sw
     expect((await books(HO)).rechargeEnabled).toBe(false)
   })
 
-  it('a pool change', async () => {
+  it('a pool change (salaries only, owner 2026-10-30)', async () => {
     await confirmAndEnable(HO)
-    const res = await call('ceo', 'PUT', `/head-offices/${HO}/books/pool`, { include: [{ from: 5000, to: 6899 }], includeCodes: ['7010'], excludeCodes: ['6990'] })
+    const res = await call('ceo', 'PUT', `/head-offices/${HO}/books/pool`, { include: [{ from: 6030, to: 6032 }], includeCodes: ['6036'], excludeCodes: [] })
     expect(res.statusCode).toBe(200)
     await expectCleared(HO)
-    expect((await books(HO)).costPool).toEqual({ include: [{ from: 5000, to: 6899 }], includeCodes: ['7010'], excludeCodes: ['6990'] })
+    expect((await books(HO)).costPool).toEqual({ include: [{ from: 6030, to: 6032 }], includeCodes: ['6036'], excludeCodes: [] })
     expect(await prisma.auditLog.count({ where: { action: 'ho.recharge.disable', tenantId: HO } })).toBeGreaterThanOrEqual(1)
-    const bad = await call('ceo', 'PUT', `/head-offices/${HO}/books/pool`, { include: [{ from: 6999, to: 5000 }] })
+    // Anything but salaries is refused: the head office shares salaries only.
+    const wide = await call('ceo', 'PUT', `/head-offices/${HO}/books/pool`, { include: [{ from: 5000, to: 6999 }] })
+    expect(wide.statusCode).toBe(422)
+    expect(wide.json().error.code).toBe('POOL_SALARIES_ONLY')
+    const extra = await call('ceo', 'PUT', `/head-offices/${HO}/books/pool`, { include: [{ from: 6030, to: 6036 }], includeCodes: ['6100'] })
+    expect(extra.json().error.code).toBe('POOL_SALARIES_ONLY')
+    const bad = await call('ceo', 'PUT', `/head-offices/${HO}/books/pool`, { include: [{ from: 6036, to: 6030 }] })
     expect(bad.statusCode).toBe(400)
-    const outside = await call('ceo', 'PUT', `/head-offices/${HO}/books/pool`, { include: [{ from: 500, to: 6999 }] })
-    expect(outside.statusCode).toBe(400)
   })
 
   it('an account re-mapping (and the mapping rules)', async () => {

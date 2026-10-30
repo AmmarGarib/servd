@@ -2316,14 +2316,20 @@ only, foreign rows 404). Contract: `backend/src/modules/headOffices/README.md`.
   month (`splits.ts`); `splitByBps` is the ONE rounding rule (leftover paisa
   to the largest share at exactly 100%; below 100% the rest stays with the
   head office).
+- **The head office is a SALARY-SPLITTING entity only (owner, 2026-10-30: "head office is just a salary
+  splitting entity. no expenses to be charged other than salary splitting" — REPLACES HO-Q1's 5000–6999
+  pool).** The cost pool is the wages accounts 6030–6036 (wages by department, each carrying the employer EOBI /
+  SESSI payroll books there, and gratuity) — `headOffices/books.ts DEFAULT_COST_POOL`; `PUT
+  /head-offices/:id/books/pool` refuses anything outside them (422 `POOL_SALARIES_ONLY`); migration
+  `20261030130000` moved existing books to it (confirmation + recharge switch cleared). Nothing else the head
+  office books is ever recharged. Books tab shows "What is shared" (no pool editor).
 - **Recharge posting is OFF per head office** (H51, 2026-10-16: stays off for the 25 Oct sign-off) until the CA confirms the
   accounts (`HeadOfficeBooks.accountsConfirmedAt`) and the CEO sets
   `rechargeFromPeriod` (DB CHECK `head_office_books_enable_chk`). Any change
   to accounts, pool or links switches it back off. The worker (under
   `ENABLE_WORKERS`) only PREPARES and SUBMITS a run for approval — it never
-  posts. **Decided (owner, 2026-10-26):** HO-Q1 = the default cost pool (the
-  head office's net cost, 5000–6999 at cost, no markup, 6990 excluded — the
-  recharge on 4220 is outside it and `pool.ts` drops the recharge account by
+  posts. **Decided (owner, 2026-10-26):** HO-Q1 = the default cost pool, NOW salaries
+  only 6030–6036 (owner, 2026-10-30; no markup; `pool.ts` drops the recharge account by
   id); HO-Q3 = income (4220, BUILT; the All-companies P&L shows income and
   cost until eliminations exist — noted on the Books tab).
 - **Reach and the lens are submit-only** (`lib/headOffice.ts`): a head-office

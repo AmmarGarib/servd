@@ -39,12 +39,24 @@ export const zCostPool = z.object({
 export type CostPool = z.infer<typeof zCostPool>
 
 /**
- * The default pool (spec §0 / HO-Q1): expenses 5000–6999 at cost, minus 6990
- * (the fleet recovery account, and the head-office recharge account before
- * HO-Q3). The recharge itself credits 4220 income (HO-Q3), outside the range,
- * and pool.ts also drops the books' recharge account by id whatever its code.
+ * The head office is a SALARY-SPLITTING entity only (owner, 2026-10-30: "head
+ * office is just a salary splitting entity. no expenses to be charged other than
+ * salary splitting" — REPLACES HO-Q1's 5000–6999 pool). The pool is the wages
+ * accounts 6030–6036 (kitchen, front of house, management, riders — each
+ * carrying the employer EOBI / SESSI as payroll posts them — and gratuity);
+ * nothing else the head office books is ever recharged. The recharge itself
+ * credits 4220 income, outside the range, and pool.ts also drops the books'
+ * recharge account by id whatever its code.
  */
-export const DEFAULT_COST_POOL: CostPool = { include: [{ from: 5000, to: 6999 }], includeCodes: [], excludeCodes: ['6990'] }
+export const SALARY_POOL_FROM = 6030
+export const SALARY_POOL_TO = 6036
+export const DEFAULT_COST_POOL: CostPool = { include: [{ from: SALARY_POOL_FROM, to: SALARY_POOL_TO }], includeCodes: [], excludeCodes: [] }
+
+/** Every range and code of a pool inside the salary accounts? */
+export function poolIsSalariesOnly(p: CostPool): boolean {
+  const inRange = (n: number) => n >= SALARY_POOL_FROM && n <= SALARY_POOL_TO
+  return p.include.every((r) => inRange(r.from) && inRange(r.to)) && p.includeCodes.every((c) => inRange(Number(c)))
+}
 
 /** The stored pool, parsed; an unreadable value falls back to the default (never throws on a read). */
 export function parseCostPool(raw: unknown): CostPool {
@@ -99,6 +111,9 @@ export async function invalidateConfirmation(tx: Tx, hoId: string, actorId: stri
 export async function updatePool(tx: Tx, hoId: string, pool: CostPool, actorId: string): Promise<{ before: CostPool; after: CostPool } & Invalidation> {
   const row = await lockBooks(tx, hoId)
   const parsed = zCostPool.parse(pool)
+  if (!poolIsSalariesOnly(parsed)) {
+    throw new AppError('POOL_SALARIES_ONLY', `The head office shares salaries only — the pool may name accounts ${SALARY_POOL_FROM}–${SALARY_POOL_TO} (wages and gratuity) and nothing else`, 422)
+  }
   const inv = await invalidateConfirmation(tx, hoId, actorId, row)
   await tx.headOfficeBooks.update({ where: { tenantId: hoId }, data: { costPool: parsed, updatedById: actorId } })
   return { before: parseCostPool(row.costPool), after: parsed, ...inv }

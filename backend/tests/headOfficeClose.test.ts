@@ -91,9 +91,10 @@ beforeAll(async () => {
     await setRecharge(t, HO, { enabled: true, fromPeriod: '2026-08' }, ceo)
   }, { timeout: 30_000 })
   await prisma.hrEmployee.create({ data: { tenantId: HO, employeeCode: 'HO-0001', fullName: 'Head of Finance' } })
-  await cost(HO, '2026-07-10', '6010', 2_000_000)
-  await cost(HO, '2026-09-10', '6010', 10_000_000)
-  await cost(HO, '2026-10-05', '6010', 3_000_000)
+  await cost(HO, '2026-07-10', '6032', 2_000_000)
+  await cost(HO, '2026-09-10', '6032', 10_000_000)
+  await cost(HO, '2026-10-05', '6032', 3_000_000)
+  await cost(HO, '2026-09-12', '6010', 4_000_000) // rent: not a salary, never pooled (owner 2026-10-30)
 
   app = Fastify()
   app.addHook('onRequest', (_req, _reply, done) => { runWithRlsContext({}, () => done()) })
@@ -156,7 +157,7 @@ describe('the head office and its companies wait for the recharge', () => {
   })
 
   it('drift after posting blocks again until a true-up', async () => {
-    await cost(HO, '2026-09-28', '6070', 250_000)
+    await cost(HO, '2026-09-28', '6032', 250_000)
     const ho = await recharge.run(ctx(HO, '2026-09-30', ['2026-09']))
     expect(ho?.cents).toBe(250_000)
     expect(await charges.run(ctx(C1, '2026-09-30', ['2026-09']))).not.toBeNull()
@@ -183,7 +184,7 @@ describe('the head office and its companies wait for the recharge', () => {
   })
 
   it('the close status route answers the same for the company', async () => {
-    await cost(HO, '2026-09-29', '6070', 1_000)
+    await cost(HO, '2026-09-29', '6032', 1_000)
     const res = await call('GET', `/close-status?tenantId=${C1}&through=2026-09-30`)
     expect(res.statusCode).toBe(200)
     expect(res.json().ready).toBe(false)

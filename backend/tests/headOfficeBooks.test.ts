@@ -106,6 +106,9 @@ beforeAll(async () => {
       data: [
         { tenantId: t, code: '1010', name: 'Cash on Hand', type: 'asset' },
         { tenantId: t, code: '6010', name: 'Rent', type: 'expense' },
+        { tenantId: t, code: '6030', name: 'Wages Expense', type: 'expense' },
+        { tenantId: t, code: '6031', name: 'Wages Expense 2', type: 'expense' },
+        { tenantId: t, code: '6032', name: 'Wages Expense (HO)', type: 'expense' },
         { tenantId: t, code: '6990', name: 'Costs Recharged to Group Companies', type: 'expense' },
       ],
     })
@@ -128,15 +131,17 @@ beforeAll(async () => {
   await prisma.hrEmployee.create({ data: { tenantId: HO, employeeCode: 'HO-0001', fullName: 'Head of Finance' } })
   await prisma.hrPayrollRun.create({ data: { tenantId: HO, period: '2026-08', status: 'locked', settings: {} } })
 
-  // September: wages 800,000 + rent 150,000 + software 50,000 = PKR 1,000,000.
+  // September: wages 6030-6032 (50k + 150k + 800k) = PKR 1,000,000; rent is not pooled.
   await cost(HO, '2026-09-10', '6032', 80_000_000)
-  await cost(HO, '2026-09-10', '6010', 15_000_000)
-  await cost(HO, '2026-09-11', '6070', 5_000_000)
+  await cost(HO, '2026-09-10', '6031', 15_000_000)
+  await cost(HO, '2026-09-11', '6030', 5_000_000)
+  // Not a salary: rent is a head-office expense but never in the pool (owner 2026-10-30, salaries only).
+  await cost(HO, '2026-09-13', '6010', 9_000_000)
   // Never in September's pool: October's cost, and a line on the recharge account itself (A9).
-  await cost(HO, '2026-10-02', '6010', 7_000_000)
+  await cost(HO, '2026-10-02', '6032', 7_000_000)
   await cost(HO, '2026-09-12', '6990', 1_234_500)
   // August: PKR 500,000.
-  await cost(HO, '2026-08-15', '6010', 50_000_000)
+  await cost(HO, '2026-08-15', '6032', 50_000_000)
 
   app = Fastify()
   app.addHook('onRequest', (_req, _reply, done) => { runWithRlsContext({}, () => done()) })
@@ -161,7 +166,8 @@ describe('pool, preview and prepare', () => {
   it('the pool is the head office expense of the PKT month, never the recharge account or another month', async () => {
     const p = await computePool(prisma, HO, '2026-09')
     expect(p.poolCents).toBe(100_000_000)
-    expect(p.basis.map((b) => [b.code, b.netCents])).toEqual([['6010', 15_000_000], ['6032', 80_000_000], ['6070', 5_000_000]])
+    expect(p.basis.map((b) => [b.code, b.netCents])).toEqual([['6030', 5_000_000], ['6031', 15_000_000], ['6032', 80_000_000]])
+    expect(p.basis.map((b) => b.code)).not.toContain('6010')
   })
 
   it('preview gives the basis, the lines and what the head office keeps', async () => {
@@ -248,7 +254,7 @@ describe('approve', () => {
 
   it('posts one transfer per company in both books; the head office keeps only its retained share; drift is reported', async () => {
     // A cost lands after submission: the approval reports the drift (a true-up follows).
-    await cost(HO, '2026-09-20', '6070', 100_000)
+    await cost(HO, '2026-09-20', '6032', 100_000)
     const res = await call('ceo', 'POST', `/${sept}/approve`, { acknowledgeWarnings: true })
     expect(res.statusCode).toBe(200)
     const run = res.json()
@@ -285,7 +291,7 @@ describe('approve', () => {
     expect((await pairBalances(prisma, HO, C2)).aDueFromB).toBe(30_000_000)
     // The head office's September P&L = what it keeps (+ the late cost, not recharged yet,
     // + the stray 6990 line the fixture put outside the pool on purpose).
-    expect(await hoPnl('2026-09')).toBe(10_000_000 + 100_000 + 1_234_500)
+    expect(await hoPnl('2026-09')).toBe(10_000_000 + 100_000 + 1_234_500 + 9_000_000)
     const inv = await runInvariants(sept)
     expect(inv.problems).toEqual([])
     // Audited in the head office and both companies — never another company (A19).
@@ -308,7 +314,7 @@ describe('August: stale on submit, and two approvals at once post once', () => {
     const res = await call('ceo', 'POST', '/', { headOfficeId: HO, period: '2026-08' })
     expect(res.statusCode).toBe(201)
     const id = res.json().id
-    await cost(HO, '2026-08-20', '6010', 1_000_000)
+    await cost(HO, '2026-08-20', '6032', 1_000_000)
     const s1 = await call('ceo', 'POST', `/${id}/submit`)
     expect(s1.statusCode).toBe(409)
     expect(code(s1)).toBe('RUN_STALE')
@@ -377,7 +383,7 @@ describe('true-ups and closed books', () => {
   })
 
   it('a negative true-up credits the companies (the head office is the debtor)', async () => {
-    await cost(HO, '2026-09-25', '6010', -500_000)
+    await cost(HO, '2026-09-25', '6032', -500_000)
     const res = await call('fin', 'POST', '/', { headOfficeId: HO, period: '2026-09' })
     expect(res.statusCode).toBe(201)
     negTrueUp = res.json().id
