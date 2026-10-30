@@ -187,7 +187,9 @@ export default function PayrollRunPage() {
               {isHrAdmin && <button className={`${btnDanger} ml-2 !text-xs [@media(pointer:coarse)]:min-h-[44px]`} disabled={act.isPending} onClick={() => void ask("delete")}>Delete draft</button>}
             </>}
             {run.status === 'finance_review' && canReview && <>
-              <button className={btn} disabled={act.isPending} onClick={() => void ask('finance-pass')}>Pass to CEO</button>
+              {role === 'admin'
+                ? <button className={btn} disabled={act.isPending} onClick={() => void ask('approve')}>Approve payroll</button>
+                : <button className={btn} disabled={act.isPending} onClick={() => void ask('finance-pass')}>Pass to CEO</button>}
               <button className={btnGhost} disabled={act.isPending} onClick={() => { setErr(''); setReturning(true) }}>Return to HR</button>
             </>}
             {run.status === 'finance_checked' && canApprove && (
