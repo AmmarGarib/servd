@@ -141,6 +141,8 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
   }, [keenuNow.data])
   const keenuPending = push?.state === 'pending'
   const lockedToServd = keenuNow.data?.settlementChannel === 'servd' && paidCentsOf(order) > 0
+  // SRB direct (2026-10-30): no fiscal POS takes a pushed bill — offer "Close in servd" only (a push already on the bill still shows).
+  const keenuOffered = keenuNow.data?.pushAvailable !== false || !!push
 
   // ── Card machine ──────────────────────────────────────────────────────────
   const termConfig = useTerminalConfig(shiftId)
@@ -460,8 +462,8 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
               {isDelivery && paidCentsOf(order) === 0 && !holding && !keenuPending && (
                 <button type="button" onClick={() => void switchCod(true)} disabled={codBusy} className="mb-3 min-h-11 w-full rounded-lg border border-kds-border text-sm font-semibold text-kds-text hover:border-kds-green disabled:opacity-40">{codBusy ? 'Switching…' : 'Cash on delivery instead (the rider collects)'}</button>
               )}
-              {/* The two ways to close the bill */}
-              <div className="mb-3 grid grid-cols-2 gap-2" role="group" aria-label="How to close this bill">
+              {/* The two ways to close the bill (only "Close in servd" when no fiscal POS can take a push) */}
+              {keenuOffered && <div className="mb-3 grid grid-cols-2 gap-2" role="group" aria-label="How to close this bill">
                 {(['servd', 'keenu'] as const).map((w) => (
                   <button key={w} type="button" aria-pressed={way === w} onClick={() => pickWay(w)} disabled={(holding || keenuPending) && way !== w || (w === 'keenu' && lockedToServd)}
                     className={`min-h-12 rounded-xl border-2 px-2 text-sm font-bold disabled:opacity-30 ${way === w ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-text hover:border-kds-green'}`}>
@@ -469,7 +471,7 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
                     <span className="block text-[10px] font-normal uppercase tracking-wider opacity-70">{w === 'servd' ? 'Pay here' : 'Keenu POS files it'}</span>
                   </button>
                 ))}
-              </div>
+              </div>}
 
               <div role="tablist" aria-label="Settle" className="mb-3 grid grid-cols-2 border-b border-kds-border">
                 {(['process', 'summary'] as const).map((t) => (

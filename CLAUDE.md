@@ -902,18 +902,34 @@ noindex, no servd chrome / feedback / pop-ups).
 
 ### POS connector + pre-bills (2026-10-10, owner amendments binding)
 
-**The external fiscal POS is the ONLY FBR/SRB filer.** servd is the
-order-taking software; it never talks to FBR PRAL or SRB. The direct
-adapters, workers, queues, `/integrations/tax/status` and every `FBR_*` /
-`SRB_*` env var are removed — **never add a direct authority client.**
+**SRB direct (owner, 2026-10-30 — REVERSES "never add a direct authority
+client" for SRB only): "servd files sales tax invoices DIRECTLY with SRB from
+its own till."** SRB only — FBR is not used; Keenu is no longer the fiscal POS
+(it may stay as a card machine, the terminal connector, unchanged). The filer
+is ONE driver inside the connector framework: `connectors/drivers/srb.ts`
+(driver `srb`, "SRB direct (servd files itself)", in `FISCAL_DRIVERS`; needs
+an API key = SRB's `pos_pass`, sealed by secretBox; `settings.srb = {posUser,
+live}` — live off = SRB transType "Test", a dry run is always Test). Flat
+JSON `toSrbInvoiceFields` + credentials to
+`https://pos.srb.gos.pk/ePOSGateway/v1/SalesInvoiceService.api`; resCode
+"00" → filed with `srbInvoiceId` and the QRCodeLink as `qrPayload` +
+`verifyUrl` (printed as a QR); refunds = invoiceType 2; no lookup (an unknown
+outcome is resent with the SAME deterministic invoiceId; a duplicate refusal
+→ rejected + alert, recorded by hand); zeroValue false; no pushBill. The POS
+user / Live switch cannot change while live (409 `SWITCH_OFF_FIRST`); go-live
+needs them set and Live. Never a second filer, queue or table, and no other
+authority client. The old external-fiscal-POS path (`http`) still works.
+No `FBR_*` / `SRB_*` env vars (credentials are per company on the page).
 Everything goes through `backend/src/connectors/` (README there; vendor
-contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`).
+contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
+§4A). Tests: `tests/srbDirectDriver.test.ts`.
 
 - **The connector:** one `PosConnector` row per company per kind — `fiscal`
   (the fiscal POS) and `terminal` (the card machine), so they can be
   different vendors. Drivers: `none`, `test` (built in, deterministic, no
-  network, `TEST-…` numbers, receipts say `TEST — NOT A FISCAL INVOICE`) and
-  `http` ("servd connector API v1"). A real vendor is one file in
+  network, `TEST-…` numbers, receipts say `TEST — NOT A FISCAL INVOICE`),
+  `http` ("servd connector API v1") and `srb` (SRB direct, 2026-10-30;
+  `registry.ts DIRECT_FISCAL_DRIVERS`). A real vendor is one file in
   `connectors/drivers/` + one line in `registry.ts`. Secrets go through
   `lib/secretBox.ts` (`SERVD_SECRET_KEY`); responses carry hints only.
 - **Transactional outbox:** the sale `FiscalDocument` is inserted inside
@@ -2859,10 +2875,17 @@ change a route only together with that file). Binding rules:
   the ONE sale document (payload `settlement.pushId`) → revenue to the brand's MAIN
   account. **Close in servd** (`settlementChannel: 'servd'` on `/pos/payments`, or
   `PUT /pos/orders/:id/settlement-channel` before any other tender path) → revenue
-  to the brand's **servd sub-account**; its fiscal documents (sale AND returns) are
-  `manual_required` / `servd_channel` — NEVER sent (enqueue, retry, rebuild and the
-  sender itself all refuse; `outbox.ts SERVD_CHANNEL`), never skipped. A pending Keenu
-  push blocks every other tender (`KEENU_PUSH_PENDING` in the active-tender guard).
+  to the brand's **servd sub-account**. Its fiscal documents: under SRB direct
+  (owner, 2026-10-30, driver in `registry.ts DIRECT_FISCAL_DRIVERS`) the NORMAL
+  path — filed automatically by servd; under a fiscal POS driver (test / http /
+  none) `manual_required` / `servd_channel` — NEVER sent (enqueue, retry, rebuild and
+  the sender itself all refuse; `outbox.ts SERVD_CHANNEL` / `servdHandFiledTx`),
+  never skipped. Rows already `servd_channel` stay hand-filed after a switch to SRB,
+  and so does a return of a hand-filed sale. A pending Keenu push blocks every other
+  tender (`KEENU_PUSH_PENDING` in the active-tender guard). **No fiscal POS, no push:**
+  `GET /pos/orders/:id/keenu-push` returns `pushAvailable` (`keenuPush.ts
+  keenuPushAvailable`, the same test as the push); false (SRB direct, connector off,
+  reporting off) → the till shows "Close in servd" only.
 - **Two accounts per brand:** `Concept.servdRevenueAccountCode` "Sales — <brand>
   (servd)" — the LAST free code of 4010–4089 (main accounts keep numbering from
   4010 up), created with the main one at brand create and by the boot step
@@ -2872,9 +2895,12 @@ change a route only together with that file). Binding rules:
   `journal.ts saleRevenueCodeFor`; refunds / credit notes / cancel-undos reverse the
   account the SALE credited (`saleBookingOf` picks the channel's line in a shift
   close that carries both).
-- **Servd sales are filed by hand** on the SRB / FBR portal (owner confirmed):
-  finance records the filing on `/accounting/servd-filings` (`servdFilings.ts`,
-  through `outbox.recordManualFiling` — no second filing table). Close check
+- **Servd sales are filed by hand** on the SRB / FBR portal (owner confirmed) —
+  ONLY while the company's fiscal driver is a fiscal POS; under SRB direct
+  (2026-10-30) they are filed automatically. Finance records the hand filings on
+  `/accounting/servd-filings` (`servdFilings.ts`, through `outbox.recordManualFiling` —
+  no second filing table; `servdDocumentWhere` shows, for an SRB-direct company, only
+  the hand-filed rows `servd_channel` / `servd_portal`). Close check
   **`servd_sales_unfiled`** BLOCKS (CEO-overridable) while any is unfiled on or
   before the lock. Reporting-OFF companies have no documents (as before).
 - **Waiter = an HR employee of the order's company** (`Order.waiterEmployeeId`;

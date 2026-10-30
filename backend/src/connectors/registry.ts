@@ -13,12 +13,28 @@ import type { ConnectorCtx, ConnectorKindT, FiscalDriver, FiscalSettings, RaastD
 import { parseFiscalSettings, parseRaastSettings, parseTerminalSettings } from './config.js'
 import { testFiscalDriver, testTerminalDriver } from './drivers/test.js'
 import { httpFiscalDriver, httpTerminalDriver } from './drivers/http.js'
+import { srbFiscalDriver } from './drivers/srb.js'
 import { isSandbox, practiceConnectorRow } from '../lib/sandbox.js'
 import { isHeadOfficeTenant } from '../lib/headOffice.js'
 
 export const FISCAL_DRIVERS: Readonly<Record<string, FiscalDriver>> = {
   test: testFiscalDriver,
   http: httpFiscalDriver,
+  srb: srbFiscalDriver,
+}
+
+/**
+ * Fiscal drivers through which servd files with the authority ITSELF (owner,
+ * 2026-10-30: SRB direct). Under one of these, a bill closed in servd
+ * (Order.settlementChannel 'servd') is filed automatically like any other —
+ * not hand-filed on the portal (connectors/fiscal/outbox.ts SERVD_CHANNEL).
+ * Keyed on the STORED driver id (the practice copy runs the test driver for
+ * it, and behaves the same way).
+ */
+export const DIRECT_FISCAL_DRIVERS: ReadonlySet<string> = new Set(['srb'])
+
+export function isDirectFiscalDriver(id: string | null | undefined): boolean {
+  return !!id && DIRECT_FISCAL_DRIVERS.has(id)
 }
 
 export const TERMINAL_DRIVERS: Readonly<Record<string, TerminalDriver>> = {

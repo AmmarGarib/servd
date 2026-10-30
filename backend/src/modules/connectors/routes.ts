@@ -518,6 +518,12 @@ function dryRunPayload(tenantId: string, brand: string, registrations: FiscalPay
 export async function goLiveMissing(tenantId: string, row: PosConnector): Promise<string[]> {
   const missing: string[] = []
   if (row.driver === 'none' || !fiscalDriverOf(row.driver)) missing.push('Pick a fiscal POS driver')
+  // SRB direct (2026-10-30): servd files itself — test in SRB's Test mode first, then switch to Live before going live.
+  if (row.driver === 'srb') {
+    const srb = parseFiscalSettings(row.settings).srb
+    if (!srb?.posUser || !row.apiKeyEnc) missing.push('Enter the SRB POS user and password')
+    else if (!srb.live) missing.push('Switch SRB to Live (after a passing Test)')
+  }
   const tenMin = connectorNow().getTime() - 10 * 60_000
   if (!row.lastTestOk || !row.lastTestAt || row.lastTestAt.getTime() < tenMin) missing.push('Run "Test connection" successfully (within the last 10 minutes)')
   const since = new Date(connectorNow().getTime() - 30 * 86_400_000)

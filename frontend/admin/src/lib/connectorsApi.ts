@@ -48,6 +48,8 @@ export interface FiscalSettings {
   apiKeyHeader?: string
   paths?: Partial<Record<'sales' | 'refunds' | 'documents' | 'health', string>>
   test?: { scenario: string }
+  /** SRB direct driver (2026-10-30): SRB's POS user; live = file real invoices (transType Live), off = SRB Test. The password is the API key. */
+  srb?: { posUser: string; live: boolean }
 }
 
 export interface TerminalEntry {

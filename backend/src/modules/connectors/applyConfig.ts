@@ -246,7 +246,13 @@ export async function applyConnectorConfig(
   if (body.settings !== undefined) {
     if (kind === 'fiscal') {
       const patch = fiscalSettingsPatch.parse(body.settings)
-      const next = fiscalSettingsSchema.parse({ ...parseFiscalSettings(stored), ...patch })
+      const prev = parseFiscalSettings(stored)
+      const next = fiscalSettingsSchema.parse({ ...prev, ...patch })
+      // SRB direct (2026-10-30): the POS user and the Test / Live switch decide where and how
+      // servd files — like the driver and address, never changed on a LIVE connector.
+      if (row.enabled && (next.srb?.posUser !== prev.srb?.posUser || (next.srb?.live ?? false) !== (prev.srb?.live ?? false))) {
+        throw switchOffFirst('the SRB POS user or Test / Live mode')
+      }
       const locs = await locationsOfCompany(tenantId, [...new Set(next.outlets.map((o) => o.locationId))], tx)
       for (const o of next.outlets) {
         if (!locs.has(o.locationId)) throw notInCompany('An outlet in the POS id overrides')

@@ -21,6 +21,15 @@
 // The month close BLOCKS while a servd-channel document dated on or before the
 // lock is still unfiled (close check 'servd_sales_unfiled', CEO-overridable
 // with acknowledge) — servdFilingsCloseCheck below, listed in CLOSE_CHECKS.
+//
+// SRB direct (owner, 2026-10-30): when a company's fiscal driver files
+// directly (connectors/registry.ts DIRECT_FISCAL_DRIVERS — 'srb'), its
+// servd-closed bills are filed AUTOMATICALLY by the outbox and are not hand
+// filings. This page and the close check then see only the hand-filed rows
+// (statusReason 'servd_channel' still unfiled, 'servd_portal' recorded) —
+// rows created before the switch, which finance can still record. The
+// automatic ones are watched where every fiscal document is (Dev → API → POS
+// connector → Submissions, /health, the fiscal_* flags).
 
 import type { FastifyInstance } from 'fastify'
 import type { Prisma, UserRole } from '@prisma/client'
@@ -32,6 +41,7 @@ import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { MANUAL_FILABLE, recordManualFiling, SERVD_CHANNEL } from '../../connectors/fiscal/outbox.js'
+import { DIRECT_FISCAL_DRIVERS } from '../../connectors/registry.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from './dates.js'
 import type { CloseCheck } from './closeCheckTypes.js'
 
@@ -41,9 +51,25 @@ export const SERVD_FILERS = ['admin', 'finance'] as UserRole[]
 /** Document statuses that still owe a portal filing (MANUAL_FILABLE: everything but filed / manual_filed / skipped / submitting). */
 export const SERVD_UNFILED_STATUSES = MANUAL_FILABLE
 
-/** Fiscal documents of bills closed in servd, in a company scope. */
-export function servdDocumentWhere(tenant: { tenantId: string } | { tenantId: { in: string[] } }): Prisma.FiscalDocumentWhereInput {
-  return { ...tenant, order: { settlementChannel: 'servd' } }
+/**
+ * Fiscal documents of bills closed in servd that are filed BY HAND, in a
+ * company scope: every one of a company whose fiscal driver is a fiscal POS;
+ * under a direct driver (SRB direct) only the hand-filed rows (servd_channel /
+ * servd_portal) — the rest are filed automatically.
+ */
+export async function servdDocumentWhere(
+  tenant: { tenantId: string } | { tenantId: { in: string[] } },
+  db: Pick<typeof prisma, 'posConnector'> = prisma,
+): Promise<Prisma.FiscalDocumentWhereInput> {
+  const direct = (await db.posConnector.findMany({
+    where: { kind: 'fiscal', driver: { in: [...DIRECT_FISCAL_DRIVERS] } },
+    select: { tenantId: true },
+  })).map((r) => r.tenantId)
+  return {
+    ...tenant,
+    order: { settlementChannel: 'servd' },
+    ...(direct.length > 0 && { OR: [{ statusReason: { in: [SERVD_CHANNEL, 'servd_portal'] } }, { tenantId: { notIn: direct } }] }),
+  }
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/
@@ -58,8 +84,9 @@ export async function servdFilingRoutes(fastify: FastifyInstance): Promise<void>
       limit: z.coerce.number().int().min(1).max(1000).default(500),
     }).parse(req.query ?? {})
     const scope = await scopeTenantWhere(req, 'read')
+    const servdWhere = await servdDocumentWhere(scope)
     const where: Prisma.FiscalDocumentWhereInput = {
-      ...servdDocumentWhere(scope),
+      ...servdWhere,
       ...(q.conceptId && { conceptId: q.conceptId }),
       ...(q.status === 'unfiled' && { status: { in: SERVD_UNFILED_STATUSES } }),
       ...(q.status === 'filed' && { status: 'manual_filed' }),
@@ -81,7 +108,7 @@ export async function servdFilingRoutes(fastify: FastifyInstance): Promise<void>
         },
       }),
       prisma.fiscalDocument.aggregate({
-        where: { ...servdDocumentWhere(scope), status: { in: SERVD_UNFILED_STATUSES }, ...(q.conceptId && { conceptId: q.conceptId }) },
+        where: { ...servdWhere, status: { in: SERVD_UNFILED_STATUSES }, ...(q.conceptId && { conceptId: q.conceptId }) },
         _count: true, _sum: { amountCents: true },
       }),
     ])
@@ -123,7 +150,7 @@ export async function servdFilingRoutes(fastify: FastifyInstance): Promise<void>
     if (filedOn.getTime() > Date.now()) throw new AppError('FILED_IN_FUTURE', 'The portal filing date cannot be in the future', 422)
     const scope = await scopeTenantWhere(req, 'write')
     const docs = await prisma.fiscalDocument.findMany({
-      where: { id: { in: ids }, ...servdDocumentWhere(scope) },
+      where: { id: { in: ids }, ...(await servdDocumentWhere(scope)) },
       select: { id: true, status: true, tenantId: true, orderId: true, kind: true, amountCents: true },
     })
     // All or nothing: one foreign / unknown / non-servd id and nothing is recorded.
@@ -172,7 +199,7 @@ export const servdFilingsCloseCheck: CloseCheck = {
   overridable: true,
   async run(ctx) {
     const agg = await ctx.db.fiscalDocument.aggregate({
-      where: { ...servdDocumentWhere({ tenantId: ctx.tenantId }), status: { in: SERVD_UNFILED_STATUSES }, createdAt: { lte: ctx.newLock } },
+      where: { ...(await servdDocumentWhere({ tenantId: ctx.tenantId }, ctx.db)), status: { in: SERVD_UNFILED_STATUSES }, createdAt: { lte: ctx.newLock } },
       _count: true,
       _sum: { amountCents: true },
     })
@@ -196,7 +223,7 @@ export const servdFilingsCloseCheck: CloseCheck = {
 /** The unfiled count of one company (the servd docs the close check counts) — for tests and the page. */
 export async function servdUnfiledCount(tenantId: string, through: Date): Promise<number> {
   return prisma.fiscalDocument.count({
-    where: { ...servdDocumentWhere({ tenantId }), status: { in: SERVD_UNFILED_STATUSES }, createdAt: { lte: through } },
+    where: { ...(await servdDocumentWhere({ tenantId })), status: { in: SERVD_UNFILED_STATUSES }, createdAt: { lte: through } },
   })
 }
 

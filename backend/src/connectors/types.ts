@@ -1,8 +1,9 @@
 // POS connector — the vendor-neutral driver contract (spec §3, frozen).
 //
 // servd talks to two kinds of external systems through drivers:
-//   fiscal   — the external fiscal POS that files FBR / SRB (the ONLY filer
-//              since 2026-10-10; servd no longer files directly), and
+//   fiscal   — the filer of FBR / SRB invoices: an external fiscal POS
+//              (http) or, since 2026-10-30 (owner), servd itself filing
+//              directly with SRB (drivers/srb.ts — SRB only), and
 //   terminal — the payment processor's card machine at the till.
 //   raast    — Raast QR bank alerts (2026-10-12): bank-SMS matching now
 //              (enabled = SMS matching ON), a bank / aggregator API later.
@@ -187,6 +188,8 @@ export interface FiscalSettings {
   apiKeyHeader?: string          // default 'Authorization' (sent as 'Bearer <key>'); any other header name gets the raw key
   paths?: Partial<Record<'sales' | 'refunds' | 'documents' | 'health', string>>
   test?: { scenario: 'ok' | 'slow' | 'down' | 'reject' | 'auth' | 'processing_then_ok' | 'unknown_then_filed'; push?: 'settle' | 'decline' | 'pending' }
+  /** SRB direct driver (owner, 2026-10-30): the SRB POS user; live = transType "Live" (default false = "Test"). The password is the connector's API key. */
+  srb?: { posUser: string; live: boolean }
 }
 export interface TerminalSettings {
   chargeTimeoutSec: number       // 45..300, default 120

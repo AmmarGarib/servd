@@ -5,9 +5,17 @@ bank alerts (bank SMS from a counter phone, 2026-10-12). The vendor
 contract is in `docs/pos-connector-api.md` and the design is in the
 2026-10-10 spec.
 
-**Never add a direct authority client.** FBR/SRB filing goes only through
-the fiscal POS, using this folder's outbox. Every path that completes an
-order goes through `completeOrder`, which inserts the sale document.
+**One direct authority client, SRB, and only as a driver here (owner,
+2026-10-30 — replaces "never add a direct authority client").** servd files
+sales tax invoices directly with SRB through `drivers/srb.ts` (driver `srb`,
+"SRB direct (servd files itself)"); SRB only — FBR is not used, and no other
+authority client is added. It goes through this folder's ONE outbox like any
+fiscal driver — never a second filer, queue or table. Every path that
+completes an order goes through `completeOrder`, which inserts the sale
+document. `registry.ts DIRECT_FISCAL_DRIVERS` lists the drivers that file
+directly: under one, bills closed in servd (`Order.settlementChannel
+'servd'`) are filed automatically instead of being hand-filed on the portal
+(`fiscal/outbox.ts SERVD_CHANNEL`).
 
 | File | What |
 |---|---|
@@ -17,6 +25,7 @@ order goes through `completeOrder`, which inserts the sale document.
 | `util.ts` | `withTimeout`, backoff, HMAC sign and verify, message scrubbing, PKT time helpers |
 | `drivers/test.ts` | The built-in deterministic test driver. It never contacts a network and never files a real invoice. |
 | `drivers/http.ts` | The generic "servd connector API v1" driver |
+| `drivers/srb.ts` | SRB direct (2026-10-30): POSTs the flat SRB invoice (`toSrbInvoiceFields` + credentials from `settings.srb.posUser` / the API key, transType Test unless `settings.srb.live`) to `pos.srb.gos.pk`; resCode `00` → filed with the QR link. No lookup: an unknown outcome is resent with the same invoiceId. `setSrbTransport` is the test seam. |
 | `fiscal/payload.ts` | Builds the payload from STORED order figures, with refunds pro rata, plus the ported SRB and FBR field mappings. A delivery fee stored on the order becomes its own `DELIVERY-CHARGE` line (H9, below). `totalsCheck` enforces the bill identity before anything is sent. |
 | `fiscal/outbox.ts` | `enqueueFiscalSaleTx` / `enqueueFiscalRefundTx` (inside the caller's transaction), `sendFiscalDocument` (DB lease, lookup before resubmit), `submitFiscalNow` / `submitFiscalAtTill`, `kickFiscal`, retry, manual filing, release of held documents, the sweeper |
 | `fiscal/view.ts` | `FiscalView`, `fiscalViewForOrder`, `legacySrbAlias` |

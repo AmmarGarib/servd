@@ -105,6 +105,7 @@ import { buildShiftCloseEntry, liveShiftCloses } from '../accounting/shiftPostin
 import { homeShiftOf, isShiftReceipt } from '../accounting/orderPosting.js'
 import { dayLockOf } from '../nightAudit/lock.js'
 import { TRASH_ORDERS } from '../trash/providers/transactions/orders.js'
+import { filesServdChannelDirectly } from '../../connectors/fiscal/outbox.js'
 
 type Db = Prisma.TransactionClient | typeof prisma
 
@@ -449,7 +450,10 @@ async function previewItem(shift: ShiftRow, tenantId: string, item: ShiftCorrect
       money: receipts.filter((p) => p.method !== 'comp').length === 0 ? 'none' : item.moneyReturned ? 'owed_back' : 'voided',
       stock: item.kind === 'void_reissue' ? 'moves_to_new_bill' : item.foodMade ? 'waste' : 'back_to_stock',
       fiscal: !finalBill || !sale || sale.status === 'skipped' ? 'none'
-        : (sale.statusReason === 'servd_channel' || o?.settlementChannel === 'servd') ? 'void_document_manual' : 'void_document',
+        // Hand-filed: a sale filed by hand on the portal, or a servd-closed bill while the
+        // company's driver is a fiscal POS; under SRB direct (2026-10-30) the void is filed automatically.
+        : (sale.statusReason === 'servd_channel' || sale.statusReason === 'servd_portal'
+          || (o?.settlementChannel === 'servd' && !(await filesServdChannelDirectly(prisma, tenantId)))) ? 'void_document_manual' : 'void_document',
       raast: !raastPaid ? null : item.kind !== 'void_reissue' && item.moneyReturned ? 'owed_back' : 'cancelled',
     },
     blockedBy,

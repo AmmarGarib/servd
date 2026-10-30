@@ -7,13 +7,24 @@ Pakistan's e-invoicing regime has two layers for restaurants:
 | **FBR** (Federal Board of Revenue) via PRAL | Federal sales tax | Tier-1 businesses nationwide, under SRO 1307(I)/2022 |
 | **SRB** (Sindh Revenue Board) | Provincial sales tax on services | Restaurants located in Sindh |
 
-**servd does not file with FBR or SRB itself.** The direct FBR PRAL and SRB
-clients, their workers and the `FBR_*` / `SRB_*` environment variables are
-gone (owner decision, 2026-10-10). An **external fiscal POS** — a vendor's
-system that is registered with the authorities — is the only filer. servd is
-the order-taking software: it sends each full & final sale to that POS through
-the **POS connector**, gets the fiscal invoice number and QR back, and prints
-them on the bill.
+> **2026-10-30 — servd files with SRB itself (owner decision).** "servd files
+> sales tax invoices DIRECTLY with SRB from its own till." SRB only — FBR is
+> not used. Keenu is no longer the fiscal POS (it can stay as a card machine,
+> the terminal connector). The filer is the **SRB direct** driver inside the
+> same POS connector (driver `srb`, `backend/src/connectors/drivers/srb.ts`):
+> the same outbox, retries, held / released backlog, alerts and receipts. Bills
+> closed in servd are filed **automatically** under it — no more hand filing
+> on the portal for them. Set-up: §4A below.
+
+Before 2026-10-30 servd did not file with FBR or SRB itself: the old direct
+FBR PRAL and SRB clients, their workers and the `FBR_*` / `SRB_*` environment
+variables were removed (owner decision, 2026-10-10), and an **external fiscal
+POS** — a vendor's system registered with the authorities — was the only
+filer. That path (driver `http`, "servd connector API v1") still works: servd
+sends each full & final sale through the **POS connector**, gets the fiscal
+invoice number and QR back, and prints them on the bill. There are no
+`SRB_*` environment variables in either case — SRB credentials are entered
+per company on the connector page.
 
 The vendor contract (what the fiscal POS must implement) is
 [`docs/pos-connector-api.md`](./pos-connector-api.md) — "servd connector API v1".
@@ -146,6 +157,64 @@ The built-in `test` driver files `TEST-…` numbers and receipts say
 While live, the driver and base URL cannot be changed
 (`409 SWITCH_OFF_FIRST`): to move vendor, the CEO switches off, IT changes and
 tests, the CEO goes live again. The API key can be rotated while live.
+
+---
+
+## 4A. SRB direct — servd files with SRB itself (owner, 2026-10-30)
+
+Who: IT and the CEO set it up; only the CEO goes live. One company at a time
+(the connector is per company — each company uses its own SRB credentials).
+
+1. **Fiscal setup** tab: pick driver **"SRB direct (servd files itself)"**.
+   There is no base URL and no webhook — servd calls
+   `https://pos.srb.gos.pk/ePOSGateway/v1/SalesInvoiceService.api` itself.
+2. Enter the **SRB POS user** (`pos_user`) and the **SRB POS password**
+   (`pos_pass`) SRB issued for this company. The password is stored encrypted
+   (needs `SERVD_SECRET_KEY`, §4 step 0) and only its hint is ever shown.
+   Leave **Live (not test)** OFF for now — SRB's Test mode.
+3. **POS IDs** tab: set each brand's **SRB POS id** (numeric). FBR ids are
+   not used. A brand with no SRB id cannot file (its documents are refused
+   `NOT_REGISTERED`).
+4. **Test connection**, then **Dry-run sale**: the dry run files a PKR 100
+   invoice in SRB's **Test** mode (a dry run is always Test, whatever the
+   switch says) and shows SRB's invoice number. A failure shows SRB's result
+   code (`SRB_<code>`) — usually a wrong user / password or POS id.
+5. When the Test invoices are right, the CEO switches off if live, IT ticks
+   **Live (not test)** and saves, and runs **Test connection** again. The POS
+   user and the Live switch cannot change while the connector is live (409
+   `SWITCH_OFF_FIRST`) — every live invoice is a real SRB invoice.
+6. **Go live** (CEO, `GO LIVE`): it also refuses until the SRB user and
+   password are in and the SRB switch is on **Live**. Then **Release all
+   held** as in §4.
+
+How it behaves:
+
+- **Every full & final bill is filed by servd** — bills pushed nowhere,
+  bills closed in servd, deliveries, online orders. Refunds and credit notes
+  are filed as SRB sales returns (invoice type 2). Zero-value bills are not
+  filed (SRB direct cannot file a zero bill; they are skipped automatically).
+- The receipt prints SRB's invoice number and the **QR code** from SRB's
+  `QRCodeLink`.
+- **Bills closed in servd are filed automatically.** Their documents follow
+  the normal path (pending → filed); they no longer appear on Finance →
+  Servd sales to file, and the month-close check `servd_sales_unfiled` only
+  counts the hand-filed rows created before the switch — finance records
+  those as before. A return of a sale that was filed by hand is filed by hand
+  too.
+- **No "Push to Keenu"** at the till: with no fiscal POS there is nothing to
+  push to, so the till offers "Close in servd" only. The card machine
+  (terminal connector) is unchanged.
+- **No lookup.** SRB has no "get invoice" API. If a call times out after it
+  was sent, servd resends the SAME invoice (the same `invoiceId`, never a new
+  one): SRB either files it once or refuses it as a duplicate. A duplicate
+  refusal leaves the document **rejected** with an alert — check the SRB
+  portal and record the filing by hand with SRB's number (Submissions →
+  Record manual filing). Keep "Wait at the till" at 3–5 s.
+- **Tax figure on discounted bills.** SRB's rule computes tax on the
+  pre-discount value; servd charges tax after the discount. On a discounted
+  bill the figure SRB records can differ from the bill — confirm the
+  treatment with the tax adviser before going Live.
+- The practice copy never calls SRB: it runs the built-in test driver.
 
 ---
 

@@ -1075,7 +1075,7 @@ async function fiscalDocs(input: TillReportInput, notes: string[]): Promise<Till
     status: d.status, reason: d.statusReason ?? '', fiscalNumber: d.fiscalNumber ?? '', authority: (d.authority ?? '').toUpperCase(),
     filedAt: pktStamp(d.filedAt), test: d.isTest ? 'Test' : '', amountCents: d.amountCents,
   }))
-  notes.push('Fiscal documents created in the period. Bills closed in servd are manual_required / servd_channel — filed by hand on the SRB / FBR portal, never sent to the POS.')
+  notes.push('Fiscal documents created in the period. With SRB direct (servd files itself) bills closed in servd are filed automatically like any other; under a fiscal POS driver — and for rows from before the switch — they are manual_required / servd_channel, filed by hand on the SRB / FBR portal.')
   return [{
     title: null,
     columns: [

@@ -184,6 +184,9 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
   const [baseUrl, setBaseUrl] = useState(f.baseUrl ?? '')
   const [apiKey, setApiKey] = useState<string | null>(null)   // null = unchanged
   const [s, setS] = useState<FiscalSettings>(f.settings)
+  // SRB direct (2026-10-30): POS user + Live switch live in settings.srb; the password is the API key.
+  const [srbUser, setSrbUser] = useState(f.settings.srb?.posUser ?? '')
+  const [srbLive, setSrbLive] = useState(f.settings.srb?.live ?? false)
   const [newSecret, setNewSecret] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [badNums, setBadNums] = useState<Record<string, boolean>>({})
@@ -191,9 +194,16 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
   // Reset the form only when the SERVER copy really changes (a save, or
   // another person's edit) — not on every 10 s poll, which returns new objects.
   const serverKey = JSON.stringify([f.driver, f.baseUrl, f.settings])
-  useEffect(() => { setDriver(f.driver); setBaseUrl(f.baseUrl ?? ''); setS(f.settings) }, [serverKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setDriver(f.driver); setBaseUrl(f.baseUrl ?? ''); setS(f.settings)
+    setSrbUser(f.settings.srb?.posUser ?? ''); setSrbLive(f.settings.srb?.live ?? false)
+  }, [serverKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const needs = fiscalDrivers.find((d) => d.id === driver)?.needs ?? { baseUrl: driver === 'http', apiKey: driver === 'http', webhookSecret: false }
+  const needs = fiscalDrivers.find((d) => d.id === driver)?.needs ?? { baseUrl: driver === 'http', apiKey: driver === 'http' || driver === 'srb', webhookSecret: false }
+  const isSrb = driver === 'srb'
+  const srbChanged = isSrb && (srbUser.trim() !== (f.settings.srb?.posUser ?? '') || srbLive !== (f.settings.srb?.live ?? false))
+  // The server needs a POS user before the SRB block can be saved.
+  const srbIncomplete = srbChanged && !srbUser.trim()
 
   const changed = useMemo(() => {
     const body: Record<string, unknown> = {}
@@ -205,9 +215,10 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
       if (s[k] !== f.settings[k]) settings[k] = s[k]
     }
     if ((s.test?.scenario ?? 'ok') !== (f.settings.test?.scenario ?? 'ok')) settings['test'] = { scenario: s.test?.scenario ?? 'ok' }
+    if (srbChanged && srbUser.trim()) settings['srb'] = { posUser: srbUser.trim(), live: srbLive }
     if (Object.keys(settings).length) body['settings'] = settings
     return body
-  }, [driver, baseUrl, apiKey, s, f])
+  }, [driver, baseUrl, apiKey, s, f, srbChanged, srbUser, srbLive])
 
   const save = useMutation({
     mutationFn: () => connectorsApi.save<FiscalSettings>('fiscal', changed),
@@ -236,29 +247,49 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
       {!canEdit && <p className="text-xs text-s-muted">Read-only — the CEO and IT configure the connector.</p>}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <Field label="Driver" htmlFor="fx-driver" hint={driver === 'test' ? 'Built in. Files TEST numbers — never a real fiscal invoice.' : driver === 'none' ? 'Off. Sales are held until a driver is set and the CEO goes live.' : undefined}>
+        <Field label="Driver" htmlFor="fx-driver" hint={driver === 'test' ? 'Built in. Files TEST numbers — never a real fiscal invoice.' : driver === 'none' ? 'Off. Sales are held until a driver is set and the CEO goes live.' : isSrb ? 'servd files every bill with SRB itself — bills closed in servd included. No fiscal POS, no “Push to Keenu”.' : undefined}>
           <Select id="fx-driver" className="s-select" value={driver} disabled={locked} onChange={(e) => setDriver(e.target.value)}>
             {fiscalDrivers.length === 0 && <option value={f.driver}>{f.driver}</option>}
             {fiscalDrivers.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
           </Select>
         </Field>
-        {(needs.baseUrl || f.baseUrl) && (
+        {!isSrb && (needs.baseUrl || f.baseUrl) && (
           <Field label="Base URL" htmlFor="fx-url" hint="The vendor's https:// address. Private and local addresses are refused.">
             <input id="fx-url" className="s-input font-mono text-xs" value={baseUrl} disabled={locked} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://fiscal.vendor.pk/servd/v1" />
           </Field>
         )}
       </div>
 
+      {isSrb && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Field label="SRB POS user" htmlFor="fx-srb-user" hint="The pos_user SRB issued when the POS was registered.">
+            <input id="fx-srb-user" className="s-input font-mono text-xs" value={srbUser} disabled={locked} maxLength={64}
+              autoComplete="off" autoCapitalize="none" spellCheck={false}
+              onChange={(e) => setSrbUser(e.target.value)} placeholder="e.g. 4bs8gf55" />
+          </Field>
+          <Field label="SRB mode" htmlFor="fx-srb-live" hint={srbLive ? 'Live — every bill becomes a real SRB invoice once the CEO goes live.' : 'Test — SRB answers with test invoices; nothing is a real tax invoice. Test first, then switch to Live.'}>
+            <label className="flex min-h-10 items-center gap-2 text-sm text-s-text">
+              <input id="fx-srb-live" type="checkbox" className="h-4 w-4"
+                checked={srbLive} disabled={locked} onChange={(e) => setSrbLive(e.target.checked)} />
+              <span>Live (not test)</span>
+              <Badge tone={srbLive ? 'ok' : 'warn'}>{srbLive ? 'Live' : 'Test'}</Badge>
+            </label>
+          </Field>
+        </div>
+      )}
+      {isSrb && srbIncomplete && <p className="text-xs text-s-amber">Enter the SRB POS user to save the SRB settings.</p>}
+      {isSrb && live && <p className="text-xs text-s-muted">The SRB POS user and mode are locked while live — the CEO switches off first.</p>}
+
       {(needs.apiKey || f.apiKeyHint) && (
-        <Field label="API key" hint="Stored encrypted. Never shown again once saved — only its first and last four characters.">
+        <Field label={isSrb ? 'SRB POS password' : 'API key'} hint="Stored encrypted. Never shown again once saved — only its first and last four characters.">
           {apiKey === null ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-xs text-s-text">{f.apiKeyHint ?? 'Not set'}</span>
-              {canEdit && <button className="s-btn-secondary px-2 py-1 text-xs" onClick={() => setApiKey('')}>{f.apiKeyHint ? 'Replace' : 'Set key'}</button>}
+              {canEdit && <button className="s-btn-secondary px-2 py-1 text-xs" onClick={() => setApiKey('')}>{f.apiKeyHint ? 'Replace' : isSrb ? 'Set password' : 'Set key'}</button>}
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <PasswordInput name="fiscal-api-key" autoComplete="new-password" autoCapitalize="none" spellCheck={false} wrapperClassName="flex-1 min-w-[200px]" className="s-input font-mono text-xs" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Paste the key from the vendor" />
+              <PasswordInput name="fiscal-api-key" autoComplete="new-password" autoCapitalize="none" spellCheck={false} wrapperClassName="flex-1 min-w-[200px]" className="s-input font-mono text-xs" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={isSrb ? 'The pos_pass SRB issued' : 'Paste the key from the vendor'} />
               <button className="s-btn-ghost px-2 py-1 text-xs" onClick={() => setApiKey(null)}>Keep current</button>
               {f.apiKeyHint && <span className="text-[11px] text-s-muted">Saving it empty removes the key.</span>}
             </div>
@@ -266,7 +297,7 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
         </Field>
       )}
 
-      <Field label="Webhook" hint="The fiscal POS calls this address when a document is filed later. Signed with the webhook secret.">
+      {!isSrb && <Field label="Webhook" hint="The fiscal POS calls this address when a document is filed later. Signed with the webhook secret.">
         <div className="flex flex-wrap items-center gap-2">
           <code className="text-[11px] break-all rounded bg-s-bg px-2 py-1 text-s-text">{f.webhookUrl}</code>
           <button className="s-btn-ghost px-2 py-1 text-xs" onClick={() => void copy(f.webhookUrl, 'url')}>{copied === 'url' ? 'Copied' : 'Copy'}</button>
@@ -288,7 +319,7 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
           </div>
         )}
         <ErrorLine>{regen.error ? connectorErrorText(regen.error) : rotate.error ? connectorErrorText(rotate.error) : null}</ErrorLine>
-      </Field>
+      </Field>}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Wait at the till (ms)" htmlFor="fx-sync" hint="How long the till waits for the fiscal number before printing “pending” (500–5000). A sale is never blocked.">
@@ -322,7 +353,7 @@ function ConnectionCard({ data, canEdit }: { data: ConnectorsOverview; canEdit: 
 
       {canEdit && (
         <div className="flex flex-wrap items-center gap-3">
-          <button className="s-btn-primary" disabled={save.isPending || numbersBad || Object.keys(changed).length === 0} onClick={() => save.mutate()}>
+          <button className="s-btn-primary" disabled={save.isPending || numbersBad || srbIncomplete || Object.keys(changed).length === 0} onClick={() => save.mutate()}>
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
           {save.isSuccess && Object.keys(changed).length === 0 && <OkLine>Saved.</OkLine>}
@@ -376,6 +407,7 @@ function readiness(data: ConnectorsOverview): Array<{ label: string; ok: boolean
   const unregistered = data.brandPosIds.filter((b) => !b.fbrPosId && !b.srbPosId && !outlets.some((o) => o.conceptId === b.conceptId || o.conceptId === null))
   return [
     { label: 'A fiscal POS driver is picked', ok: f.driver !== 'none' },
+    ...(f.driver === 'srb' ? [{ label: 'SRB is set to Live (after a passing Test)', ok: f.settings.srb?.live === true }] : []),
     { label: 'Test connection passed in the last 10 minutes', ok: tested },
     { label: unregistered.length ? `POS ids for: ${unregistered.map((b) => b.name).join(', ')} (brands that traded in the last 30 days must have one)` : 'Every brand has a POS id', ok: unregistered.length === 0 },
     { label: 'The old direct FBR / SRB queues are drained', ok: data.legacyDrained },

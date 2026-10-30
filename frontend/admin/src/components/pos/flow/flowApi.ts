@@ -359,8 +359,10 @@ export function checkKeenuPush(orderId: string): Promise<KeenuAnswer> {
   requireOnline()
   return api.post<KeenuAnswer>(`/pos/orders/${orderId}/keenu-push/check`, {})
 }
-export function getKeenuPush(orderId: string): Promise<{ settlementChannel: string | null; push: KeenuPushView | null }> {
-  return api.get<{ settlementChannel: string | null; push: KeenuPushView | null }>(`/pos/orders/${orderId}/keenu-push`)
+/** pushAvailable: the company's fiscal connector can take a pushed bill (false under SRB direct — servd files itself). */
+export type KeenuPushState = { settlementChannel: string | null; pushAvailable?: boolean; push: KeenuPushView | null }
+export function getKeenuPush(orderId: string): Promise<KeenuPushState> {
+  return api.get<KeenuPushState>(`/pos/orders/${orderId}/keenu-push`)
 }
 
 /** One-line explanation for the Keenu / channel codes the contract lists (the server's own message stays the fallback). */

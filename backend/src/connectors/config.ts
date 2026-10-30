@@ -43,6 +43,11 @@ export const fiscalSettingsSchema = z.object({
     // Keenu bill push (till flow, 2026-10-20): what the test POS does with a pushed bill. Default 'settle'.
     push: z.enum(['settle', 'decline', 'pending']).optional(),
   }).optional(),
+  // SRB direct driver (owner, 2026-10-30): the POS user SRB issued; live = transType "Live" (default Test).
+  srb: z.object({
+    posUser: z.string().trim().min(1).max(64),
+    live: z.boolean().default(false),
+  }).optional(),
 })
 
 export const terminalEntrySchema = z.object({

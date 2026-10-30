@@ -269,12 +269,23 @@ async function settledView(orderId: string, k: KeenuMeta, replayed: boolean): Pr
   }
 }
 
+/**
+ * Can this company's fiscal connector take a pushed bill right now (the same
+ * test pushConnector makes)? False under SRB direct (2026-10-30: no fiscal POS,
+ * no pushBill), a switched-off connector or reporting OFF — the till then
+ * hides "Push to Keenu" and offers "Close in servd" only.
+ */
+export async function keenuPushAvailable(tenantId: string): Promise<boolean> {
+  try { await pushConnector(tenantId); return true } catch { return false }
+}
+
 /** The till's view of a bill's Keenu push (GET). */
 export async function keenuPushView(orderId: string) {
-  const o = await prisma.order.findUniqueOrThrow({ where: { id: orderId }, select: { settlementChannel: true, settlementMeta: true } })
+  const o = await prisma.order.findUniqueOrThrow({ where: { id: orderId }, select: { settlementChannel: true, settlementMeta: true, concept: { select: { tenantId: true } } } })
   const k = keenuMetaOf(o.settlementMeta)
   return {
     settlementChannel: o.settlementChannel,
+    pushAvailable: o.concept.tenantId ? await keenuPushAvailable(o.concept.tenantId) : false,
     push: k ? { pushId: k.pushId, state: k.state, method: k.method, amountCents: k.amountCents, tipCents: k.tipCents, at: k.at, approvalRef: k.approvalRef ?? null, reason: k.reason ?? null } : null,
   }
 }

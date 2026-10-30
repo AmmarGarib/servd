@@ -26,7 +26,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { getFiscalQueue } from '../../lib/queue.js'
 import { getIOSafe } from '../../lib/ws.js'
 import type { ConnectorCtx, FiscalAuthority, FiscalDriver, FiscalPayload, FiscalResult, FiscalSettings, Outcome } from '../types.js'
-import { fiscalDriverOf, getConnectorFresh, buildCtx, connectorNow, ensureConnectorRow, type LoadedConnector } from '../registry.js'
+import { fiscalDriverOf, getConnectorFresh, buildCtx, connectorNow, ensureConnectorRow, isDirectFiscalDriver, type LoadedConnector } from '../registry.js'
 import { parseFiscalSettings, reportingRequiredOf, reportingRequiredSinceOf, saleFileable } from '../config.js'
 import { isTestTenant } from '../../lib/testCompany.js'
 import { nextDelayMs, scrubMessage, withTimeout } from '../util.js'
@@ -104,20 +104,50 @@ export const TOTALS_MISMATCH = 'totals_mismatch'
 /**
  * Till flow (owner, 2026-10-20): a bill CLOSED IN SERVD (Order.settlementChannel
  * 'servd') is filed BY HAND on the SRB / FBR portal (daily / weekly / monthly —
- * owner confirmed). Its sale document — and every return of that sale — is
+ * owner confirmed) WHILE the company's fiscal connector is a fiscal POS (http /
+ * test / none). Its sale document — and every return of that sale — is
  * 'manual_required' with this reason: never sent to the fiscal POS (not at
  * enqueue, not by a retry, not by a release, not by the sender — sendOnce turns
  * it back), never skipped. Finance records the portal filing with
  * recordManualFiling (Finance → Servd sales to file, accounting/servdFilings.ts),
  * and the month close blocks while any stays unfiled (close check
  * 'servd_sales_unfiled').
+ *
+ * SRB direct (owner, 2026-10-30: "bills closed in servd are filed
+ * AUTOMATICALLY"): when the company's fiscal driver files directly
+ * (registry.ts DIRECT_FISCAL_DRIVERS — 'srb'), a servd-closed bill follows the
+ * normal path (pending / held / waiting) and servd files it itself. Rows
+ * already 'manual_required' / servd_channel stay as they are (finance can still
+ * record them), and a return of such a hand-filed sale is hand-filed too.
  */
 export const SERVD_CHANNEL = 'servd_channel'
 
-/** Is this order's bill closed in servd (filed by hand)? */
+/** Is this order's bill closed in servd? */
 async function servdChannelTx(db: Tx | typeof prisma, orderId: string): Promise<boolean> {
   const o = await db.order.findUnique({ where: { id: orderId }, select: { settlementChannel: true } })
   return o?.settlementChannel === 'servd'
+}
+
+/** Does this company's fiscal driver file directly with the authority (SRB direct)? Reads the STORED driver. */
+export async function filesServdChannelDirectly(db: Tx | typeof prisma, tenantId: string): Promise<boolean> {
+  const row = await db.posConnector.findUnique({ where: { tenantId_kind: { tenantId, kind: 'fiscal' } }, select: { driver: true } })
+  return isDirectFiscalDriver(row?.driver)
+}
+
+/** Statuses reasons of a sale that was filed (or is to be filed) BY HAND on the portal as a servd-closed bill. */
+const HAND_FILED_SALE_REASONS = new Set([SERVD_CHANNEL, 'servd_portal'])
+
+/**
+ * Is this order's document filed BY HAND? A bill closed in servd, unless the
+ * company's driver files directly — and, under a direct driver, still a
+ * return whose sale was itself hand-filed (`saleDocumentId`).
+ */
+async function servdHandFiledTx(db: Tx | typeof prisma, tenantId: string, orderId: string, saleDocumentId?: string | null): Promise<boolean> {
+  if (!(await servdChannelTx(db, orderId))) return false
+  if (!(await filesServdChannelDirectly(db, tenantId))) return true
+  if (!saleDocumentId) return false
+  const sale = await db.fiscalDocument.findFirst({ where: { id: saleDocumentId, tenantId }, select: { statusReason: true } })
+  return HAND_FILED_SALE_REASONS.has(sale?.statusReason ?? '')
 }
 
 function mismatchText(orderRef: string, check: TotalsCheck, inDoubt = false, kind: FiscalDocument['kind'] = 'sale'): string {
@@ -198,8 +228,9 @@ export async function enqueueFiscalSaleTx(tx: Tx, input: { orderId: string; tena
   else if (!built.check.ok) { status = 'failed'; reason = TOTALS_MISMATCH }
   // Zero-value = the BILL is zero (a wallet- or gift-card-paid sale is not, ONL-R2-02).
   else if (built.totalCents === 0 && !conn.settings.fileZeroValue) { status = 'skipped'; reason = 'zero_value' }
-  // Closed in servd: filed by hand on the portal — never sent (till flow, 2026-10-20).
-  else if (built.settlementChannel === 'servd') { status = 'manual_required'; reason = SERVD_CHANNEL }
+  // Closed in servd: filed by hand on the portal — never sent (till flow, 2026-10-20) —
+  // unless the company's driver files directly (SRB direct, 2026-10-30): then the normal path.
+  else if (built.settlementChannel === 'servd' && !isDirectFiscalDriver(conn.row?.driver)) { status = 'manual_required'; reason = SERVD_CHANNEL }
   else if (!conn.live) { status = 'held'; reason = 'no_connector' }
   else if (built.registrations.length === 0) { status = 'held'; reason = 'not_registered' }
   else if (built.totalCents === 0 && !capsOf(conn.driver, conn.row).zeroValue) { status = 'skipped'; reason = 'zero_value_unsupported' }
@@ -339,8 +370,10 @@ export async function enqueueFiscalRefundTx(tx: Tx, input: {
   }
 
   // A return of a sale closed in servd is filed by hand too (till flow,
-  // 2026-10-20) — whatever its sale's state, never sent to the fiscal POS.
-  if ((status === 'pending' || status === 'waiting') && (sale?.statusReason === SERVD_CHANNEL || await servdChannelTx(tx, input.orderId))) {
+  // 2026-10-20) — whatever its sale's state, never sent to the fiscal POS. Under
+  // a direct driver (SRB direct, 2026-10-30) only the return of a sale that was
+  // itself hand-filed (servd_channel / servd_portal) stays by hand.
+  if ((status === 'pending' || status === 'waiting') && (HAND_FILED_SALE_REASONS.has(sale?.statusReason ?? '') || await servdHandFiledTx(tx, input.tenantId, input.orderId))) {
     status = 'manual_required'; reason = SERVD_CHANNEL
   }
 
@@ -684,10 +717,11 @@ export async function sendOnce(documentId: string, via: FiscalVia, budgetMs: num
   if (leased.length === 0) return 'busy'
   const doc = await prisma.fiscalDocument.findUniqueOrThrow({ where: { id: documentId } })
 
-  // Till flow (2026-10-20): a document of a bill closed in servd is NEVER sent —
-  // whatever moved it to pending (a retry, a rebuild, a release), it goes back to
-  // 'manual_required' / servd_channel for finance to record the portal filing.
-  if (await servdChannelTx(prisma, doc.orderId)) {
+  // Till flow (2026-10-20): a document of a bill closed in servd is NEVER sent to a
+  // fiscal POS — whatever moved it to pending (a retry, a rebuild, a release), it
+  // goes back to 'manual_required' / servd_channel for finance to record the portal
+  // filing. Under a direct driver (SRB direct, 2026-10-30) servd files it itself.
+  if (await servdHandFiledTx(prisma, doc.tenantId, doc.orderId, doc.kind === 'refund' ? doc.saleDocumentId : null)) {
     await updateLeased(doc, { status: 'manual_required', statusReason: SERVD_CHANNEL, attempts: { decrement: 1 } })
     return 'held'
   }
@@ -968,7 +1002,7 @@ async function retryMismatch(doc: FiscalDocument): Promise<FiscalDocument> {
     }
     let status: FiscalDocStatus = 'pending'
     let reason: string | null = null
-    if (await servdChannelTx(tx, cur.orderId)) { status = 'manual_required'; reason = SERVD_CHANNEL }
+    if (await servdHandFiledTx(tx, cur.tenantId, cur.orderId, cur.kind === 'refund' ? cur.saleDocumentId : null)) { status = 'manual_required'; reason = SERVD_CHANNEL }
     else if (cur.kind === 'refund') {
       const sale = cur.saleDocumentId ? await tx.fiscalDocument.findFirst({ where: { id: cur.saleDocumentId, tenantId: cur.tenantId }, select: { status: true } }) : null
       if (sale && sale.status !== 'filed' && sale.status !== 'manual_filed') status = 'waiting'
