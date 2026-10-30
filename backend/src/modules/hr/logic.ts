@@ -121,7 +121,8 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   encashLeaveOnExit: true,
   employeeCodePrefix: 'EMP-',
   gratuity: DEFAULT_GRATUITY,
-  absentWithoutPunchFrom: '2026-11-01',
+  // Owner, 2026-10-30 ("Dock October too" — replaces H52's "October pays as is" for absences): from 1 Oct.
+  absentWithoutPunchFrom: '2026-10-01',
   punchOvertimeFrom: '2026-11-01',
   standardDayHours: 9,
   otMinimumMinutes: 30,

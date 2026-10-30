@@ -1,9 +1,9 @@
 // Absent without a punch, and punch overtime (owner, 2026-10-22).
 //
-//   Rule A: from the HR setting absentWithoutPunchFrom (default 2026-11-01), a
+//   Rule A: from the HR setting absentWithoutPunchFrom (default 2026-10-01), a
 //     rota working day with no standing attendance record is absent and docked;
 //     weekly offs, holidays, approved leave, days with no rota and today / later
-//     never are; any standing record (an HR correction) wins. October pays as is.
+//     never are; any standing record (an HR correction) wins. October docks too (owner, 2026-10-30).
 //   Rule B: overtime = time worked after the rota shift's end (or beyond the
 //     standard day, 9 h, with no shift); under 30 minutes ignored.
 //   Rule C: punch OT is only AVAILABLE — paid once HR adds it to that
@@ -169,11 +169,13 @@ describe('the overtime minutes rule', () => {
 })
 
 describe('rule A — absent without a punch', () => {
-  it('October pays as is: no punches, nothing docked', async () => {
+  // Owner, 2026-10-30: "Dock October too" (replaces H52's "October pays as is" for absences).
+  it('October docks too: every working day with no punch (Mondays are the default rota\'s day off)', async () => {
     const oct = await newRun('hrA', '2026-10')
     const s = await slipOf('hrA', oct, emps['a1']!)
-    expect(s.inputs['absentDays']).toBe(0)
-    expect(s.inputs['payBasis']).toMatchObject({ daysInMonth: 31, employedDays: 31, absentDays: 0, paidDays: 31 })
+    // October 2026: 31 days, 4 Mondays (5, 12, 19, 26) off → 27 working days, none punched.
+    expect(s.inputs['absentDays']).toBe(27)
+    expect(s.inputs['payBasis']).toMatchObject({ daysInMonth: 31, employedDays: 31, absentDays: 27, paidDays: 4 })
     await prisma.hrPayrollRun.update({ where: { id: oct }, data: { status: 'locked' } })
   })
 
@@ -222,7 +224,7 @@ describe('rule A — absent without a punch', () => {
     const runB = await newRun('hrB', '2026-11')
     expect((await slipOf('hrB', runB, emps['b1']!)).inputs['absentDays']).toBe(0)
     // Company A's setting is untouched.
-    expect((await call('hrA', 'GET', '/settings')).json().absentWithoutPunchFrom).toBe('2026-11-01')
+    expect((await call('hrA', 'GET', '/settings')).json().absentWithoutPunchFrom).toBe('2026-10-01')
   })
 })
 

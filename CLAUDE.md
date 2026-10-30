@@ -2720,7 +2720,9 @@ should show as per attendance … calculate accurate Overtime, again OT should
 not include in payroll on auto … add column for availed leaves").**
 `hr/attendanceDays.ts` is the ONE reading (payroll, F&F, the report and the
 register). **Rule A:** from HR setting `absentWithoutPunchFrom` (per company,
-default `2026-11-01`; null = off — October pays as is, H52) a WORKING day — the
+default `2026-10-01` — owner, 2026-10-30: "Dock October too", replacing H52's
+"October pays as is" for absences; migration `20261030100000` moved companies still
+on the old default; null = off) a WORKING day — the
 rota (`rotaFor`) gives a shift, not a holiday for the person's branch, not on
 approved leave, employed, and already over (before today PKT) — with no standing
 attendance record is absent (1) and docked (`attendanceInputs`'

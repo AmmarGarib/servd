@@ -3,7 +3,7 @@
 // attendance register agree.
 //
 // Rule A — absent without a punch. From the company's HR setting
-// `absentWithoutPunchFrom` (default 2026-11-01; October pays as is, H52), a
+// `absentWithoutPunchFrom` (default 2026-10-01 — owner, 2026-10-30: "Dock October too"), a
 // WORKING day with no standing attendance record counts as absent (1) and is
 // docked by payroll, unless HR corrects it (any standing record for the day —
 // a punch, an approved correction, a manual day the CEO approved — wins).
