@@ -2203,9 +2203,10 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   noise … if an order card is sitting on screen for 1 minute without being started, expo needs an alert").**
   `modules/expo/kitchenBoard.ts` extends the ONE KDS (never a second): `loadStationQueue` is THE station queue
   (`/expo/station/:id/queue` reads it unchanged); a CARD = one order's live work at one station (fired steps +
-  legacy lines), oldest first, the first `Station.visibleCards` (4–6, default 5; `PUT /expo/stations/:id/display`,
-  managers + F&B manager / chef with `kds_config`, applies at once — a screen setting, not a C3 station change)
-  visible, the rest queued. `GET /expo/station/:id/board` stamps `kdsShownAt` once on first show; Start
+  legacy lines), oldest first, the first `Station.visibleCards` visible — FIXED at 4 for every station (owner, 2026-10-30: "make standard 4
+  cards on screen for all kitchen stations"; migration `20261030120000`; the KDS config picker is gone,
+  `PUT /expo/stations/:id/display` accepts only 4), the rest queued. Kitchen view (`/kds`) shows each station's
+  cards in ONE horizontal row that scrolls sideways (owner, 2026-10-30). `GET /expo/station/:id/board` stamps `kdsShownAt` once on first show; Start
   (`/cards/:orderId/start`) stamps `startedAt` (step, or `OrderItem.startedAt` for a line); the tick
   (`/cards/:orderId/done`) bumps every row through `stepCascade.ts completeStepBump` (the cascade — the next
   station's step fires; also behind `POST /expo/steps/:id/bump`) or `updateItemStatus` (409 `CARD_ON_HOLD`).

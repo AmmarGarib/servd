@@ -15,7 +15,7 @@
 //   • A CARD is one order's live work at one station: its fired steps
 //     (status preparing) and its legacy lines (no recipe steps: pending /
 //     preparing / held / recalled). Cards are oldest first (earliest fire,
-//     else placed); the first `Station.visibleCards` (4–6, default 5) are
+//     else placed); the first `Station.visibleCards` (fixed at 4, owner 2026-10-30) are
 //     VISIBLE, the rest QUEUED (not shown to the cook).
 //   • kdsShownAt is stamped (once) on a card's rows the first time a read
 //     finds it in the visible window; the expo's alert = a visible card not
@@ -50,9 +50,10 @@ import { SERVICE_PHASES } from './fire.js'
 
 /** Orders that ended without food going out — nothing of theirs belongs on a station screen. */
 const ENDED_NO_SALE: Array<'cancelled' | 'rejected' | 'refunded'> = ['cancelled', 'rejected', 'refunded']
-export const DEFAULT_VISIBLE_CARDS = 5
+// Owner, 2026-10-30: "make standard 4 cards on screen for all kitchen stations" — fixed at 4.
+export const DEFAULT_VISIBLE_CARDS = 4
 export const MIN_VISIBLE_CARDS = 4
-export const MAX_VISIBLE_CARDS = 6
+export const MAX_VISIBLE_CARDS = 4
 /** A visible card not started for this long raises the expo's (silent) alert. */
 export const UNSTARTED_ALERT_MS = 60_000
 /** Cook timer bounds (also a DB CHECK). */

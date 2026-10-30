@@ -418,7 +418,7 @@ model Station {
   isActive     Boolean   @default(true)
   // Owner B12 (2026-10-26): how many order cards the station screen shows at
   // once (4–6, default 5; CHECK stations_visible_cards_chk). The rest queue.
-  visibleCards Int       @default(5)
+  visibleCards Int       @default(4)
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   deletedAt    DateTime?

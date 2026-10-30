@@ -2,7 +2,7 @@
 // stickers (owner B12, 2026-10-26) — modules/expo/kitchenBoard.ts.
 //
 // What this guards:
-//   • A station shows at most visibleCards (default 5, 4–6) ORDER cards,
+//   • A station shows at most visibleCards (fixed at 4, owner 2026-10-30) ORDER cards,
 //     oldest first; the rest queue. kdsShownAt is stamped on first show.
 //   • A visible card not started for 60 s is on the expo's alert list; Start
 //     (or a timer) takes it off. A held card is never alerted.
@@ -99,7 +99,7 @@ const e = (id: string, firedMin: number, extra: Partial<BoardEntry> = {}): Board
 })
 
 describe('cards, window, alert, backlog (pure)', () => {
-  it('groups rows per order, oldest fire first, and splits at the window (clamped 4–6)', () => {
+  it('groups rows per order, oldest fire first, and splits at the window (fixed at 4)', () => {
     const cards = groupCards([
       { order: o('order-new', 1), entry: e('a', 1) },
       { order: o('order-old', 9), entry: e('b', 9) },
@@ -108,10 +108,10 @@ describe('cards, window, alert, backlog (pure)', () => {
     expect(cards.map((c) => c.order.id)).toEqual(['order-old', 'order-new'])
     expect(cards[1]!.entries).toHaveLength(2)
     const many = Array.from({ length: 9 }, (_, i) => i)
-    expect(splitWindow(many, 5).visible).toHaveLength(5)
+    expect(splitWindow(many, 5).visible).toHaveLength(4)
     expect(splitWindow(many, 2).visible).toHaveLength(4)
-    expect(splitWindow(many, 9).visible).toHaveLength(6)
-    expect(splitWindow(many, 6).queued).toEqual([6, 7, 8])
+    expect(splitWindow(many, 9).visible).toHaveLength(4)
+    expect(splitWindow(many, 4).queued).toEqual([4, 5, 6, 7, 8])
   })
 
   it('alerts on a visible card shown 60 s+ ago and not started; never a started or held one', () => {
@@ -150,30 +150,27 @@ describe('cards, window, alert, backlog (pure)', () => {
 // ─── Board, Start, alert ─────────────────────────────────────────────────────
 
 describe('station board', () => {
-  it('shows the 5 oldest order cards, queues the rest, stamps kdsShownAt; company B gets 404', async () => {
+  it('shows the 4 oldest order cards, queues the rest, stamps kdsShownAt; company B gets 404', async () => {
     const orders = []
     for (let i = 7; i >= 1; i -= 1) orders.push(await lineOrder(passA, i))
     const res = await call('cookA', 'GET', `/expo/station/${passA}/board`)
     expect(res.statusCode).toBe(200)
     const b = res.json()
-    expect(b.station.visibleCards).toBe(5)
-    expect(b.visible).toHaveLength(5)
-    expect(b.queuedCount).toBe(2)
+    expect(b.station.visibleCards).toBe(4)
+    expect(b.visible).toHaveLength(4)
+    expect(b.queuedCount).toBe(3)
     expect(b.visible[0].order.id).toBe(orders[0]!.id)
     expect(b.visible[0].entries[0]).toMatchObject({ itemName: expect.stringContaining('Wrap'), notes: 'no onion', modifiers: ['Extra cheese'] })
     expect(b.visible[0].order.ref).toBe(orders[0]!.id.slice(-8).toUpperCase())
     const shown = await prisma.orderItem.findMany({ where: { orderId: { in: orders.map((x) => x.id) } }, select: { orderId: true, kdsShownAt: true } })
-    expect(shown.filter((s) => s.kdsShownAt).length).toBe(5)
+    expect(shown.filter((s) => s.kdsShownAt).length).toBe(4)
     expect((await call('cookB', 'GET', `/expo/station/${passA}/board`)).statusCode).toBe(404)
 
-    // The station display setting (4–6): the chef sets 6 → one more card shows.
-    expect((await call('chefA', 'PUT', `/expo/stations/${passA}/display`, { visibleCards: 7 })).statusCode).toBe(400)
-    expect((await call('mgrB', 'PUT', `/expo/stations/${passA}/display`, { visibleCards: 6 })).statusCode).toBe(404)
-    expect((await call('cookA', 'PUT', `/expo/stations/${passA}/display`, { visibleCards: 6 })).statusCode).toBe(403)
-    expect((await call('chefA', 'PUT', `/expo/stations/${passA}/display`, { visibleCards: 6 })).statusCode).toBe(200)
-    const b2 = (await call('cookA', 'GET', `/expo/station/${passA}/board`)).json()
-    expect(b2.visible).toHaveLength(6)
-    expect(b2.queuedCount).toBe(1)
+    // The station display is fixed at 4 cards (owner, 2026-10-30): any other count is refused.
+    expect((await call('chefA', 'PUT', `/expo/stations/${passA}/display`, { visibleCards: 6 })).statusCode).toBe(400)
+    expect((await call('mgrB', 'PUT', `/expo/stations/${passA}/display`, { visibleCards: 4 })).statusCode).toBe(404)
+    expect((await call('cookA', 'PUT', `/expo/stations/${passA}/display`, { visibleCards: 4 })).statusCode).toBe(403)
+    expect((await call('chefA', 'PUT', `/expo/stations/${passA}/display`, { visibleCards: 4 })).statusCode).toBe(200)
 
     // Clean the pass for the next tests.
     for (const x of orders) {
@@ -186,7 +183,7 @@ describe('station board', () => {
   it('a visible card 60 s+ unstarted is on the expo alert; Start clears it; backlog counts queued tickets', async () => {
     const first = await lineOrder(grillA, 10)
     const others = []
-    for (let i = 9; i >= 5; i -= 1) others.push(await lineOrder(grillA, i))
+    for (let i = 9; i >= 6; i -= 1) others.push(await lineOrder(grillA, i))
     await call('cookA', 'GET', `/expo/station/${grillA}/board`) // first show
     await prisma.orderItem.updateMany({ where: { orderId: first.id }, data: { kdsShownAt: new Date(Date.now() - 90_000) } })
 
@@ -195,7 +192,7 @@ describe('station board', () => {
     expect(s1.unstarted[0]).toMatchObject({ stationName: 'Grill', ref: first.id.slice(-8).toUpperCase() })
     expect(s1.backlog).toMatchObject({ tickets: 1, queuedCards: 1 })
     const grill = s1.stations.find((s: { id: string }) => s.id === grillA)
-    expect(grill).toMatchObject({ visible: 5, queued: 1 })
+    expect(grill).toMatchObject({ visible: 4, queued: 1 })
     // Company B sees nothing of A.
     const sB = (await call('cookB', 'GET', '/expo/kitchen-status')).json()
     expect(sB.unstarted).toHaveLength(0)

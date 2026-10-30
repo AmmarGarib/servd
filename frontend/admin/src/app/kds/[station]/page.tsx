@@ -41,7 +41,7 @@ interface RecipeData {
  * off should just make the order card blink red.. no noise."
  *
  * Reads GET /expo/station/:id/board (modules/expo/kitchenBoard.ts): at most
- * the station's `visibleCards` (4–6) ORDER cards, oldest first; the rest wait
+ * the station's `visibleCards` (4, owner 2026-10-30) ORDER cards, oldest first; the rest wait
  * in a queue the cook does not see (only a count). On a card:
  *   • tap the card → the order pop-up: each dish's step instructions (English
  *     and Urdu), timers per dish, Hold / Resume for a line;
@@ -195,7 +195,7 @@ export default function StationKdsPage() {
 
   const timersOf = (orderId: string) => timers.filter((t) => t.orderId === orderId)
   const remaining = (t: KitchenTimer) => (new Date(t.endsAt).getTime() - serverNow) / 1000
-  const limit = data?.station.visibleCards ?? 5
+  const limit = data?.station.visibleCards ?? 4
 
   return (
     <div className="erp-kitchen-dark flex min-h-screen flex-col bg-kds-bg">

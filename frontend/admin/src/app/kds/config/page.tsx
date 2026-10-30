@@ -147,15 +147,6 @@ function StationsTab() {
     onError: (e: Error) => setNotice({ text: e.message, error: true }),
   })
 
-  // How many order cards the station screen shows (4–6) — a screen setting,
-  // applied at once (PUT /expo/stations/:id/display; owner B12, 2026-10-26).
-  const setDisplay = useMutation({
-    mutationFn: ({ id, visibleCards }: { id: string; visibleCards: number }) =>
-      api.put(`/expo/stations/${id}/display`, { visibleCards }),
-    onSuccess: () => { setNotice(null); void qc.invalidateQueries({ queryKey: ['kds-stations'] }) },
-    onError: (e: Error) => setNotice({ text: e.message, error: true }),
-  })
-
   const createStation = useMutation({
     mutationFn: (body: { conceptId: string; name: string; displayOrder: number }) =>
       api.post<Station>('/stations', body),
@@ -332,20 +323,7 @@ function StationsTab() {
                               }`}>
                                 load {s.liveLoad}
                               </span>
-                              <span className="inline-flex items-center gap-1 text-xs text-kds-subtext" role="group" aria-label={`Cards on ${s.name}'s screen`}>
-                                Cards on screen
-                                {[4, 5, 6].map((n) => (
-                                  <button key={n} type="button"
-                                    onClick={() => setDisplay.mutate({ id: s.id, visibleCards: n })}
-                                    disabled={setDisplay.isPending}
-                                    aria-pressed={(s.visibleCards ?? 5) === n}
-                                    className={`min-h-10 min-w-10 rounded-lg border text-sm font-bold disabled:opacity-50 ${
-                                      (s.visibleCards ?? 5) === n ? 'border-kds-green bg-kds-green/20 text-kds-green' : 'border-kds-border text-kds-subtext hover:text-kds-text'
-                                    }`}>
-                                    {n}
-                                  </button>
-                                ))}
-                              </span>
+                              <span className="text-xs text-kds-subtext">4 cards on screen</span>
                               <button
                                 onClick={() => toggleActive(s)}
                                 disabled={patchStation.isPending}

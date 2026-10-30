@@ -314,7 +314,7 @@ function StationLivePanel({ stationId }: { stationId: string }) {
   return (
     <div className="border-t border-kds-border bg-black/20 p-4 space-y-3">
       {cooking.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
+        <div className="flex gap-2.5 overflow-x-auto snap-x snap-mandatory pb-2 pt-2">
           {cooking.map((t) => {
             const isLegacy = '__legacy' in t
             const id = isLegacy ? t.itemId : (t as StepTicket).stepId
@@ -334,7 +334,7 @@ function StationLivePanel({ stationId }: { stationId: string }) {
             const fm: FulfilmentMeta = FULFILMENT_META[t.order.fulfilmentType] ?? FALLBACK_META
             const instruction = !isLegacy ? (t as StepTicket).instruction : null
             return (
-              <div key={id} className={`rounded-xl relative overflow-hidden border-2 bg-kds-card ${fm.card}`}>
+              <div key={id} className={`w-64 shrink-0 snap-start rounded-xl relative overflow-hidden border-2 bg-kds-card ${fm.card}`}>
                 <div className="p-3">
                   <div className={`absolute -top-2 left-2 px-1.5 py-0.5 rounded text-xs font-black uppercase tracking-wider border bg-kds-card ${fm.badge} ${fm.text}`}>
                     <FulfilmentIcon type={t.order.fulfilmentType} size={11} /> {fm.short}
@@ -392,9 +392,9 @@ function StationLivePanel({ stationId }: { stationId: string }) {
           <p className="text-xs uppercase tracking-[0.2em] font-black text-kds-subtext mb-1.5">
             On deck ({waiting.length})
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2">
+          <div className="flex gap-2 overflow-x-auto snap-x pb-1">
             {waiting.map((t) => (
-              <div key={t.stepId} className="rounded-lg px-2.5 py-1.5 opacity-60"
+              <div key={t.stepId} className="w-44 shrink-0 snap-start rounded-lg px-2.5 py-1.5 opacity-60"
                 style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)' }}>
                 <p className="text-xs font-bold text-kds-text/70 leading-tight">
                   {t.qty > 1 && <span className="text-kds-subtext mr-1">{t.qty}×</span>}
