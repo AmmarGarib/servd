@@ -8,6 +8,7 @@
 // Neither can read anyone else's salary.
 
 import { networkKey, onOfficeNetwork } from '../../lib/officeNetwork.js'
+import { salaryBreakup } from './payslipBreakup.js'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { classificationOf, classifyPaymentTx, classificationsOfReferences, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import type { Prisma, UserRole, HrEmployee, HrRecord } from '@prisma/client'
@@ -2759,20 +2760,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...inTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
     const rows = await prisma.hrPayslip.findMany({ where: { runId: run.id }, include: { employee: { select: { fullName: true, employeeCode: true, bankName: true, iban: true, paymentMethod: true, eobiNo: true, basicSalaryCents: true, data: true } } }, orderBy: { employee: { employeeCode: 'asc' } } })
-    // The salary breakup for the run table (owner, 2026-10-31: "Allowances and all → Total Amount → deduction on
-    // attendance → gross → Other deductions → Net"): basic + the employee master's named allowances, read live
-    // (display only). Only the allowance list leaves `data` — never the rest of the employee master.
-    const slips = rows.map(({ employee: { data, ...emp }, ...slip }) => {
-      const raw = (data as Record<string, unknown> | null)?.['allowances']
-      const allowances = Array.isArray(raw)
-        ? raw.flatMap((a) => {
-          const r = a as Record<string, unknown>
-          const cents = Number(r['amountCents'])
-          return Number.isFinite(cents) && cents > 0 ? [{ name: String(r['name'] ?? '').trim() || 'Allowance', amountCents: Math.round(cents) }] : []
-        })
-        : []
-      return { ...slip, employee: { ...emp, allowances } }
-    })
+    // The salary breakup (owner, 2026-10-31) — payslipBreakup.ts, the one reading. Only the breakup leaves the
+    // employee master's `data`, never the rest of it.
+    const slips = rows.map(({ employee: { data, basicSalaryCents, ...emp }, ...slip }) => ({ ...slip, employee: emp, breakup: salaryBreakup(slip, { basicSalaryCents, data }) }))
     const c = run.paidAt ? (await classificationsOfReferences(prisma, [run.tenantId], [`hr.payroll.payment:${run.id}`])).get(`hr.payroll.payment:${run.id}`) : undefined
     // The run's company's deduction types, for HR's "Add deduction" picker (owner, 2026-10-30).
     const deductionTypes = (await getSettings(run.tenantId)).deductionTypes
@@ -3102,22 +3092,24 @@ export async function hrRoutes(fastify: FastifyInstance) {
         ...lines.map(({ sl, l }) => [sl.employee.employeeCode, sl.employee.fullName, typeOf(l), l.label, l.note ?? null, r(l.amountCents)]),
         ...Array.from(byType).sort((a, b) => a[0].localeCompare(b[0])).map(([t, c]) => [null, `Total — ${t}`, t, null, null, r(c)])]
     } else {
-      // The pay basis (HR-1): salary = monthly gross ÷ days in month × paid
-      // days. Blank for a payslip from before the basis was kept.
-      const basis = (inputs: unknown) => ((inputs as Record<string, unknown> | null)?.['payBasis'] ?? null) as { daysInMonth: number; paidDays: number; dailyRateCents: number; monthlyGrossCents: number } | null
-      // Deductions by type (owner, 2026-10-30): one column per type on this run, after the total.
+      // The salary breakup (owner, 2026-10-31: "show the same breakup on the payslip and register") —
+      // payslipBreakup.ts, the same reading as the run table and the payslip. Blank days for a payslip from before
+      // the pay basis was kept. Other deductions by type (owner, 2026-10-30): one column per type, then the total.
       type L = { kind: string; code: string; amountCents: number }
       const typeOf = (l: L) => dedTypeLabel(l.code, s0.deductionTypes)
-      const dedCols = Array.from(new Set(slips.flatMap((sl) => (sl.lines as unknown as L[]).filter((l) => l.kind === 'deduction' && l.amountCents !== 0).map(typeOf)))).sort()
-      rows = [['Employee ID', 'Name', 'Monthly gross', 'Days in month', 'Paid days', 'Per-day rate', 'Gross', 'Earnings', 'Deductions', ...dedCols.map((c) => `Ded: ${c}`), 'EOBI employee', 'EOBI employer', 'Net'], ...slips.map((s) => {
-        const b = basis(s.inputs)
-        const per = dedCols.map((c) => r((s.lines as unknown as L[]).filter((l) => l.kind === 'deduction' && typeOf(l) === c).reduce((a, l) => a + l.amountCents, 0)))
-        return [s.employee.employeeCode, s.employee.fullName, b ? r(b.monthlyGrossCents) : null, b?.daysInMonth ?? null, b?.paidDays ?? null, b ? r(b.dailyRateCents) : null, r(s.grossCents), r(s.earningsCents), r(s.deductionsCents), ...per, r(s.eobiEmployeeCents), r(s.eobiEmployerCents), r(s.netCents)]
+      const isOther = (l: L) => l.kind === 'deduction' && l.amountCents !== 0 && !['tax', 'eobi_employee', 'late'].includes(l.code)
+      const dedCols = Array.from(new Set(slips.flatMap((sl) => (sl.lines as unknown as L[]).filter(isOther).map(typeOf)))).sort()
+      rows = [['Employee ID', 'Name', 'Basic', 'Allowances', 'Total salary', 'Days in month', 'Paid days', 'Per-day rate', 'Attendance deduction', 'Overtime', 'Other earnings', 'Gross', 'Income tax', ...dedCols.map((c) => `Ded: ${c}`), 'Other deductions', 'EOBI employee', 'Net', 'EOBI employer'], ...slips.map((s) => {
+        const k = salaryBreakup(s, s.employee)
+        const per = dedCols.map((c) => r((s.lines as unknown as L[]).filter((l) => isOther(l) && typeOf(l) === c).reduce((a, l) => a + l.amountCents, 0)))
+        const otherEarn = k.otherEarnings.reduce((a, x) => a + x.cents, 0) - k.overtimeCents
+        return [s.employee.employeeCode, s.employee.fullName, r(k.basicCents), r(k.allowancesCents), r(k.totalSalaryCents), k.basis?.daysInMonth ?? null, k.basis?.paidDays ?? null, k.basis ? r(k.basis.dailyRateCents) : null,
+          r(k.attendanceDeductionCents), r(k.overtimeCents), r(otherEarn), r(k.grossCents), r(k.taxCents), ...per, r(k.otherDeductionsCents), r(k.eobiCents), r(k.netCents), r(s.eobiEmployerCents)]
       })]
     }
     // ?format=xlsx|pdf: the same sheet through lib/reportExport.ts (CSV unchanged — the bank file stays CSV-exact).
     const head = rows[0] as string[]
-    const MONEY = new Set(['Net pay', 'Employee 1%', 'Employer 5%', 'Total', 'Amount', 'Monthly gross', 'Per-day rate', 'Gross', 'Earnings', 'Deductions', 'EOBI employee', 'EOBI employer', 'Net'])
+    const MONEY = new Set(['Net pay', 'Employee 1%', 'Employer 5%', 'Total', 'Amount', 'Basic', 'Allowances', 'Total salary', 'Per-day rate', 'Attendance deduction', 'Overtime', 'Other earnings', 'Gross', 'Income tax', 'Other deductions', 'EOBI employee', 'EOBI employer', 'Net'])
     const types: ReportColumnType[] = head.map((h) => (MONEY.has(h) || h.startsWith('Ded: ') ? 'pkr' : h === 'Days in month' || h === 'Paid days' ? 'number' : 'text'))
     const title = { register: 'Payroll register', bank: 'Payroll bank file', eobi: 'EOBI', deductions: 'Payroll deductions' }[kind] ?? `Payroll ${kind}`
     return sendReportFor(req, reply, exportFormatOf(req.query.format, 'csv')!, `payroll-${run.period}-${kind}`, {
@@ -3603,9 +3595,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>('/me/payslips/:id', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const me = await myEmployee(req)
-    const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, employeeId: me.id, run: { status: 'locked' } }, include: { run: { select: { period: true } } } })
+    const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, employeeId: me.id, run: { status: 'locked' } }, include: { run: { select: { period: true } }, employee: { select: { basicSalaryCents: true, data: true } } } })
     if (!slip) throw new NotFoundError('Payslip', req.params.id)
-    return slip
+    const { employee, ...rest } = slip
+    return { ...rest, breakup: salaryBreakup(rest, employee) }
   })
 
   // ── Shift swaps waiting on the colleague (audit HR-R5) ────────────────────

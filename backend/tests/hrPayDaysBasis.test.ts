@@ -152,6 +152,26 @@ describe('pay = gross ÷ days in month × paid days (HR-1)', () => {
     expect(l.grossCents).toBe(RS(28000))
   })
 
+  it('shows the salary breakup (total salary → attendance → gross → deductions → net) on the run, payslip and register', async () => {
+    const run = await call('hrA', 'GET', `/payroll/runs/${runA}`)
+    expect(run.statusCode, run.body).toBe(200)
+    type K = { totalSalaryCents: number; basicCents: number; allowancesCents: number; attendanceDeductionCents: number; otherEarnings: Array<{ cents: number }>; lateCents: number; grossCents: number; taxCents: number; otherDeductionsCents: number; eobiCents: number; netCents: number }
+    const slips = (run.json() as { payslips: Array<{ netCents: number; employee: Record<string, unknown>; breakup: K }> }).payslips
+    expect(slips.length).toBeGreaterThan(0)
+    for (const s of slips) {
+      const k = s.breakup
+      expect(k.basicCents + k.allowancesCents).toBe(k.totalSalaryCents)
+      expect(k.totalSalaryCents - k.attendanceDeductionCents + k.otherEarnings.reduce((a, x) => a + x.cents, 0)).toBe(k.grossCents)
+      expect(k.grossCents - k.taxCents - k.otherDeductionsCents - k.eobiCents).toBe(s.netCents)
+      expect(s.employee).not.toHaveProperty('data') // only the breakup leaves the employee master
+    }
+    const full = slips.find((s) => s.employee['employeeCode'] === 'a-full') ?? slips[0]!
+    expect(full.breakup.totalSalaryCents).toBeGreaterThan(full.breakup.grossCents - 1)
+    const csv = await call('hrA', 'GET', `/payroll/runs/${runA}/export.csv?kind=register`)
+    const head = csv.body.trim().split('\n')[0]!
+    for (const h of ['Basic', 'Allowances', 'Total salary', 'Attendance deduction', 'Gross', 'Income tax', 'Other deductions', 'Net']) expect(head).toContain(h)
+  })
+
   it('shows the paid days and per-day rate in the register and the Payroll Report', async () => {
     const csv = await call('hrA', 'GET', `/payroll/runs/${runA}/export.csv?kind=register`)
     expect(csv.statusCode).toBe(200)

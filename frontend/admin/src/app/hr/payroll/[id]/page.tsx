@@ -19,6 +19,7 @@ import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { OvertimePicker, otAvailableOf, otSummary } from '../../../../components/hr/OvertimePicker'
 import { NavIcon } from '../../../../components/ui/NavIcon'
+import { SalaryBreakupView, breakupHtml, type SalaryBreakup } from '../../../../components/hr/SalaryBreakup'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number; posting?: 'recovery' | 'deduction'; note?: string | null }
 /** A company's deduction type (backend hr/logic.ts DeductionType; owner, 2026-10-30). */
@@ -35,7 +36,8 @@ const basisOf = (s: Slip): PayBasis | null => {
 }
 interface Slip {
   id: string; employeeId: string
-  employee: { fullName: string; employeeCode: string; bankName: string | null; iban: string | null; paymentMethod: string | null; eobiNo: string | null; basicSalaryCents?: number; allowances?: Array<{ name: string; amountCents: number }> }
+  employee: { fullName: string; employeeCode: string; bankName: string | null; iban: string | null; paymentMethod: string | null; eobiNo: string | null }
+  breakup: SalaryBreakup
   inputs: Record<string, number | boolean | string[] | unknown>
   lines: Line[]; grossCents: number; earningsCents: number; deductionsCents: number; eobiEmployeeCents: number; eobiEmployerCents: number; netCents: number
 }
@@ -62,39 +64,26 @@ const RUN_STATUS_LABEL: Record<string, string> = {
 }
 /** The income tax on a payslip: the deduction line (finance's figure once it entered one). */
 const taxOf = (s: Slip) => s.lines.filter((l) => l.code === 'tax').reduce((a, l) => a + l.amountCents, 0)
-// How the run table reads (owner, 2026-10-31: "Allowances and all → Total Amount → deduction on attendance → gross →
-// Other deductions → Net"): Basic + Allowances = Total salary (the full monthly salary); − the attendance deduction
-// (salary not paid for days absent / unpaid / not employed, plus lates) + overtime and other earnings = Gross;
-// − income tax − other deductions − EOBI = Net. Display only — the payslip engine's figures are unchanged.
-const salaryEarnedOf = (s: Slip) => s.lines.filter((l) => l.code === 'salary').reduce((a, l) => a + l.amountCents, 0)
-const lateOf = (s: Slip) => s.lines.filter((l) => l.kind === 'deduction' && l.code === 'late').reduce((a, l) => a + l.amountCents, 0)
-const totalSalaryOf = (s: Slip) => basisOf(s)?.monthlyGrossCents ?? salaryEarnedOf(s)
-const basicOf = (s: Slip) => Math.min(s.employee.basicSalaryCents ?? 0, totalSalaryOf(s))
-/** The allowances that make up Total salary − Basic: the employee master's named ones, the rest as "Other allowances". */
-const allowanceBreakdown = (s: Slip): Array<{ name: string; cents: number }> => {
-  const total = totalSalaryOf(s) - basicOf(s)
-  const named = (s.employee.allowances ?? []).map((x) => ({ name: x.name, cents: x.amountCents }))
-  const namedSum = named.reduce((a, x) => a + x.cents, 0)
-  if (namedSum > total) return total > 0 ? [{ name: 'Allowances', cents: total }] : []
-  return [...named, ...(total - namedSum > 0 ? [{ name: named.length ? 'Other allowances' : 'Allowances', cents: total - namedSum }] : [])]
-}
-const attendanceDeductionOf = (s: Slip) => totalSalaryOf(s) - salaryEarnedOf(s) + lateOf(s)
-const grossOf = (s: Slip) => s.earningsCents - lateOf(s)
-const otherDeductionsOf = (s: Slip) => grossOf(s) - taxOf(s) - s.eobiEmployeeCents - s.netCents
-/** What makes up the Attendance deduction cell. */
+// How the run table and the payslip read (owner, 2026-10-31: "Allowances and all → Total Amount → deduction on
+// attendance → gross → Other deductions → Net"): the server's ONE breakup (backend hr/payslipBreakup.ts), also
+// used by the register and the employee's own payslip. Display only — the payslip's lines and net are unchanged.
+const totalSalaryOf = (s: Slip) => s.breakup.totalSalaryCents
+const basicOf = (s: Slip) => s.breakup.basicCents
+const allowanceBreakdown = (s: Slip) => s.breakup.allowances
+const attendanceDeductionOf = (s: Slip) => s.breakup.attendanceDeductionCents
+const grossOf = (s: Slip) => s.breakup.grossCents
+const otherDeductionsOf = (s: Slip) => s.breakup.otherDeductionsCents
 const attendanceBreakdown = (s: Slip): string => {
-  const b = basisOf(s)
-  const daysNotPaid = totalSalaryOf(s) - salaryEarnedOf(s)
+  const k = s.breakup
+  const b = k.basis
   const parts = [
     b ? `Per-day rate ${rs(b.dailyRateCents)} · paid ${b.paidDays} of ${b.daysInMonth} days (absent ${b.absentDays}, unpaid leave ${b.unpaidLeaveDays}, employed ${b.employedDays})` : '',
-    daysNotPaid !== 0 ? `Days not paid: ${rs(daysNotPaid)}` : '',
-    ...s.lines.filter((l) => l.kind === 'deduction' && l.code === 'late' && l.amountCents !== 0).map((l) => `${l.label}: ${rs(l.amountCents)}`),
+    k.daysNotPaidCents !== 0 ? `Days not paid: ${rs(k.daysNotPaidCents)}` : '',
+    k.lateCents !== 0 ? `Late coming: ${rs(k.lateCents)}` : '',
   ]
   return parts.filter(Boolean).join('\n') || 'No attendance deduction'
 }
-/** What makes up the Other deductions cell, by type (not tax, EOBI or lates). */
-const deductionBreakdown = (s: Slip): Array<{ label: string; cents: number }> =>
-  s.lines.filter((l) => l.kind === 'deduction' && !['tax', 'eobi_employee', 'late'].includes(l.code) && l.amountCents !== 0).map((l) => ({ label: l.label, cents: l.amountCents }))
+const deductionBreakdown = (s: Slip) => s.breakup.otherDeductions
 
 /** Cash staff are paid from the safe; bank and cheque staff from the bank —
  *  by the method snapshotted when the month was calculated. */
@@ -463,14 +452,11 @@ function SlipModal({ slip, period, draft, types, onClose }: { slip: Slip; period
   }
   const print = () => {
     const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    const row = (l: Line) => `<tr><td>${esc(l.label)}${l.note ? ` <span style="color:#666">— ${esc(l.note)}</span>` : ''}</td><td style="text-align:right">${rs(l.amountCents)}</td></tr>`
-    const html = `<h2>Payslip — ${period}</h2><p><strong>${slip.employee.fullName}</strong> (${slip.employee.employeeCode})</p>${basis ? `<p>Salary = ${rs(basis.monthlyGrossCents)} ÷ ${basis.daysInMonth} days × ${basis.paidDays} paid days (per-day rate ${rs(basis.dailyRateCents)})</p>` : ''}
-      <h4>Earnings</h4><table>${slip.lines.filter((l) => l.kind === 'earning').map(row).join('')}</table>
-      <h4>Deductions</h4><table>${slip.lines.filter((l) => l.kind === 'deduction').map(row).join('')}</table>
-      <p><strong>Net pay: ${rs(slip.netCents)}</strong></p>
-      <p style="font-size:12px;color:#666">Employer contributions: ${slip.lines.filter((l) => l.kind === 'employer').map((l) => `${l.label} ${rs(l.amountCents)}`).join(', ') || 'none'}</p>`
+    const html = `<h2>Payslip — ${period}</h2><p><strong>${esc(slip.employee.fullName)}</strong> (${esc(slip.employee.employeeCode)})</p>
+      ${breakupHtml(slip.breakup)}
+      <p style="font-size:12px;color:#666">Employer contributions: ${esc(slip.lines.filter((l) => l.kind === 'employer').map((l) => `${l.label} ${rs(l.amountCents)}`).join(', ') || 'none')}</p>`
     const w = window.open('', '_blank'); if (!w) return
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Payslip</title><style>body{font-family:system-ui;max-width:600px;margin:40px auto;color:#111}table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid #eee}</style></head><body>${html.replace(/<(?!\/?(h2|h4|p|strong|table|tr|td|span)\b)/g, '&lt;')}</body></html>`)
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Payslip</title><style>body{font-family:system-ui;max-width:600px;margin:40px auto;color:#111}table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid #eee}</style></head><body>${html.replace(/<(?!\/?(h2|h4|p|strong|table|tr|td|span|br)\b)/g, '&lt;')}</body></html>`)
     w.document.close(); setTimeout(() => w.print(), 300)
   }
   return (
@@ -478,20 +464,10 @@ function SlipModal({ slip, period, draft, types, onClose }: { slip: Slip; period
       <form onSubmit={submit} noValidate className="grid md:grid-cols-2 gap-5">
         <div>
           <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-2">Payslip</p>
-          {basis && (
-            <div className="rounded-xl p-3 mb-3 text-xs text-white/70 space-y-0.5" style={{ background: 'rgb(var(--fg-rgb) / 0.04)' }}>
-              <p className="font-bold text-white/85">Salary = {rs(basis.monthlyGrossCents)} ÷ {basis.daysInMonth} days × {basis.paidDays} paid days</p>
-              <p>Per-day rate {rs(basis.dailyRateCents)} · days in month {basis.daysInMonth} · employed {basis.employedDays} · absent {basis.absentDays} · unpaid leave {basis.unpaidLeaveDays}</p>
-              <p className="text-white/45">Weekly offs, holidays and paid leave are paid days.</p>
-            </div>
+          <SalaryBreakupView breakup={slip.breakup} />
+          {slip.lines.some((l) => l.kind === 'employer' && l.amountCents !== 0) && (
+            <p className="text-[11px] text-white/45 mt-2">Employer pays on top: {slip.lines.filter((l) => l.kind === 'employer' && l.amountCents !== 0).map((l) => `${l.label} ${rs(l.amountCents)}`).join(' · ')}</p>
           )}
-          {slip.lines.map((l) => (
-            <div key={l.code + l.label} className="flex justify-between text-sm py-1 border-b border-white/[0.04]">
-              <span className="min-w-0 break-words" style={{ color: l.kind === 'deduction' ? 'var(--erp-danger)' : l.kind === 'employer' ? 'rgb(var(--fg-rgb) / 0.4)' : 'rgb(var(--fg-rgb) / 0.8)' }}>{l.label}{l.note ? <span className="text-white/40"> — {l.note}</span> : null}</span>
-              <span className="text-white/85">{l.kind === 'deduction' ? '−' : ''}{rs(l.amountCents)}</span>
-            </div>
-          ))}
-          <div className="flex justify-between text-base font-black pt-2"><span className="text-white/85">Net</span><span className="text-primary-ink">{rs(slip.netCents)}</span></div>
           <button type="button" className={`${btnGhost} mt-3`} onClick={print}>Print payslip</button>
         </div>
         <div>
