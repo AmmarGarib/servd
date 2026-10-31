@@ -221,10 +221,13 @@ function JournalsPage() {
   const moneyNetOut = used.reduce((s, p) => s + (isMoneyCode(codeOfAccount(p.line.accountId)) ? p.credit - p.debit : 0), 0)
   const suggestedVoucher: VoucherType = moneyNetOut > 0 ? 'PV' : moneyNetOut < 0 ? 'RV' : 'JV'
   const voucherType: VoucherType = voucherPick || suggestedVoucher
-  const voucherError = voucherType === 'PV' && moneyNetOut <= 0 && debitTotal > 0
-    ? 'A payment voucher (PV) must pay money out — credit cash, petty cash or a bank, or pick JV / AV'
-    : voucherType === 'RV' && moneyNetOut >= 0 && debitTotal > 0
-      ? 'A receiving voucher (RV) must bring money in — debit cash, petty cash or a bank, or pick JV / AV'
+  // PV = a credit to any asset or liability account, RV = a debit to one (owner, 2026-10-31: "Payment can be made
+  // from any asset account … Or to set off liability against payment") — the server's rule (voucherNumbers.ts).
+  const isBalanceSheet = (id: string) => ['asset', 'liability'].includes(accounts.find((a) => a.id === id)?.type ?? '')
+  const voucherError = voucherType === 'PV' && debitTotal > 0 && !used.some((p) => p.credit > 0 && isBalanceSheet(p.line.accountId))
+    ? 'A payment voucher (PV) must credit an asset account (where the money comes from) or a liability it is set off against, or pick JV / AV'
+    : voucherType === 'RV' && debitTotal > 0 && !used.some((p) => p.debit > 0 && isBalanceSheet(p.line.accountId))
+      ? 'A receiving voucher (RV) must debit an asset account (where the money goes) or a liability it is set off against, or pick JV / AV'
       : null
 
   const blockers: string[] = []

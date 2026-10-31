@@ -5,8 +5,8 @@
 // Stamped by the ONE posting engine (journal.ts postJournalEntry) in the same
 // transaction as the entry, per company, ascending, never reused:
 //   • A manual entry takes the type finance picks on the form (owner, 2026-10-23: "Payment voucher (PV),
-//     journal voucher (JV), Receiving voucher (RV) and adjustment voucher (AV)"): PV only when the entry
-//     pays money out, RV only when it brings money in (422 VOUCHER_TYPE_MISMATCH); JV / AV on anything.
+//     journal voucher (JV), Receiving voucher (RV) and adjustment voucher (AV)"): PV when it credits any asset or
+//     liability account, RV when it debits one (owner, 2026-10-31; 422 VOUCHER_TYPE_MISMATCH); JV / AV on anything.
 //     None picked = JV, as before.
 //   • AV-00001 — an adjustment voucher (manual entries only).
 //   • JV-00001 — a manual journal entry, and every reversal / void / cancel
@@ -85,19 +85,26 @@ export async function suggestedManualVoucherKind(
   return net > 0 ? 'PV' : net < 0 ? 'RV' : 'JV'
 }
 
-/** 422 VOUCHER_TYPE_MISMATCH when a PV does not pay money out or an RV does not bring money in. */
+/**
+ * 422 VOUCHER_TYPE_MISMATCH for a hand-picked PV / RV that cannot be one (owner, 2026-10-31: "Payment can be made
+ * from any asset account, PV voucher should not restrict it … Or to set off liability against payment, make both"):
+ *   PV — at least one CREDIT line on an asset or liability account (paid from any asset, or set off against a
+ *        liability, e.g. Due to Garibsons);
+ *   RV — at least one DEBIT line on an asset or liability account (the mirror).
+ * The automatic PV / RV stamp on system postings and the payments register still read only money accounts.
+ */
 export async function assertManualVoucherKind(
   tx: Db, tenantId: string, kind: ManualVoucherKind,
   lines: Array<{ accountCode: string; type: 'debit' | 'credit'; amountCents: number }>,
 ): Promise<void> {
   if (kind !== 'PV' && kind !== 'RV') return
-  const net = await moneyNetOutCents(tx, tenantId, lines)
-  if (kind === 'PV' && net <= 0) {
-    throw new AppError('VOUCHER_TYPE_MISMATCH', 'A payment voucher (PV) must pay money out — credit cash on hand, petty cash or a bank. Pick JV or AV for this entry' + (net < 0 ? ', or RV (it brings money in).' : '.'), 422)
-  }
-  if (kind === 'RV' && net >= 0) {
-    throw new AppError('VOUCHER_TYPE_MISMATCH', 'A receiving voucher (RV) must bring money in — debit cash on hand, petty cash or a bank. Pick JV or AV for this entry' + (net > 0 ? ', or PV (it pays money out).' : '.'), 422)
-  }
+  const side = kind === 'PV' ? 'credit' : 'debit'
+  const codes = [...new Set(lines.filter((l) => l.type === side && l.amountCents > 0).map((l) => l.accountCode))]
+  const fits = codes.length > 0 && (await tx.account.count({ where: { tenantId, code: { in: codes }, type: { in: ['asset', 'liability'] } } })) > 0
+  if (fits) return
+  throw new AppError('VOUCHER_TYPE_MISMATCH', kind === 'PV'
+    ? 'A payment voucher (PV) must pay out of an asset account or set it off against a liability — credit an asset or liability account, or pick JV / AV.'
+    : 'A receiving voucher (RV) must bring money into an asset account or set it off against a liability — debit an asset or liability account, or pick JV / AV.', 422)
 }
 
 /**

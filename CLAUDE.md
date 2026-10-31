@@ -1425,8 +1425,10 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   voucher (PV), journal voucher (JV), Receiving voucher (RV) and adjustment voucher (AV)"; "give option to
   generate duplicate voucher of existing entry").** A manual entry takes `voucherKind` PV | JV | RV | AV
   (`voucherNumbers.ts MANUAL_VOUCHER_KINDS`; each its own per-company series, AV-00001…; none = JV as
-  before). PV must pay money out and RV bring it in (`assertManualVoucherKind` → 422
-  `VOUCHER_TYPE_MISMATCH`); JV / AV fit any entry. Checked in `postManualJournal`, at request raise / edit
+  before). PV must CREDIT an asset or liability account (paid from any asset, or set off against a
+  liability) and RV must DEBIT one (owner, 2026-10-31: "Payment can be made from any asset account … Or to set off
+  liability against payment, make both"; `assertManualVoucherKind` → 422 `VOUCHER_TYPE_MISMATCH`); JV / AV fit any
+  entry. The payments register and system PV / RV stamps still read money accounts only. Checked in `postManualJournal`, at request raise / edit
   (`assertManualVoucherKindForLines`); a journal request keeps it in `changeMeta.voucherKind`; an amend
   keeps the original's type unless a new one is sent, and a type change is never a text-only edit (it
   re-posts, same-amount rules). The form suggests PV / RV / JV from the lines. "Duplicate" on a manual

@@ -433,8 +433,19 @@ describe('voucher types on manual entries', () => {
     expect(((await post('fin', 'JV', await receipt(903))).json() as { voucherNo: string }).voucherNo).toMatch(/^JV-/)
   })
 
-  it('PV must pay money out, RV must bring it in (422 VOUCHER_TYPE_MISMATCH); bad type 400', async () => {
-    const r1 = await post('fin', 'PV', await nonCash(500))
+  it('PV credits an asset or liability, RV debits one (422 VOUCHER_TYPE_MISMATCH); bad type 400', async () => {
+    // Owner, 2026-10-31: "Payment can be made from any asset account … Or to set off liability against payment".
+    const fromAsset = [
+      { accountId: await acct(A, '6010'), type: 'debit' as const, amountCents: 510 },
+      { accountId: await acct(A, '1310'), type: 'credit' as const, amountCents: 510 },
+    ]
+    expect((await post('fin', 'PV', fromAsset)).statusCode).toBe(201)
+    expect((await post('fin', 'PV', await nonCash(505))).statusCode).toBe(201)
+    const pnlOnly = [
+      { accountId: await acct(A, '6010'), type: 'debit' as const, amountCents: 500 },
+      { accountId: await acct(A, '4210'), type: 'credit' as const, amountCents: 500 },
+    ]
+    const r1 = await post('fin', 'PV', pnlOnly)
     expect(r1.statusCode).toBe(422); expect(code(r1)).toBe('VOUCHER_TYPE_MISMATCH')
     const r2 = await post('fin', 'RV', await two(500))
     expect(r2.statusCode).toBe(422); expect(code(r2)).toBe('VOUCHER_TYPE_MISMATCH')
