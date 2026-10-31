@@ -35,7 +35,7 @@ const basisOf = (s: Slip): PayBasis | null => {
 }
 interface Slip {
   id: string; employeeId: string
-  employee: { fullName: string; employeeCode: string; bankName: string | null; iban: string | null; paymentMethod: string | null; eobiNo: string | null }
+  employee: { fullName: string; employeeCode: string; bankName: string | null; iban: string | null; paymentMethod: string | null; eobiNo: string | null; basicSalaryCents?: number; allowances?: Array<{ name: string; amountCents: number }> }
   inputs: Record<string, number | boolean | string[] | unknown>
   lines: Line[]; grossCents: number; earningsCents: number; deductionsCents: number; eobiEmployeeCents: number; eobiEmployerCents: number; netCents: number
 }
@@ -62,22 +62,39 @@ const RUN_STATUS_LABEL: Record<string, string> = {
 }
 /** The income tax on a payslip: the deduction line (finance's figure once it entered one). */
 const taxOf = (s: Slip) => s.lines.filter((l) => l.code === 'tax').reduce((a, l) => a + l.amountCents, 0)
-// How the run table reads (owner, 2026-10-30: "gross amount should be total salary … Gross − tax − deductions =
-// Net"): Gross = the full monthly salary + overtime + other earnings; Deductions = the salary not paid for days
-// absent / unpaid / not employed + lates, loans and other deductions (never income tax or EOBI, their own columns).
-// Display only — the payslip engine's figures are unchanged, and Gross − tax − deductions − EOBI = its net.
+// How the run table reads (owner, 2026-10-31: "Allowances and all → Total Amount → deduction on attendance → gross →
+// Other deductions → Net"): Basic + Allowances = Total salary (the full monthly salary); − the attendance deduction
+// (salary not paid for days absent / unpaid / not employed, plus lates) + overtime and other earnings = Gross;
+// − income tax − other deductions − EOBI = Net. Display only — the payslip engine's figures are unchanged.
 const salaryEarnedOf = (s: Slip) => s.lines.filter((l) => l.code === 'salary').reduce((a, l) => a + l.amountCents, 0)
-const fullGrossOf = (s: Slip) => {
-  const monthly = basisOf(s)?.monthlyGrossCents ?? salaryEarnedOf(s)
-  return monthly + (s.earningsCents - salaryEarnedOf(s))
+const lateOf = (s: Slip) => s.lines.filter((l) => l.kind === 'deduction' && l.code === 'late').reduce((a, l) => a + l.amountCents, 0)
+const totalSalaryOf = (s: Slip) => basisOf(s)?.monthlyGrossCents ?? salaryEarnedOf(s)
+const basicOf = (s: Slip) => Math.min(s.employee.basicSalaryCents ?? 0, totalSalaryOf(s))
+/** The allowances that make up Total salary − Basic: the employee master's named ones, the rest as "Other allowances". */
+const allowanceBreakdown = (s: Slip): Array<{ name: string; cents: number }> => {
+  const total = totalSalaryOf(s) - basicOf(s)
+  const named = (s.employee.allowances ?? []).map((x) => ({ name: x.name, cents: x.amountCents }))
+  const namedSum = named.reduce((a, x) => a + x.cents, 0)
+  if (namedSum > total) return total > 0 ? [{ name: 'Allowances', cents: total }] : []
+  return [...named, ...(total - namedSum > 0 ? [{ name: named.length ? 'Other allowances' : 'Allowances', cents: total - namedSum }] : [])]
 }
-const tableDeductionsOf = (s: Slip) => fullGrossOf(s) - taxOf(s) - s.eobiEmployeeCents - s.netCents
-/** What makes up the Deductions cell, by type: the days not paid, then each deduction line (not tax or EOBI). */
-const deductionBreakdown = (s: Slip): Array<{ label: string; cents: number }> => {
-  const lines = s.lines.filter((l) => l.kind === 'deduction' && l.code !== 'tax' && l.code !== 'eobi_employee' && l.amountCents !== 0)
-  const daysNotPaid = tableDeductionsOf(s) - lines.reduce((a, l) => a + l.amountCents, 0)
-  return [...(daysNotPaid !== 0 ? [{ label: 'Days not paid', cents: daysNotPaid }] : []), ...lines.map((l) => ({ label: l.label, cents: l.amountCents }))]
+const attendanceDeductionOf = (s: Slip) => totalSalaryOf(s) - salaryEarnedOf(s) + lateOf(s)
+const grossOf = (s: Slip) => s.earningsCents - lateOf(s)
+const otherDeductionsOf = (s: Slip) => grossOf(s) - taxOf(s) - s.eobiEmployeeCents - s.netCents
+/** What makes up the Attendance deduction cell. */
+const attendanceBreakdown = (s: Slip): string => {
+  const b = basisOf(s)
+  const daysNotPaid = totalSalaryOf(s) - salaryEarnedOf(s)
+  const parts = [
+    b ? `Per-day rate ${rs(b.dailyRateCents)} · paid ${b.paidDays} of ${b.daysInMonth} days (absent ${b.absentDays}, unpaid leave ${b.unpaidLeaveDays}, employed ${b.employedDays})` : '',
+    daysNotPaid !== 0 ? `Days not paid: ${rs(daysNotPaid)}` : '',
+    ...s.lines.filter((l) => l.kind === 'deduction' && l.code === 'late' && l.amountCents !== 0).map((l) => `${l.label}: ${rs(l.amountCents)}`),
+  ]
+  return parts.filter(Boolean).join('\n') || 'No attendance deduction'
 }
+/** What makes up the Other deductions cell, by type (not tax, EOBI or lates). */
+const deductionBreakdown = (s: Slip): Array<{ label: string; cents: number }> =>
+  s.lines.filter((l) => l.kind === 'deduction' && !['tax', 'eobi_employee', 'late'].includes(l.code) && l.amountCents !== 0).map((l) => ({ label: l.label, cents: l.amountCents }))
 
 /** Cash staff are paid from the safe; bank and cheque staff from the bank —
  *  by the method snapshotted when the month was calculated. */
@@ -173,11 +190,13 @@ export default function PayrollRunPage() {
       {loadErr && <p className="text-sm text-s-red" role="alert">{(loadErr as Error).message}</p>}
       {run && (
         <div className="space-y-5">
-          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-9 gap-3">
             <Stat label="Employees" value={t['employees'] ?? 0} />
-            <Stat label="Gross" value={rs((data?.payslips ?? []).reduce((a, s) => a + fullGrossOf(s), 0))} />
+            <Stat label="Total salary" value={rs((data?.payslips ?? []).reduce((a, s) => a + totalSalaryOf(s), 0))} />
+            <Stat label="Attendance deduction" value={rs((data?.payslips ?? []).reduce((a, s) => a + attendanceDeductionOf(s), 0))} />
+            <Stat label="Gross" value={rs((data?.payslips ?? []).reduce((a, s) => a + grossOf(s), 0))} />
             <Stat label="Income tax" value={rs((data?.payslips ?? []).reduce((a, s) => a + taxOf(s), 0))} />
-            <Stat label="Deductions" value={rs((data?.payslips ?? []).reduce((a, s) => a + tableDeductionsOf(s), 0))} />
+            <Stat label="Other deductions" value={rs((data?.payslips ?? []).reduce((a, s) => a + otherDeductionsOf(s), 0))} />
             <Stat label="Net pay" value={rs(t['netCents'])} tone="good" />
             <Stat label="EOBI employee" value={rs(t['eobiEmployeeCents'])} />
             <Stat label="EOBI employer" value={rs(t['eobiEmployerCents'])} />
@@ -235,7 +254,7 @@ export default function PayrollRunPage() {
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
-                {['Employee', 'Paid days', 'Per-day rate', 'Overtime', 'Gross', 'Income tax', 'Deductions', 'EOBI (1%)', 'Net', ''].map((h, i) => <th key={h} className={`px-4 py-3 font-bold whitespace-nowrap${i === 0 ? ' sticky left-0 z-[1] bg-s-surface' : ''}${i === 9 ? ' pr-6' : ''}`}>{h}</th>)}
+                {['Employee', 'Basic', 'Allowances', 'Total salary', 'Paid days', 'Attendance deduction', 'Overtime', 'Gross', 'Income tax', 'Other deductions', 'EOBI (1%)', 'Net', ''].map((h, i, all) => <th key={h} className={`px-4 py-3 font-bold whitespace-nowrap${i === 0 ? ' sticky left-0 z-[1] bg-s-surface' : ''}${i === all.length - 1 ? ' pr-6' : ''}`}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {data!.payslips.map((s) => {
@@ -243,18 +262,24 @@ export default function PayrollRunPage() {
                   return (
                     <tr key={s.id} className="border-t border-white/[0.05]">
                       <td className="px-4 py-3 sticky left-0 z-[1] bg-s-surface min-w-[9rem]"><p className="font-bold text-white/85">{s.employee.fullName}</p><p className="text-[11px] text-white/40">{s.employee.employeeCode}{s.inputs['edited'] ? ' · edited' : ''}</p></td>
+                      <td className="px-4 py-3 text-white/70 whitespace-nowrap">{basicOf(s) > 0 ? rs(basicOf(s)) : '—'}</td>
+                      <td className="px-4 py-3 text-white/70 whitespace-nowrap" title={allowanceBreakdown(s).map((x) => `${x.name}: ${rs(x.cents)}`).join('\n') || 'No allowances'}>
+                        {allowanceBreakdown(s).length ? rs(allowanceBreakdown(s).reduce((a, x) => a + x.cents, 0)) : '—'}
+                        {allowanceBreakdown(s).length > 1 && <p className="text-[10px] text-white/40 max-w-[12rem] truncate">{allowanceBreakdown(s).map((x) => x.name).join(' · ')}</p>}
+                      </td>
+                      <td className="px-4 py-3 text-white/85 font-bold whitespace-nowrap">{rs(totalSalaryOf(s))}</td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">{basisOf(s) ? `${basisOf(s)!.paidDays} of ${basisOf(s)!.daysInMonth}` : '—'}</td>
-                      <td className="px-4 py-3 text-white/70">{basisOf(s) ? rs(basisOf(s)!.dailyRateCents) : '—'}</td>
+                      <td className="px-4 py-3 text-white/70 whitespace-nowrap" title={attendanceBreakdown(s)}>{attendanceDeductionOf(s) ? rs(attendanceDeductionOf(s)) : '—'}</td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">{otCell(s)}</td>
-                      <td className="px-4 py-3 text-white/70">{rs(fullGrossOf(s))}</td>
+                      <td className="px-4 py-3 text-white/85 font-bold whitespace-nowrap">{rs(grossOf(s))}</td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">
                         {canSetTax
                           ? <button type="button" className="font-bold text-primary-ink underline decoration-dotted underline-offset-2 [@media(pointer:coarse)]:min-h-[44px]" onClick={() => { setErr(''); setTaxSlipId(s.id) }} aria-label={`Income tax for ${s.employee.fullName}: ${rs(taxOf(s))} — change`}>{rs(taxOf(s))}</button>
                           : rs(taxOf(s))}
                         {typeof s.inputs['taxOverrideCents'] === 'number' && <span className="ml-1 text-[10px] text-white/40">set by finance</span>}
                       </td>
-                      <td className="px-4 py-3 text-white/70" title={deductionBreakdown(s).map((b) => `${b.label}: ${rs(b.cents)}`).join('\n') || 'No deductions'}>
-                        {rs(tableDeductionsOf(s))}
+                      <td className="px-4 py-3 text-white/70 whitespace-nowrap" title={deductionBreakdown(s).map((b) => `${b.label}: ${rs(b.cents)}`).join('\n') || 'No other deductions'}>
+                        {rs(otherDeductionsOf(s))}
                         {deductionItemsOf(s).length > 0 && <p className="text-[10px] text-white/40 max-w-[12rem] truncate">{deductionItemsOf(s).map((d) => d.label).join(' · ')}</p>}
                       </td>
                       <td className="px-4 py-3 text-white/70">{rs(s.eobiEmployeeCents)}</td>

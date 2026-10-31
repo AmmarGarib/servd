@@ -2758,7 +2758,21 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string } }>('/payroll/runs/:id', { preHandler: requireAuth(...PAYROLL_READERS) }, async (req) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...inTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
-    const slips = await prisma.hrPayslip.findMany({ where: { runId: run.id }, include: { employee: { select: { fullName: true, employeeCode: true, bankName: true, iban: true, paymentMethod: true, eobiNo: true } } }, orderBy: { employee: { employeeCode: 'asc' } } })
+    const rows = await prisma.hrPayslip.findMany({ where: { runId: run.id }, include: { employee: { select: { fullName: true, employeeCode: true, bankName: true, iban: true, paymentMethod: true, eobiNo: true, basicSalaryCents: true, data: true } } }, orderBy: { employee: { employeeCode: 'asc' } } })
+    // The salary breakup for the run table (owner, 2026-10-31: "Allowances and all → Total Amount → deduction on
+    // attendance → gross → Other deductions → Net"): basic + the employee master's named allowances, read live
+    // (display only). Only the allowance list leaves `data` — never the rest of the employee master.
+    const slips = rows.map(({ employee: { data, ...emp }, ...slip }) => {
+      const raw = (data as Record<string, unknown> | null)?.['allowances']
+      const allowances = Array.isArray(raw)
+        ? raw.flatMap((a) => {
+          const r = a as Record<string, unknown>
+          const cents = Number(r['amountCents'])
+          return Number.isFinite(cents) && cents > 0 ? [{ name: String(r['name'] ?? '').trim() || 'Allowance', amountCents: Math.round(cents) }] : []
+        })
+        : []
+      return { ...slip, employee: { ...emp, allowances } }
+    })
     const c = run.paidAt ? (await classificationsOfReferences(prisma, [run.tenantId], [`hr.payroll.payment:${run.id}`])).get(`hr.payroll.payment:${run.id}`) : undefined
     // The run's company's deduction types, for HR's "Add deduction" picker (owner, 2026-10-30).
     const deductionTypes = (await getSettings(run.tenantId)).deductionTypes
