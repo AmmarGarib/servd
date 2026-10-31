@@ -427,3 +427,41 @@ describe('add an existing asset — another servd company gave it', () => {
     expect(await trialBalance(E.tenantId)).toBe(0)
   })
 })
+
+// Owner, 2026-10-31: "1st the asset will go to chart of accounts, then will be transferred to Fixed assets register"
+// — finance books it to an asset account, then moves it into the register; the CEO approves (Dr class / Cr that account).
+describe('add an existing asset — already in the chart of accounts', () => {
+  it('moves the value out of the account the CEO approves; refuses money accounts and more than the account holds', async () => {
+    await mkUser('ceoChart', 'admin', C.tenantId)
+    const acc = await prisma.account.create({ data: { tenantId: C.tenantId, code: '1710', name: 'Generator (booked by JV)', type: 'asset' } })
+    const { postJournalEntry } = await import('../src/modules/accounting/journal.js')
+    await postJournalEntry({
+      tenantId: C.tenantId, sourceType: 'manual', sourceId: `gen-${RUN}`, description: 'Generator bought', entryDate: new Date(`${day(0)}T07:00:00Z`),
+      lines: [{ accountCode: '1710', type: 'debit', amountCents: 300_000 }, { accountCode: '1010', type: 'credit', amountCents: 300_000 }],
+    })
+    const b = { source: 'chart_account', sourceAccountCode: '1710', classId: C.kitchen, name: 'Generator', locationId: C.locationId, valueCents: 300_000, inServiceDate: day(0), remainingLifeMonths: 36, reason: 'Booked to 1710 first, now on the register' }
+
+    // Never from cash, and never the related-party fields.
+    expect((await raise('finC', { ...b, sourceAccountCode: '1010' })).json().error.code).toBe('SOURCE_ACCOUNT_NOT_ALLOWED')
+    expect((await raise('finC', { ...b, valueCents: 300_001 })).json().error.code).toBe('SOURCE_ACCOUNT_SHORT')
+
+    const before = await entries(C.tenantId)
+    const r = await raise('finC', b)
+    expect(r.statusCode, r.body).toBe(202)
+    const ev = r.json().event as { id: string; existing: { sourceLabel: string } }
+    expect(ev.existing.sourceLabel).toBe('Moved from account 1710')
+    expect(await entries(C.tenantId)).toBe(before)
+    // The pending move counts: nothing more can be moved out of 1710.
+    expect((await raise('finC', { ...b, valueCents: 1 })).json().error.code).toBe('SOURCE_ACCOUNT_SHORT')
+    // Another company's finance has no 1710 of its own to move.
+    expect((await raise('finB', { ...b, classId: B.kitchen, locationId: B.locationId })).json().error.code).toBe('SOURCE_ACCOUNT_NOT_ALLOWED')
+
+    await applyEvent(ev.id, who['ceoChart']!.id)
+    expect(await balance(C.tenantId, '1710')).toBe(0)
+    expect(await balance(C.tenantId, '1510')).toBe(300_000)
+    expect(await trialBalance(C.tenantId)).toBe(0)
+    const asset = await prisma.fixedAsset.findFirstOrThrow({ where: { tenantId: C.tenantId, name: 'Generator' } })
+    expect(asset).toMatchObject({ costCents: 300_000, acquisitionCreditCode: '1710', usefulLifeMonths: 36 })
+    expect(acc.id).toBeTruthy()
+  })
+})

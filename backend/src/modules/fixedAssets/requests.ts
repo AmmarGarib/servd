@@ -145,12 +145,13 @@ export async function shapeEvents(db: Db, events: FixedAssetEvent[], who: { id: 
 }
 
 /** The add_existing payload fields the screens read (null for every other kind). */
-function existingOf(e: FixedAssetEvent): { source?: unknown; counterparty?: unknown; counterpartyTenantId?: string | null; name?: string | null } | null {
+function existingOf(e: FixedAssetEvent): { source?: unknown; counterparty?: unknown; counterpartyTenantId?: string | null; sourceAccountCode?: string | null; name?: string | null } | null {
   if (e.kind !== 'add_existing' || !e.payload || typeof e.payload !== 'object' || Array.isArray(e.payload)) return null
   const p = e.payload as Record<string, unknown>
   return {
     source: p['source'], counterparty: p['counterparty'],
     counterpartyTenantId: typeof p['counterpartyTenantId'] === 'string' ? p['counterpartyTenantId'] : null,
+    sourceAccountCode: typeof p['sourceAccountCode'] === 'string' ? p['sourceAccountCode'] : null,
     name: typeof p['name'] === 'string' ? p['name'] : null,
   }
 }

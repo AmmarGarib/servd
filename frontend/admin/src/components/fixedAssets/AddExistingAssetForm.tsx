@@ -24,10 +24,13 @@ import { PendingFilesPicker } from '../files/PendingFilesPicker'
 import { uploadRecordFiles, type PickedFile } from '../files/recordFiles'
 import { FA_BASE, L, Modal, ErrorLine, Notice, errorWords, inp, btnPrimary, btnGhost, money, todayIso, forCompany, type FaLookups, type FaRequest } from './shared'
 
-type Origin = 'pre_servd' | 'garibsons' | 'servd_company' | 'owners'
+type Origin = 'chart_account' | 'pre_servd' | 'garibsons' | 'servd_company' | 'owners'
 
 /** Each option with where it books, in one plain line. */
 const ORIGINS: Array<{ key: Origin; label: string; books: string; group: 'pre' | 'related'; ready: boolean }> = [
+  // Owner, 2026-10-31: "1st the asset will go to chart of accounts, then will be transferred to Fixed assets register".
+  { key: 'chart_account', group: 'pre', ready: true, label: 'Already in the chart of accounts',
+    books: 'Finance booked it to an asset account first. It moves out of that account into the register (and starts depreciating) when the CEO approves.' },
   { key: 'pre_servd', group: 'pre', ready: true, label: 'Bought before servd',
     books: 'Already owned by the business. Booked against Owner’s capital (3010).' },
   { key: 'garibsons', group: 'related', ready: true, label: 'Garibsons paid for it',
@@ -55,6 +58,16 @@ export function AddExistingAssetForm({ lookups, onClose, onDone }: {
   const outlets = forCompany(lookups.locations, tenantId)
 
   const [origin, setOrigin] = useState<Origin>('pre_servd')
+  const [sourceAccountCode, setSourceAccountCode] = useState('')
+  const fromChart = origin === 'chart_account'
+  // The company's asset accounts an item can move from (the server checks the rest and the balance).
+  const chart = useQuery<Array<{ tenantId: string | null; code: string; name: string; type: string; isActive: boolean }>>({
+    queryKey: ['fa-chart-source', tenantId],
+    queryFn: () => api.get('/setup/chart-of-accounts?active=1'),
+    enabled: fromChart,
+  })
+  const sourceAccounts = (chart.data ?? []).filter((a) => a.tenantId === tenantId && a.type === 'asset' && a.isActive
+    && !/^1(0|1|2|5)\d\d/.test(a.code) && a.code !== '1340')
   const [classId, setClassId] = useState('')
   const [name, setName] = useState('')
   const [serial, setSerial] = useState('')
@@ -87,10 +100,11 @@ export function AddExistingAssetForm({ lookups, onClose, onDone }: {
 
   const send = useMutation({
     mutationFn: async () => {
-      const related = origin !== 'pre_servd'
+      const related = origin !== 'pre_servd' && origin !== 'chart_account'
       const r = await api.post<{ event: FaRequest; applied: boolean }>(`${FA_BASE}/existing`, {
-        source: related ? 'related_party' : 'pre_servd',
+        source: fromChart ? 'chart_account' : related ? 'related_party' : 'pre_servd',
         ...(related ? { counterparty: origin } : {}),
+        ...(fromChart ? { sourceAccountCode } : {}),
         ...(fromCompany
           ? { counterpartyTenantId: giverTenantId, giverAssetId, ...(name.trim() ? { name: name.trim() } : {}) }
           : { classId, name: name.trim(), valueCents: value }),
@@ -125,6 +139,7 @@ export function AddExistingAssetForm({ lookups, onClose, onDone }: {
     else if (!giver) problems.push('Pick the asset from that company\u2019s register.')
     else if (!cls) problems.push('This company has that asset class switched off.')
   } else {
+    if (fromChart && !sourceAccountCode) problems.push('Pick the account the asset is booked to.')
     if (!cls) problems.push('Pick the class.')
     if (!name.trim()) problems.push('Say what the asset is.')
     if (value <= 0) problems.push('Enter today\u2019s value.')
@@ -189,6 +204,16 @@ export function AddExistingAssetForm({ lookups, onClose, onDone }: {
             </div>
           ))}
         </fieldset>
+
+        {fromChart && (
+          <L t="Account it is booked to">
+            <Select className={inp} value={sourceAccountCode} onChange={(e) => setSourceAccountCode(e.target.value)}>
+              <option value="">{chart.isLoading ? 'Loading accounts…' : 'Pick the asset account'}</option>
+              {sourceAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+            </Select>
+            <span className="block text-[11px] text-white/45 mt-1">The value you enter moves out of this account into the register (Dr the asset class, Cr this account). It cannot be more than the account holds.</span>
+          </L>
+        )}
 
         {fromCompany && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

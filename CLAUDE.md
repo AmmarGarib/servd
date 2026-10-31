@@ -1725,7 +1725,14 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   inter-company engine (`postSystemTransferTx`, source `asset_transfer`:
   receiver Dr 1395 / Cr Due to, giver Dr Due from / Cr 1395) — 1395 Fixed
   Asset Transfer Clearing nets to zero; a closed month in either company is
-  422 `PERIOD_LOCKED` (contract: `modules/fixedAssets/README.md`). Depreciation is AUTOMATIC (worker 03:20 PKT,
+  422 `PERIOD_LOCKED` (contract: `modules/fixedAssets/README.md`). **From the chart of accounts (owner, 2026-10-31: "1st the asset will go to chart of accounts,
+  then will be transferred to Fixed assets register"):** add_existing source `chart_account` + `sourceAccountCode`
+  — finance books the item to one of the company's live ASSET accounts first, then raises the move; the CEO's
+  approval posts `fixed_asset.acquire:<assetId>` Dr class cost / Cr that account (account row locked). Never from
+  cash / bank / receivables (`NOT_BANK_CODES`, 1020, bank codes), stock 12xx, 1340 (capitalise through CapEx),
+  15xx or a controlled account (422 `SOURCE_ACCOUNT_NOT_ALLOWED`); never more than the account holds less moves
+  already pending from it (422 `SOURCE_ACCOUNT_SHORT`). `events.ts assertChartSourceAccount`; tests in
+  `tests/fixedAssetExisting.test.ts`. Depreciation is AUTOMATIC (worker 03:20 PKT,
   `chargeThrough` the one path, no switch); smallwares are pooled (H21);
   prepayments sit on 1310 and release monthly (`accounting/prepaidReleases.ts`);
   refundable deposits (1360) only through CapEx. No deferred tax anywhere

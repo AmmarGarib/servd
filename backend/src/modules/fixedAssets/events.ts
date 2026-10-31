@@ -51,7 +51,7 @@ import { serviceClient } from '../../lib/prisma.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { toCents, zMoneyCents, assertMoneyFits } from '../../lib/money.js'
 import {
-  moneyAccountCode, RECEIPT_METHODS, zReceiptMethod, zPaymentRef, assertPaymentReference, receiptText,
+  moneyAccountCode, RECEIPT_METHODS, zReceiptMethod, zPaymentRef, assertPaymentReference, receiptText, NOT_BANK_CODES,
 } from '../../lib/bankAccounts.js'
 import {
   ACCT, postJournalEntry, reverseJournalEntry, lateDatingFor, withLateNote, type JournalLineInput,
@@ -119,7 +119,10 @@ export const WRITE_OFF_CAUSES = ['breakage', 'loss', 'theft', 'worn_out'] as con
 // ─── Existing assets (owner, 2026-10-21) ────────────────────────────────────
 
 /** Where an existing asset came from. */
-export const EXISTING_SOURCES = ['pre_servd', 'related_party'] as const
+// 'chart_account' (owner, 2026-10-31: "1st the asset will go to chart of accounts, then will be transferred to Fixed
+// assets register"): finance first books the asset to an account in the chart (a journal / voucher), then moves it
+// into the register to depreciate it — the CEO approves, as every add_existing.
+export const EXISTING_SOURCES = ['pre_servd', 'related_party', 'chart_account'] as const
 /** Who is on the other side of a related-party transfer. */
 export const EXISTING_COUNTERPARTIES = ['garibsons', 'servd_company', 'owners'] as const
 export type ExistingSource = typeof EXISTING_SOURCES[number]
@@ -132,7 +135,11 @@ export type ExistingCounterparty = typeof EXISTING_COUNTERPARTIES[number]
  * when another servd company gave it (the inter-company engine moves 1395 to
  * "Due to <giver>" in the same transaction).
  */
-export function existingOffsetCode(source: ExistingSource, counterparty: ExistingCounterparty | null | undefined): string {
+export function existingOffsetCode(source: ExistingSource, counterparty: ExistingCounterparty | null | undefined, sourceAccountCode?: string | null): string {
+  if (source === 'chart_account') {
+    if (!sourceAccountCode) throw new AppError('SOURCE_ACCOUNT_REQUIRED', 'Pick the chart-of-accounts account the asset is booked to', 422)
+    return sourceAccountCode
+  }
   if (source === 'pre_servd') return ACCT.OWNERS_CAPITAL
   if (counterparty === 'garibsons') return ACCT.DUE_TO_GARIBSONS
   if (counterparty === 'owners') return ACCT.OWNERS_CAPITAL
@@ -141,8 +148,9 @@ export function existingOffsetCode(source: ExistingSource, counterparty: Existin
 }
 
 /** Plain words for the screens and the approvals inbox. */
-export function existingSourceLabel(p: { source?: unknown; counterparty?: unknown }, counterpartyName?: string | null): string {
+export function existingSourceLabel(p: { source?: unknown; counterparty?: unknown; sourceAccountCode?: unknown }, counterpartyName?: string | null): string {
   if (p.source === 'pre_servd') return 'Bought before servd'
+  if (p.source === 'chart_account') return `Moved from account ${typeof p.sourceAccountCode === 'string' ? p.sourceAccountCode : ''}`.trim()
   if (p.counterparty === 'garibsons') return 'From Garibsons (owed to Garibsons)'
   if (p.counterparty === 'owners') return 'Contributed by the owners'
   if (p.counterparty === 'servd_company') return `From ${counterpartyName || 'another servd company'}`
@@ -226,7 +234,13 @@ export const PAYLOAD_SCHEMAS = {
     salvageCents: zMoneyCents('The salvage value').optional(),
     // Another servd company: the GIVER's register asset that moves (its book value is the value).
     giverAssetId: idSchema.nullable().optional(),
+    // chart_account: the code of the account (in the asset's company) the asset is booked to.
+    sourceAccountCode: z.string().trim().min(1).max(20).nullable().optional(),
   }).superRefine((p, ctx) => {
+    if ((p.source === 'chart_account') !== !!p.sourceAccountCode) {
+      ctx.addIssue({ code: 'custom', path: ['sourceAccountCode'], message: 'Pick the account only when the asset is already in the chart of accounts' })
+    }
+    if (p.source === 'chart_account' && p.counterparty) ctx.addIssue({ code: 'custom', path: ['counterparty'], message: 'An asset moved from the chart of accounts has no related party' })
     if (p.source === 'related_party' && !p.counterparty) ctx.addIssue({ code: 'custom', path: ['counterparty'], message: 'Say who it came from' })
     if (p.source === 'pre_servd' && p.counterparty) ctx.addIssue({ code: 'custom', path: ['counterparty'], message: 'An asset bought before servd has no related party' })
     if ((p.counterparty === 'servd_company') !== !!p.counterpartyTenantId) {
@@ -620,6 +634,43 @@ export async function giverPreview(db: Db, giverTenantId: string, giverAssetId: 
  * REMAINING_LIFE (above twice the class life), SALVAGE_TOO_HIGH,
  * COUNTERPARTY_NOT_YOURS, ASSET_NOT_ON_GIVER_REGISTER, NO_BOOK_VALUE.
  */
+/**
+ * An asset moved from the chart of accounts into the register (owner, 2026-10-31). The account must be one of the
+ * company's live ASSET accounts holding at least the value moved, and not one the asset cannot honestly come from:
+ *   the register's own 1500–1599 (already in the register), 1340 (CapEx advances — capitalise through CapEx),
+ *   stock 1200–1299, money (cash, petty cash, drawer, bank and wallet codes, receivables / clearing: NOT_BANK_CODES
+ *   and every bank account's code), or an account a module controls.
+ *   422 SOURCE_ACCOUNT_NOT_ALLOWED · 422 SOURCE_ACCOUNT_SHORT (raise: after other pending moves from the same account)
+ */
+async function assertChartSourceAccount(db: Db, tenantId: string, code: string, valueCents: number, when: 'raise' | 'apply'): Promise<void> {
+  const acc = await db.account.findFirst({ where: { tenantId, code }, select: { id: true, type: true, isActive: true, controlledBy: true, name: true } })
+  if (!acc || !acc.isActive) throw new AppError('SOURCE_ACCOUNT_NOT_ALLOWED', `Account ${code} is not a live account of this company`, 422)
+  const lead = Number(/^\s*(\d{4})/.exec(code)?.[1] ?? NaN)
+  const banks = await db.bankAccount.findMany({ where: { tenantId, accountCode: { not: null } }, select: { accountCode: true } })
+  const moneyCodes = new Set<string>([...NOT_BANK_CODES, '1020', ...banks.map((b) => b.accountCode!)])
+  if (acc.type !== 'asset' || acc.controlledBy || moneyCodes.has(code) || code === ACCT.SUPPLIER_ADVANCES
+    || (lead >= 1500 && lead <= 1599) || (lead >= 1200 && lead <= 1299)) {
+    throw new AppError('SOURCE_ACCOUNT_NOT_ALLOWED',
+      `${code} ${acc.name} cannot be moved into the register — pick the asset account the item was booked to (not cash, bank, stock, receivables, CapEx advances 1340 or a fixed-asset account)`, 422)
+  }
+  // At approval, hold the account row so two approvals cannot both spend the same balance.
+  if (when === 'apply') await db.$queryRaw`SELECT id FROM accounts WHERE id = ${acc.id} FOR UPDATE`
+  const sums = await db.journalLine.groupBy({ by: ['type'], where: { accountId: acc.id }, _sum: { amountCents: true } })
+  const balance = sums.reduce((s2, l) => s2 + (l.type === 'debit' ? 1 : -1) * toCents(l._sum.amountCents ?? 0), 0)
+  let alreadyAsked = 0
+  if (when === 'raise') {
+    const pending = await db.fixedAssetEvent.findMany({ where: { tenantId, kind: 'add_existing', status: 'pending' }, select: { payload: true } })
+    for (const e of pending) {
+      const pl = (e.payload ?? {}) as Record<string, unknown>
+      if (pl['source'] === 'chart_account' && pl['sourceAccountCode'] === code) alreadyAsked += Number(pl['valueCents'] ?? 0)
+    }
+  }
+  if (balance - alreadyAsked < valueCents) {
+    throw new AppError('SOURCE_ACCOUNT_SHORT',
+      `${code} ${acc.name} holds ${(balance / 100).toFixed(2)}${alreadyAsked ? ` (${(alreadyAsked / 100).toFixed(2)} already waiting to move)` : ''} — less than the ${(valueCents / 100).toFixed(2)} you are moving`, 422)
+  }
+}
+
 export async function checkAddExisting(
   db: Db, tenantId: string, p: AddExistingPayload, when: 'raise' | 'apply',
   opts: { memberTenantIds?: readonly string[] } = {},
@@ -637,7 +688,8 @@ export async function checkAddExisting(
     // Another servd company the caller is a member of (never the asset's own).
     await assertGiverCompany(db, tenantId, p.counterpartyTenantId ?? '', opts.memberTenantIds ?? [])
   }
-  const offsetCode = existingOffsetCode(p.source, p.counterparty)
+  const offsetCode = existingOffsetCode(p.source, p.counterparty, p.sourceAccountCode)
+  if (p.source === 'chart_account') await assertChartSourceAccount(db, tenantId, offsetCode, p.valueCents, when)
   const inServiceAt = parseDate(p.inServiceAt)
   if (Number.isNaN(inServiceAt.getTime())) throw new AppError('IN_SERVICE_DATE', 'That date is not valid', 422)
   if (isFuturePktDay(inServiceAt)) throw new AppError('IN_SERVICE_DATE', 'The in-service date cannot be in the future', 422)

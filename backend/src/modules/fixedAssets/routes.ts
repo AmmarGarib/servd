@@ -478,6 +478,8 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
       inServiceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-01'),
       remainingLifeMonths: z.number().int().min(1).max(1200).optional(),
       salvageCents: zMoneyCents('The salvage value').optional(),
+      // source 'chart_account' (owner, 2026-10-31): the account the asset is booked to.
+      sourceAccountCode: z.string().trim().min(1).max(20).optional(),
       reason: z.string().max(1000),
     }).parse(req.body)
     if (body.reason.trim().length < 10) throw new AppError('REASON_REQUIRED', 'Give a reason (at least 10 characters)', 422)
@@ -510,6 +512,7 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
         source: body.source,
         counterparty: body.source === 'related_party' ? (body.counterparty ?? null) : null,
         counterpartyTenantId: body.counterparty === 'servd_company' ? (body.counterpartyTenantId ?? null) : null,
+        sourceAccountCode: body.source === 'chart_account' ? (body.sourceAccountCode ?? null) : null,
         classKey: cls.key,
         name,
         serial: body.serial ?? giver?.serialNumber ?? null,
