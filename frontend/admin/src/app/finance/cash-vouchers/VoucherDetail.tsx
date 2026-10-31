@@ -26,6 +26,7 @@ import { Button, CheckLabel, dangerOutlineBtn, ErrorBanner, fieldCls, FieldLabel
 import { Select } from '@/components/ui/Select'
 import { ExpenseAccountOptions, useExpenseAccounts } from './expenseAccounts'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { FileViewModal } from '../../../components/files/FileViewModal'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
@@ -56,6 +57,8 @@ export function VoucherDetail({ id }: { id: string }) {
   // A cash keeper reads every box; anyone else gets 403 there (silently).
   const { isSuccess: isKeeper } = usePettyBoxes()
   const [editing, setEditing] = useState(false)
+  // The full voucher (the same PDF as Download PDF) shown in the browser, nothing saved.
+  const [viewing, setViewing] = useState(false)
   const [noteFor, setNoteFor] = useState<NoteAct | null>(null)
   const [note, setNote] = useState('')
   const [onBehalfReason, setOnBehalfReason] = useState('')
@@ -106,6 +109,7 @@ export function VoucherDetail({ id }: { id: string }) {
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <PrintPortal v={v} companyName={companyName} categoryLabel={categoryLabel} />
+      {viewing && <FileViewModal path={`${CV_BASE}/${v.id}/export.pdf`} mime="application/pdf" name={v.number} onClose={() => setViewing(false)} />}
 
       <header className="px-4 sm:px-7 py-6 border-b border-white/[0.05]">
         <Link href="/finance/cash-vouchers" className="text-xs text-s-muted hover:text-white/70">← Cash vouchers</Link>
@@ -198,6 +202,7 @@ export function VoucherDetail({ id }: { id: string }) {
             {(v.canExport ?? true) && (
               <>
                 <Button variant="secondary" type="submit" onClick={() => window.print()}>Print</Button>
+                <Button variant="secondary" type="submit" onClick={() => setViewing(true)}>View voucher</Button>
                 <Button variant="secondary" type="submit" onClick={() => void exportAs('pdf')}>Download PDF</Button>
                 <Button variant="secondary" type="submit" onClick={() => void exportAs('xlsx')}>Download Excel</Button>
               </>
