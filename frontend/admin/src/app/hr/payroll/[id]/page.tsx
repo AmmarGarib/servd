@@ -89,6 +89,12 @@ const attendanceBreakdown = (s: Slip): string => {
   return parts.filter(Boolean).join('\n') || 'No attendance deduction'
 }
 const deductionBreakdown = (s: Slip) => s.breakup.otherDeductions
+/** Particulars a payslip prints as "—" because the HR record is blank (owner, 2026-10-31). */
+const missingParticulars = (s: Slip): string[] => {
+  const p = s.particulars
+  return [!p.cnic && 'CNIC', !p.department && 'department', !p.designation && 'designation', !p.joiningDate && 'date of joining', !p.employmentType && 'employment type']
+    .filter((x): x is string => !!x)
+}
 
 /** Cash staff are paid from the safe; bank and cheque staff from the bank —
  *  by the method snapshotted when the month was calculated. */
@@ -195,6 +201,19 @@ export default function PayrollRunPage() {
             <Stat label="EOBI employee" value={rs(t['eobiEmployeeCents'])} />
             <Stat label="EOBI employer" value={rs(t['eobiEmployerCents'])} />
           </div>
+          {(() => {
+            const gaps = (data?.payslips ?? []).map((x) => ({ s: x, miss: missingParticulars(x) })).filter((g) => g.miss.length > 0)
+            if (gaps.length === 0) return null
+            return (
+              <div role="status" className="rounded-xl p-3 text-sm text-white/85 break-words" style={{ background: 'color-mix(in srgb, var(--erp-warning) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--erp-warning) 30%, transparent)' }}>
+                <p className="font-bold">Missing details — {gaps.length} payslip{gaps.length === 1 ? '' : 's'} will print &ldquo;—&rdquo;</p>
+                <p className="text-xs text-white/55 mb-1">Fill these in on the employee&rsquo;s HR record; the payslip picks them up straight away.</p>
+                <ul className="text-xs space-y-0.5">
+                  {gaps.map(({ s: x, miss }) => <li key={x.id}><span className="font-bold">{x.employee.fullName}</span> ({x.employee.employeeCode}): {miss.join(', ')}</li>)}
+                </ul>
+              </div>
+            )
+          })()}
           {banner && (
             <div role="status" className="rounded-xl p-3 text-sm text-white/85 break-words" style={{ background: `color-mix(in srgb, ${banner.tone} 8%, transparent)`, border: `1px solid color-mix(in srgb, ${banner.tone} 30%, transparent)` }}>
               {banner.text}
