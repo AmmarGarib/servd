@@ -70,6 +70,9 @@ const taxOf = (s: Slip) => s.lines.filter((l) => l.code === 'tax').reduce((a, l)
 const totalSalaryOf = (s: Slip) => s.breakup.totalSalaryCents
 const basicOf = (s: Slip) => s.breakup.basicCents
 const allowanceBreakdown = (s: Slip) => s.breakup.allowances
+/** Every allowance name on the run, in the order they first appear — one table column each (owner, 2026-10-31). */
+const allowanceColumns = (slips: Slip[]): string[] => Array.from(new Set(slips.flatMap((s) => s.breakup.allowances.map((a) => a.name))))
+const allowanceCents = (s: Slip, name: string) => s.breakup.allowances.filter((a) => a.name === name).reduce((a, x) => a + x.cents, 0)
 const attendanceDeductionOf = (s: Slip) => s.breakup.attendanceDeductionCents
 const grossOf = (s: Slip) => s.breakup.grossCents
 const otherDeductionsOf = (s: Slip) => s.breakup.otherDeductionsCents
@@ -243,7 +246,7 @@ export default function PayrollRunPage() {
           <div className="rounded-2xl overflow-x-auto" style={card}>
             <table className="w-full text-sm">
               <thead><tr className="text-left text-[10px] uppercase tracking-wider text-white/40">
-                {['Employee', 'Basic', 'Allowances', 'Total salary', 'Paid days', 'Attendance deduction', 'Overtime', 'Gross', 'Income tax', 'Other deductions', 'EOBI (1%)', 'Net', ''].map((h, i, all) => <th key={h} className={`px-4 py-3 font-bold whitespace-nowrap${i === 0 ? ' sticky left-0 z-[1] bg-s-surface' : ''}${i === all.length - 1 ? ' pr-6' : ''}`}>{h}</th>)}
+                {['Employee', 'Basic', ...(allowanceColumns(data!.payslips).length ? allowanceColumns(data!.payslips) : ['Allowances']), 'Total salary', 'Paid days', 'Attendance deduction', 'Overtime', 'Gross', 'Income tax', 'Other deductions', 'EOBI (1%)', 'Net', ''].map((h, i, all) => <th key={`${h}-${i}`} className={`px-4 py-3 font-bold whitespace-nowrap${i === 0 ? ' sticky left-0 z-[1] bg-s-surface' : ''}${i === all.length - 1 ? ' pr-6' : ''}`}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {data!.payslips.map((s) => {
@@ -252,10 +255,9 @@ export default function PayrollRunPage() {
                     <tr key={s.id} className="border-t border-white/[0.05]">
                       <td className="px-4 py-3 sticky left-0 z-[1] bg-s-surface min-w-[9rem]"><p className="font-bold text-white/85">{s.employee.fullName}</p><p className="text-[11px] text-white/40">{s.employee.employeeCode}{s.inputs['edited'] ? ' · edited' : ''}</p></td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">{basicOf(s) > 0 ? rs(basicOf(s)) : '—'}</td>
-                      <td className="px-4 py-3 text-white/70 whitespace-nowrap" title={allowanceBreakdown(s).map((x) => `${x.name}: ${rs(x.cents)}`).join('\n') || 'No allowances'}>
-                        {allowanceBreakdown(s).length ? rs(allowanceBreakdown(s).reduce((a, x) => a + x.cents, 0)) : '—'}
-                        {allowanceBreakdown(s).length > 1 && <p className="text-[10px] text-white/40 max-w-[12rem] truncate">{allowanceBreakdown(s).map((x) => x.name).join(' · ')}</p>}
-                      </td>
+                      {allowanceColumns(data!.payslips).length
+                        ? allowanceColumns(data!.payslips).map((name) => <td key={name} className="px-4 py-3 text-white/70 whitespace-nowrap">{allowanceCents(s, name) ? rs(allowanceCents(s, name)) : '—'}</td>)
+                        : <td className="px-4 py-3 text-white/70 whitespace-nowrap">—</td>}
                       <td className="px-4 py-3 text-white/85 font-bold whitespace-nowrap">{rs(totalSalaryOf(s))}</td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap">{basisOf(s) ? `${basisOf(s)!.paidDays} of ${basisOf(s)!.daysInMonth}` : '—'}</td>
                       <td className="px-4 py-3 text-white/70 whitespace-nowrap" title={attendanceBreakdown(s)}>{attendanceDeductionOf(s) ? rs(attendanceDeductionOf(s)) : '—'}</td>

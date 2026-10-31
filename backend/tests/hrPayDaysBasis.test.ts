@@ -153,10 +153,13 @@ describe('pay = gross ÷ days in month × paid days (HR-1)', () => {
   })
 
   it('shows the salary breakup (total salary → attendance → gross → deductions → net) on the run, payslip and register', async () => {
+    // Named allowances on the employee master show one by one (owner, 2026-10-31).
+    const fullEmp = await prisma.hrEmployee.findUniqueOrThrow({ where: { id: emps['a-full']! } })
+    await prisma.hrEmployee.update({ where: { id: fullEmp.id }, data: { basicSalaryCents: RS(30000), data: { ...(fullEmp.data as object), allowances: [{ name: 'House rent', amountCents: RS(15000) }, { name: 'Fuel', amountCents: RS(5000) }] } } })
     const run = await call('hrA', 'GET', `/payroll/runs/${runA}`)
     expect(run.statusCode, run.body).toBe(200)
     type K = { totalSalaryCents: number; basicCents: number; allowancesCents: number; attendanceDeductionCents: number; otherEarnings: Array<{ cents: number }>; lateCents: number; grossCents: number; taxCents: number; otherDeductionsCents: number; eobiCents: number; netCents: number }
-    const slips = (run.json() as { payslips: Array<{ netCents: number; employee: Record<string, unknown>; breakup: K }> }).payslips
+    const slips = (run.json() as { payslips: Array<{ employeeId: string; netCents: number; employee: Record<string, unknown>; breakup: K }> }).payslips
     expect(slips.length).toBeGreaterThan(0)
     for (const s of slips) {
       const k = s.breakup
@@ -165,11 +168,13 @@ describe('pay = gross ÷ days in month × paid days (HR-1)', () => {
       expect(k.grossCents - k.taxCents - k.otherDeductionsCents - k.eobiCents).toBe(s.netCents)
       expect(s.employee).not.toHaveProperty('data') // only the breakup leaves the employee master
     }
-    const full = slips.find((s) => s.employee['employeeCode'] === 'a-full') ?? slips[0]!
+    const full = slips.find((s) => s.employeeId === emps['a-full'])!
     expect(full.breakup.totalSalaryCents).toBeGreaterThan(full.breakup.grossCents - 1)
     const csv = await call('hrA', 'GET', `/payroll/runs/${runA}/export.csv?kind=register`)
     const head = csv.body.trim().split('\n')[0]!
-    for (const h of ['Basic', 'Allowances', 'Total salary', 'Attendance deduction', 'Gross', 'Income tax', 'Other deductions', 'Net']) expect(head).toContain(h)
+    const fullK = slips.find((s) => s.employeeId === emps['a-full'])!.breakup as K & { allowances: Array<{ name: string; cents: number }> }
+    expect(fullK.allowances.map((a) => a.name)).toEqual(['House rent', 'Fuel', 'Other allowances'])
+    for (const h of ['Allowance: House rent', 'Allowance: Fuel', 'Allowance: Other allowances', 'Total allowances', 'Basic', 'Total salary', 'Attendance deduction', 'Gross', 'Income tax', 'Other deductions', 'Net']) expect(head).toContain(h)
   })
 
   it('shows the paid days and per-day rate in the register and the Payroll Report', async () => {

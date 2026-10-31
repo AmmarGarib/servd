@@ -3099,18 +3099,22 @@ export async function hrRoutes(fastify: FastifyInstance) {
       const typeOf = (l: L) => dedTypeLabel(l.code, s0.deductionTypes)
       const isOther = (l: L) => l.kind === 'deduction' && l.amountCents !== 0 && !['tax', 'eobi_employee', 'late'].includes(l.code)
       const dedCols = Array.from(new Set(slips.flatMap((sl) => (sl.lines as unknown as L[]).filter(isOther).map(typeOf)))).sort()
-      rows = [['Employee ID', 'Name', 'Basic', 'Allowances', 'Total salary', 'Days in month', 'Paid days', 'Per-day rate', 'Attendance deduction', 'Overtime', 'Other earnings', 'Gross', 'Income tax', ...dedCols.map((c) => `Ded: ${c}`), 'Other deductions', 'EOBI employee', 'Net', 'EOBI employer'], ...slips.map((s) => {
-        const k = salaryBreakup(s, s.employee)
+      // Each allowance its own column (owner, 2026-10-31: "Show allowances breakup also"), then their total.
+      const ks = new Map(slips.map((sl) => [sl.id, salaryBreakup(sl, sl.employee)]))
+      const allowCols = Array.from(new Set(slips.flatMap((sl) => ks.get(sl.id)!.allowances.map((a) => a.name))))
+      rows = [['Employee ID', 'Name', 'Basic', ...allowCols.map((c) => `Allowance: ${c}`), 'Total allowances', 'Total salary', 'Days in month', 'Paid days', 'Per-day rate', 'Attendance deduction', 'Overtime', 'Other earnings', 'Gross', 'Income tax', ...dedCols.map((c) => `Ded: ${c}`), 'Other deductions', 'EOBI employee', 'Net', 'EOBI employer'], ...slips.map((s) => {
+        const k = ks.get(s.id)!
+        const allow = allowCols.map((c) => r(k.allowances.filter((a) => a.name === c).reduce((a, x) => a + x.cents, 0)))
         const per = dedCols.map((c) => r((s.lines as unknown as L[]).filter((l) => isOther(l) && typeOf(l) === c).reduce((a, l) => a + l.amountCents, 0)))
         const otherEarn = k.otherEarnings.reduce((a, x) => a + x.cents, 0) - k.overtimeCents
-        return [s.employee.employeeCode, s.employee.fullName, r(k.basicCents), r(k.allowancesCents), r(k.totalSalaryCents), k.basis?.daysInMonth ?? null, k.basis?.paidDays ?? null, k.basis ? r(k.basis.dailyRateCents) : null,
+        return [s.employee.employeeCode, s.employee.fullName, r(k.basicCents), ...allow, r(k.allowancesCents), r(k.totalSalaryCents), k.basis?.daysInMonth ?? null, k.basis?.paidDays ?? null, k.basis ? r(k.basis.dailyRateCents) : null,
           r(k.attendanceDeductionCents), r(k.overtimeCents), r(otherEarn), r(k.grossCents), r(k.taxCents), ...per, r(k.otherDeductionsCents), r(k.eobiCents), r(k.netCents), r(s.eobiEmployerCents)]
       })]
     }
     // ?format=xlsx|pdf: the same sheet through lib/reportExport.ts (CSV unchanged — the bank file stays CSV-exact).
     const head = rows[0] as string[]
-    const MONEY = new Set(['Net pay', 'Employee 1%', 'Employer 5%', 'Total', 'Amount', 'Basic', 'Allowances', 'Total salary', 'Per-day rate', 'Attendance deduction', 'Overtime', 'Other earnings', 'Gross', 'Income tax', 'Other deductions', 'EOBI employee', 'EOBI employer', 'Net'])
-    const types: ReportColumnType[] = head.map((h) => (MONEY.has(h) || h.startsWith('Ded: ') ? 'pkr' : h === 'Days in month' || h === 'Paid days' ? 'number' : 'text'))
+    const MONEY = new Set(['Net pay', 'Employee 1%', 'Employer 5%', 'Total', 'Amount', 'Basic', 'Total allowances', 'Total salary', 'Per-day rate', 'Attendance deduction', 'Overtime', 'Other earnings', 'Gross', 'Income tax', 'Other deductions', 'EOBI employee', 'EOBI employer', 'Net'])
+    const types: ReportColumnType[] = head.map((h) => (MONEY.has(h) || h.startsWith('Ded: ') || h.startsWith('Allowance: ') ? 'pkr' : h === 'Days in month' || h === 'Paid days' ? 'number' : 'text'))
     const title = { register: 'Payroll register', bank: 'Payroll bank file', eobi: 'EOBI', deductions: 'Payroll deductions' }[kind] ?? `Payroll ${kind}`
     return sendReportFor(req, reply, exportFormatOf(req.query.format, 'csv')!, `payroll-${run.period}-${kind}`, {
       title: `${title} — ${run.period}`, period: `Pay period ${run.period}`, ...fromMatrix(head, rows.slice(1), types), csv: csv(rows),
