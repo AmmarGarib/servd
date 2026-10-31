@@ -14,7 +14,7 @@ import Link from 'next/link'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 
 // In "All companies" view (more than one company) each row names its company.
-type Row = { tenantId?: string | null; companyName?: string | null; code: string; name: string; balanceCents: number }
+type Row = { tenantId?: string | null; companyName?: string | null; code: string; name: string; balanceCents: number; term?: 'current' | 'non_current' | null }
 
 interface BalanceSheet {
   asOf: string
@@ -32,6 +32,11 @@ interface BalanceSheet {
   ppe?: Array<{ tenantId: string | null; companyName: string | null; classKey: string; label: string; costCents: number; accumulatedCents: number; netCents: number }>
   totals: {
     assetsCents: number
+    /** Current / non-current split (owner, 2026-10-31). */
+    currentAssetsCents?: number
+    nonCurrentAssetsCents?: number
+    currentLiabilitiesCents?: number
+    nonCurrentLiabilitiesCents?: number
     liabilitiesCents: number
     equityCents: number
     retainedEarningsBroughtForwardCents?: number
@@ -117,8 +122,22 @@ export default function BalanceSheetPage() {
         {isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {data && (
           <>
-            <Section title="Assets"      rows={data.assets}      total={data.totals.assetsCents} multi={multi} />
-            <Section title="Liabilities" rows={data.liabilities} total={data.totals.liabilitiesCents} multi={multi} />
+            {/* Non-current / current (owner, 2026-10-31); an older API without the split shows one block. */}
+            {data.totals.currentAssetsCents === undefined ? (
+              <>
+                <Section title="Assets"      rows={data.assets}      total={data.totals.assetsCents} multi={multi} />
+                <Section title="Liabilities" rows={data.liabilities} total={data.totals.liabilitiesCents} multi={multi} />
+              </>
+            ) : (
+              <>
+                <Section title="Non-current assets" rows={data.assets.filter((r) => r.term === 'non_current')} total={data.totals.nonCurrentAssetsCents ?? 0} multi={multi} />
+                <Section title="Current assets" rows={data.assets.filter((r) => r.term !== 'non_current')} total={data.totals.currentAssetsCents} multi={multi} />
+                <p className="flex justify-between px-4 -mt-2 mb-4 text-sm font-bold text-s-text"><span>Total assets</span><span className="font-mono">{fmtPkr(data.totals.assetsCents)}</span></p>
+                <Section title="Current liabilities" rows={data.liabilities.filter((r) => r.term !== 'non_current')} total={data.totals.currentLiabilitiesCents ?? 0} multi={multi} />
+                <Section title="Non-current liabilities" rows={data.liabilities.filter((r) => r.term === 'non_current')} total={data.totals.nonCurrentLiabilitiesCents ?? 0} multi={multi} />
+                <p className="flex justify-between px-4 -mt-2 mb-4 text-sm font-bold text-s-text"><span>Total liabilities</span><span className="font-mono">{fmtPkr(data.totals.liabilitiesCents)}</span></p>
+              </>
+            )}
             <Section
               multi={multi}
               title="Equity"

@@ -532,10 +532,17 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         const multi = report.companies.length > 1
         const co = (name: string | null): Record<string, string> => (multi ? { company: name ?? '' } : {})
         const flat: Array<Record<string, string | number>> = []
-        for (const a of report.assets)      flat.push({ section: 'Assets',      ...co(a.companyName), code: a.code, name: a.name, balance: fmtPkr(a.balanceCents) })
-        flat.push({ section: 'Assets',      ...co(''), code: '', name: 'TOTAL ASSETS', balance: fmtPkr(report.totals.assetsCents) })
-        for (const l of report.liabilities) flat.push({ section: 'Liabilities', ...co(l.companyName), code: l.code, name: l.name, balance: fmtPkr(l.balanceCents) })
-        flat.push({ section: 'Liabilities', ...co(''), code: '', name: 'TOTAL LIABILITIES', balance: fmtPkr(report.totals.liabilitiesCents) })
+        // Non-current, then current (owner, 2026-10-31), each with its subtotal.
+        for (const [term, label, total] of [['non_current', 'Non-current assets', report.totals.nonCurrentAssetsCents], ['current', 'Current assets', report.totals.currentAssetsCents]] as const) {
+          for (const a of report.assets.filter((x) => x.term === term)) flat.push({ section: label, ...co(a.companyName), code: a.code, name: a.name, balance: fmtPkr(a.balanceCents) })
+          flat.push({ section: label, ...co(''), code: '', name: `TOTAL ${label.toUpperCase()}`, balance: fmtPkr(total) })
+        }
+        flat.push({ section: 'Current assets', ...co(''), code: '', name: 'TOTAL ASSETS', balance: fmtPkr(report.totals.assetsCents) })
+        for (const [term, label, total] of [['current', 'Current liabilities', report.totals.currentLiabilitiesCents], ['non_current', 'Non-current liabilities', report.totals.nonCurrentLiabilitiesCents]] as const) {
+          for (const l of report.liabilities.filter((x) => x.term === term)) flat.push({ section: label, ...co(l.companyName), code: l.code, name: l.name, balance: fmtPkr(l.balanceCents) })
+          flat.push({ section: label, ...co(''), code: '', name: `TOTAL ${label.toUpperCase()}`, balance: fmtPkr(total) })
+        }
+        flat.push({ section: 'Non-current liabilities', ...co(''), code: '', name: 'TOTAL LIABILITIES', balance: fmtPkr(report.totals.liabilitiesCents) })
         for (const e of report.equity)      flat.push({ section: 'Equity',      ...co(e.companyName), code: e.code, name: e.name, balance: fmtPkr(e.balanceCents) })
         // Virtual roll-forward (H29): each company's own fiscal year.
         for (const e of report.earningsByCompany) {

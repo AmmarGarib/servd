@@ -1482,6 +1482,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `ACCOUNT_CODE_TAKEN`. 1400–1599, 2012, 2100–2199, 6200–6249 and 6990–6999
   are refused for everyone, the CEO included (422 `ACCOUNT_CODE_RESERVED`; the
   leading four digits decide): only their own modules create them.
+  **Current / non-current (owner, 2026-10-31):** `Account.classification`
+  ('current' | 'non_current', assets and liabilities only — 422
+  `TERM_ONLY_ASSET_LIABILITY`; NULL = the default by code) read ONLY through
+  `lib/accountTerm.ts termOf` (defaults: assets 1500–1599, 1360 and 1600+
+  non-current, else current; liabilities 2200+ non-current, else current).
+  Set on the chart's account form (CHART_EDITORS); the chart lists and the
+  balance sheet (screen + exports, `totals.current*/nonCurrent*`) split by it.
+  A label only — no posting reads it, and it is separate from the Fixed Asset
+  Register.
 - **Which money account:** `moneyAccountCode(db, tenantId, {method, bankAccountId})`
   in `lib/bankAccounts.ts` is THE answer for every non-till payment (supplier
   payments, receivable receipts/refunds, wallet top-ups, CapEx, OpEx, gift

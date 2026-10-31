@@ -1,3 +1,4 @@
+import { termOf, type AccountTerm } from '../../lib/accountTerm.js'
 // Financial reports built from the journal — the ledger is the source of truth.
 //
 // Every report aggregates JournalLine rows by account; nothing reads from
@@ -321,7 +322,7 @@ export async function trialBalance(tenantIds: string[], asOf: Date, opts: { basi
 // to balances are shown GROSS (one company's receivable, the other's payable),
 // never eliminated — this is not a consolidation.
 
-type BalanceRow = { tenantId: string | null; companyName: string | null; code: string; name: string; balanceCents: number }
+type BalanceRow = { tenantId: string | null; companyName: string | null; code: string; name: string; balanceCents: number; term: AccountTerm | null }
 
 export interface BalanceSheetEarnings {
   tenantId: string
@@ -360,6 +361,11 @@ export interface BalanceSheetReport {
   ppe: BalanceSheetPpeRow[]
   totals: {
     assetsCents: number
+    /** Current / non-current split of assets and liabilities (owner, 2026-10-31; lib/accountTerm.ts). */
+    currentAssetsCents: number
+    nonCurrentAssetsCents: number
+    currentLiabilitiesCents: number
+    nonCurrentLiabilitiesCents: number
     liabilitiesCents: number
     equityCents: number
     retainedEarningsBroughtForwardCents: number
@@ -394,12 +400,17 @@ export async function balanceSheet(tenantIds: string[], asOf: Date): Promise<Bal
     ppeClassesFor(tenantIds),
   ])
   const nameOf = new Map(companies.map((c) => [c.id, c.name]))
+  // The stored current / non-current picks (the rest take the default by code).
+  const picks = new Map((await prisma.account.findMany({
+    where: { tenantId: { in: tenantIds }, classification: { not: null } }, select: { tenantId: true, code: true, classification: true },
+  })).map((a) => [`${a.tenantId}:${a.code}`, a.classification]))
   const section = (type: AccountType): BalanceRow[] => rows
     .filter((r) => r.type === type)
     .map((r) => ({
       tenantId: r.tenantId,
       companyName: r.tenantId ? (nameOf.get(r.tenantId) ?? null) : null,
       code: r.code, name: r.name, balanceCents: r.balanceCents,
+      term: termOf({ code: r.code, type: r.type, classification: picks.get(`${r.tenantId}:${r.code}`) ?? null }),
     }))
     // An account at zero is not listed (owner, 2026-10-22: "Don't show accounts in balance sheet with
     // 0 balance") — like the trial balance; totals are unchanged (they are zeros).
@@ -454,6 +465,7 @@ export async function balanceSheet(tenantIds: string[], asOf: Date): Promise<Bal
   const assetsCents      = assets.reduce((s, r) => s + r.balanceCents, 0)
   const liabilitiesCents = liabilities.reduce((s, r) => s + r.balanceCents, 0)
   const equityCents      = equity.reduce((s, r) => s + r.balanceCents, 0)
+  const sumTerm = (list: BalanceRow[], t: AccountTerm) => list.filter((r) => r.term === t).reduce((s, r) => s + r.balanceCents, 0)
 
   return {
     asOf: fmtPktDate(asOf),
@@ -465,6 +477,10 @@ export async function balanceSheet(tenantIds: string[], asOf: Date): Promise<Bal
     ppe,
     totals: {
       assetsCents,
+      currentAssetsCents: sumTerm(assets, 'current'),
+      nonCurrentAssetsCents: sumTerm(assets, 'non_current'),
+      currentLiabilitiesCents: sumTerm(liabilities, 'current'),
+      nonCurrentLiabilitiesCents: sumTerm(liabilities, 'non_current'),
       liabilitiesCents,
       equityCents,
       retainedEarningsBroughtForwardCents,

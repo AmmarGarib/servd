@@ -19,6 +19,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
+import { termOf } from '../../lib/accountTerm.js'
 import { Prisma, type UserRole } from '@prisma/client'
 import { prisma, serviceClient } from '../../lib/prisma.js'
 import { audit } from '../../lib/audit.js'
@@ -1183,7 +1184,9 @@ export async function setupRoutes(fastify: FastifyInstance) {
       },
     })
     // Sub-accounts only for accounts whose sub-accounts are switched on (owner, 2026-10-23).
-    return rows.map(({ tenant, ...a }) => ({ ...a, companyName: tenant?.name ?? null, ...(withSubs && !a.subAccountsEnabled ? { subAccounts: [] } : {}) }))
+    // `term`: current / non-current for assets and liabilities (owner, 2026-10-31; lib/accountTerm.ts) —
+    // `classification` is the stored pick (null = the default by code).
+    return rows.map(({ tenant, ...a }) => ({ ...a, term: termOf(a), companyName: tenant?.name ?? null, ...(withSubs && !a.subAccountsEnabled ? { subAccounts: [] } : {}) }))
   })
   // Adding, renaming or switching off an account changes what can post, so
   // both writes go on the accounting trail (category 'accounting').
@@ -1210,7 +1213,11 @@ export async function setupRoutes(fastify: FastifyInstance) {
       name:        z.string().min(1).max(120),
       type:        z.enum(['asset', 'liability', 'equity', 'revenue', 'expense']),
       description: z.string().max(500).nullable().optional(),
+      classification: z.enum(['current', 'non_current']).nullable().optional(),
     }).parse(req.body)
+    if (body.classification && body.type !== 'asset' && body.type !== 'liability') {
+      throw new AppError('TERM_ONLY_ASSET_LIABILITY', 'Current / non-current is only for asset and liability accounts', 422)
+    }
     // Ranges a module owns (finance audit 2026-10-16): the fixed-asset
     // register 1500–1599 and 2012, the inter-company / head-office pair
     // accounts 1400–1499 and 2100–2199, the head-office charge accounts
@@ -1309,11 +1316,16 @@ export async function setupRoutes(fastify: FastifyInstance) {
       name:        z.string().min(1).max(120).optional(),
       description: z.string().max(500).nullable().optional(),
       isActive:    z.boolean().optional(),
+      // Current / non-current (owner, 2026-10-31); null = back to the default by code.
+      classification: z.enum(['current', 'non_current']).nullable().optional(),
     }).parse(req.body)
     const existing = await prisma.account.findFirst({
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!existing) throw new NotFoundError('Account', req.params.id)
+    if (body.classification && existing.type !== 'asset' && existing.type !== 'liability') {
+      throw new AppError('TERM_ONLY_ASSET_LIABILITY', 'Current / non-current is only for asset and liability accounts', 422)
+    }
     // Finance switches accounts off / on too (owner, 2026-10-16: "Give access to finance also").
     if (body.isActive === false && existing.isActive) await assertAccountMayBeSwitchedOff(existing)
     const updated = await prisma.account.update({ where: { id: existing.id }, data: body })

@@ -3291,6 +3291,9 @@ model Account {
   /// subaccount"). Off = payroll never tags it, the journal picker and statements show no sub-accounts and no new
   /// tag is accepted; existing tags stay as history. Opening a sub-account switches it on. lib/subAccounts.ts.
   subAccountsEnabled Boolean     @default(false)
+  /// Current / non-current for an asset or liability (owner, 2026-10-31). NULL = the default by code
+  /// (lib/accountTerm.ts termOf, the ONE reading). Always NULL on revenue / expense / equity.
+  classification     String?
 
   /// Who controls postings to this account (journal.ts postJournalEntry) — ONE controlled-account mechanism (wave B):
   ///   'intercompany' — "Due from/to <company>" of ONE company pair: only sourceType 'ic.*'

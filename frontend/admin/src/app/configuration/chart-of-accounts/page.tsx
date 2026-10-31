@@ -17,7 +17,12 @@ interface Account {
   type: AccountType
   description: string | null
   isActive: boolean
+  /** Current / non-current for assets and liabilities (owner, 2026-10-31; backend lib/accountTerm.ts): the
+   *  stored pick, else the default by code. Null for equity / revenue / expense. */
+  term?: Term | null
 }
+type Term = 'current' | 'non_current'
+const TERM_TITLE: Record<Term, string> = { current: 'Current', non_current: 'Non-current' }
 
 const TYPE_COLOR: Record<AccountType, { bg: string; fg: string }> = {
   asset:     { bg: 'rgb(var(--erp-primary-rgb) / 0.12)', fg: 'var(--erp-primary)' },
@@ -40,6 +45,29 @@ export default function ChartOfAccountsPage() {
     return acc
   }, { asset: [], liability: [], equity: [], revenue: [], expense: [] })
 
+  const renderRow = (a: Account) => (
+                <div key={a.id} className="border-b border-white/[0.04] last:border-b-0">
+                <div className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-white/[0.02]">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="font-mono text-xs text-white/45 shrink-0 w-12">{a.code}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-white/85">{a.name}</p>
+                      {a.description && <p className="text-xs text-white/40">{a.description}</p>}
+                    </div>
+                    {!a.isActive && <span className="text-[10px] text-white/30">PAUSED</span>}
+                    {a.subAccountsEnabled && <span className="s-badge-green text-[10px]">Sub-accounts on</span>}
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button onClick={() => setOpenSubs(openSubs === a.id ? null : a.id)} aria-expanded={openSubs === a.id}
+                      className="text-xs text-white/55 hover:text-white">Sub-accounts {openSubs === a.id ? '▴' : '▾'}</button>
+                    <Link href={`/accounting/journal?tab=accounts&accountId=${a.id}`} className="text-xs text-white/55 hover:text-white">Entries</Link>
+                    <button onClick={() => setEditing(a)} className="text-xs text-white/55 hover:text-white">Edit</button>
+                  </div>
+                </div>
+                {openSubs === a.id && <SubAccounts accountId={a.id} enabled={!!a.subAccountsEnabled} />}
+                </div>
+)
+
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg)' }}>
       <header className="px-7 py-6 border-b border-white/[0.05]">
@@ -61,28 +89,18 @@ export default function ChartOfAccountsPage() {
             <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">{t}s · {grouped[t].length}</h2>
             <div className="rounded-2xl overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               {grouped[t].length === 0 && <p className="p-5 text-xs text-white/35">No {t} accounts.</p>}
-              {grouped[t].map((a) => (
-                <div key={a.id} className="border-b border-white/[0.04] last:border-b-0">
-                <div className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-white/[0.02]">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="font-mono text-xs text-white/45 shrink-0 w-12">{a.code}</span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-white/85">{a.name}</p>
-                      {a.description && <p className="text-xs text-white/40">{a.description}</p>}
+              {(t === 'asset' || t === 'liability')
+                ? (t === 'asset' ? (['non_current', 'current'] as Term[]) : (['current', 'non_current'] as Term[])).map((term) => {
+                  const list = grouped[t].filter((a) => (a.term ?? 'current') === term)
+                  return (
+                    <div key={term}>
+                      <p className="px-4 py-2 text-[11px] font-black uppercase tracking-wider text-white/50" style={{ background: 'rgb(var(--fg-rgb) / 0.03)' }}>{TERM_TITLE[term]} {t === 'asset' ? 'assets' : 'liabilities'} · {list.length}</p>
+                      {list.length === 0 && <p className="px-4 py-3 text-xs text-white/35">None.</p>}
+                      {list.map(renderRow)}
                     </div>
-                    {!a.isActive && <span className="text-[10px] text-white/30">PAUSED</span>}
-                    {a.subAccountsEnabled && <span className="s-badge-green text-[10px]">Sub-accounts on</span>}
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <button onClick={() => setOpenSubs(openSubs === a.id ? null : a.id)} aria-expanded={openSubs === a.id}
-                      className="text-xs text-white/55 hover:text-white">Sub-accounts {openSubs === a.id ? '▴' : '▾'}</button>
-                    <Link href={`/accounting/journal?tab=accounts&accountId=${a.id}`} className="text-xs text-white/55 hover:text-white">Entries</Link>
-                    <button onClick={() => setEditing(a)} className="text-xs text-white/55 hover:text-white">Edit</button>
-                  </div>
-                </div>
-                {openSubs === a.id && <SubAccounts accountId={a.id} enabled={!!a.subAccountsEnabled} />}
-                </div>
-              ))}
+                  )
+                })
+                : grouped[t].map(renderRow)}
             </div>
           </section>
         ))}
@@ -102,11 +120,13 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
   const [type, setType] = useState<AccountType>(account?.type ?? 'expense')
   const [description, setDescription] = useState(account?.description ?? '')
   const [isActive, setIsActive] = useState(account?.isActive ?? true)
+  const [term, setTerm] = useState<Term>(account?.term ?? 'current')
+  const hasTerm = type === 'asset' || type === 'liability'
 
   const save = useMutation({
     mutationFn: () => {
-      if (account) return api.patch(`/setup/chart-of-accounts/${account.id}`, { name: name.trim(), description: description || null, isActive })
-      return api.post('/setup/chart-of-accounts', { code: code.trim(), name: name.trim(), type, description: description || null })
+      if (account) return api.patch(`/setup/chart-of-accounts/${account.id}`, { name: name.trim(), description: description || null, isActive, ...(hasTerm && { classification: term }) })
+      return api.post('/setup/chart-of-accounts', { code: code.trim(), name: name.trim(), type, description: description || null, ...(hasTerm && { classification: term }) })
     },
     onSuccess: () => onSaved(),
   })
@@ -135,6 +155,14 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
               </Select>
             </Field>
           </div>
+          {hasTerm && (
+            <Field label={type === 'asset' ? 'Current or non-current asset *' : 'Current or non-current liability *'}>
+              <Select value={term} onChange={(e) => setTerm(e.target.value as Term)} className={fieldCls}>
+                <option value="current">Current {type === 'asset' ? '(cash, stock, receivables — used within a year)' : '(due within a year)'}</option>
+                <option value="non_current">Non-current {type === 'asset' ? '(equipment, deposits — held longer than a year)' : '(due after more than a year)'}</option>
+              </Select>
+            </Field>
+          )}
           <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Marketing software" className={fieldCls} /></Field>
           <Field label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={fieldCls} placeholder="What goes here vs other accounts" /></Field>
           {account && (

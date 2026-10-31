@@ -283,8 +283,10 @@ describe('balance sheet, P&L, trial balance: CSV unchanged, Excel and PDF added'
     const json = await get('finA', `/accounting/balance-sheet?asOf=${today}`)
     const csv = await get('finA', `/accounting/balance-sheet?asOf=${today}&format=csv`)
     expect(csv.statusCode).toBe(200)
-    expect(csv.body).toBe(legacyBs(json.json() as Bs))
-    expect(csv.body).toContain('TOTAL ASSETS')
+    // Since 2026-10-31 the CSV splits assets and liabilities into non-current / current (owner) — the
+    // equity part is unchanged, and every total is still there.
+    expect(csv.body.slice(csv.body.indexOf('\r\nEquity'))).toBe(legacyBs(json.json() as Bs).slice(legacyBs(json.json() as Bs).indexOf('\r\nEquity')))
+    for (const t of ['TOTAL NON-CURRENT ASSETS', 'TOTAL CURRENT ASSETS', 'TOTAL ASSETS', 'TOTAL CURRENT LIABILITIES', 'TOTAL NON-CURRENT LIABILITIES', 'TOTAL LIABILITIES']) expect(csv.body).toContain(t)
     const { xlsx } = await expectFiles(`/accounting/balance-sheet?asOf=${today}`)
     // Cash 1010 = 1,000,000 + 250,050 − 80,000 paisa = PKR 11,700.50, as a number.
     expect(xlsx.toString('utf8')).toMatch(/<v>11700\.5<\/v>/)

@@ -259,3 +259,38 @@ describe('module-owned account ranges are never created by hand', () => {
     expect(ok.json().tenantId).toBe(tenantB)
   })
 })
+
+// Current / non-current (owner, 2026-10-31; lib/accountTerm.ts).
+describe('current / non-current on assets and liabilities', () => {
+  it('defaults by code, takes a pick on assets and liabilities only, and stays per company', async () => {
+    const { defaultTermOf } = await import('../src/lib/accountTerm.js')
+    expect(defaultTermOf('1010', 'asset')).toBe('current')
+    expect(defaultTermOf('1210', 'asset')).toBe('current')
+    expect(defaultTermOf('1510', 'asset')).toBe('non_current')
+    expect(defaultTermOf('1591', 'asset')).toBe('non_current')
+    expect(defaultTermOf('1360', 'asset')).toBe('non_current')
+    expect(defaultTermOf('2010', 'liability')).toBe('current')
+    expect(defaultTermOf('2210', 'liability')).toBe('non_current')
+    expect(defaultTermOf('6030', 'expense')).toBeNull()
+
+    const list = (await call('ceoA', 'GET', '/setup/chart-of-accounts')).json() as Array<{ code: string; term: string | null }>
+    expect(list.find((a) => a.code === '1510')!.term).toBe('non_current')
+    expect(list.find((a) => a.code === '1010')!.term).toBe('current')
+    expect(list.find((a) => a.code === '4090')?.term ?? null).toBeNull()
+
+    // A new non-current asset; an expense refuses a term.
+    const created = await call('ceoA', 'POST', '/setup/chart-of-accounts', { code: '1710', name: 'Long-term loan to staff', type: 'asset', classification: 'non_current' })
+    expect(created.statusCode, created.body).toBe(201)
+    expect((await call('ceoA', 'POST', '/setup/chart-of-accounts', { code: '6711', name: 'X', type: 'expense', classification: 'current' })).statusCode).toBe(422)
+    // Move 1310 to non-current, then back to the default.
+    const id1310 = await accountId(tenantA, '1310')
+    expect((await call('ceoA', 'PATCH', `/setup/chart-of-accounts/${id1310}`, { classification: 'non_current' })).statusCode).toBe(200)
+    const after = (await call('ceoA', 'GET', '/setup/chart-of-accounts')).json() as Array<{ code: string; term: string }>
+    expect(after.find((a) => a.code === '1310')!.term).toBe('non_current')
+    // Company B's 1310 is untouched, and B cannot edit A's.
+    const bList = (await call('ceoB', 'GET', '/setup/chart-of-accounts')).json() as Array<{ code: string; term: string }>
+    expect(bList.find((a) => a.code === '1310')!.term).toBe('current')
+    expect((await call('ceoB', 'PATCH', `/setup/chart-of-accounts/${id1310}`, { classification: 'current' })).statusCode).toBe(404)
+    expect((await call('ceoA', 'PATCH', `/setup/chart-of-accounts/${id1310}`, { classification: null })).statusCode).toBe(200)
+  })
+})
