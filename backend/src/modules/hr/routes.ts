@@ -9,6 +9,7 @@
 
 import { networkKey, onOfficeNetwork } from '../../lib/officeNetwork.js'
 import { salaryBreakup } from './payslipBreakup.js'
+import { getPayslipHeader, setPayslipHeader, clearPayslipHeader, payslipParticulars, PARTICULAR_FIELDS } from './payslipDocument.js'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { classificationOf, classifyPaymentTx, classificationsOfReferences, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import type { Prisma, UserRole, HrEmployee, HrRecord } from '@prisma/client'
@@ -1088,6 +1089,22 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
   // ── Settings ──────────────────────────────────────────────────────────────
   fastify.get('/settings', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => getSettings(activeTenant(req)))
+
+  // The payslip's header image, one per company (owner, 2026-10-31: "Paste this Logo as header of Payslip").
+  fastify.get('/payslip-header', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => ({ image: await getPayslipHeader(activeTenant(req)) }))
+  fastify.put('/payslip-header', { preHandler: requireAuth(...HR_ADMIN), bodyLimit: 2 * 1024 * 1024 }, async (req) => {
+    const tenantId = activeTenant(req)
+    const body = z.object({ dataBase64: z.string().min(1), mime: z.string().max(100) }).strict().parse(req.body)
+    const image = await setPayslipHeader(tenantId, body.dataBase64, body.mime)
+    await audit({ category: 'identity', action: 'hr.payslip_header.set', entity: 'Tenant', entityId: tenantId, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, metadata: { actorRole: req.staffUser!.role } })
+    return { image }
+  })
+  fastify.delete('/payslip-header', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
+    const tenantId = activeTenant(req)
+    await clearPayslipHeader(tenantId)
+    await audit({ category: 'identity', action: 'hr.payslip_header.remove', entity: 'Tenant', entityId: tenantId, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, metadata: { actorRole: req.staffUser!.role } })
+    return reply.status(204).send()
+  })
 
   // The network the caller is on now, for "Add the network I'm on now" (HR settings).
   fastify.get('/settings/current-network', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -2759,14 +2776,20 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string } }>('/payroll/runs/:id', { preHandler: requireAuth(...PAYROLL_READERS) }, async (req) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...inTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
-    const rows = await prisma.hrPayslip.findMany({ where: { runId: run.id }, include: { employee: { select: { fullName: true, employeeCode: true, bankName: true, iban: true, paymentMethod: true, eobiNo: true, basicSalaryCents: true, data: true } } }, orderBy: { employee: { employeeCode: 'asc' } } })
+    const rows = await prisma.hrPayslip.findMany({ where: { runId: run.id }, include: { employee: { select: { ...PARTICULAR_FIELDS, bankName: true, iban: true, paymentMethod: true, eobiNo: true, basicSalaryCents: true, data: true } } }, orderBy: { employee: { employeeCode: 'asc' } } })
     // The salary breakup (owner, 2026-10-31) — payslipBreakup.ts, the one reading. Only the breakup leaves the
     // employee master's `data`, never the rest of it.
-    const slips = rows.map(({ employee: { data, basicSalaryCents, ...emp }, ...slip }) => ({ ...slip, employee: emp, breakup: salaryBreakup(slip, { basicSalaryCents, data }) }))
+    // The printed payslip's particulars and the company's header image (owner, 2026-10-31).
+    const parts = await payslipParticulars(run.tenantId, rows)
+    const slips = rows.map(({ employee: { data, basicSalaryCents, fullName, employeeCode, bankName, iban, paymentMethod, eobiNo }, ...slip }) => ({
+      ...slip, employee: { fullName, employeeCode, bankName, iban, paymentMethod, eobiNo },
+      breakup: salaryBreakup(slip, { basicSalaryCents, data }), particulars: parts.get(slip.id)!,
+    }))
+    const payslipHeader = await getPayslipHeader(run.tenantId)
     const c = run.paidAt ? (await classificationsOfReferences(prisma, [run.tenantId], [`hr.payroll.payment:${run.id}`])).get(`hr.payroll.payment:${run.id}`) : undefined
     // The run's company's deduction types, for HR's "Add deduction" picker (owner, 2026-10-30).
     const deductionTypes = (await getSettings(run.tenantId)).deductionTypes
-    return { run: { ...run, paymentClassification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }, payslips: slips, deductionTypes }
+    return { run: { ...run, paymentClassification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }, payslips: slips, deductionTypes, payslipHeader }
   })
 
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/recalculate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -3599,10 +3622,11 @@ export async function hrRoutes(fastify: FastifyInstance) {
 
   fastify.get<{ Params: { id: string } }>('/me/payslips/:id', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const me = await myEmployee(req)
-    const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, employeeId: me.id, run: { status: 'locked' } }, include: { run: { select: { period: true } }, employee: { select: { basicSalaryCents: true, data: true } } } })
+    const slip = await prisma.hrPayslip.findFirst({ where: { id: req.params.id, employeeId: me.id, run: { status: 'locked' } }, include: { run: { select: { period: true } }, employee: { select: { ...PARTICULAR_FIELDS, tenantId: true, basicSalaryCents: true, data: true } } } })
     if (!slip) throw new NotFoundError('Payslip', req.params.id)
     const { employee, ...rest } = slip
-    return { ...rest, breakup: salaryBreakup(rest, employee) }
+    const particulars = (await payslipParticulars(employee.tenantId, [{ id: slip.id, inputs: slip.inputs, employee }])).get(slip.id)!
+    return { ...rest, breakup: salaryBreakup(rest, employee), particulars, payslipHeader: await getPayslipHeader(employee.tenantId) }
   })
 
   // ── Shift swaps waiting on the colleague (audit HR-R5) ────────────────────

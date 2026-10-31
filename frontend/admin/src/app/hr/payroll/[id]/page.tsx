@@ -19,7 +19,7 @@ import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { OvertimePicker, otAvailableOf, otSummary } from '../../../../components/hr/OvertimePicker'
 import { NavIcon } from '../../../../components/ui/NavIcon'
-import { SalaryBreakupView, breakupHtml, type SalaryBreakup } from '../../../../components/hr/SalaryBreakup'
+import { SalaryBreakupView, PayslipParticularsView, printPayslip, type SalaryBreakup, type PayslipParticulars } from '../../../../components/hr/SalaryBreakup'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number; posting?: 'recovery' | 'deduction'; note?: string | null }
 /** A company's deduction type (backend hr/logic.ts DeductionType; owner, 2026-10-30). */
@@ -38,6 +38,7 @@ interface Slip {
   id: string; employeeId: string
   employee: { fullName: string; employeeCode: string; bankName: string | null; iban: string | null; paymentMethod: string | null; eobiNo: string | null }
   breakup: SalaryBreakup
+  particulars: PayslipParticulars
   inputs: Record<string, number | boolean | string[] | unknown>
   lines: Line[]; grossCents: number; earningsCents: number; deductionsCents: number; eobiEmployeeCents: number; eobiEmployerCents: number; netCents: number
 }
@@ -56,6 +57,7 @@ interface Detail {
   }
   payslips: Slip[]
   deductionTypes?: DeductionType[]
+  payslipHeader?: string | null
 }
 
 /** The run's status in plain words. */
@@ -284,7 +286,7 @@ export default function PayrollRunPage() {
           </div>
         </div>
       )}
-      {editing && run && <SlipModal key={`${editing.id}:${((editing.inputs['otRecordIds'] as string[] | undefined) ?? []).join(',')}:${Number(editing.inputs['otCents'] ?? 0)}`} slip={editing} period={run.period} draft={run.status === 'draft'} types={data?.deductionTypes ?? []} onClose={() => setEditingId(null)} />}
+      {editing && run && <SlipModal key={`${editing.id}:${((editing.inputs['otRecordIds'] as string[] | undefined) ?? []).join(',')}:${Number(editing.inputs['otCents'] ?? 0)}`} slip={editing} period={run.period} draft={run.status === 'draft'} types={data?.deductionTypes ?? []} header={data?.payslipHeader ?? null} onClose={() => setEditingId(null)} />}
       {returning && run && <ReturnModal runId={run.id} period={run.period} onClose={() => setReturning(false)} />}
       {taxSlip && run && <TaxModal slip={taxSlip} period={run.period} onClose={() => setTaxSlipId(null)} />}
       {paying && run && data && <PayRunModal runId={run.id} tenantId={run.tenantId} period={run.period} slips={data.payslips} onClose={() => setPaying(false)} />}
@@ -402,7 +404,7 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
   )
 }
 
-function SlipModal({ slip, period, draft, types, onClose }: { slip: Slip; period: string; draft: boolean; types: DeductionType[]; onClose: () => void }) {
+function SlipModal({ slip, period, draft, types, header, onClose }: { slip: Slip; period: string; draft: boolean; types: DeductionType[]; header: string | null; onClose: () => void }) {
   const qc = useQueryClient()
   const initial = Object.fromEntries(INPUTS.map(([k]) => [k, Number(slip.inputs[k] ?? 0)])) as Record<string, number>
   const basis = basisOf(slip)
@@ -452,20 +454,14 @@ function SlipModal({ slip, period, draft, types, onClose }: { slip: Slip; period
     setErr('')
     save.mutate()
   }
-  const print = () => {
-    const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    const html = `<h2>Payslip — ${period}</h2><p><strong>${esc(slip.employee.fullName)}</strong> (${esc(slip.employee.employeeCode)})</p>
-      ${breakupHtml(slip.breakup)}
-      <p style="font-size:12px;color:#666">Employer contributions: ${esc(slip.lines.filter((l) => l.kind === 'employer').map((l) => `${l.label} ${rs(l.amountCents)}`).join(', ') || 'none')}</p>`
-    const w = window.open('', '_blank'); if (!w) return
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Payslip</title><style>body{font-family:system-ui;max-width:600px;margin:40px auto;color:#111}table{width:100%;border-collapse:collapse}td{padding:4px 0;border-bottom:1px solid #eee}</style></head><body>${html.replace(/<(?!\/?(h2|h4|p|strong|table|tr|td|span|br)\b)/g, '&lt;')}</body></html>`)
-    w.document.close(); setTimeout(() => w.print(), 300)
-  }
+  const employerNote = slip.lines.filter((l) => l.kind === 'employer' && l.amountCents !== 0).map((l) => `${l.label} ${rs(l.amountCents)}`).join(' · ')
+  const print = () => printPayslip({ period, header, particulars: slip.particulars, breakup: slip.breakup, employerNote: employerNote ? `Employer pays on top: ${employerNote}` : undefined })
   return (
     <Modal title={`${slip.employee.fullName} — ${period}`} wide onClose={onClose} dirty={draft && (changed.length > 0 || itemsChanged)}>
       <form onSubmit={submit} noValidate className="grid md:grid-cols-2 gap-5">
         <div>
           <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-2">Payslip</p>
+          <PayslipParticularsView particulars={slip.particulars} header={header} />
           <SalaryBreakupView breakup={slip.breakup} />
           {slip.lines.some((l) => l.kind === 'employer' && l.amountCents !== 0) && (
             <p className="text-[11px] text-white/45 mt-2">Employer pays on top: {slip.lines.filter((l) => l.kind === 'employer' && l.amountCents !== 0).map((l) => `${l.label} ${rs(l.amountCents)}`).join(' · ')}</p>

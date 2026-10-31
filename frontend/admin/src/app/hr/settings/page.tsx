@@ -69,6 +69,48 @@ function OfficeNetworksPanel({ value, onSet }: { value: OfficeNetwork[]; onSet: 
     </Panel>
   )
 }
+/** The payslip's header image, one per company (owner, 2026-10-31: "Paste this Logo as header of Payslip").
+ *  Saved at once — not with the page's Save. */
+function PayslipHeaderPanel() {
+  const qc = useQueryClient()
+  const [err, setErr] = useState('')
+  const q = useQuery({ queryKey: ['hr-payslip-header'], queryFn: () => api.get<{ image: string | null }>('/hr/payslip-header') })
+  const save = useMutation({
+    mutationFn: async (file: File) => {
+      const dataBase64 = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader()
+        r.onload = () => { const x = String(r.result ?? ''); resolve(x.slice(x.indexOf(',') + 1)) }
+        r.onerror = () => reject(new Error('This browser could not read the file.'))
+        r.readAsDataURL(file)
+      })
+      return api.put<{ image: string }>('/hr/payslip-header', { dataBase64, mime: file.type || 'image/png' })
+    },
+    onSuccess: () => { setErr(''); void qc.invalidateQueries({ queryKey: ['hr-payslip-header'] }) },
+    onError: (e: Error) => setErr(e.message),
+  })
+  const remove = useMutation({
+    mutationFn: () => api.delete('/hr/payslip-header'),
+    onSuccess: () => { setErr(''); void qc.invalidateQueries({ queryKey: ['hr-payslip-header'] }) },
+    onError: (e: Error) => setErr(e.message),
+  })
+  const img = q.data?.image ?? null
+  return (
+    <Panel title="Payslip header">
+      <p className="text-xs text-white/55">The picture printed across the top of every payslip of this company (the logo banner). PNG, JPEG or WebP, up to 600 KB. It is saved as soon as you choose it.</p>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {img ? <img src={img} alt="Payslip header" className="w-full max-w-xl rounded-lg border border-white/10 object-contain" /> : <p className="text-sm text-white/45">No header yet — payslips print without one.</p>}
+      <div className="flex flex-wrap items-center gap-3">
+        <label className={`${btn} cursor-pointer`}>
+          {save.isPending ? 'Uploading…' : img ? 'Replace header' : 'Upload header'}
+          <input type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" disabled={save.isPending}
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) save.mutate(f) }} />
+        </label>
+        {img && <button type="button" className="text-xs font-bold text-s-red hover:underline" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove</button>}
+      </div>
+      {err && <p role="alert" className="text-sm text-s-red">{err}</p>}
+    </Panel>
+  )
+}
 /** A deduction type HR picks on a payslip (backend hr/logic.ts DeductionType; owner, 2026-10-30). */
 interface DeductionType { key: string; label: string; posting: 'recovery' | 'deduction'; active: boolean }
 const POSTING_LABEL: Record<DeductionType['posting'], string> = {
@@ -268,6 +310,8 @@ export default function HrSettingsPage() {
           </Panel>
 
           <OfficeNetworksPanel value={s.officeNetworks ?? []} onSet={(v) => setS({ ...s, officeNetworks: v })} />
+
+          <PayslipHeaderPanel />
 
           <Panel title="Company default rota">
             <p className="text-xs text-white/55">Everyone with no rota of their own works this shift. A person&apos;s own rota, a swap or a schedule change wins. Off = people with no rota are never marked absent.</p>
