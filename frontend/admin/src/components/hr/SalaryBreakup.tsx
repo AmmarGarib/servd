@@ -32,7 +32,13 @@ export function breakupRows(k: SalaryBreakup): Row[] {
   const b = k.basis
   const rows: Row[] = []
   if (k.basicCents > 0) rows.push({ label: 'Basic salary', cents: k.basicCents })
-  for (const a of k.allowances) rows.push({ label: a.name, cents: a.cents, sign: '+' })
+  // Allowances as their own block (owner, 2026-10-31: "show allowances breakup in the payslip print too"): the total,
+  // then each allowance under it.
+  if (k.allowancesCents !== 0) {
+    rows.push({ label: 'Allowances', cents: k.allowancesCents, sign: '+' })
+    // No named allowances on the employee's record: one line, nothing to break down.
+    if (!(k.allowances.length === 1 && k.allowances[0]!.name === 'Allowances')) for (const a of k.allowances) rows.push({ label: a.name, cents: a.cents, sub: true })
+  }
   rows.push({ label: 'Total salary', cents: k.totalSalaryCents, sign: '=', strong: true })
   if (k.attendanceDeductionCents !== 0) {
     rows.push({
