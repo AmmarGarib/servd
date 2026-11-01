@@ -39,6 +39,7 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 import type { CloseCheck, CloseCheckContext, CloseCheckDb, CloseProblem } from './closeCheckTypes.js'
 import { fiscalYearEndMonthOf, isFiscalYearEndInRange } from './fiscalYear.js'
 import { fmtPktDate } from './dates.js'
+import { openItemsCloseChecks } from './openItemsCloseChecks.js'
 import { sumCents } from '../../lib/money.js'
 import { shiftOfCompany } from '../../lib/tenantScope.js'
 import { shiftBusinessDate } from '../../lib/businessDay.js'
@@ -534,6 +535,8 @@ const vouchersHeldOn1357Check: CloseCheck = {
 export const CORE_CLOSE_CHECKS: CloseCheck[] = [
   raastCheck, openTillsCheck, unpostedShiftsCheck, unpostedOrdersCheck, postingFailedCheck, trialBalanceCheck, bankUnmatchedCheck,
   vouchersAwaitingDocsCheck, vouchersHeldOn1357Check,
+  // Owner, 2026-11-01: open vouchers, journal requests, shift corrections, draft bills, clearing accounts.
+  ...openItemsCloseChecks,
 ]
 
 /** EVERY period-close check, in the order the checklist shows them. */

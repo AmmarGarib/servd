@@ -39,6 +39,8 @@ import { tagLineTx } from '../../lib/subAccounts.js'
 import { closedBooksThrough } from './closedBooks.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { requireModule } from '../notifications/requireModule.js'
+import { queueStaffNotify, notifyStaffMany } from '../../lib/staffNotify.js'
+import { ceosOf } from '../../lib/staffNotifyRecipients.js'
 
 // Who records tax paid to the authorities, links entries and posts the
 // 2030 reclass: finance and the CEO (finance gap 6) — taxPayments.ts holds
@@ -1229,7 +1231,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     }
   })
 
-  fastify.post('/period-close', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req, reply) => {
+  // Closing the month (owner, 2026-11-01: "finance should have access to close those issues with a notification to
+  // CEO"): the CEO, or finance with the accounting module, when nothing blocks; closing OVER a block (acknowledge, the
+  // old unmatched-Raast switch) stays the CEO's (403 OVERRIDE_CEO_ONLY). A close by finance tells the CEO(s) on the bell.
+  fastify.post('/period-close', { preHandler: [requireAuth('admin', 'finance'), requireModule('accounting')] }, async (req, reply) => {
     const body = z.object({
       lockedThrough: z.string(),
       note: z.string().max(500).optional(),
@@ -1269,6 +1274,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
     // The CEO's acknowledgement: every key closable-over, and a real reason.
     const ackKeys = Array.from(new Set(body.acknowledge?.keys ?? []))
+    const isCeo = req.staffUser!.role === 'admin'
+    if (!isCeo && (ackKeys.length > 0 || body.closeWithUnmatchedRaast)) {
+      throw new AppError('OVERRIDE_CEO_ONLY', 'Only the CEO can close the books over a blocking check — fix it, or ask the CEO.', 403)
+    }
     const reason = body.acknowledge?.reason?.trim() ?? ''
     if (ackKeys.length > 0) {
       const fixed = ackKeys.filter((k) => !isOverridableKey(k))
@@ -1418,6 +1427,21 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         userEmail: req.staffUser!.email,
         after: { lockedThrough: created.lockedThrough, fiscalYearEndMonth: endMonth },
         metadata: { ip: req.ip, prevLock: existing?.lockedThrough ?? null, currentFiscalYear: fy.label },
+      })
+    }
+    // Finance closed it: the CEO(s) of the company hear about it on the bell (after the commit; never fails the close).
+    if (!isCeo) {
+      const closer = req.staffUser!
+      queueStaffNotify(async () => {
+        const ceos = await ceosOf(tenantId)
+        const warns = list.warnings
+        await notifyStaffMany(ceos.map((userId) => ({
+          userId, tenantId, kind: 'period.closed' as const, severity: warns.length ? 'warning' as const : 'info' as const,
+          title: `Books closed through ${fmtPktDate(newLock)} by finance`,
+          body: `${closer.email} closed ${list.months.join(', ') || 'the period'}.${warns.length ? ` Warnings left: ${warns.map((w) => w.title).join('; ')}.` : ' No warnings.'}`.slice(0, 500),
+          link: '/accounting/period-close', entityType: 'PeriodLock', entityId: created.id, actorId: closer.id,
+          dedupeKey: `period.closed:${created.id}`,
+        })))
       })
     }
     return reply.status(201).send({ ...created, checks: list.problems, months: list.months, isYearEnd: list.isYearEnd })

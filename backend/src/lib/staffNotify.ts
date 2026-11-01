@@ -65,6 +65,7 @@ export type NotificationKind =
   | 'integration.alert'       // the WhatsApp gateway dropped / is back (platform-wide) — CEO + IT
   | 'food_safety.overdue'     // a temperature check or cleaning task is overdue — the company's kitchen managers
   | 'backup.result'           // the weekly database backup was made / failed (platform-wide) — the CEO (owner S13)
+  | 'period.closed'           // finance closed a company's books through a date — that company's CEO(s) (owner, 2026-11-01)
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical'
 

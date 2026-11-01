@@ -319,7 +319,7 @@ describe('the delegation path (checked live on every use)', () => {
     }
     const routes: Array<[string, 'POST' | 'PUT' | 'PATCH', string]> = [
       // /accounting/journal and /reverse are finance's too since 2026-10-16 (owner) — no longer CEO-only.
-      ['fin', 'POST', '/accounting/period-close'],
+      // POST /accounting/period-close is finance's too since 2026-11-01 (owner) — closing OVER a block stays the CEO's.
       ['fin', 'POST', '/accounting/period-close/reopen'],
       ['hrHod', 'PUT', '/permissions/role-modules'],
       ['fin', 'POST', '/tenants/merge'],

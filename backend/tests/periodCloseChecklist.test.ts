@@ -169,8 +169,10 @@ describe('blocks refuse the close with their key; the CEO closes over them with 
     }
   })
 
-  it('only the CEO closes', async () => {
-    expect((await close('fin', A)).statusCode).toBe(403)
+  it('the CEO and finance close; nobody else (owner, 2026-11-01)', async () => {
+    await mkUser('mgrClose', 'manager', A, [A])
+    expect((await close('mgrClose', A)).statusCode).toBe(403)
+    expect((await close('fin', A)).statusCode).toBe(201)
   })
 
   it('a closed till whose close never reached the books blocks (unposted_shifts)', async () => {
@@ -447,5 +449,51 @@ describe('night_audit_days (the night audit, sales days only)', () => {
     } finally {
       await prisma.tenant.update({ where: { id: B }, data: { nightAuditStartDay: NIGHT_AUDIT_LATER } })
     }
+  })
+})
+
+// Owner, 2026-11-01: open vouchers, journal requests, clearing accounts block the month; finance closes when nothing
+// blocks (never over a block) and the CEO hears about it on the bell.
+describe('month close: open items and finance closing', () => {
+  it('an open cash voucher, a waiting journal request and a clearing account off zero block; B never sees A\'s', async () => {
+    const v = await prisma.cashVoucher.create({ data: { tenantId: A, seq: 9001, number: 'CV-09001', voucherDate: new Date('2026-08-10T07:00:00Z'), payeeName: 'Market', purpose: 'Onions', amountCents: 50_000, preparedById: users.fin!.id, status: 'submitted', createdAt: new Date('2026-08-10T07:00:00Z') } })
+    const jr = await prisma.journalRequest.create({ data: { tenantId: A, description: 'Accrue rent', preparedById: users.fin!.id, status: 'submitted', entryDate: new Date('2026-08-20T07:00:00Z') } })
+    const je = await postJournalEntry({ tenantId: A, sourceType: 'test.clearing', sourceId: `clr-${A}`, description: 'Left on clearing', entryDate: new Date('2026-08-15T07:00:00Z'), lines: [
+      { accountCode: '1395', type: 'debit', amountCents: 7_000 }, { accountCode: '1020', type: 'credit', amountCents: 7_000 },
+    ] })
+    try {
+      const refused = await close('fin', A)
+      expect(refused.statusCode).toBe(409)
+      expect(keysOf(refused)).toEqual(expect.arrayContaining(['vouchers_open', 'journal_requests_open', 'clearing_accounts']))
+      // Finance can never close over a block — the CEO can.
+      const over = await close('fin', A, { acknowledge: { keys: ['vouchers_open', 'journal_requests_open', 'clearing_accounts'], reason: 'Finance wants to close anyway' } })
+      expect(over.statusCode).toBe(403)
+      expect(over.json().error.code).toBe('OVERRIDE_CEO_ONLY')
+      const viewB = await call('adminB', 'GET', `/accounting/period-close?lockedThrough=${CLOSE}`, undefined, B)
+      const keysB = (viewB.json().checks as Problem[]).map((x) => x.key)
+      for (const k of ['vouchers_open', 'journal_requests_open', 'clearing_accounts']) expect(keysB).not.toContain(k)
+    } finally {
+      await prisma.cashVoucher.delete({ where: { id: v.id } })
+      await prisma.journalRequest.delete({ where: { id: jr.id } })
+      await postJournalEntry({ tenantId: A, sourceType: 'test.clearing.fix', sourceId: `clr-${A}`, description: 'Clear it', entryDate: new Date('2026-08-16T07:00:00Z'), lines: [
+        { accountCode: '1020', type: 'debit', amountCents: 7_000 }, { accountCode: '1395', type: 'credit', amountCents: 7_000 },
+      ] })
+      void je
+    }
+  })
+
+  it('finance closes when nothing blocks; the CEO gets a bell notice', async () => {
+    const ok = await close('fin', A)
+    expect(ok.statusCode, ok.body).toBe(201)
+    const { flushNotifications } = await import('../src/lib/staffNotify.js')
+    await flushNotifications()
+    const n = await prisma.staffNotification.findFirst({ where: { userId: users.ceo!.id, kind: 'period.closed', tenantId: A } })
+    expect(n?.title).toContain('by finance')
+    // The CEO's own close tells nobody.
+    await resetLocks()
+    await prisma.staffNotification.deleteMany({ where: { kind: 'period.closed' } })
+    expect((await close('ceo', A)).statusCode).toBe(201)
+    await flushNotifications()
+    expect(await prisma.staffNotification.count({ where: { kind: 'period.closed' } })).toBe(0)
   })
 })

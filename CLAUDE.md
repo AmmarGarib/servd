@@ -1686,6 +1686,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   (module `food_cost`). `brandSalesRevenueCents` / `costOfSalesSplit`
   (`accounting/reports.ts`) are the one cost-of-sales denominator and class
   split. 42xx is other income — never brand sales, a sales KPI or a ratio base.
+- **Month close by finance, open items block (owner, 2026-11-01: "Every uncompleted/Opened voucher, unbalanced
+  accounts, Payroll in process … should raise warning and block the month and finance should have access to close
+  those issues with a notification to CEO").** `accounting/openItemsCloseChecks.ts` adds to CLOSE_CHECKS (all block,
+  CEO-overridable): `vouchers_open` (cash vouchers raised ≤ lock still waiting / returned / approved unpaid),
+  `journal_requests_open`, `shift_corrections_open`, `supplier_bills_draft`, `clearing_accounts` (1395 and any
+  "clearing" / "suspense" account except 1110, 1115, 1290, 1357, 2015 — not zero at the lock). Payroll in process =
+  the existing `payroll` check. `POST /accounting/period-close` admits finance with `accounting` when nothing blocks;
+  `acknowledge` / `closeWithUnmatchedRaast` by anyone but the CEO is 403 `OVERRIDE_CEO_ONLY`; a finance close sends
+  the company's CEO(s) a `period.closed` bell notice (warnings listed). Reopening stays CEO-only.
 - **Period close:** `accounting/closeChecks.ts` `CLOSE_CHECKS` is the ONE
   checklist; a module adds a CloseCheck, never its own 409 on
   `POST /accounting/period-close`. The CEO closes over overridable blocks with

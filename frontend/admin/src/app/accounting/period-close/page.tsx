@@ -104,6 +104,9 @@ export default function PeriodClosePage() {
   const qc = useQueryClient()
   const isAdmin = useAuthStore((s) => s.isRole('admin'))
   const myRole = useAuthStore((s) => s.user?.role ?? null)
+  // Finance closes the month when nothing blocks; the CEO is told on the bell (owner, 2026-11-01). Closing over a
+  // block stays the CEO's.
+  const mayClose = isAdmin || myRole === 'finance'
   const [lockedThrough, setLockedThrough] = useState(yesterdayPktIso())
   const [note, setNote] = useState('')
   const [reopenReason, setReopenReason] = useState('')
@@ -365,19 +368,20 @@ export default function PeriodClosePage() {
             </div>
           )}
 
-          {isAdmin ? (
+          {mayClose ? (
             <Button type="submit" onClick={() => close.mutate()} disabled={close.isPending || !canClose} className="w-full">
               {close.isPending ? 'Closing…' : state?.isYearEnd ? 'Close period (year end)' : 'Close period'}
             </Button>
           ) : (
-            <p className="text-xs text-s-muted">Only the CEO closes the books.</p>
+            <p className="text-xs text-s-muted">Only the CEO and finance close the books.</p>
           )}
-          {isAdmin && state && !canClose && !close.isPending && (
+          {mayClose && !isAdmin && <p className="text-xs text-s-muted">The CEO is told on the bell when you close.</p>}
+          {mayClose && state && !canClose && !close.isPending && (
             <p className="text-xs text-s-muted">
               {fixedOnly.length > 0
                 ? 'Fix the checks marked "must be fixed" first.'
                 : untickedBlocks.length > 0
-                  ? 'Fix the blocking checks, or tick them to close over them with a reason.'
+                  ? isAdmin ? 'Fix the blocking checks, or tick them to close over them with a reason.' : 'Fix the blocking checks first — only the CEO can close over one.'
                   : !reasonOk ? 'Give a reason of at least 10 characters.' : ''}
             </p>
           )}
