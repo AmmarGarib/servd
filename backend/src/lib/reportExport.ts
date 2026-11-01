@@ -277,7 +277,7 @@ const RULE = rgb(0.85, 0.82, 0.89)
 const HEAD_FILL = rgb(0.953, 0.933, 0.98) // #f3eefa
 
 /** Characters the standard font can draw; anything else becomes "?" (never a throw). */
-function safeTextFor(font: PDFFont): (s: string) => string {
+export function safeTextFor(font: PDFFont): (s: string) => string {
   const ok = new Set(font.getCharacterSet())
   return (s: string) => {
     let out = ''

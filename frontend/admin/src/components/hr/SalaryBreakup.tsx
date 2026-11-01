@@ -2,9 +2,12 @@
 // A payslip's salary breakup (owner, 2026-10-31: "Allowances and all → Total Amount → deduction on attendance →
 // gross → Other deductions → Net"). The figures come from the server (backend hr/payslipBreakup.ts, the ONE
 // reading shared with the run table and the payroll register); this file only shows them — on screen
-// (<SalaryBreakupView>) and in the printed payslip (breakupHtml).
+// (<SalaryBreakupView>); the PDF is made by the server (backend hr/payslipPdf.ts).
 
+import { useState } from 'react'
 import { rs } from '@/lib/hr'
+import { api } from '@/lib/api'
+import { FileViewModal } from '@/components/files/FileViewModal'
 
 export interface SalaryBreakup {
   basicCents: number
@@ -77,12 +80,6 @@ export function SalaryBreakupView({ breakup }: { breakup: SalaryBreakup }) {
   )
 }
 
-/** The same rows as HTML for the printed payslip (escaped). */
-export function breakupHtml(k: SalaryBreakup): string {
-  const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  return `<table>${breakupRows(k).map((r) => `<tr><td style="${r.sub ? 'padding-left:16px;color:#666;font-size:12px' : ''}${r.strong ? 'font-weight:700' : ''}">${r.sign && !r.sub && r.sign !== '=' ? `${r.sign} ` : ''}${esc(r.label)}${r.note ? `<br><span style="color:#666;font-size:12px">${esc(r.note)}</span>` : ''}</td><td style="text-align:right;${r.strong ? 'font-weight:700' : ''}">${esc(rs(r.cents))}</td></tr>`).join('')}</table>`
-}
-
 // ─── The payslip document (owner, 2026-10-31: "let's build Payslip now") ─────────────────────────────────────────
 // The company's header image, the particulars, then the breakup. The same layout on screen and in print.
 
@@ -103,12 +100,6 @@ const fmtDay = (d: string | null) => {
   const [y, m, dd] = d.split('-').map(Number)
   return new Date(Date.UTC(y!, (m ?? 1) - 1, dd ?? 1)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
-/** "2026-10" → "October 2026". */
-export const payslipMonth = (period: string) => {
-  const [y, m] = period.split('-').map(Number)
-  return y && m ? new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) : period
-}
-
 /** The particulars in the owner's order. */
 export function particularRows(p: PayslipParticulars): Array<[string, string]> {
   return [
@@ -145,31 +136,17 @@ export function PayslipParticularsView({ particulars, header }: { particulars: P
   )
 }
 
-/** Opens the payslip in a new window and prints it. */
-export function printPayslip(o: { period: string; header?: string | null; particulars: PayslipParticulars; breakup: SalaryBreakup; employerNote?: string }) {
-  const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  const img = safeHeader(o.header)
-  const parts = particularRows(o.particulars)
-  const grid = `<table class="p">${Array.from({ length: Math.ceil(parts.length / 2) }, (_, i) => {
-    const a = parts[i * 2]!, b = parts[i * 2 + 1]
-    return `<tr><td class="k">${esc(a[0])}</td><td class="v">${esc(a[1])}</td>${b ? `<td class="k">${esc(b[0])}</td><td class="v">${esc(b[1])}</td>` : '<td></td><td></td>'}</tr>`
-  }).join('')}</table>`
-  const body = `${img ? `<img class="hdr" src="${img}" alt="">` : ''}
-    <h2>Payslip — ${esc(payslipMonth(o.period))}</h2>
-    ${grid}
-    <h4>Salary</h4>
-    ${breakupHtml(o.breakup)}
-    ${o.employerNote ? `<p class="note">${esc(o.employerNote)}</p>` : ''}
-    <p class="note">This is a computer-generated payslip.</p>`
-  const w = window.open('', '_blank'); if (!w) return
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Payslip ${esc(o.particulars.employeeCode)} ${esc(o.period)}</title><style>
-    body{font-family:system-ui,Arial,sans-serif;max-width:720px;margin:24px auto;color:#111;padding:0 16px}
-    .hdr{width:100%;display:block;margin-bottom:16px}
-    h2{margin:8px 0 12px}h4{margin:18px 0 6px;text-transform:uppercase;font-size:12px;letter-spacing:.06em;color:#555}
-    table{width:100%;border-collapse:collapse}td{padding:5px 0;border-bottom:1px solid #eee;vertical-align:top}
-    table.p td{border:1px solid #ddd;padding:6px 8px;font-size:13px}table.p td.k{color:#555;width:18%}table.p td.v{font-weight:600;width:32%}
-    .note{font-size:12px;color:#666}
-    @media print{body{margin:0}}
-  </style></head><body>${body}</body></html>`)
-  w.document.close(); setTimeout(() => w.print(), 400)
+/** The payslip PDF the server makes (owner, 2026-11-01: A4, navy and light grey — backend hr/payslipPdf.ts):
+ *  View opens it here, Download saves it. `path` is the API path of the PDF. */
+export function PayslipPdfButtons({ path, filename, className, label = 'payslip' }: { path: string; filename: string; className: string; label?: string }) {
+  const [viewing, setViewing] = useState(false)
+  const [err, setErr] = useState('')
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <button type="button" className={className} onClick={() => setViewing(true)}>View {label} (PDF)</button>
+      <button type="button" className={className} onClick={() => { setErr(''); api.download(`${path}?download=1`, `${filename}.pdf`).catch((e: Error) => setErr(e.message)) }}>Download PDF</button>
+      {err && <span role="alert" className="text-xs" style={{ color: 'var(--erp-danger)' }}>{err}</span>}
+      {viewing && <FileViewModal path={path} mime="application/pdf" name={`${filename}.pdf`} onClose={() => setViewing(false)} />}
+    </span>
+  )
 }

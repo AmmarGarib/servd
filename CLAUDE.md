@@ -2798,6 +2798,14 @@ on its next recalculation. The F&F stores the days its salary pays as
 `data._payBasis` (one row per month: from–to, days employed, absent, unpaid
 leave, paid days, salary) — shown on the form and printed as "Days paid".
 Tests: `tests/payrollOvertimeOptIn.test.ts`.
+**The payslip is a PDF the server makes (owner, 2026-11-01: "A4 portrait … navy blue … light grey … Net payable:
+prominent dark-blue section … PDF, with automatic generation from the payroll system").** `hr/payslipPdf.ts`
+(pdf-lib, Helvetica = Arial metrics): header (company name or the uploaded PNG / JPEG header, navy PAYSLIP box),
+employee information, 01 Earnings (basic, each allowance, other earnings), 02 Deductions (attendance, lates, tax,
+EOBI, other), navy NET PAYABLE band with the amount in words, payment period and status. Figures from
+`payslipBreakup.ts` only. `GET /hr/payroll/payslips/:id/pdf`, `GET /hr/payroll/runs/:id/payslips.pdf` (a page each;
+PAYROLL_READERS, company scope, foreign 404), `GET /hr/me/payslips/:id/pdf` (own, locked); `?download=1` = attachment.
+Admin `PayslipPdfButtons` (View / Download) replaced the HTML print.
 **Deductions by type (owner, 2026-10-30: "Make sub categories for deductions column, e.g: Late, Advances, loan,
 IPD, etc to select by HR").** Per-company types in HR settings `deductionTypes` (`logic.ts DEFAULT_DEDUCTION_TYPES`:
 Late coming, Advance, Loan, IPD (medical), Other; each `posting` `recovery` | `deduction`); `GET|POST /hr/deduction-types`,

@@ -5,7 +5,7 @@
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
-import { SalaryBreakupView, PayslipParticularsView, printPayslip, type SalaryBreakup, type PayslipParticulars } from '../../../components/hr/SalaryBreakup'
+import { SalaryBreakupView, PayslipParticularsView, PayslipPdfButtons, type SalaryBreakup, type PayslipParticulars } from '../../../components/hr/SalaryBreakup'
 import { card, btn, btnGhost, rs, day, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../lib/hr'
 import { HrShell, Modal, Stat, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../components/hr/FormRenderer'
@@ -176,7 +176,7 @@ function MySlip({ id, onClose }: { id: string; onClose: () => void }) {
           </>
         )}
       </div>
-      {s && <div className="no-print pt-2"><button type="button" className={btnGhost} onClick={() => (s.breakup && s.particulars ? printPayslip({ period: s.run.period, header: s.payslipHeader, particulars: s.particulars, breakup: s.breakup }) : window.print())}>Print payslip</button></div>}
+      {s && <div className="no-print pt-2"><PayslipPdfButtons path={`/hr/me/payslips/${id}/pdf`} filename={`payslip-${s.particulars?.employeeCode ?? ''}-${s.run.period}`} className={btnGhost} /></div>}
     </Modal>
   )
 }

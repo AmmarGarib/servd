@@ -266,6 +266,22 @@ describe('two companies', () => {
     expect(p).toHaveProperty('cnic')
     expect((await call('hrB', 'GET', `/payroll/runs/${runB}`)).json().payslipHeader).toBeNull()
 
+    // The payslip PDF (owner, 2026-11-01): one payslip, the whole run (a page each), with the company's header;
+    // another company's payslip or run is 404.
+    const slipA = await prisma.hrPayslip.findFirstOrThrow({ where: { runId: runA, employeeId: emps['a-full'] } })
+    const one = await call('hrA', 'GET', `/payroll/payslips/${slipA.id}/pdf`)
+    expect(one.statusCode, one.body).toBe(200)
+    expect(one.headers['content-type']).toBe('application/pdf')
+    expect(one.rawPayload.subarray(0, 5).toString()).toBe('%PDF-')
+    expect(String(one.headers['content-disposition'])).toMatch(/^inline;/)
+    expect(String((await call('hrA', 'GET', `/payroll/payslips/${slipA.id}/pdf?download=1`)).headers['content-disposition'])).toMatch(/^attachment;/)
+    const { PDFDocument } = await import('pdf-lib')
+    const all = await call('hrA', 'GET', `/payroll/runs/${runA}/payslips.pdf`)
+    expect(all.statusCode, all.body).toBe(200)
+    expect((await PDFDocument.load(all.rawPayload)).getPageCount()).toBe(await prisma.hrPayslip.count({ where: { runId: runA } }))
+    expect((await call('hrB', 'GET', `/payroll/payslips/${slipA.id}/pdf`)).statusCode).toBe(404)
+    expect((await call('hrB', 'GET', `/payroll/runs/${runA}/payslips.pdf`)).statusCode).toBe(404)
+
     expect((await call('hrA', 'DELETE', '/payslip-header')).statusCode).toBe(204)
     expect((await call('hrA', 'GET', '/payslip-header')).json().image).toBeNull()
   })

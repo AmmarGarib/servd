@@ -9,6 +9,7 @@
 
 import { networkKey, onOfficeNetwork } from '../../lib/officeNetwork.js'
 import { salaryBreakup } from './payslipBreakup.js'
+import { payslipsPdf, type PayslipPdfInput } from './payslipPdf.js'
 import { getPayslipHeader, setPayslipHeader, clearPayslipHeader, payslipParticulars, PARTICULAR_FIELDS } from './payslipDocument.js'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { classificationOf, classifyPaymentTx, classificationsOfReferences, type ClassificationInput } from '../accounting/paymentsRegister.js'
@@ -2792,6 +2793,44 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return { run: { ...run, paymentClassification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }, payslips: slips, deductionTypes, payslipHeader }
   })
 
+  // The payslip as a PDF (owner, 2026-11-01: A4 portrait, navy and light grey, net payable in a navy band — made by
+  // the payroll system itself, payslipPdf.ts). One payslip, or the whole run as one PDF (a page each). Same readers
+  // and company scope as the run.
+  async function payslipPdfInputs(where: Prisma.HrPayslipWhereInput): Promise<PayslipPdfInput[]> {
+    const rows = await prisma.hrPayslip.findMany({
+      where, orderBy: { employee: { employeeCode: 'asc' } },
+      include: { run: { select: { tenantId: true, period: true, paidAt: true } }, employee: { select: { ...PARTICULAR_FIELDS, basicSalaryCents: true, data: true } } },
+    })
+    if (rows.length === 0) return []
+    const tenantId = rows[0]!.run.tenantId
+    const parts = await payslipParticulars(tenantId, rows)
+    const header = await getPayslipHeader(tenantId)
+    const company = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } })
+    return rows.map((r) => ({
+      companyName: company?.name ?? 'Payslip', period: r.run.period, header,
+      particulars: parts.get(r.id)!, breakup: salaryBreakup(r, r.employee), paid: !!r.run.paidAt,
+    }))
+  }
+  const sendPdf = (reply: FastifyReply, pdf: Buffer, name: string, download: boolean) => reply
+    .header('content-type', 'application/pdf')
+    .header('content-disposition', `${download ? 'attachment' : 'inline'}; filename="${name.replace(/[^A-Za-z0-9._-]+/g, '-')}.pdf"`)
+    .header('cache-control', 'private, no-store')
+    .send(pdf)
+
+  fastify.get<{ Params: { id: string }; Querystring: { download?: string } }>('/payroll/payslips/:id/pdf', { preHandler: requireAuth(...PAYROLL_READERS) }, async (req, reply) => {
+    const inputs = await payslipPdfInputs({ id: req.params.id, run: inTenants(req) })
+    if (inputs.length === 0) throw new NotFoundError('Payslip', req.params.id)
+    return sendPdf(reply, await payslipsPdf(inputs), `payslip-${inputs[0]!.particulars.employeeCode}-${inputs[0]!.period}`, req.query.download === '1')
+  })
+
+  fastify.get<{ Params: { id: string }; Querystring: { download?: string } }>('/payroll/runs/:id/payslips.pdf', { preHandler: requireAuth(...PAYROLL_READERS) }, async (req, reply) => {
+    const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...inTenants(req) }, select: { id: true, period: true } })
+    if (!run) throw new NotFoundError('Payroll', req.params.id)
+    const inputs = await payslipPdfInputs({ runId: run.id })
+    if (inputs.length === 0) throw new AppError('NO_PAYSLIPS', 'This payroll has no payslips yet', 409)
+    return sendPdf(reply, await payslipsPdf(inputs), `payslips-${run.period}`, req.query.download === '1')
+  })
+
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/recalculate', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
     const run = await prisma.hrPayrollRun.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!run) throw new NotFoundError('Payroll', req.params.id)
@@ -3627,6 +3666,14 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const { employee, ...rest } = slip
     const particulars = (await payslipParticulars(employee.tenantId, [{ id: slip.id, inputs: slip.inputs, employee }])).get(slip.id)!
     return { ...rest, breakup: salaryBreakup(rest, employee), particulars, payslipHeader: await getPayslipHeader(employee.tenantId) }
+  })
+
+  // The employee's own payslip as a PDF (locked runs only, as above).
+  fastify.get<{ Params: { id: string }; Querystring: { download?: string } }>('/me/payslips/:id/pdf', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
+    const me = await myEmployee(req)
+    const inputs = await payslipPdfInputs({ id: req.params.id, employeeId: me.id, run: { status: 'locked' } })
+    if (inputs.length === 0) throw new NotFoundError('Payslip', req.params.id)
+    return sendPdf(reply, await payslipsPdf(inputs), `payslip-${inputs[0]!.particulars.employeeCode}-${inputs[0]!.period}`, req.query.download === '1')
   })
 
   // ── Shift swaps waiting on the colleague (audit HR-R5) ────────────────────

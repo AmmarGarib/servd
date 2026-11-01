@@ -19,7 +19,7 @@ import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { OvertimePicker, otAvailableOf, otSummary } from '../../../../components/hr/OvertimePicker'
 import { NavIcon } from '../../../../components/ui/NavIcon'
-import { SalaryBreakupView, PayslipParticularsView, printPayslip, type SalaryBreakup, type PayslipParticulars } from '../../../../components/hr/SalaryBreakup'
+import { SalaryBreakupView, PayslipParticularsView, PayslipPdfButtons, type SalaryBreakup, type PayslipParticulars } from '../../../../components/hr/SalaryBreakup'
 
 interface Line { kind: 'earning' | 'deduction' | 'employer'; code: string; label: string; amountCents: number; posting?: 'recovery' | 'deduction'; note?: string | null }
 /** A company's deduction type (backend hr/logic.ts DeductionType; owner, 2026-10-30). */
@@ -252,6 +252,7 @@ export default function PayrollRunPage() {
             )}
             {run.paidAt && run.paymentClassification && <span className="self-center"><ClassificationChip value={run.paymentClassification} /></span>}
             <span className="ml-auto flex flex-wrap gap-2">
+              {run.status !== 'draft' && <PayslipPdfButtons path={`/hr/payroll/runs/${id}/payslips.pdf`} filename={`payslips-${run.period}`} className={btnGhost} label="all payslips" />}
               {dl('register', 'Payroll register')}
               {dl('bank', 'Bank transfer sheet')}
               {dl('eobi', 'EOBI report')}
@@ -473,8 +474,6 @@ function SlipModal({ slip, period, draft, types, header, onClose }: { slip: Slip
     setErr('')
     save.mutate()
   }
-  const employerNote = slip.lines.filter((l) => l.kind === 'employer' && l.amountCents !== 0).map((l) => `${l.label} ${rs(l.amountCents)}`).join(' · ')
-  const print = () => printPayslip({ period, header, particulars: slip.particulars, breakup: slip.breakup, employerNote: employerNote ? `Employer pays on top: ${employerNote}` : undefined })
   return (
     <Modal title={`${slip.employee.fullName} — ${period}`} wide onClose={onClose} dirty={draft && (changed.length > 0 || itemsChanged)}>
       <form onSubmit={submit} noValidate className="grid md:grid-cols-2 gap-5">
@@ -485,7 +484,7 @@ function SlipModal({ slip, period, draft, types, header, onClose }: { slip: Slip
           {slip.lines.some((l) => l.kind === 'employer' && l.amountCents !== 0) && (
             <p className="text-[11px] text-white/45 mt-2">Employer pays on top: {slip.lines.filter((l) => l.kind === 'employer' && l.amountCents !== 0).map((l) => `${l.label} ${rs(l.amountCents)}`).join(' · ')}</p>
           )}
-          <button type="button" className={`${btnGhost} mt-3`} onClick={print}>Print payslip</button>
+          <div className="mt-3"><PayslipPdfButtons path={`/hr/payroll/payslips/${slip.id}/pdf`} filename={`payslip-${slip.employee.employeeCode}-${period}`} className={btnGhost} /></div>
         </div>
         <div>
           <div className="mb-3">
