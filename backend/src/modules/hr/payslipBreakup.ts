@@ -62,7 +62,16 @@ export function salaryBreakup(slip: SlipLike, emp: EmployeeLike): SalaryBreakup 
   const basicCents = Math.max(0, Math.min(emp.basicSalaryCents ?? 0, totalSalaryCents))
   const left = totalSalaryCents - basicCents
   const named = allowancesOf(emp.data).map((x) => ({ name: x.name, cents: x.amountCents }))
-  const namedSum = named.reduce((a, x) => a + x.cents, 0)
+  let namedSum = named.reduce((a, x) => a + x.cents, 0)
+  // Allowances typed as rounded rupees can add up to a rupee or so more than gross − basic (Anusha: 23,704 + 5,926 +
+  // 11,852 = 41,482 against 41,481). Up to one rupee per allowance is rounding: the largest allowance gives it back,
+  // so the breakdown still shows and still adds up to the salary. Anything bigger is a real mismatch (one line).
+  const excess = namedSum - left
+  if (excess > 0 && excess <= 100 * named.length && named.length > 0) {
+    const big = named.reduce((m, x) => (x.cents > m.cents ? x : m), named[0]!)
+    big.cents -= excess
+    namedSum -= excess
+  }
   const allowances = namedSum > left
     ? (left > 0 ? [{ name: 'Allowances', cents: left }] : [])
     : [...named, ...(left - namedSum > 0 ? [{ name: named.length ? 'Other allowances' : 'Allowances', cents: left - namedSum }] : [])]
