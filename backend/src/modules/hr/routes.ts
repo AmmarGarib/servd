@@ -8,7 +8,7 @@
 // Neither can read anyone else's salary.
 
 import { networkKey, onOfficeNetwork } from '../../lib/officeNetwork.js'
-import { salaryBreakup } from './payslipBreakup.js'
+import { salaryBreakup, unifyAllowanceNames } from './payslipBreakup.js'
 import { payslipsPdf, type PayslipPdfInput } from './payslipPdf.js'
 import { payslipParticulars, PARTICULAR_FIELDS } from './payslipDocument.js'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
@@ -2771,6 +2771,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       ...slip, employee: { fullName, employeeCode, bankName, iban, paymentMethod, eobiNo },
       breakup: salaryBreakup(slip, { basicSalaryCents, data }), particulars: parts.get(slip.id)!,
     }))
+    unifyAllowanceNames(slips.map((x) => x.breakup)) // one column per allowance (spelling slips grouped)
     const c = run.paidAt ? (await classificationsOfReferences(prisma, [run.tenantId], [`hr.payroll.payment:${run.id}`])).get(`hr.payroll.payment:${run.id}`) : undefined
     // The run's company's deduction types, for HR's "Add deduction" picker (owner, 2026-10-30).
     const deductionTypes = (await getSettings(run.tenantId)).deductionTypes
@@ -2789,10 +2790,12 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const tenantId = rows[0]!.run.tenantId
     const parts = await payslipParticulars(tenantId, rows)
     const company = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } })
-    return rows.map((r) => ({
+    const out = rows.map((r) => ({
       companyName: company?.name ?? 'Payslip', period: r.run.period,
       particulars: parts.get(r.id)!, breakup: salaryBreakup(r, r.employee), paid: !!r.run.paidAt,
     }))
+    unifyAllowanceNames(out.map((x) => x.breakup))
+    return out
   }
   const sendPdf = (reply: FastifyReply, pdf: Buffer, name: string, download: boolean) => reply
     .header('content-type', 'application/pdf')
@@ -3187,6 +3190,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
       const dedCols = Array.from(new Set(slips.flatMap((sl) => (sl.lines as unknown as L[]).filter(isOther).map(typeOf)))).sort()
       // Each allowance its own column (owner, 2026-10-31: "Show allowances breakup also"), then their total.
       const ks = new Map(slips.map((sl) => [sl.id, salaryBreakup(sl, sl.employee)]))
+      unifyAllowanceNames([...ks.values()])
       const allowCols = Array.from(new Set(slips.flatMap((sl) => ks.get(sl.id)!.allowances.map((a) => a.name))))
       rows = [['Employee ID', 'Name', 'Basic', ...allowCols.map((c) => `Allowance: ${c}`), 'Total allowances', 'Total salary', 'Days in month', 'Paid days', 'Per-day rate', 'Attendance deduction', 'Overtime', 'Other earnings', 'Gross', 'Income tax', ...dedCols.map((c) => `Ded: ${c}`), 'Other deductions', 'EOBI employee', 'Net', 'EOBI employer'], ...slips.map((s) => {
         const k = ks.get(s.id)!

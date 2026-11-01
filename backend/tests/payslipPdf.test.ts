@@ -31,3 +31,14 @@ describe('allowance breakdown and rounding', () => {
     expect(k.allowances).toEqual([{ name: 'Allowances', cents: 4_148_100 }])
   })
 })
+
+import { unifyAllowanceNames } from '../src/modules/hr/payslipBreakup.js'
+describe('one column per allowance across a run', () => {
+  it('a misspelt or differently cased name joins the common spelling; different allowances stay apart', () => {
+    const mk = (names: string[]) => ({ allowances: names.map((name) => ({ name, cents: 100 })) }) as never
+    const ks = [mk(['Medical Allowance', 'Fuel Allowance']), mk(['Medical Allowance']), mk(['Medical Allowane', 'fuel allowance ']), mk(['House Rent Allowance'])]
+    unifyAllowanceNames(ks)
+    const names = new Set((ks as Array<{ allowances: Array<{ name: string }> }>).flatMap((k) => k.allowances.map((a) => a.name)))
+    expect([...names].sort()).toEqual(['Fuel Allowance', 'House Rent Allowance', 'Medical Allowance'])
+  })
+})

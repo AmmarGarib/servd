@@ -105,3 +105,54 @@ export function salaryBreakup(slip: SlipLike, emp: EmployeeLike): SalaryBreakup 
       : null,
   }
 }
+
+// ── One column per allowance across a run (owner, 2026-11-01: "Duplication" — "Medical Allowane" on one record made a
+// second Medical column). Names are typed per employee, so a run's allowances are grouped by a key that ignores case,
+// spaces and punctuation, and a slip within two letters of a longer, more-used name joins it. Each group takes its
+// most-used spelling. Display only: the employee records are unchanged (fix the typo there too).
+const keyOf = (n: string) => n.toLowerCase().replace(/[^a-z0-9]+/g, '')
+function editDistance(a: string, b: string): number {
+  const d = Array.from({ length: b.length + 1 }, (_, j) => j)
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0]!
+    d[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const cur = d[j]!
+      d[j] = Math.min(d[j]! + 1, d[j - 1]! + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
+      prev = cur
+    }
+  }
+  return d[b.length]!
+}
+export function unifyAllowanceNames(breakups: SalaryBreakup[]): void {
+  const count = new Map<string, Map<string, number>>() // key → spelling → uses
+  for (const k of breakups) for (const a of k.allowances) {
+    const key = keyOf(a.name)
+    const m = count.get(key) ?? new Map<string, number>()
+    m.set(a.name, (m.get(a.name) ?? 0) + 1)
+    count.set(key, m)
+  }
+  const uses = (key: string) => [...count.get(key)!.values()].reduce((a, b) => a + b, 0)
+  // Most-used keys first: a rarer key within 2 letters of one (both ≥ 6 letters) joins it.
+  const keys = [...count.keys()].sort((a, b) => uses(b) - uses(a) || b.length - a.length)
+  const into = new Map<string, string>()
+  for (const k of keys) {
+    const host = keys.find((h) => h !== k && into.get(h) === h && uses(h) >= uses(k) && h.length >= 6 && k.length >= 6 && editDistance(h, k) <= 2 && keys.indexOf(h) < keys.indexOf(k))
+    into.set(k, host ?? k)
+  }
+  const label = new Map<string, string>()
+  for (const k of keys) {
+    if (into.get(k) !== k) continue
+    let best = '', n = -1
+    for (const [key, m] of count) if (into.get(key) === k) for (const [sp, c] of m) if (c > n) { best = sp; n = c }
+    label.set(k, best)
+  }
+  for (const b of breakups) {
+    const merged = new Map<string, number>()
+    for (const a of b.allowances) {
+      const name = label.get(into.get(keyOf(a.name))!) ?? a.name
+      merged.set(name, (merged.get(name) ?? 0) + a.cents)
+    }
+    b.allowances = [...merged].map(([name, cents]) => ({ name, cents }))
+  }
+}
