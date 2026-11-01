@@ -53,6 +53,7 @@ interface Detail {
     id: string; tenantId: string; period: string; status: string; paidAt: string | null; paymentClassification?: PaymentClassification | null
     createdById: string | null; preparedByIds: string[]; sentToFinanceById?: string | null
     financeNote?: string | null; financeReturnNote?: string | null; financeReturnedAt?: string | null
+    ceoReturnNote?: string | null; ceoReturnedAt?: string | null
     totals: Record<string, number | string[] | RunPayment>
   }
   payslips: Slip[]
@@ -124,7 +125,7 @@ export default function PayrollRunPage() {
   const [paying, setPaying] = useState(false)
   const [err, setErr] = useState('')
   const { userId, role, isHrAdmin, isPayrollApprover, isPayrollPayer, isFinanceReviewer } = useHrAccess()
-  const [returning, setReturning] = useState(false)
+  const [returning, setReturning] = useState<ReturnMode | null>(null)
   const [taxSlipId, setTaxSlipId] = useState<string | null>(null)
   const confirm = useConfirm()
   const { data, error: loadErr, isLoading } = useQuery({ queryKey: ['hr-payroll', id], queryFn: () => api.get<Detail>(`/hr/payroll/runs/${id}`) })
@@ -176,8 +177,10 @@ export default function PayrollRunPage() {
   // Finance enters the tax while it has the run; the CEO may also on a draft.
   const canSetTax = !!run && isFinanceReviewer && (run.status === 'finance_review' || (run.status === 'draft' && role === 'admin'))
   const banner = !run ? null
+    : run.status === 'finance_review' && run.ceoReturnNote ? { tone: 'var(--erp-danger)', text: `Returned to finance for correction: ${run.ceoReturnNote}` }
     : run.status === 'finance_review' ? { tone: 'var(--erp-warning)', text: 'With finance for review — finance checks it and enters the income tax, then passes it to the CEO or returns it to HR.' }
     : run.status === 'finance_checked' ? { tone: 'var(--erp-primary)', text: `Checked by finance — waiting for the CEO.${run.financeNote ? ` Finance's note: ${run.financeNote}` : ''}` }
+    : run.status === 'draft' && run.ceoReturnNote && (!run.financeReturnedAt || (run.ceoReturnedAt ?? '') > run.financeReturnedAt) ? { tone: 'var(--erp-danger)', text: `Returned to HR for correction: ${run.ceoReturnNote}` }
     : run.status === 'draft' && run.financeReturnNote ? { tone: 'var(--erp-danger)', text: `Returned by finance: ${run.financeReturnNote}` }
     : null
   const taxSlip = data?.payslips.find((p) => p.id === taxSlipId) ?? null
@@ -232,11 +235,13 @@ export default function PayrollRunPage() {
             </>}
             {run.status === 'finance_review' && canReview && <>
               <button className={btn} disabled={act.isPending} onClick={() => void ask('finance-pass')}>Pass to CEO</button>
-              <button className={btnGhost} disabled={act.isPending} onClick={() => { setErr(''); setReturning(true) }}>Return to HR</button>
+              <button className={btnGhost} disabled={act.isPending} onClick={() => { setErr(''); setReturning('finance-to-hr') }}>Return to HR</button>
             </>}
-            {run.status === 'finance_checked' && canApprove && (
+            {run.status === 'finance_checked' && canApprove && <>
               <button className={btn} disabled={act.isPending} onClick={() => void ask('approve')}>Approve</button>
-            )}
+              <button className={btnGhost} disabled={act.isPending} onClick={() => { setErr(''); setReturning('approver-to-finance') }}>Return to finance</button>
+              <button className={btnGhost} disabled={act.isPending} onClick={() => { setErr(''); setReturning('approver-to-hr') }}>Return to HR</button>
+            </>}
             {run.status === 'approved' && isPayrollApprover && <>
               <button className={btnGhost} disabled={act.isPending} onClick={() => act.mutate('reopen')}>Reopen</button>
               <button className={btn} disabled={act.isPending} onClick={() => void ask('lock')}>Lock</button>
@@ -306,36 +311,42 @@ export default function PayrollRunPage() {
         </div>
       )}
       {editing && run && <SlipModal key={`${editing.id}:${((editing.inputs['otRecordIds'] as string[] | undefined) ?? []).join(',')}:${Number(editing.inputs['otCents'] ?? 0)}`} slip={editing} period={run.period} draft={run.status === 'draft'} types={data?.deductionTypes ?? []} onClose={() => setEditingId(null)} />}
-      {returning && run && <ReturnModal runId={run.id} period={run.period} onClose={() => setReturning(false)} />}
+      {returning && run && <ReturnModal mode={returning} runId={run.id} period={run.period} onClose={() => setReturning(null)} />}
       {taxSlip && run && <TaxModal slip={taxSlip} period={run.period} onClose={() => setTaxSlipId(null)} />}
       {paying && run && data && <PayRunModal runId={run.id} tenantId={run.tenantId} period={run.period} slips={data.payslips} onClose={() => setPaying(false)} />}
     </HrShell>
   )
 }
 
-/** Finance sends the payroll back to HR with what needs correcting (≥10 characters). */
-function ReturnModal({ runId, period, onClose }: { runId: string; period: string; onClose: () => void }) {
+/** Sending the payroll back with what needs correcting (≥10 characters): finance → HR, or the approver → finance / HR
+ *  (owner, 2026-11-01: "all approvals should be returnable"). */
+type ReturnMode = 'finance-to-hr' | 'approver-to-finance' | 'approver-to-hr'
+function ReturnModal({ mode, runId, period, onClose }: { mode: ReturnMode; runId: string; period: string; onClose: () => void }) {
   const qc = useQueryClient()
   const [note, setNote] = useState('')
   const [err, setErr] = useState('')
   const short = note.trim().length < 10
+  const toFinance = mode === 'approver-to-finance'
+  const who = toFinance ? 'finance' : 'HR'
   const send = useMutation({
-    mutationFn: () => api.post(`/hr/payroll/runs/${runId}/finance-return`, { note: note.trim() }),
+    mutationFn: () => mode === 'finance-to-hr'
+      ? api.post(`/hr/payroll/runs/${runId}/finance-return`, { note: note.trim() })
+      : api.post(`/hr/payroll/runs/${runId}/return`, { note: note.trim(), to: toFinance ? 'finance' : 'hr' }),
     onSuccess: () => { void qc.invalidateQueries(); onClose() },
     onError: (e: Error) => setErr(e.message),
   })
   return (
-    <Modal title={`Return payroll ${period} to HR`} onClose={onClose} dirty={note.trim().length > 0}>
+    <Modal title={`Return payroll ${period} to ${who}`} onClose={onClose} dirty={note.trim().length > 0}>
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); if (!short && !send.isPending) send.mutate() }}>
         <label className="block">
-          <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">What HR needs to correct</span>
+          <span className="block text-[11px] font-bold uppercase tracking-wider text-white/45 mb-1">What {who} needs to correct</span>
           <textarea className={`${inp} min-h-[96px]`} value={note} maxLength={1000} onChange={(e) => setNote(e.target.value)} aria-invalid={!!err || undefined} />
         </label>
-        <p className="text-[11px] text-white/60">At least 10 characters. HR sees this note on the payroll and in the bell, edits the payroll and sends it again.</p>
+        <p className="text-[11px] text-white/60">At least 10 characters. {toFinance ? 'Finance sees this note on the payroll and in the bell, corrects it and passes it to you again.' : 'HR sees this note on the payroll and in the bell, edits the payroll and sends it through finance again.'}</p>
         {short && note.trim().length > 0 && <p className="text-xs text-s-amber">Write a little more — {10 - note.trim().length} more character{10 - note.trim().length === 1 ? '' : 's'} needed.</p>}
         {err && <p className="text-xs text-s-red" role="alert">{err}</p>}
         <div className="flex flex-wrap gap-2">
-          <button type="submit" className={btn} disabled={short || send.isPending}>{send.isPending ? 'Sending…' : 'Return to HR'}</button>
+          <button type="submit" className={btn} disabled={short || send.isPending}>{send.isPending ? 'Sending…' : `Return to ${who}`}</button>
           <button type="button" className={btnGhost} onClick={onClose}>Cancel</button>
         </div>
       </form>

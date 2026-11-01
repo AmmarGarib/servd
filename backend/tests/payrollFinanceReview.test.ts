@@ -82,6 +82,7 @@ beforeAll(async () => {
   await mkUser('mgmt', 'management', T.A)
   await mkUser('hrB', 'hr', T.B)
   await mkUser('finB', 'finance', T.B)
+  await mkUser('ceoB', 'admin', T.B)
   E['cook'] = (await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-1`, fullName: 'Cook', grossSalaryCents: RS(60000), monthlyTaxCents: RS(1000), joiningDate: D('2025-01-01'), paymentMethod: 'bank' } })).id
   E['finEmp'] = (await prisma.hrEmployee.create({ data: { tenantId: T.A, employeeCode: `${P}-2`, fullName: 'Finance person', grossSalaryCents: RS(90000), monthlyTaxCents: RS(2000), joiningDate: D('2025-01-01'), paymentMethod: 'bank', userId: U['fin']!.id } })).id
   E['bCook'] = (await prisma.hrEmployee.create({ data: { tenantId: T.B, employeeCode: `${P}-3`, fullName: 'B cook', grossSalaryCents: RS(50000), monthlyTaxCents: 0, joiningDate: D('2025-01-01'), paymentMethod: 'bank' } })).id
@@ -242,6 +243,28 @@ describe('payroll: HR → finance → CEO', () => {
     expect(lock.statusCode, lock.body).toBe(200)
     expect(lock.json().status).toBe('locked')
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantOfRun, reference: { startsWith: `hr.payroll.accrual:${runA}` } } })).toBe(2)
+  })
+
+  it('the approver returns it for correction — to finance or to HR, with a note; another company 404', async () => {
+    const runC = (await call('hr', 'POST', '/hr/payroll/runs', { period: '2026-07' })).json().id as string
+    expect((await call('hr', 'POST', `/hr/payroll/runs/${runC}/send-to-finance`)).statusCode).toBe(200)
+    expect((await call('fin', 'POST', `/hr/payroll/runs/${runC}/finance-pass`, {})).statusCode).toBe(200)
+    expect(code(await call('ceo', 'POST', `/hr/payroll/runs/${runC}/return`, { note: 'short', to: 'finance' }))).toBe('NOTE_TOO_SHORT')
+    // The inbox offers both returns.
+    const inbox = (await call('ceo', 'GET', '/approvals?type=payroll_run')).json() as { items: Array<{ id: string; actions: Array<{ kind: string; label: string }> }> }
+    const item = inbox.items.find((i) => i.id === runC)
+    if (item) expect(item.actions.filter((a) => a.kind === 'return').map((a) => a.label)).toEqual(['Return to finance', 'Return to HR'])
+    const toFin = await call('ceo', 'POST', `/hr/payroll/runs/${runC}/return`, { note: 'Tax on the cook is wrong', to: 'finance' })
+    expect(toFin.statusCode, toFin.body).toBe(200)
+    expect(toFin.json()).toMatchObject({ status: 'finance_review', ceoReturnNote: 'Tax on the cook is wrong', financeCheckedById: null })
+    expect((await call('fin', 'POST', `/hr/payroll/runs/${runC}/finance-pass`, {})).json().ceoReturnNote).toBeNull()
+    const toHr = await call('ceo', 'POST', `/hr/payroll/runs/${runC}/return`, { note: 'Missing the new joiner, recalculate', to: 'hr' })
+    expect(toHr.json()).toMatchObject({ status: 'draft', ceoReturnNote: 'Missing the new joiner, recalculate', sentToFinanceById: null })
+    // Nothing was booked; only a run waiting for approval can be returned.
+    expect(await prisma.journalEntry.count({ where: { reference: { startsWith: `hr.payroll.accrual:${runC}` } } })).toBe(0)
+    expect(code(await call('ceo', 'POST', `/hr/payroll/runs/${runC}/return`, { note: 'Not waiting any more', to: 'hr' }))).toBe('NOT_FINANCE_CHECKED')
+    expect((await call('ceoB', 'POST', `/hr/payroll/runs/${runC}/return`, { note: 'Not my company at all', to: 'hr' })).statusCode).toBe(404)
+    expect((await call('hr', 'DELETE', `/hr/payroll/runs/${runC}`)).statusCode).toBe(204)
   })
 
   it('the CEO may set tax on a draft and pass a run themselves; company B stays its own', async () => {

@@ -7863,6 +7863,10 @@ model HrPayrollRun {
   financeReturnNote   String?
   financeReturnedById String?
   financeReturnedAt   DateTime?
+  // The approver sent it back for correction (owner, 2026-11-01: "all approvals should be returnable").
+  ceoReturnNote       String?
+  ceoReturnedById     String?
+  ceoReturnedAt       DateTime?
   approvedById        String?
   approvedAt          DateTime?
   lockedAt            DateTime?

@@ -556,6 +556,11 @@ const payrollRuns: ApprovalProvider = {
           actions: [
             { kind: 'approve', label: 'Approve', method: 'POST', path: `/hr/payroll/runs/${r.id}/approve`, body: {},
               confirm: 'Approve this payroll? Check the payslips first on the payroll screen.' },
+            // Return for correction (owner, 2026-11-01: "all approvals should be returnable").
+            { kind: 'return', label: 'Return to finance', method: 'POST', path: `/hr/payroll/runs/${r.id}/return`, body: { to: 'finance' },
+              input: { field: 'note', label: 'What finance needs to correct (at least 10 characters)', required: true } },
+            { kind: 'return', label: 'Return to HR', method: 'POST', path: `/hr/payroll/runs/${r.id}/return`, body: { to: 'hr' },
+              input: { field: 'note', label: 'What HR needs to correct (at least 10 characters)', required: true } },
           ],
         }
       })

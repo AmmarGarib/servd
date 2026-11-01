@@ -204,7 +204,7 @@ async function stampRunVia(req: FastifyRequest, run: { id: string; tenantId: str
  * their company's run is unchanged (owner question before widening it).
  */
 async function payrollDecision(
-  req: FastifyRequest, id: string, action: 'approve' | 'lock' | 'reopen',
+  req: FastifyRequest, id: string, action: 'approve' | 'lock' | 'reopen' | 'return',
   preparer?: (run: { createdById: string | null; preparedByIds: string[]; sentToFinanceById: string | null }) => void,
 ) {
   const subj = await approvalSubjectOf('payroll_run', id)
@@ -2921,7 +2921,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const at = new Date()
     const n = await prisma.hrPayrollRun.updateMany({
       where: { id: run.id, status: 'draft' },
-      data: { status: 'finance_review', sentToFinanceById: req.staffUser!.id, sentToFinanceAt: at, financeCheckedById: null, financeCheckedAt: null, financeNote: null },
+      data: { status: 'finance_review', sentToFinanceById: req.staffUser!.id, sentToFinanceAt: at, financeCheckedById: null, financeCheckedAt: null, financeNote: null, ceoReturnNote: null, ceoReturnedById: null, ceoReturnedAt: null },
     })
     if (n.count === 0) throw new AppError('RUN_NOT_DRAFT', 'Only a draft payroll can be sent to finance', 409)
     await audit({
@@ -2941,7 +2941,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const at = new Date()
     const n = await prisma.hrPayrollRun.updateMany({
       where: { id: run.id, status: 'finance_review' },
-      data: { status: 'finance_checked', financeCheckedById: req.staffUser!.id, financeCheckedAt: at, financeNote: note || null },
+      data: { status: 'finance_checked', financeCheckedById: req.staffUser!.id, financeCheckedAt: at, financeNote: note || null, ceoReturnNote: null, ceoReturnedById: null, ceoReturnedAt: null },
     })
     if (n.count === 0) throw new AppError('NOT_WITH_FINANCE', 'This payroll is no longer with finance for review', 409)
     await audit({
@@ -3030,6 +3030,37 @@ export async function hrRoutes(fastify: FastifyInstance) {
     }, { timeout: 60_000 })
     await audit({ category: 'identity', action: 'hr.payroll.approve', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period, totals: run.totals } })
     await auditPayrollDecision(req, run, grant, 'approve')
+    return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+  })
+
+  // Return for correction (owner, 2026-11-01: "all approvals should be returnable"): the approver sends a payroll
+  // waiting for approval back — to finance (`to: 'finance'`, e.g. the tax is wrong: it is with finance again) or to HR
+  // (`to: 'hr'`, a draft; it comes back through finance). Note ≥10 (422 NOTE_TOO_SHORT); nothing was booked yet.
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/return', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const body = z.object({ note: z.string().trim().max(1000).optional(), to: z.enum(['hr', 'finance']).default('hr') }).parse(req.body ?? {})
+    const note = body.note ?? ''
+    if (note.length < 10) throw new AppError('NOTE_TOO_SHORT', 'Say what needs correcting (at least 10 characters)', 422)
+    const { run, grant } = await payrollDecision(req, req.params.id, 'return')
+    if (run.status !== 'finance_checked') throw new AppError('NOT_FINANCE_CHECKED', 'Only a payroll waiting for approval can be returned (an approved one: Reopen)', 409)
+    const at = new Date()
+    const back = { ceoReturnNote: note, ceoReturnedById: req.staffUser!.id, ceoReturnedAt: at, financeCheckedById: null, financeCheckedAt: null, financeNote: null }
+    const n = await prisma.hrPayrollRun.updateMany({
+      where: { id: run.id, status: 'finance_checked' },
+      data: body.to === 'finance' ? { status: 'finance_review', ...back } : { status: 'draft', ...back, sentToFinanceById: null, sentToFinanceAt: null },
+    })
+    if (n.count === 0) throw new AppError('NOT_FINANCE_CHECKED', 'This payroll is no longer waiting for approval', 409)
+    await audit({
+      category: 'accounting', action: 'hr.payroll.return', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId,
+      after: { period: run.period, note, to: body.to }, metadata: { actorRole: req.staffUser!.role },
+    })
+    // The bell: whoever must fix it (finance who checked it, or HR's preparers) hears it came back, with the note.
+    await auditApproval(req, {
+      type: 'payroll_run', id: run.id, tenantId: run.tenantId, decision: 'return', grant, entity: 'HrPayrollRun',
+      metadata: {
+        period: run.period, decidedAt: at.toISOString(), note, to: body.to,
+        waitingUserIds: [...new Set((body.to === 'finance' ? [run.financeCheckedById] : [run.createdById, run.sentToFinanceById, ...run.preparedByIds]).filter((x): x is string => !!x))],
+      },
+    })
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
 

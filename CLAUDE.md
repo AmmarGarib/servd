@@ -1873,7 +1873,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   through Recalculate); finance enters every payslip's tax, its own included
   (owner, 2026-10-30 — the CEO's approval is the check); audit `hr.payroll.tax_set`. The inbox and bell: `payroll_finance_review`
   (finance) then `payroll_run` (`finance_checked` only). EOBI stays HR's (off by
-  default). Tests: `tests/payrollFinanceReview.test.ts`.
+  default). **The approver returns it too (owner, 2026-11-01: "all approvals should be returnable"):** `POST
+  /hr/payroll/runs/:id/return {note ≥10, to: 'finance' | 'hr'}` (the approve right; only `finance_checked`, 409
+  `NOT_FINANCE_CHECKED`) → `finance_review` or `draft`, note on `ceoReturnNote` (cleared on the next send / pass);
+  inbox "Return to finance" / "Return to HR". Every approval type now has Return or Reject. Tests:
+  `tests/payrollFinanceReview.test.ts`.
 - **Tip pools: finance pays after the CEO's approval (owner, 2026-10-17).**
   Posting stays with the approvers (`APPROVERS` = CEO, co-owners) and records
   `TipPool.postedById` in the same write. Finance with `accounting` may pay a
