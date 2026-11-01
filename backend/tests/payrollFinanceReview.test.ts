@@ -220,17 +220,28 @@ describe('payroll: HR → finance → CEO', () => {
     expect(ok.statusCode, ok.body).toBe(200)
     expect(ok.json().status).toBe('approved')
     expect(await inboxIds('ceo', 'payroll_run')).not.toContain(runA)
-    // Reopen sends it back through finance.
+    // The approval books it (owner, 2026-11-01): Cr 2020 wages payable for the net, tax to 2042.
+    const tenantOfRun = ok.json().tenantId as string
+    const lines = async (ref: string) => (await prisma.journalEntry.findFirst({ where: { tenantId: tenantOfRun, reference: ref }, include: { lines: { include: { account: { select: { code: true } } } } } }))?.lines ?? []
+    const net = (await runOf('ceo', runA)).payslips.reduce((a, x) => a + (x as unknown as { netCents: number }).netCents, 0)
+    const first = await lines(`hr.payroll.accrual:${runA}`)
+    expect(first.filter((l) => l.account.code === '2020' && l.type === 'credit').reduce((a, l) => a + Number(l.amountCents), 0)).toBe(net)
+    // Reopen sends it back through finance and reverses the entry.
     const re = await call('ceo', 'POST', `/hr/payroll/runs/${runA}/reopen`)
+    expect(re.statusCode, re.body).toBe(200)
     expect(re.json().status).toBe('draft')
+    expect((await lines(`hr.payroll.accrual.reversal:${runA}`)).length).toBe(first.length)
     expect(re.json().financeCheckedById).toBeNull()
     expect(code(await call('ceo', 'POST', `/hr/payroll/runs/${runA}/approve`))).toBe('NOT_FINANCE_CHECKED')
     expect((await call('hr', 'POST', `/hr/payroll/runs/${runA}/send-to-finance`)).statusCode).toBe(200)
     expect((await call('fin', 'POST', `/hr/payroll/runs/${runA}/finance-pass`, {})).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/hr/payroll/runs/${runA}/approve`)).statusCode).toBe(200)
+    // Approved again: a new revision is the live entry; the lock posts nothing more.
+    expect((await lines(`hr.payroll.accrual:${runA}@2`)).length).toBe(first.length)
     const lock = await call('ceo', 'POST', `/hr/payroll/runs/${runA}/lock`)
     expect(lock.statusCode, lock.body).toBe(200)
     expect(lock.json().status).toBe('locked')
+    expect(await prisma.journalEntry.count({ where: { tenantId: tenantOfRun, reference: { startsWith: `hr.payroll.accrual:${runA}` } } })).toBe(2)
   })
 
   it('the CEO may set tax on a draft and pass a run themselves; company B stays its own', async () => {

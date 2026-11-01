@@ -10,7 +10,7 @@
 import { networkKey, onOfficeNetwork } from '../../lib/officeNetwork.js'
 import { salaryBreakup } from './payslipBreakup.js'
 import { payslipsPdf, type PayslipPdfInput } from './payslipPdf.js'
-import { getPayslipHeader, setPayslipHeader, clearPayslipHeader, payslipParticulars, PARTICULAR_FIELDS } from './payslipDocument.js'
+import { payslipParticulars, PARTICULAR_FIELDS } from './payslipDocument.js'
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { classificationOf, classifyPaymentTx, classificationsOfReferences, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import type { Prisma, UserRole, HrEmployee, HrRecord } from '@prisma/client'
@@ -53,7 +53,7 @@ const safeDocxPlaceholders = (b: Buffer): string[] => { try { return docxPlaceho
 import { CASH_REQUEST_PAID_FROM } from './advanceLoan.js'
 import { REPORTS, buildReport, reportXlsx, resolver, type ReportQuery } from './reports.js'
 import {
-  postPayrollAccrual, postPayrollPayment, postLoanDisbursement, postFinalSettlementAccrual, postFinalSettlementPayment,
+  postPayrollAccrual, reversePayrollAccrual, postPayrollPayment, postLoanDisbursement, postFinalSettlementAccrual, postFinalSettlementPayment,
   lockSettlement, FNF_ACCRUAL, FNF_PAYMENT, type PayrollPayFrom,
 } from './ledger.js'
 import { reverseJournalEntry } from '../accounting/journal.js'
@@ -1091,21 +1091,6 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // ── Settings ──────────────────────────────────────────────────────────────
   fastify.get('/settings', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => getSettings(activeTenant(req)))
 
-  // The payslip's header image, one per company (owner, 2026-10-31: "Paste this Logo as header of Payslip").
-  fastify.get('/payslip-header', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => ({ image: await getPayslipHeader(activeTenant(req)) }))
-  fastify.put('/payslip-header', { preHandler: requireAuth(...HR_ADMIN), bodyLimit: 2 * 1024 * 1024 }, async (req) => {
-    const tenantId = activeTenant(req)
-    const body = z.object({ dataBase64: z.string().min(1), mime: z.string().max(100) }).strict().parse(req.body)
-    const image = await setPayslipHeader(tenantId, body.dataBase64, body.mime)
-    await audit({ category: 'identity', action: 'hr.payslip_header.set', entity: 'Tenant', entityId: tenantId, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, metadata: { actorRole: req.staffUser!.role } })
-    return { image }
-  })
-  fastify.delete('/payslip-header', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
-    const tenantId = activeTenant(req)
-    await clearPayslipHeader(tenantId)
-    await audit({ category: 'identity', action: 'hr.payslip_header.remove', entity: 'Tenant', entityId: tenantId, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId, metadata: { actorRole: req.staffUser!.role } })
-    return reply.status(204).send()
-  })
 
   // The network the caller is on now, for "Add the network I'm on now" (HR settings).
   fastify.get('/settings/current-network', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -2786,11 +2771,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
       ...slip, employee: { fullName, employeeCode, bankName, iban, paymentMethod, eobiNo },
       breakup: salaryBreakup(slip, { basicSalaryCents, data }), particulars: parts.get(slip.id)!,
     }))
-    const payslipHeader = await getPayslipHeader(run.tenantId)
     const c = run.paidAt ? (await classificationsOfReferences(prisma, [run.tenantId], [`hr.payroll.payment:${run.id}`])).get(`hr.payroll.payment:${run.id}`) : undefined
     // The run's company's deduction types, for HR's "Add deduction" picker (owner, 2026-10-30).
     const deductionTypes = (await getSettings(run.tenantId)).deductionTypes
-    return { run: { ...run, paymentClassification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }, payslips: slips, deductionTypes, payslipHeader }
+    return { run: { ...run, paymentClassification: c?.classification ?? null, paymentEntryId: c?.journalEntryId ?? null }, payslips: slips, deductionTypes }
   })
 
   // The payslip as a PDF (owner, 2026-11-01: A4 portrait, navy and light grey, net payable in a navy band — made by
@@ -2804,10 +2788,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (rows.length === 0) return []
     const tenantId = rows[0]!.run.tenantId
     const parts = await payslipParticulars(tenantId, rows)
-    const header = await getPayslipHeader(tenantId)
     const company = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } })
     return rows.map((r) => ({
-      companyName: company?.name ?? 'Payslip', period: r.run.period, header,
+      companyName: company?.name ?? 'Payslip', period: r.run.period,
       particulars: parts.get(r.id)!, breakup: salaryBreakup(r, r.employee), paid: !!r.run.paidAt,
     }))
   }
@@ -3037,8 +3020,14 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
     // …and not in between: an edit of theirs landing after the check above.
     const unedited = req.staffUser!.role === 'admin' ? {} : { NOT: { preparedByIds: { has: me } } }
-    const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'finance_checked', ...unedited }, data: { status: 'approved', approvedById: req.staffUser!.id, approvedAt: new Date() } })
-    if (n.count === 0) throw new AppError('NOT_FINANCE_CHECKED', 'This payroll is not waiting for approval', 409)
+    // The approval books the payroll (owner, 2026-11-01: "Payroll should be booked in Wages Payable when approved by
+    // CEO"): Dr wages / Cr 2020 Wages payable, 2042 salary tax, 2043 / 2044, 1350 — in the same transaction, so a run
+    // is never approved without its entry (a closed month refuses both).
+    await prisma.$transaction(async (tx) => {
+      const n = await tx.hrPayrollRun.updateMany({ where: { id: run.id, status: 'finance_checked', ...unedited }, data: { status: 'approved', approvedById: req.staffUser!.id, approvedAt: new Date() } })
+      if (n.count === 0) throw new AppError('NOT_FINANCE_CHECKED', 'This payroll is not waiting for approval', 409)
+      await postPayrollAccrual(tx, run.id, req.staffUser!.id)
+    }, { timeout: 60_000 })
     await audit({ category: 'identity', action: 'hr.payroll.approve', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId, after: { period: run.period, totals: run.totals } })
     await auditPayrollDecision(req, run, grant, 'approve')
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
@@ -3047,11 +3036,15 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/reopen', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const { run, grant } = await payrollDecision(req, req.params.id, 'reopen')
     // Back to HR as a draft: it goes through finance again (the finance check is cleared).
-    const n = await prisma.hrPayrollRun.updateMany({
-      where: { id: run.id, status: 'approved' },
-      data: { status: 'draft', approvedById: null, approvedAt: null, sentToFinanceById: null, sentToFinanceAt: null, financeCheckedById: null, financeCheckedAt: null, financeNote: null },
-    })
-    if (n.count === 0) throw new AppError('NOT_APPROVED', 'Only an approved (not locked) payroll can be reopened', 409)
+    // The approval booked it: reopening reverses that entry (on its own date — a closed month refuses the reopen).
+    await prisma.$transaction(async (tx) => {
+      const n = await tx.hrPayrollRun.updateMany({
+        where: { id: run.id, status: 'approved' },
+        data: { status: 'draft', approvedById: null, approvedAt: null, sentToFinanceById: null, sentToFinanceAt: null, financeCheckedById: null, financeCheckedAt: null, financeNote: null },
+      })
+      if (n.count === 0) throw new AppError('NOT_APPROVED', 'Only an approved (not locked) payroll can be reopened', 409)
+      await reversePayrollAccrual(tx, run.id, req.staffUser!.id, `Payroll ${run.period} reopened`)
+    }, { timeout: 60_000 })
     await auditPayrollDecision(req, run, grant, 'reopen')
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
@@ -3062,7 +3055,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const { run, grant } = await payrollDecision(req, req.params.id, 'lock')
     const blocker = await runBlocker(run.id)
     if (blocker) throw new AppError('RUN_INCOMPLETE', blocker, 409)
-    // Locking posts the month's payroll to the books, in the same transaction:
+    // The approval booked the payroll; locking only posts it for a run approved before that rule (no-op otherwise):
     // a payroll is never locked without its accrual, nor posted twice.
     await prisma.$transaction(async (tx) => {
       const n = await tx.hrPayrollRun.updateMany({ where: { id: run.id, status: 'approved' }, data: { status: 'locked', lockedAt: new Date() } })
@@ -3665,7 +3658,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!slip) throw new NotFoundError('Payslip', req.params.id)
     const { employee, ...rest } = slip
     const particulars = (await payslipParticulars(employee.tenantId, [{ id: slip.id, inputs: slip.inputs, employee }])).get(slip.id)!
-    return { ...rest, breakup: salaryBreakup(rest, employee), particulars, payslipHeader: await getPayslipHeader(employee.tenantId) }
+    return { ...rest, breakup: salaryBreakup(rest, employee), particulars }
   })
 
   // The employee's own payslip as a PDF (locked runs only, as above).

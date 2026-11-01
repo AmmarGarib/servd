@@ -154,7 +154,7 @@ function RequestForm({ section, tenantId, department, onClose }: { section: stri
 }
 
 function MySlip({ id, onClose }: { id: string; onClose: () => void }) {
-  const { data: s, isLoading, error } = useQuery({ queryKey: ['hr-my-slip', id], queryFn: () => api.get<{ run: { period: string }; lines: Array<{ kind: string; label: string; amountCents: number }>; netCents: number; breakup?: SalaryBreakup; particulars?: PayslipParticulars; payslipHeader?: string | null }>(`/hr/me/payslips/${id}`) })
+  const { data: s, isLoading, error } = useQuery({ queryKey: ['hr-my-slip', id], queryFn: () => api.get<{ run: { period: string }; lines: Array<{ kind: string; label: string; amountCents: number }>; netCents: number; breakup?: SalaryBreakup; particulars?: PayslipParticulars}>(`/hr/me/payslips/${id}`) })
   return (
     <Modal title={s ? `Payslip ${s.run.period}` : 'Payslip'} onClose={onClose}>
       {/* Print only the slip: everything else on the page is hidden while printing. */}
@@ -163,7 +163,7 @@ function MySlip({ id, onClose }: { id: string; onClose: () => void }) {
         {s && <p className="hidden print:block text-lg font-black mb-3">Payslip {s.run.period}</p>}
         {isLoading && <p className="text-sm text-white/40">Loading payslip…</p>}
         {error && <p className="text-sm text-s-red" role="alert">{(error as Error).message}</p>}
-        {s?.particulars && <PayslipParticularsView particulars={s.particulars} header={s.payslipHeader} />}
+        {s?.particulars && <PayslipParticularsView particulars={s.particulars} />}
         {s?.breakup ? <SalaryBreakupView breakup={s.breakup} /> : (
           <>
             {s?.lines.filter((l) => l.kind !== 'employer').map((l) => (

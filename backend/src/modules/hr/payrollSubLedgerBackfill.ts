@@ -39,8 +39,7 @@ export async function backfillPayrollSubLedger(opts: { tenantIds?: string[]; for
     }
 
     const runRefs = await prisma.journalEntry.findMany({ where: { tenantId, reference: { startsWith: 'hr.payroll.accrual:' } }, select: { reference: true } })
-    for (const r of runRefs) {
-      const runId = r.reference!.slice('hr.payroll.accrual:'.length)
+    for (const runId of [...new Set(runRefs.map((r) => r.reference!.slice('hr.payroll.accrual:'.length).split('@')[0]!))]) {
       const t = await prisma.$transaction((tx) => tagPayrollRunTx(tx, runId), { timeout: 60_000 })
       res.runs++
       res.mismatched.push(...t.mismatched)

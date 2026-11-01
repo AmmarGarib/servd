@@ -18,7 +18,7 @@
 import type { CloseCheck, CloseCheckContext, CloseProblem } from '../accounting/closeCheckTypes.js'
 import { payableEmployees } from './service.js'
 import { settlementParts, settlementNet } from './logic.js'
-import { FNF_ACCRUAL } from './ledger.js'
+import { FNF_ACCRUAL, liveRunAccrual } from './ledger.js'
 import type { ApprovalEntry } from './logic.js'
 
 export const PAYROLL_ACCRUAL = 'hr.payroll.accrual'
@@ -50,7 +50,8 @@ const payrollCheck: CloseCheck = {
       select: { id: true, period: true, status: true },
     })
     const runOf = new Map(runs.map((r) => [r.period, r]))
-    const locked = runs.filter((r) => r.status === 'locked')
+    // Booked at the CEO's approval (owner, 2026-11-01); an approved or locked run must have its live accrual.
+    const locked = runs.filter((r) => r.status === 'locked' || r.status === 'approved')
     // A locked run with money must have its accrual on the books.
     const [withMoney, posted] = locked.length
       ? await Promise.all([
@@ -59,10 +60,8 @@ const payrollCheck: CloseCheck = {
           where: { tenantId, runId: { in: locked.map((r) => r.id) }, OR: [{ earningsCents: { not: 0 } }, { netCents: { not: 0 } }, { deductionsCents: { not: 0 } }] },
           _sum: { netCents: true },
         }),
-        db.journalEntry.findMany({
-          where: { tenantId, reference: { in: locked.map((r) => `${PAYROLL_ACCRUAL}:${r.id}`) } },
-          select: { reference: true },
-        }),
+        Promise.all(locked.map(async (r) => ((await liveRunAccrual(db as never, tenantId, r.id)) ? { reference: `${PAYROLL_ACCRUAL}:${r.id}` } : null)))
+          .then((xs) => xs.filter((x): x is { reference: string } => !!x)),
       ])
       : [[], []]
     const moneyOf = new Map(withMoney.map((g) => [g.runId, g._sum.netCents ?? 0]))
@@ -74,7 +73,7 @@ const payrollCheck: CloseCheck = {
     let unpostedCents = 0
     for (const m of months) {
       const run = runOf.get(m)
-      if (run?.status === 'locked') {
+      if (run?.status === 'locked' || run?.status === 'approved') {
         if (moneyOf.has(run.id) && !postedRefs.has(`${PAYROLL_ACCRUAL}:${run.id}`)) {
           notPosted.push(m)
           unpostedCents += moneyOf.get(run.id) ?? 0
@@ -89,14 +88,14 @@ const payrollCheck: CloseCheck = {
     if (all.length === 0) return null
     const bits = [
       notRun.length ? `no payroll for ${notRun.join(', ')}` : null,
-      notLocked.length ? `payroll not locked for ${notLocked.join(', ')}` : null,
-      notPosted.length ? `payroll locked but not on the books for ${notPosted.join(', ')} (marking it paid books it)` : null,
+      notLocked.length ? `payroll not approved by the CEO for ${notLocked.join(', ')}` : null,
+      notPosted.length ? `payroll approved but not on the books for ${notPosted.join(', ')} (marking it paid books it)` : null,
     ].filter(Boolean)
     return {
       key: 'payroll',
       severity: 'block',
-      title: 'Payroll not locked and booked',
-      detail: `${bits.join('; ')}. Lock each month's payroll in HR → Payroll so its wages are on the books before closing.`,
+      title: 'Payroll not approved and booked',
+      detail: `${bits.join('; ')}. Have each month's payroll approved (HR → Payroll) — the approval books its wages — before closing.`,
       count: all.length,
       ...(unpostedCents ? { cents: unpostedCents } : {}),
       months: all,

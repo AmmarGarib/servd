@@ -37,7 +37,10 @@ let empA1: string, empA2: string, empB1: string, deptB: string
 const U: Record<string, { id: string; token: string }> = {}
 
 async function tenant(name: string, kind: 'company' | 'head_office') {
-  return (await prisma.tenant.create({ data: { name, slug: `${P}-${name.toLowerCase().replace(/\W+/g, '-')}`, kind } })).id
+  const id = (await prisma.tenant.create({ data: { name, slug: `${P}-${name.toLowerCase().replace(/\W+/g, '-')}`, kind } })).id
+  // A payroll approval books the run (owner, 2026-11-01), so each company has its chart.
+  if (kind === 'company') await ensureChartOfAccounts(id)
+  return id
 }
 async function mkUser(key: string, role: UserRole, primary: string, members: string[]) {
   const u = await prisma.user.create({

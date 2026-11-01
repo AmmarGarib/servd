@@ -247,26 +247,17 @@ describe('two companies', () => {
     expect(t.rows.some((row) => typeof row[1] === 'string' && (row[1] as string).startsWith('a-'))).toBe(false)
   })
 
-  it('prints each company its own payslip header and the particulars', async () => {
-    // A 1×1 PNG.
-    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
-    const put = await call('hrA', 'PUT', '/payslip-header', { dataBase64: png, mime: 'image/png' })
-    expect(put.statusCode, put.body).toBe(200)
-    expect((await call('hrA', 'GET', '/payslip-header')).json().image).toMatch(/^data:image\/png;base64,/)
-    expect((await call('hrB', 'GET', '/payslip-header')).json().image).toBeNull()
-    expect((await call('hrA', 'PUT', '/payslip-header', { dataBase64: Buffer.from('%PDF-1.4 not a picture').toString('base64'), mime: 'application/pdf' })).statusCode).toBe(400)
-
+  it('prints each company its payslip particulars and the PDF', async () => {
     const runA = (await prisma.hrPayrollRun.findFirstOrThrow({ where: { tenantId: tenantA, period: '2027-01' } })).id
     const runB = (await prisma.hrPayrollRun.findFirstOrThrow({ where: { tenantId: tenantB, period: '2027-02' } })).id
-    const a = (await call('hrA', 'GET', `/payroll/runs/${runA}`)).json() as { payslipHeader: string | null; payslips: Array<{ employeeId: string; particulars: Record<string, unknown> }> }
-    expect(a.payslipHeader).toMatch(/^data:image\/png/)
+    const a = (await call('hrA', 'GET', `/payroll/runs/${runA}`)).json() as { payslips: Array<{ employeeId: string; particulars: Record<string, unknown> }> }
     const p = a.payslips.find((x) => x.employeeId === emps['a-full'])!.particulars
     expect(p).toMatchObject({ employeeName: 'a-full', joiningDate: '2025-01-01', monthDays: 31, paidDays: 27.5 })
     expect(p).toHaveProperty('employmentType')
     expect(p).toHaveProperty('cnic')
-    expect((await call('hrB', 'GET', `/payroll/runs/${runB}`)).json().payslipHeader).toBeNull()
+    expect((await call('hrB', 'GET', `/payroll/runs/${runB}`)).statusCode).toBe(200)
 
-    // The payslip PDF (owner, 2026-11-01): one payslip, the whole run (a page each), with the company's header;
+    // The payslip PDF (owner, 2026-11-01): one payslip, the whole run (a page each);
     // another company's payslip or run is 404.
     const slipA = await prisma.hrPayslip.findFirstOrThrow({ where: { runId: runA, employeeId: emps['a-full'] } })
     const one = await call('hrA', 'GET', `/payroll/payslips/${slipA.id}/pdf`)
@@ -282,8 +273,6 @@ describe('two companies', () => {
     expect((await call('hrB', 'GET', `/payroll/payslips/${slipA.id}/pdf`)).statusCode).toBe(404)
     expect((await call('hrB', 'GET', `/payroll/runs/${runA}/payslips.pdf`)).statusCode).toBe(404)
 
-    expect((await call('hrA', 'DELETE', '/payslip-header')).statusCode).toBe(204)
-    expect((await call('hrA', 'GET', '/payslip-header')).json().image).toBeNull()
   })
 
   it('drops a retired 26-day setting a PUT still sends', async () => {

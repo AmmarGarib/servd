@@ -4,13 +4,13 @@
 //
 // Made by the server from the payslip itself — the same figures as the screen (payslipBreakup.ts, the one
 // reading) and the particulars (payslipDocument.ts). Display only; nothing is stored. Font: Helvetica, the PDF
-// standard font with Arial's metrics (no font file to ship). The company's uploaded header picture (PNG / JPEG)
-// replaces the company name at the top left.
+// standard font with Arial's metrics (no font file to ship). No uploaded header picture (owner, 2026-11-01:
+// "remove the GS header") — the company name in text.
 //
 //   Header (company · PAYSLIP <month>) → Employee information → 01 Earnings → 02 Deductions → NET PAYABLE
 //   (navy band, amount in words) → payment period and status.
 
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage, type PDFImage } from 'pdf-lib'
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 import { safeTextFor } from '../../lib/reportExport.js'
 import type { SalaryBreakup } from './payslipBreakup.js'
 import type { PayslipParticulars } from './payslipDocument.js'
@@ -18,7 +18,6 @@ import type { PayslipParticulars } from './payslipDocument.js'
 export interface PayslipPdfInput {
   companyName: string
   period: string // YYYY-MM
-  header: string | null // data URL
   particulars: PayslipParticulars
   breakup: SalaryBreakup
   paid: boolean
@@ -68,15 +67,6 @@ export function rupeesInWords(cents: number): string {
   return `${cents < 0 ? 'Minus ' : ''}${parts.join(' ')} Rupees Only`
 }
 
-async function embedHeader(doc: PDFDocument, dataUrl: string | null): Promise<PDFImage | null> {
-  const m = dataUrl && /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
-  if (!m) return null
-  try {
-    const bytes = Buffer.from(m[2]!, 'base64')
-    return m[1] === 'png' ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)
-  } catch { return null }
-}
-
 /** One payslip per page; many payslips (a whole run) make one PDF. */
 export async function payslipsPdf(slips: PayslipPdfInput[]): Promise<Buffer> {
   const doc = await PDFDocument.create()
@@ -85,15 +75,11 @@ export async function payslipsPdf(slips: PayslipPdfInput[]): Promise<Buffer> {
   const font = await doc.embedFont(StandardFonts.Helvetica)
   const bold = await doc.embedFont(StandardFonts.HelveticaBold)
   const safe = safeTextFor(font)
-  const images = new Map<string, PDFImage | null>()
-  for (const s of slips) {
-    if (s.header && !images.has(s.header)) images.set(s.header, await embedHeader(doc, s.header))
-    drawPayslip(doc.addPage(PAGE), s, { font, bold, safe, logo: s.header ? images.get(s.header) ?? null : null })
-  }
+  for (const s of slips) drawPayslip(doc.addPage(PAGE), s, { font, bold, safe })
   return Buffer.from(await doc.save())
 }
 
-function drawPayslip(page: PDFPage, s: PayslipPdfInput, f: { font: PDFFont; bold: PDFFont; safe: (x: string) => string; logo: PDFImage | null }) {
+function drawPayslip(page: PDFPage, s: PayslipPdfInput, f: { font: PDFFont; bold: PDFFont; safe: (x: string) => string }) {
   const { font, bold, safe } = f
   const W = PAGE[0], R = W - M
   const text = (t: string, x: number, y: number, o: { size?: number; b?: boolean; color?: ReturnType<typeof rgb>; right?: boolean; maxW?: number } = {}) => {
@@ -112,20 +98,17 @@ function drawPayslip(page: PDFPage, s: PayslipPdfInput, f: { font: PDFFont; bold
     page.drawText(safe(label), { x: left + 7, y: y + 0.5, size, font: bold, color: NAVY })
   }
 
-  // ── Header ──
+  // ── Header (owner, 2026-11-01: company name + "PAYROLL & HUMAN RESOURCES" left, a rounded navy PAYSLIP box right;
+  // no uploaded picture) ──
   let y = PAGE[1] - M
-  const boxW = 120, boxH = 50
-  page.drawRectangle({ x: R - boxW, y: y - boxH, width: boxW, height: boxH, color: NAVY })
-  text('PAYSLIP', R - boxW + 12, y - 20, { size: 14, b: true, color: WHITE })
-  text(monthTitle(s.period).toUpperCase(), R - boxW + 12, y - 37, { size: 8.5, b: true, color: WHITE })
-  if (f.logo) {
-    const h = 46, w = Math.min((f.logo.width / f.logo.height) * h, W - 2 * M - boxW - 24)
-    page.drawImage(f.logo, { x: M, y: y - h, width: w, height: (w / f.logo.width) * f.logo.height })
-  } else {
-    text(s.companyName.toUpperCase(), M, y - 20, { size: 17, b: true, color: NAVY, maxW: W - 2 * M - boxW - 24 })
-    text('PAYROLL & HUMAN RESOURCES', M, y - 36, { size: 7.5, color: MUTED })
-  }
-  y -= boxH + 22
+  const boxW = 96, boxH = 40, r = 6
+  const bx = R - boxW, by = y - boxH
+  page.drawSvgPath(`M ${r} 0 H ${boxW - r} Q ${boxW} 0 ${boxW} ${r} V ${boxH - r} Q ${boxW} ${boxH} ${boxW - r} ${boxH} H ${r} Q 0 ${boxH} 0 ${boxH - r} V ${r} Q 0 0 ${r} 0 Z`, { x: bx, y: by + boxH, color: NAVY })
+  text('PAYSLIP', bx + 10, y - 17, { size: 11, b: true, color: WHITE })
+  text(monthTitle(s.period).toUpperCase(), bx + 10, y - 31, { size: 7, b: true, color: WHITE })
+  text(s.companyName.toUpperCase(), M, y - 16, { size: 13, b: true, color: NAVY, maxW: W - 2 * M - boxW - 24 })
+  text('PAYROLL & HUMAN RESOURCES', M, y - 29, { size: 6.5, color: MUTED })
+  y -= boxH + 18
   hr(y)
 
   // ── Employee information ──

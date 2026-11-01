@@ -191,7 +191,7 @@ describe('pool, preview and prepare', () => {
   })
 
   it('a month not over yet is refused', async () => {
-    const res = await call('fin', 'POST', '/', { headOfficeId: HO, period: '2026-10' })
+    const res = await call('fin', 'POST', '/', { headOfficeId: HO, period: '2099-12' })
     expect(res.statusCode).toBe(422)
     expect(code(res)).toBe('PERIOD_NOT_OVER')
   })

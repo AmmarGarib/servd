@@ -2809,12 +2809,20 @@ leave, paid days, salary) — shown on the form and printed as "Days paid".
 Tests: `tests/payrollOvertimeOptIn.test.ts`.
 **The payslip is a PDF the server makes (owner, 2026-11-01: "A4 portrait … navy blue … light grey … Net payable:
 prominent dark-blue section … PDF, with automatic generation from the payroll system").** `hr/payslipPdf.ts`
-(pdf-lib, Helvetica = Arial metrics): header (company name or the uploaded PNG / JPEG header, navy PAYSLIP box),
+(pdf-lib, Helvetica = Arial metrics): header (company name + "PAYROLL & HUMAN RESOURCES", rounded navy PAYSLIP box —
+the uploaded header picture and `/hr/payslip-header` were REMOVED, owner 2026-11-01: "remove the GS header"),
 employee information, 01 Earnings (basic, each allowance, other earnings), 02 Deductions (attendance, lates, tax,
 EOBI, other), navy NET PAYABLE band with the amount in words, payment period and status. Figures from
 `payslipBreakup.ts` only. `GET /hr/payroll/payslips/:id/pdf`, `GET /hr/payroll/runs/:id/payslips.pdf` (a page each;
 PAYROLL_READERS, company scope, foreign 404), `GET /hr/me/payslips/:id/pdf` (own, locked); `?download=1` = attachment.
 Admin `PayslipPdfButtons` (View / Download) replaced the HTML print.
+**Payroll is booked at the CEO's approval (owner, 2026-11-01: "Payroll should be booked in Wages Payable when approved
+by CEO"; standard entries confirmed).** `POST /hr/payroll/runs/:id/approve` posts the accrual in its transaction (Dr
+wages by department + employer EOBI / SESSI / Cr 2020 Wages payable net, 2042 Salary tax payable, 2043, 2044, 1350);
+finance's paid = Dr 2020 / Cr bank or cash (unchanged). Reopen of an approved run reverses it on the original's date
+(a closed month refuses the reopen); re-approval posts revision `hr.payroll.accrual:<runId>@n` — read the run's entry
+ONLY through `hr/ledger.ts liveRunAccrual` (payment, tagging, close check, payments register). Lock posts only for a
+run approved before this rule. Close check `payroll`: an approved or locked run with its live accrual passes.
 **Deductions by type (owner, 2026-10-30: "Make sub categories for deductions column, e.g: Late, Advances, loan,
 IPD, etc to select by HR").** Per-company types in HR settings `deductionTypes` (`logic.ts DEFAULT_DEDUCTION_TYPES`:
 Late coming, Advance, Loan, IPD (medical), Other; each `posting` `recovery` | `deduction`); `GET|POST /hr/deduction-types`,

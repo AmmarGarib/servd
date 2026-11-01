@@ -33,7 +33,7 @@ import type { HrRecord, Prisma } from '@prisma/client'
 import { classifyPaymentTx, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { ACCT, postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
+import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from '../accounting/journal.js'
 import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { toCents } from '../../lib/money.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
@@ -92,9 +92,57 @@ function toLines(signed: Map<string, number>, memo: string): JournalLineInput[] 
   return out
 }
 
+// ─── When payroll is booked (owner, 2026-11-01: "Payroll should be booked in Wages Payable when approved by CEO") ──
+// The accrual is posted when the run is APPROVED (it used to be at lock; lock still posts one for a run approved
+// before this rule). Reopening an approved run reverses it (dated as the original, so a closed month refuses the
+// reopen); the next approval posts a new revision: source id `<runId>` first, then `<runId>@2`, `@3`… — ONE live
+// accrual per run at a time. Readers find it with liveRunAccrual, never the bare `hr.payroll.accrual:<runId>`.
+export const RUN_ACCRUAL = 'hr.payroll.accrual'
+const revisionId = (runId: string, n: number) => (n <= 1 ? runId : `${runId}@${n}`)
+/** The run id of an accrual source id (`<runId>` or `<runId>@n`). */
+export const runIdOfAccrualSource = (sourceId: string) => sourceId.split('@')[0]!
+
+/** The run's accrual revisions, oldest first, each with whether it was reversed. */
+async function runAccruals(db: Tx | typeof prisma, tenantId: string, runId: string) {
+  const refs = await db.journalEntry.findMany({
+    where: { tenantId, OR: [{ reference: `${RUN_ACCRUAL}:${runId}` }, { reference: { startsWith: `${RUN_ACCRUAL}:${runId}@` } }] },
+    select: { id: true, reference: true },
+  })
+  const revs = refs.map((r) => ({ id: r.id, reference: r.reference!, sourceId: r.reference!.slice(RUN_ACCRUAL.length + 1) }))
+    .map((r) => ({ ...r, n: r.sourceId.includes('@') ? Number(r.sourceId.split('@')[1]) : 1 }))
+    .sort((a, b) => a.n - b.n)
+  const reversed = new Set((await db.journalEntry.findMany({
+    where: { tenantId, reference: { in: revs.map((r) => `${RUN_ACCRUAL}.reversal:${r.sourceId}`) } },
+    select: { reference: true },
+  })).map((r) => r.reference!.slice(`${RUN_ACCRUAL}.reversal:`.length)))
+  return revs.map((r) => ({ ...r, reversed: reversed.has(r.sourceId) }))
+}
+
+/** The run's live (not reversed) accrual, or null. */
+export async function liveRunAccrual(db: Tx | typeof prisma, tenantId: string, runId: string): Promise<{ entryId: string; reference: string; sourceId: string } | null> {
+  const live = (await runAccruals(db, tenantId, runId)).filter((r) => !r.reversed).pop()
+  return live ? { entryId: live.id, reference: live.reference, sourceId: live.sourceId } : null
+}
+
+/** Reopen of an approved run: reverse its live accrual on the original's date (nothing live = nothing to do). */
+export async function reversePayrollAccrual(tx: Tx, runId: string, postedBy: string, reason: string) {
+  const run = await tx.hrPayrollRun.findUnique({ where: { id: runId }, select: { tenantId: true } })
+  if (!run) throw new AppError('NOT_FOUND', 'Payroll not found', 404)
+  const live = await liveRunAccrual(tx, run.tenantId, runId)
+  if (!live) return null
+  const orig = await tx.journalEntry.findUniqueOrThrow({ where: { id: live.entryId }, select: { entryDate: true } })
+  return reverseJournalEntry(run.tenantId, RUN_ACCRUAL, live.sourceId, reason, { tx, postedBy, entryDate: orig.entryDate })
+}
+
 export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string) {
   const run = await tx.hrPayrollRun.findUnique({ where: { id: runId } })
   if (!run) throw new AppError('NOT_FOUND', 'Payroll not found', 404)
+  // One live accrual per run: approval posts it, a later lock (or the payment of an older run) finds it.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`payroll-accrual:${runId}`}))`
+  const revs = await runAccruals(tx, run.tenantId, runId)
+  const live = revs.filter((r) => !r.reversed).pop()
+  if (live) return { entryId: live.id, posted: false }
+  const sourceId = revisionId(runId, (revs.at(-1)?.n ?? 0) + 1)
   const slips = await tx.hrPayslip.findMany({ where: { runId }, include: { employee: { select: { departmentId: true } } } })
   const deptIds = Array.from(new Set(slips.map((s) => s.employee.departmentId).filter(Boolean) as string[]))
   const depts = await tx.department.findMany({ where: { id: { in: deptIds } }, select: { id: true, name: true } })
@@ -129,8 +177,8 @@ export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string
   await assertLineAccounts(tx, run.tenantId, lines)
   const res = await postJournalEntry({
     tenantId: run.tenantId,
-    sourceType: 'hr.payroll.accrual',
-    sourceId: run.id,
+    sourceType: RUN_ACCRUAL,
+    sourceId,
     description: `Payroll ${run.period}`,
     entryDate: new Date(Date.UTC(y, m, 0)),
     postedBy,
@@ -188,7 +236,8 @@ export async function tagPayrollRunTx(tx: Tx, runId: string): Promise<{ mismatch
   const run = await tx.hrPayrollRun.findUnique({ where: { id: runId }, select: { tenantId: true } })
   if (!run) return { mismatched: [] }
   const { accrual, payment } = await payrollRunShares(tx, runId)
-  return tagSourceEntriesTx(tx, run.tenantId, [[`hr.payroll.accrual:${runId}`, accrual], [`hr.payroll.payment:${runId}`, payment]])
+  const live = await liveRunAccrual(tx, run.tenantId, runId)
+  return tagSourceEntriesTx(tx, run.tenantId, [[live?.reference ?? `${RUN_ACCRUAL}:${runId}`, accrual], [`hr.payroll.payment:${runId}`, payment]])
 }
 
 const SETTLEMENT_TAG_CODES: readonly string[] = [ACCT.WAGES_KITCHEN, ACCT.WAGES_FOH, ACCT.WAGES_MANAGEMENT, ACCT.WAGES_RIDERS, ACCT.GRATUITY, ACCT.WAGES_PAYABLE, STAFF_LOANS]
@@ -260,7 +309,7 @@ export async function postPayrollPayment(runId: string, paidBy: string, from: Pa
     // Pay exactly what the lock accrued to Wages Payable — never a separate
     // sum. Summing only the positive nets paid PKR 5,000 more than was accrued
     // when one payslip was negative, and left 2020 in debit (audit PPL-07).
-    const reference = `hr.payroll.accrual:${run.id}`
+    let reference = (await liveRunAccrual(tx, run.tenantId, run.id))?.reference ?? `${RUN_ACCRUAL}:${run.id}`
     let net = await accruedWagesPayable(tx, run.tenantId, reference)
     if (net == null) {
       // Locked before locking posted the accrual (before 2026-09-24): book it
@@ -268,6 +317,7 @@ export async function postPayrollPayment(runId: string, paidBy: string, from: Pa
       // instead of marking the run paid with nothing reaching the ledger
       // (audit HR-R6). An empty month posts nothing and pays nothing.
       await postPayrollAccrual(tx, run.id, paidBy)
+      reference = (await liveRunAccrual(tx, run.tenantId, run.id))?.reference ?? reference
       net = (await accruedWagesPayable(tx, run.tenantId, reference)) ?? 0
     }
     if (net < 0) throw new AppError('PAYROLL_UNBALANCED', `Payroll ${run.period} accrued a negative wages payable — reopen and recalculate it`, 409)

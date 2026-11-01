@@ -115,15 +115,9 @@ export function particularRows(p: PayslipParticulars): Array<[string, string]> {
   ]
 }
 
-/** Only a stored image data URL is ever used as the header (never a link). */
-const safeHeader = (h: string | null | undefined) => (h && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(h) ? h : null)
-
-export function PayslipParticularsView({ particulars, header }: { particulars: PayslipParticulars; header?: string | null }) {
-  const img = safeHeader(header)
+export function PayslipParticularsView({ particulars }: { particulars: PayslipParticulars }) {
   return (
     <div className="mb-3">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      {img && <img src={img} alt="Company header" className="w-full rounded-lg mb-3 object-contain" />}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
         {particularRows(particulars).map(([k, v]) => (
           <div key={k} className="min-w-0">

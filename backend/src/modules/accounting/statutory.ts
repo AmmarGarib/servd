@@ -177,7 +177,7 @@ export async function legacyHrEntries(db: Db, tenantId: string, range?: { from: 
   })
   const parsed = entries.flatMap((e) => {
     const m = HR_ACCRUAL.exec(e.reference ?? '')
-    return m ? [{ e, kind: m[1] === 'hr.payroll.accrual' ? 'payroll' as const : 'final_settlement' as const, reversal: !!m[2], sourceId: m[3]! }] : []
+    return m ? [{ e, kind: m[1] === 'hr.payroll.accrual' ? 'payroll' as const : 'final_settlement' as const, reversal: !!m[2], sourceId: m[3]!.split('@')[0]! }] : []
   })
   if (parsed.length === 0) return []
 

@@ -131,7 +131,8 @@ describe('A) wage change', () => {
     expect(await gross(emps.cook!)).toBe(RS(60000))
     // HR raised it: its HR step is signed by raising; it waits on management (the manager channel), not the CEO yet.
     expect((await approvalSubject('wage_change', reqId))!.status).toBe('with_managers')
-    const run = await call('hrA', 'POST', '/hr/payroll/runs', { period: '2026-10' })
+    // This month: the wage change is effective today.
+    const run = await call('hrA', 'POST', '/hr/payroll/runs', { period: new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 7) })
     expect(run.statusCode, run.body).toBe(201)
     runId = run.json().id
     const slip = (await call('hrA', 'GET', `/hr/payroll/runs/${runId}`)).json().payslips.find((s: { employeeId: string }) => s.employeeId === emps.cook)

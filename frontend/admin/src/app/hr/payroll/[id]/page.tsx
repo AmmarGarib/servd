@@ -57,7 +57,6 @@ interface Detail {
   }
   payslips: Slip[]
   deductionTypes?: DeductionType[]
-  payslipHeader?: string | null
 }
 
 /** The run's status in plain words. */
@@ -166,8 +165,8 @@ export default function PayrollRunPage() {
     const ok = await confirm(
       what === 'send-to-finance' ? { title: `Send payroll for ${run.period} to finance?`, body: `${facts} Finance checks it and enters the income tax. You cannot edit it while finance has it; finance can send it back to you.`, confirmLabel: 'Send to finance' }
       : what === 'finance-pass' ? { title: `Pass payroll for ${run.period} to the CEO?`, body: `${facts} Check the income tax on each payslip first. The CEO then approves it.`, confirmLabel: 'Pass to CEO' }
-      : what === 'lock' ? { title: `Lock payroll for ${run.period}?`, body: `${facts} It is posted to the books and cannot be undone.`, confirmLabel: 'Lock payroll', danger: true }
-      : what === 'approve' ? { title: `Approve payroll for ${run.period}?`, body: `${facts} After approval it can be reopened until it is locked.`, confirmLabel: 'Approve' }
+      : what === 'lock' ? { title: `Lock payroll for ${run.period}?`, body: `${facts} It cannot be reopened after this.`, confirmLabel: 'Lock payroll', danger: true }
+      : what === 'approve' ? { title: `Approve payroll for ${run.period}?`, body: `${facts} Approving books it: Dr wages expense / Cr 2020 Wages payable (income tax to 2042 Salary tax payable). Reopening before the lock reverses that entry.`, confirmLabel: 'Approve' }
       : { title: `Delete the draft payroll for ${run.period}?`, body: `${facts} The calculation is discarded; you can calculate the month again.`, confirmLabel: 'Delete draft', danger: true })
     if (ok) act.mutate(what)
   }
@@ -306,7 +305,7 @@ export default function PayrollRunPage() {
           </div>
         </div>
       )}
-      {editing && run && <SlipModal key={`${editing.id}:${((editing.inputs['otRecordIds'] as string[] | undefined) ?? []).join(',')}:${Number(editing.inputs['otCents'] ?? 0)}`} slip={editing} period={run.period} draft={run.status === 'draft'} types={data?.deductionTypes ?? []} header={data?.payslipHeader ?? null} onClose={() => setEditingId(null)} />}
+      {editing && run && <SlipModal key={`${editing.id}:${((editing.inputs['otRecordIds'] as string[] | undefined) ?? []).join(',')}:${Number(editing.inputs['otCents'] ?? 0)}`} slip={editing} period={run.period} draft={run.status === 'draft'} types={data?.deductionTypes ?? []} onClose={() => setEditingId(null)} />}
       {returning && run && <ReturnModal runId={run.id} period={run.period} onClose={() => setReturning(false)} />}
       {taxSlip && run && <TaxModal slip={taxSlip} period={run.period} onClose={() => setTaxSlipId(null)} />}
       {paying && run && data && <PayRunModal runId={run.id} tenantId={run.tenantId} period={run.period} slips={data.payslips} onClose={() => setPaying(false)} />}
@@ -424,7 +423,7 @@ function PayRunModal({ runId, tenantId, period, slips, onClose }: { runId: strin
   )
 }
 
-function SlipModal({ slip, period, draft, types, header, onClose }: { slip: Slip; period: string; draft: boolean; types: DeductionType[]; header: string | null; onClose: () => void }) {
+function SlipModal({ slip, period, draft, types, onClose }: { slip: Slip; period: string; draft: boolean; types: DeductionType[]; onClose: () => void }) {
   const qc = useQueryClient()
   const initial = Object.fromEntries(INPUTS.map(([k]) => [k, Number(slip.inputs[k] ?? 0)])) as Record<string, number>
   const basis = basisOf(slip)
@@ -479,7 +478,7 @@ function SlipModal({ slip, period, draft, types, header, onClose }: { slip: Slip
       <form onSubmit={submit} noValidate className="grid md:grid-cols-2 gap-5">
         <div>
           <p className="text-[11px] font-black uppercase tracking-wider text-white/40 mb-2">Payslip</p>
-          <PayslipParticularsView particulars={slip.particulars} header={header} />
+          <PayslipParticularsView particulars={slip.particulars} />
           <SalaryBreakupView breakup={slip.breakup} />
           {slip.lines.some((l) => l.kind === 'employer' && l.amountCents !== 0) && (
             <p className="text-[11px] text-white/45 mt-2">Employer pays on top: {slip.lines.filter((l) => l.kind === 'employer' && l.amountCents !== 0).map((l) => `${l.label} ${rs(l.amountCents)}`).join(' · ')}</p>

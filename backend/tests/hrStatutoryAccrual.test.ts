@@ -157,30 +157,31 @@ describe('payroll and F&F credit the statutory payables', () => {
     expect(amt(e!.lines, '2090', 'credit') + amt(e!.lines, '2040', 'credit')).toBe(0)
   })
 
-  it('refuses with 422 ACCOUNT_CODE_TAKEN when the company took 2043 for its own account — the run stays approved; B is unaffected', async () => {
+  it('refuses with 422 ACCOUNT_CODE_TAKEN when the company took 2043 for its own account — the run stays unapproved; B is unaffected', async () => {
     const aug = (await call('hr', 'POST', '/payroll/runs', { period: '2026-08' })).json().id
     expect((await call('hr', 'POST', `/payroll/runs/${aug}/send-to-finance`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${aug}/finance-pass`, {})).statusCode).toBe(200)
-    expect((await call('ceo', 'POST', `/payroll/runs/${aug}/approve`)).statusCode).toBe(200)
     await prisma.account.updateMany({ where: { tenantId: tenantA, code: '2043' }, data: { type: 'expense', name: 'Office tea' } })
     try {
-      const lock = await call('ceo', 'POST', `/payroll/runs/${aug}/lock`)
-      expect(lock.statusCode).toBe(422)
-      expect(lock.json().error.code).toBe('ACCOUNT_CODE_TAKEN')
-      expect(lock.json().error.message).toMatch(/2043/)
-      expect((await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: aug } })).status).toBe('approved')
+      // The approval books it (owner, 2026-11-01), so the approval is what is refused.
+      const appr = await call('ceo', 'POST', `/payroll/runs/${aug}/approve`)
+      expect(appr.statusCode).toBe(422)
+      expect(appr.json().error.code).toBe('ACCOUNT_CODE_TAKEN')
+      expect(appr.json().error.message).toMatch(/2043/)
+      expect((await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: aug } })).status).toBe('finance_checked')
       expect(await entry(tenantA, `hr.payroll.accrual:${aug}`)).toBeNull()
 
-      // Company B's own 2043 is its template account: B locks normally.
+      // Company B's own 2043 is its template account: B approves and locks normally.
       const augB = await runFor('hrB', 'ceoB', '2026-08')
       const eb = await entry(tenantB, `hr.payroll.accrual:${augB}`)
       expect(amt(eb!.lines, '2043', 'credit')).toBeGreaterThan(0)
     } finally {
       await prisma.account.updateMany({ where: { tenantId: tenantA, code: '2043' }, data: { type: 'liability', name: 'EOBI Payable' } })
     }
-    // Fixed, the lock goes through.
-    expect((await call('ceo', 'POST', `/payroll/runs/${aug}/lock`)).statusCode).toBe(200)
+    // Fixed, the approval goes through and books it; the lock adds nothing.
+    expect((await call('ceo', 'POST', `/payroll/runs/${aug}/approve`)).statusCode).toBe(200)
     expect(await entry(tenantA, `hr.payroll.accrual:${aug}`)).not.toBeNull()
+    expect((await call('ceo', 'POST', `/payroll/runs/${aug}/lock`)).statusCode).toBe(200)
   })
 })
 
@@ -228,9 +229,9 @@ describe('hrCloseChecks', () => {
     // A lock part way into a month does not ask for that month's payroll.
     expect(await payrollCheck.run(ctxFor(tenantA, ['2026-08', '2026-09'], pktEnd('2026-09-10')))).toBeNull()
 
-    // An unlocked (approved) run blocks too.
+    // An approved run is booked (owner, 2026-11-01) — it no longer blocks; the lock changes nothing.
     const sep = await runFor('hr', 'ceo', '2026-09', false)
-    expect((await payrollCheck.run(ctxFor(tenantA, ['2026-09'], pktEnd('2026-09-30'))))?.months).toEqual(['2026-09'])
+    expect(await payrollCheck.run(ctxFor(tenantA, ['2026-09'], pktEnd('2026-09-30')))).toBeNull()
     expect((await call('ceo', 'POST', `/payroll/runs/${sep}/lock`)).statusCode).toBe(200)
     expect(await payrollCheck.run(ctxFor(tenantA, ['2026-07', '2026-08', '2026-09'], pktEnd('2026-09-30')))).toBeNull()
   })

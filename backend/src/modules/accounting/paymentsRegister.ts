@@ -623,7 +623,10 @@ async function sourceDetails(db: Db, aggs: Array<{ id: string; tenantId: string;
   if (of('hr.payroll.payment').length) tasks.push((async () => {
     const runs = await db.hrPayrollRun.findMany({ where: { id: { in: ids('hr.payroll.payment') } }, select: { id: true, period: true } })
     const rm = new Map(runs.map((r) => [r.id, r]))
-    const tax = await accrualTax(db, of('hr.payroll.payment').map((x) => ({ ...x, accrual: `hr.payroll.accrual:${x.sourceId}` })))
+    // The run's LIVE accrual (a run reopened after approval has a later revision, `<runId>@n` — hr/ledger.ts).
+    const { liveRunAccrual } = await import('../hr/ledger.js')
+    const pays = await Promise.all(of('hr.payroll.payment').map(async (x) => ({ ...x, accrual: (await liveRunAccrual(db as never, x.tenantId, x.sourceId))?.reference ?? `hr.payroll.accrual:${x.sourceId}` })))
+    const tax = await accrualTax(db, pays)
     for (const x of of('hr.payroll.payment')) {
       const r = rm.get(x.sourceId)
       set(x.entryId, { voucherNumber: r ? `Payroll ${r.period}` : undefined, payee: r ? `Staff payroll ${r.period}` : undefined, whtCents: tax.get(x.entryId) ?? 0 })
