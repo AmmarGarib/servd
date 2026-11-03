@@ -224,6 +224,11 @@ async function send(number: string, message: string, scope?: SendScope | null) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': key },
     body: JSON.stringify({ number, message }),
+    // A gateway that hangs must not hold the caller: signup and password reset
+    // send WhatsApp and email together and wait for both (otp.ts
+    // requestSharedCode), so a stuck WhatsApp used to keep the customer waiting
+    // even though the email copy had already gone (2026-11-03).
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) {
     const err = await res.text().catch(() => '')
