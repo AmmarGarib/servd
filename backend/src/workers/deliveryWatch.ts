@@ -29,7 +29,7 @@ import cron from 'node-cron'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { sendText } from '../lib/whatsapp.js'
 import { sendEmail, emailConfigured } from '../lib/mailer.js'
-import { whatsappConfigured } from '../lib/whatsapp.js'
+import { whatsappConfigured, whatsappEndpoint } from '../lib/whatsapp.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
 import { notifyStaffMany, type NotifyInput } from '../lib/staffNotify.js'
 import { CONNECTOR_ADMINS } from '../lib/connectorRoles.js'
@@ -39,7 +39,7 @@ export const DELIVERY_STATE_KEY = 'integrations.delivery.state'
 
 export interface DeliveryState {
   ok: boolean
-  cause: 'ok' | 'unconfigured' | 'session_dropped' | 'bad_key' | 'gateway_unreachable' | 'unknown'
+  cause: 'ok' | 'unconfigured' | 'session_dropped' | 'session_not_running' | 'app_missing' | 'bad_key' | 'gateway_unreachable' | 'unknown'
   detail: string
   fix: string
   checkedAt: string
@@ -60,6 +60,14 @@ const HUMAN: Record<DeliveryState['cause'], { detail: string; fix: string }> = {
   session_dropped: {
     detail: 'The gateway is up but its WhatsApp session is not linked — this is what happens when the phone goes offline or WhatsApp logs the device out.',
     fix: 'Open the gateway page, find the servd app, and scan the QR code with the business WhatsApp phone. Takes about thirty seconds.',
+  },
+  session_not_running: {
+    detail: 'servd’s app is on the gateway, but no WhatsApp session is running for it — the gateway is up, servd’s own app on it is not started or linked.',
+    fix: 'On the gateway page, open servd’s app and start it / scan its QR with the business WhatsApp phone. Or, if servd should use another app that is already running, paste that app’s endpoint and key into admin → Dev → API → WhatsApp connector.',
+  },
+  app_missing: {
+    detail: 'The gateway has no app with the id in servd’s endpoint — it was deleted or recreated.',
+    fix: 'Copy the endpoint and key of servd’s app from the gateway’s API Info tab into admin → Dev → API → WhatsApp connector.',
   },
   bad_key: {
     detail: 'The gateway rejected our API key.',
@@ -95,10 +103,7 @@ export async function probeDelivery(): Promise<DeliveryState> {
   // The endpoint is .../webhook/<clientId>/send; the gateway exposes /health on
   // its root with every client's state. Derive one from the other rather than
   // asking the operator to configure a second URL that can drift out of step.
-  const { url } = await (async () => {
-    const rows = await prisma.setting.findMany({ where: { key: 'integrations.whatsapp.apiUrl' } })
-    return { url: rows[0]?.value?.trim() || (process.env['WHATSAPP_API_URL'] ?? '').trim() }
-  })()
+  const { url, key } = await whatsappEndpoint()
 
   const m = url.match(/^(https:\/\/[^/]+)\/webhook\/([^/]+)\/send$/)
   if (!m) return mk(false, 'unknown')
@@ -115,9 +120,22 @@ export async function probeDelivery(): Promise<DeliveryState> {
   const body = await res.json().catch(() => null) as { clients?: Record<string, string> } | null
   const state = body?.clients?.[clientId!]
   if (!state) {
-    // The app we are pointed at is not on the gateway any more — deleted, or
-    // the endpoint is stale. Same remedy as a bad key: go and re-copy it.
-    return mk(false, 'bad_key')
+    // Not in the running clients. That is NOT proof of a bad key (it used to be
+    // reported as one, 2026-11-03: the app existed but its session was not
+    // running after the gateway moved to AWS). Ask the app itself, with our
+    // key: the gateway checks the app before the key, so
+    //   404 "App not found" → app_missing, 401 → bad_key,
+    //   anything else      → the app and key are fine, its session is not running.
+    try {
+      const r = await fetch(`${origin}/webhook/${clientId}/groups`, {
+        headers: { 'x-api-key': key }, signal: AbortSignal.timeout(10_000),
+      })
+      if (r.status === 404) return mk(false, 'app_missing')
+      if (r.status === 401 || r.status === 403) return mk(false, 'bad_key')
+      return mk(false, 'session_not_running')
+    } catch {
+      return mk(false, 'gateway_unreachable')
+    }
   }
   if (state !== 'READY') return mk(false, 'session_dropped')
   return mk(true, 'ok')
@@ -227,7 +245,21 @@ async function confirmedProbe(): Promise<DeliveryState> {
   return state
 }
 
-export async function runDeliveryWatch(): Promise<DeliveryState> {
+/**
+ * One run at a time across every API process (boot run + cron tick, or two
+ * containers on one database): two overlapping runs each read the old state and
+ * each sent the alert — the duplicate "signup is down" emails of 2026-11-03.
+ * A run that finds another in progress skips and returns the stored state.
+ */
+export async function runDeliveryWatch(): Promise<DeliveryState | null> {
+  return prisma.$transaction(async (tx) => {
+    const got = await tx.$queryRaw<Array<{ ok: boolean }>>`SELECT pg_try_advisory_xact_lock(hashtext('servd.deliveryWatch')) AS ok`
+    if (!got[0]?.ok) return readState()
+    return runDeliveryWatchLocked()
+  }, { timeout: 180_000, maxWait: 10_000 })
+}
+
+async function runDeliveryWatchLocked(): Promise<DeliveryState> {
   const state = await confirmedProbe()
   const previous = await readState()
 

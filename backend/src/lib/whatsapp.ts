@@ -131,6 +131,11 @@ async function config(): Promise<{ url: string; key: string }> {
   return { url, key }
 }
 
+/** The endpoint and key in force (server-side only — never return the key to a client). */
+export async function whatsappEndpoint(): Promise<{ url: string; key: string }> {
+  return config()
+}
+
 /** Is a gateway configured at all? Used by /health and by the admin screen. */
 export async function whatsappConfigured(): Promise<boolean> {
   if (isSandbox()) return true // practice copy: send() answers a practice result

@@ -65,4 +65,11 @@ describe('delivery watchdog alerts', () => {
     await runDeliveryWatch()
     expect(mine().map((e) => e.subject)).toEqual(['servd: customer signup is down', 'servd: customer signup is back up'])
   })
+
+  it('two runs at the same moment send ONE alert (one run at a time)', async () => {
+    gateway(null)
+    await runDeliveryWatch()
+    await Promise.all([runDeliveryWatch(), runDeliveryWatch(), runDeliveryWatch()])
+    expect(mine().map((e) => e.subject)).toEqual(['servd: customer signup is down'])
+  })
 })

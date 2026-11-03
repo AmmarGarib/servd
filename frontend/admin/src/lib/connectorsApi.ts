@@ -557,7 +557,7 @@ export interface WhatsappStatus {
 
 export interface DeliveryState {
   ok: boolean
-  cause: 'ok' | 'unconfigured' | 'session_dropped' | 'bad_key' | 'gateway_unreachable' | 'unknown'
+  cause: 'ok' | 'unconfigured' | 'session_dropped' | 'session_not_running' | 'app_missing' | 'bad_key' | 'gateway_unreachable' | 'unknown'
   detail: string
   fix: string
   checkedAt: string | null

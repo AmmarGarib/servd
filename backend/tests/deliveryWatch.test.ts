@@ -56,11 +56,38 @@ describe('naming the fault', () => {
     expect(s.fix.toLowerCase()).toContain('qr')
   })
 
-  it('says bad_key when the app is not on the gateway any more', async () => {
+  // Not in the running clients: ask the app itself (2026-11-03 — a stopped
+  // session used to be reported as "the gateway rejected our API key").
+  function mockHealthThenApp(appStatus: number) {
+    const f = vi.fn(async (u: string) => (String(u).endsWith('/health')
+      ? { ok: true, status: 200, json: async () => ({ status: 'ok', clients: { somethingelse: 'READY' } }) }
+      : { ok: appStatus < 400, status: appStatus, json: async () => ({}) }))
+    vi.stubGlobal('fetch', f as unknown as typeof fetch)
+    return f
+  }
+
+  it('says bad_key only when the gateway refuses our key', async () => {
     await setGateway(URL_OK)
-    mockGatewayHealth({ status: 'ok', clients: { somethingelse: 'READY' } })
+    const f = mockHealthThenApp(401)
     const s = await probeDelivery()
     expect(s.cause).toBe('bad_key')
+    const [u, init] = f.mock.calls[1] as unknown as [string, { headers: Record<string, string> }]
+    expect(u).toBe('https://gw.example/webhook/abc123/groups')
+    expect(init.headers['x-api-key']).toBe('sk-test')
+  })
+
+  it('says app_missing when the gateway has no such app', async () => {
+    await setGateway(URL_OK)
+    mockHealthThenApp(404)
+    expect((await probeDelivery()).cause).toBe('app_missing')
+  })
+
+  it('says session_not_running when the app and key are fine but no session runs', async () => {
+    await setGateway(URL_OK)
+    mockHealthThenApp(200)
+    const s = await probeDelivery()
+    expect(s.cause).toBe('session_not_running')
+    expect(s.detail).not.toContain('API key')
   })
 
   it('says gateway_unreachable when the host does not answer', async () => {
