@@ -54,7 +54,8 @@ const inputCls = 'rounded-md border border-s-border bg-s-bg px-2 py-1 text-sm te
 export function MasterIngredientPicker({ label, onPicked, className = '', tenantId }: {
   /** What the control shows while closed (the line's current ingredient). */
   label: string
-  onPicked: (item: PickedItem) => void
+  /** `price` = servd's price of the picked ingredient (per kg / litre / pcs), when the search row carried one. */
+  onPicked: (item: PickedItem, price?: MasterPrice | null) => void
   className?: string
   /** The company the stock item must be in (e.g. a PO's supplier's company); default the active company. */
   tenantId?: string | null
@@ -77,11 +78,11 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
     staleTime: 30_000,
   })
 
-  async function pick(masterId: string) {
+  async function pick(masterId: string, typedPrice?: MasterPrice | null) {
     setBusy(true); setErr('')
     try {
       const item = await api.post<PickedItem & { masterIngredientId: string }>('/inventory/from-master', { masterIngredientId: masterId }, tenantId ? { tenantId } : undefined)
-      onPicked(item)
+      onPicked(item, typedPrice ?? rows.find((r) => r.id === masterId)?.price ?? null)
       setOpen(false); setQ(''); setAdding(null)
     } catch (e) {
       setErr(stockErrorText(e))
@@ -99,7 +100,9 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
       if (adding.price.trim() && Number.isFinite(price) && price > 0) {
         await api.put(`/ingredient-master/${m.id}/price`, { priceCents: Math.round(price * 100) })
       }
-      await pick(m.id)
+      await pick(m.id, adding.price.trim() && Number.isFinite(price) && price > 0
+        ? { displayUnit: priceUnitOf(adding.unit), latestCents: Math.round(price * 100), latestAt: null, latestSource: 'sheet', latestSupplier: null, latestCompany: null, averageCents: null, averageDays: 90, averageDeliveries: 0 }
+        : null)
     } catch (e) {
       setErr(stockErrorText(e)); setBusy(false)
     }

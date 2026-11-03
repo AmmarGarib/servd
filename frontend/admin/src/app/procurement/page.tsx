@@ -1,6 +1,6 @@
 'use client'
 import { CompanyTicks } from '../../components/ui/TenantPicker'
-import { MasterIngredientPicker } from '../../components/kitchen/MasterIngredientPicker'
+import { MasterIngredientPicker, type MasterPrice } from '../../components/kitchen/MasterIngredientPicker'
 import { fmtUnitCost, priceSourceLabel } from '../../lib/unitCost'
 import { Button, CheckLabel, FieldLabel, Input, LinkButton } from '@/components/finance/ui'
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -178,7 +178,7 @@ const rupeesToPaisa = (v: string) => Math.round(Number(v) * 100)
 /** A stored instant (the end of a PKT day) as the PKT calendar date YYYY-MM-DD. */
 const pktDate = (iso: string) => new Date(new Date(iso).getTime() + 5 * 3_600_000).toISOString().slice(0, 10)
 
-interface InventoryItem { id: string; name: string; unit: string; supplierId?: string | null; unitCostCents?: number | null }
+interface InventoryItem { id: string; name: string; unit: string; supplierId?: string | null; unitCostCents?: number | null; latestCostCents?: number | null }
 interface PriceHistoryRow {
   id: string; inventoryItemId: string; supplierId?: string | null
   oldCostCents?: number | null; newCostCents: number; source: string
@@ -779,6 +779,16 @@ function PoChainPanel({ po }: { po: PurchaseOrder }) {
   )
 }
 
+/** servd's price is per kg / litre / pcs; a PO line is costed per STOCK unit (g → ÷1000, ml → ÷1000). */
+function costPerStockUnit(price: MasterPrice | null, unit: string): number | null {
+  const c = price?.latestCents
+  if (c == null || !(c > 0)) return null
+  const per = price!.displayUnit
+  if (per === 'kg') return unit === 'g' ? c / 1000 : unit === 'kg' ? c : null
+  if (per === 'litre') return unit === 'ml' ? c / 1000 : unit === 'litres' || unit === 'l' ? c : null
+  return unit === 'pcs' || unit === 'each' ? c : null
+}
+
 // ─── Create PO form ───────────────────────────────────────────────────────────
 
 function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; initial?: PoDraft; title?: string; editId?: string }) {
@@ -822,7 +832,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   function addLine() { setLines([...lines, { inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }]) }
   function removeLine(i: number) { setLines(lines.filter((_, idx) => idx !== i)) }
   function updateLine(i: number, field: string, val: string) {
-    setLines(lines.map((l, idx) => idx === i ? { ...l, [field]: val } : l))
+    setLines((prev) => prev.map((l, idx) => idx === i ? { ...l, [field]: val } : l))
   }
 
   const totalCents = lines.reduce((s, l) => s + (Number(l.quantityOrdered) || 0) * Math.round((Number(l.unitCostCents) || 0) * 100), 0)
@@ -862,37 +872,54 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
       {/* Lines */}
       <div className="space-y-2">
         <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Line items</p>
-        {lines.map((line, i) => (
+        {lines.map((line, i) => {
+          const item = invItems.find((x) => x.id === line.inventoryItemId)
+          return (
           <div key={i} className="grid grid-cols-12 gap-2 items-end">
-            <div className="col-span-5">
+            <div className="col-span-12 sm:col-span-5">
               {/* servd's ingredient list, with "Add new ingredient" (owner, 2026-11-03: "give option to add from
                   here also. same as recipe area"); the stock item is made in the SUPPLIER's company. */}
               <MasterIngredientPicker className="w-full"
                 tenantId={suppliers.find((s) => s.id === supplierId)?.tenantId ?? null}
-                label={(() => { const it = invItems.find((x) => x.id === line.inventoryItemId); return it ? `${it.name} (${it.unit})` : '' })()}
-                onPicked={(item) => {
-                  qc.setQueryData<InventoryItem[]>(['inventory'], (prev = []) => prev.some((x) => x.id === item.id) ? prev : [...prev, { id: item.id, name: item.name, unit: item.unit }])
+                label={item ? `${item.name} (${item.unit})` : ''}
+                onPicked={(picked, price) => {
+                  qc.setQueryData<InventoryItem[]>(['inventory'], (prev = []) => prev.some((x) => x.id === picked.id) ? prev : [...prev, { id: picked.id, name: picked.name, unit: picked.unit }])
                   void qc.invalidateQueries({ queryKey: ['inventory'] })
-                  updateLine(i, 'inventoryItemId', item.id)
+                  // The last cost comes in by itself (owner, 2026-11-03: "Its supposed to auto take last cost"):
+                  // servd's latest price converted to the stock unit, else the company item's own latest cost.
+                  const known = invItems.find((x) => x.id === picked.id)
+                  const cents = costPerStockUnit(price ?? null, picked.unit) ?? known?.latestCostCents ?? known?.unitCostCents ?? null
+                  setLines((prev) => prev.map((l, idx) => idx === i
+                    ? { ...l, inventoryItemId: picked.id, unitCostCents: cents != null && cents > 0 ? String(Math.round(cents) / 100) : l.unitCostCents }
+                    : l))
                 }} />
             </div>
-            <div className="col-span-2">
-              <NumberField decimals={3} min={0} enterKeyHint="next" placeholder="Qty" aria-label={`Line ${i + 1} quantity`}
-                value={numOf(line.quantityOrdered)} onValueChange={(v) => updateLine(i, 'quantityOrdered', textOf(v))} className={fi} />
+            <div className="col-span-5 sm:col-span-2">
+              <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Quantity{item ? ` (${item.unit})` : ''}</span>
+              <div className="relative">
+                <NumberField decimals={3} min={0} enterKeyHint="next" placeholder="Qty" aria-label={`Line ${i + 1} quantity${item ? ` in ${item.unit}` : ''}`}
+                  value={numOf(line.quantityOrdered)} onValueChange={(v) => updateLine(i, 'quantityOrdered', textOf(v))} className={`${fi} ${item ? 'pr-10' : ''}`} />
+                {item && <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-s-muted">{item.unit}</span>}
+              </div>
             </div>
-            <div className="col-span-2">
-              <MoneyInput placeholder="Unit cost (PKR)" ariaLabel={`Line ${i + 1} unit cost in rupees`}
+            <div className="col-span-6 sm:col-span-2">
+              <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Cost per {item?.unit ?? 'unit'} (PKR)</span>
+              <MoneyInput placeholder={item ? `PKR per ${item.unit}` : 'Unit cost (PKR)'} ariaLabel={`Line ${i + 1} cost in rupees per ${item?.unit ?? 'unit'}`}
                 value={centsOf(line.unitCostCents)} onChange={(c) => updateLine(i, 'unitCostCents', pkrOf(c))} className={fi} />
             </div>
-            <div className="col-span-2">
+            <div className="col-span-1 sm:hidden">
+              <Button variant="danger" type="button" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`} className="w-full"><FIcon name="x" size={14} /></Button>
+            </div>
+            <div className="col-span-12 sm:col-span-2">
               <Input placeholder="Notes" aria-label={`Line ${i + 1} notes`} enterKeyHint="next" value={line.notes}
                 onChange={(e) => updateLine(i, 'notes', e.target.value)} className={fi} />
             </div>
-            <div className="col-span-1">
+            <div className="hidden sm:col-span-1 sm:block">
               <Button variant="danger" type="button" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`} className="w-full"><FIcon name="x" size={14} /></Button>
             </div>
           </div>
-        ))}
+          )
+        })}
         <LinkButton type="button" onClick={addLine}>+ Add line</LinkButton>
       </div>
 
