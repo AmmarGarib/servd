@@ -1203,7 +1203,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       reopenedThrough: reopened,
     }
     if (!tenantId) {
-      return { ...base, tenantId: null, closesFiscalYear: null, raastUnmatched: { count: 0, cents: 0, through: null }, through: null, checks: [], months: [], isYearEnd: false, fiscalYear: null, ready: false }
+      return { ...base, tenantId: null, closesFiscalYear: null, yearEndFirst: false, yearEndDate: null, raastUnmatched: { count: 0, cents: 0, through: null }, through: null, checks: [], months: [], isYearEnd: false, fiscalYear: null, ready: false }
     }
     const asked = req.query.lockedThrough ? parsePktEndOfDay(req.query.lockedThrough) : null
     const through = asked && !Number.isNaN(asked.getTime()) ? asked : new Date(pktToday().from.getTime() - 1)
@@ -1220,6 +1220,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       ...base,
       tenantId,
       closesFiscalYear: list.isYearEnd ? ended.label : null,
+      // The date passes a year end: the year is closed on its own first (through yearEndDate).
+      yearEndFirst: list.yearEndFirst,
+      yearEndDate: list.yearEndDate,
+      yearEndLabel: list.yearEndLabel,
       raastUnmatched: { count: raast?.count ?? 0, cents: raast?.cents ?? 0, through: fmtPktDate(through) },
       through: fmtPktDate(through),
       checks: list.problems,
@@ -1320,6 +1324,12 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         )
       }
       const list = await closeChecklist(tx, tenantId, newLock)
+      // Year end is its own close (owner, 2026-11-03): a month close never passes an unclosed year end.
+      if (list.yearEndFirst) {
+        throw new AppError('YEAR_END_FIRST',
+          `This date passes the year end (${list.yearEndDate}, ${list.yearEndLabel}). Close the year on its own first — lock through ${list.yearEndDate} — then close the month.`,
+          422, { yearEndDate: list.yearEndDate })
+      }
       const blocks = list.blocks
       const fixedBlocks = blocks.filter((b) => !b.overridable)
       const raastOnly = blocks.length === 1 && blocks[0]!.key === 'raast'

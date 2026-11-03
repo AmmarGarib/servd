@@ -78,6 +78,10 @@ interface CloseState {
   months: string[]
   isYearEnd: boolean
   closesFiscalYear: string | null
+  /** The date passes a year end without stopping on it: the year is closed on its own first. */
+  yearEndFirst?: boolean
+  yearEndDate?: string | null
+  yearEndLabel?: string | null
   fiscalYear: { endMonth: number; label: string; start: string; end: string } | null
   ready: boolean
 }
@@ -153,7 +157,7 @@ export default function PeriodClosePage() {
   const needsReason = ticked.size > 0
   const reasonOk = !needsReason || overrideReason.trim().length >= 10
   const maxLock = yesterdayPktIso()
-  const canClose = !!state && validDate && lockedThrough <= maxLock && fixedOnly.length === 0 && untickedBlocks.length === 0 && reasonOk
+  const canClose = !!state && validDate && lockedThrough <= maxLock && fixedOnly.length === 0 && untickedBlocks.length === 0 && reasonOk && !state.yearEndFirst
 
   const close = useMutation({
     mutationFn: () => api.post('/accounting/period-close', {
@@ -301,6 +305,18 @@ export default function PeriodClosePage() {
                 className="w-full" />
             </div>
           </div>
+
+          {state?.yearEndFirst && state.yearEndDate && (
+            <div className="rounded-lg border p-3 text-xs" style={{ background: 'color-mix(in srgb, var(--erp-warning) 10%, transparent)', borderColor: 'color-mix(in srgb, var(--erp-warning) 40%, transparent)' }}>
+              <p className="text-s-text font-semibold">Year end comes first{state.yearEndLabel ? ` — ${state.yearEndLabel}` : ''}</p>
+              <p className="text-s-muted mt-1">
+                This date passes the year end ({state.yearEndDate}). The year is closed on its own: close through {state.yearEndDate} first, then close the month.
+              </p>
+              <Button size="sm" variant="secondary" type="button" className="mt-2" onClick={() => setLockedThrough(state.yearEndDate!)}>
+                Close the year first ({state.yearEndDate})
+              </Button>
+            </div>
+          )}
 
           {state?.isYearEnd && (
             <div className="rounded-lg border border-s-border p-3 text-xs" style={{ background: 'rgb(var(--erp-primary-rgb) / 0.06)' }}>

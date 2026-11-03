@@ -37,7 +37,7 @@
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 import type { CloseCheck, CloseCheckContext, CloseCheckDb, CloseProblem } from './closeCheckTypes.js'
-import { fiscalYearEndMonthOf, isFiscalYearEndInRange } from './fiscalYear.js'
+import { fiscalYearEndMonthOf, fiscalYearOf, isFiscalYearEndInRange } from './fiscalYear.js'
 import { fmtPktDate } from './dates.js'
 import { openItemsCloseChecks } from './openItemsCloseChecks.js'
 import { sumCents } from '../../lib/money.js'
@@ -638,7 +638,12 @@ export interface CloseChecklist {
   blocks: CloseProblem[]
   warnings: CloseProblem[]
   months: string[]
+  /** This close IS a year-end close: it stops exactly on a fiscal year end. */
   isYearEnd: boolean
+  /** The date passes a year end without stopping on it: close the year (through yearEndDate) first. */
+  yearEndFirst: boolean
+  yearEndDate: string | null
+  yearEndLabel: string | null
 }
 
 /**
@@ -672,6 +677,13 @@ export async function closeChecklist(db: CloseCheckDb, tenantId: string, newLock
   const start = rangeStart(prevLock, newLock, firstEntryDate)
   const isYearEnd = newLock.getTime() > (prevLock?.getTime() ?? -Infinity)
     && isFiscalYearEndInRange(endMonth, prevLock ?? new Date(start.getTime() - 1), newLock)
+  // Year end is its own close (owner, 2026-11-03: "It should be month close only, year end close should be
+  // separate and at year end"): a close that passes a fiscal year end must stop exactly ON it (lock through the
+  // year's last day). The first year end after the previous lock:
+  const pktDay = (d: Date) => new Date(d.getTime() + 5 * 3_600_000).toISOString().slice(0, 10)
+  const firstEnd = isYearEnd ? fiscalYearOf(endMonth, new Date((prevLock ?? new Date(start.getTime() - 1)).getTime() + 1)) : null
+  const yearEnd = firstEnd && firstEnd.end.getTime() <= newLock.getTime() + 1 ? firstEnd : null
+  const yearEndFirst = !!yearEnd && pktDay(yearEnd.end) !== pktDay(newLock)
   const from = closeChecksFrom()
   const beforeGoLive = newLock.getTime() < from.getTime()
   const goLiveEdge = new Date(from.getTime() - 1)
@@ -695,6 +707,10 @@ export async function closeChecklist(db: CloseCheckDb, tenantId: string, newLock
     blocks: problems.filter((p) => p.severity === 'block'),
     warnings: problems.filter((p) => p.severity === 'warn'),
     months,
-    isYearEnd,
+    // A month close never also closes a year: true when this date passes a year end without stopping on it.
+    isYearEnd: isYearEnd && !yearEndFirst,
+    yearEndFirst,
+    yearEndDate: yearEnd ? pktDay(yearEnd.end) : null,
+    yearEndLabel: yearEnd?.label ?? null,
   }
 }
