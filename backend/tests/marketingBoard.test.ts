@@ -92,6 +92,8 @@ beforeAll(async () => {
   await mkUser('lead', 'marketing', [A], { moduleAllow: ['marketing_lead', 'marketing_tracker'] })
   await mkUser('mkt', 'marketing', [A])
   await mkUser('mktB', 'marketing', [B])
+  // One marketing team across companies (owner, 2026-11-03): a member of A and B, signed in with A active.
+  await mkUser('mktBoth', 'marketing', [A, B])
   await mkUser('internA', 'marketing_intern', [A], { moduleAllow: ['marketing_lead', 'marketing_tracker'] })
   await mkUser('internB', 'marketing_intern', [A])
   await mkUser('internOther', 'marketing_intern', [B])
@@ -428,5 +430,16 @@ describe('card files: PDFs and design files (owner, 2026-11-03)', () => {
     expect(cardDocumentType('poster.psd')).toBe('image/vnd.adobe.photoshop')
     expect(cardDocumentType('logo.ai')).toBe('application/postscript')
     expect(cardDocumentType('script.exe')).toBeNull()
+  })
+})
+
+describe('one marketing team across companies (owner, 2026-11-03)', () => {
+  it('a member of both companies sees and works on both companies\' boards whatever company is active; others still 404', async () => {
+    const list = (await call('mktBoth', 'GET', '/marketing-board/boards')).json() as Array<{ id: string }>
+    expect(list.map((b) => b.id)).toEqual(expect.arrayContaining([boardA, boardB]))
+    const made = await call('mktBoth', 'POST', '/marketing-board/cards', { boardId: boardB, title: 'Flipd shoot', type: 'shoot', deadline: '2026-12-05' })
+    expect(made.statusCode, made.body).toBe(201)
+    expect((await prisma.contentEvent.findUniqueOrThrow({ where: { id: made.json().id } })).tenantId).toBe(B)
+    expect((await call('mkt', 'GET', `/marketing-board/cards/${made.json().id}`)).statusCode).toBe(404)
   })
 })

@@ -1,3 +1,4 @@
+import type { ScopeMode } from '../../lib/tenantScope.js'
 // Who may do what on the marketing board and tracker (owner, 2026-11-03). Contract: ./README.md.
 //
 //   BOARD_ROLES    — the board's role list (marketing, the brand manager, the executive tier and the intern), on top
@@ -71,4 +72,14 @@ export async function assertCompanyMembers(tenantId: string, userIds: string[], 
   if (found.length !== ids.length) {
     throw new AppError(code, 'Everyone on a card must be on the staff of the board\'s company', 422)
   }
+}
+
+/**
+ * One marketing team works for every brand of every company (owner, 2026-11-03: "why are you not showing beanzbakes
+ * and Flipd boards? the marketing is done by the same team for them too"): the board, report and tracker read across
+ * EVERY company the person belongs to ('write' scope), whatever company view the header is on — never another
+ * company's. A card / board write lands in the board's own company. Creating a BOARD still binds the active company.
+ */
+export function teamMode(mode: ScopeMode): ScopeMode {
+  return mode === 'create' ? 'create' : 'write'
 }

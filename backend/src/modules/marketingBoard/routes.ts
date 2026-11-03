@@ -17,6 +17,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { teamMode } from './access.js'
 import { scopeTenantWhere, type ScopeMode, assertConceptOwned } from '../../lib/tenantScope.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
@@ -61,7 +62,7 @@ const staffSchema = z.object({
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 async function boardInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
-  const board = await prisma.marketingBoard.findFirst({ where: { id, ...(await scopeTenantWhere(req, mode)) } })
+  const board = await prisma.marketingBoard.findFirst({ where: { id, ...(await scopeTenantWhere(req, teamMode(mode))) } })
   if (!board) throw new NotFoundError('MarketingBoard', id)
   return board
 }
@@ -69,7 +70,7 @@ async function boardInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
 /** A board card the caller may see in `mode` (interns: only their own), or 404. */
 async function cardInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
   const card = await prisma.contentEvent.findFirst({
-    where: { id, boardId: { not: null }, ...(await scopeTenantWhere(req, mode)), ...internCardWhere(req) },
+    where: { id, boardId: { not: null }, ...(await scopeTenantWhere(req, teamMode(mode))), ...internCardWhere(req) },
     include: CARD_INCLUDE,
   })
   if (!card || !card.tenantId) throw new NotFoundError('Card', id)
@@ -133,7 +134,7 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
   // GET /marketing-board/boards?archived=1 — brand boards first, then platforms (never a brand).
   fastify.get<{ Querystring: { archived?: string } }>('/boards', anyBoard, async (req) => {
     const boards = await prisma.marketingBoard.findMany({
-      where: { ...(await scopeTenantWhere(req, 'read')), ...(req.query.archived === '1' ? {} : { archivedAt: null }) },
+      where: { ...(await scopeTenantWhere(req, 'write')), ...(req.query.archived === '1' ? {} : { archivedAt: null }) },
       include: { concept: { select: { id: true, name: true } } },
       orderBy: [{ kind: 'asc' }, { sort: 'asc' }, { name: 'asc' }],
     })
@@ -235,7 +236,7 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
     const where: Prisma.ContentEventWhereInput = {
       boardId: boardId ? boardId : { not: null },
       board: { archivedAt: null },
-      ...(await scopeTenantWhere(req, 'read')),
+      ...(await scopeTenantWhere(req, 'write')),
       ...internCardWhere(req),
       ...(from || to ? { startDate: { ...(from ? { gte: new Date(from) } : {}), ...(to ? { lte: new Date(to) } : {}) } } : {}),
     }
@@ -261,7 +262,7 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
       .merge(staffSchema.partial({ priority: true, ownerId: true, resourceIds: true, link: true }))
       .extend({ boardId: z.string().min(1), stage: z.enum(STAGES).optional() })
       .strict().parse(req.body)
-    const board = await boardInScope(req, body.boardId, 'create')
+    const board = await boardInScope(req, body.boardId, 'write')
     if (board.archivedAt) throw new AppError('BOARD_ARCHIVED', 'That board is archived', 409)
     const lead = await isLead(req)
     const stage: Stage = body.stage ?? 'idea'
@@ -440,7 +441,7 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { weekOf?: string; boardId?: string; format?: string } }>('/report/weekly', staffOnly, async (req, reply) => {
     const weekOf = isYmd(req.query.weekOf) ? req.query.weekOf : pktDay(new Date())
     const monday = mondayOf(weekOf)
-    const scope = await scopeTenantWhere(req, 'read')
+    const scope = await scopeTenantWhere(req, 'write')
     const report = await weeklyReport({ ...scope, ...(req.query.boardId ? { id: req.query.boardId } : {}) }, monday)
     const format = exportFormatOf(req.query.format)
     if (format) return sendReportFor(req, reply, format, { base: 'marketing-published-vs-slipped', suffix: monday }, weeklyReportTable(report))

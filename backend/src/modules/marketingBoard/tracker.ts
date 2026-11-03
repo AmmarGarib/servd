@@ -15,6 +15,7 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { teamMode } from './access.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { STANDING_ATTENDANCE, attendanceWithin, getSettings } from '../hr/service.js'
 import { periodOf, periodStart, periodEnd, nextPeriod } from '../hr/logic.js'
@@ -88,7 +89,7 @@ const TRACKEE_SELECT = {
 } as const
 
 async function trackeeInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
-  const t = await prisma.marketingTrackee.findFirst({ where: { id, ...(await scopeTenantWhere(req, mode)) }, select: TRACKEE_SELECT })
+  const t = await prisma.marketingTrackee.findFirst({ where: { id, ...(await scopeTenantWhere(req, teamMode(mode))) }, select: TRACKEE_SELECT })
   if (!t) throw new NotFoundError('MarketingTrackee', id)
   return t
 }
@@ -110,7 +111,7 @@ export async function marketingTrackerRoutes(fastify: FastifyInstance) {
   // GET /marketing-tracker — every intern / designer record in view, with headline stats.
   fastify.get<{ Querystring: { includeInactive?: string } }>('/', guard, async (req) => {
     const rows = await prisma.marketingTrackee.findMany({
-      where: { ...(await scopeTenantWhere(req, 'read')), ...(req.query.includeInactive === '1' ? {} : { active: true }) },
+      where: { ...(await scopeTenantWhere(req, 'write')), ...(req.query.includeInactive === '1' ? {} : { active: true }) },
       select: TRACKEE_SELECT,
       orderBy: { createdAt: 'asc' },
     })
@@ -247,7 +248,7 @@ export async function marketingProgressRoutes(fastify: FastifyInstance) {
   fastify.get('/me', { preHandler: requireAuth(...PROGRESS_ROLES) }, async (req) => {
     const me = req.staffUser!.id
     const records = await prisma.marketingTrackee.findMany({
-      where: { ...(await scopeTenantWhere(req, 'read')), employee: { userId: me } },
+      where: { ...(await scopeTenantWhere(req, 'write')), employee: { userId: me } },
       select: TRACKEE_SELECT,
       orderBy: { createdAt: 'asc' },
     })
