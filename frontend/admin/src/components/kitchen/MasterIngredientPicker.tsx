@@ -162,9 +162,12 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
                   </div>
                   <label className="flex items-center gap-2 text-xs text-s-muted">
                     <span className="shrink-0">Price PKR per {priceUnitOf(adding.unit)}</span>
-                    <input type="number" inputMode="decimal" min="0" step="0.01" value={adding.price} placeholder="optional"
-                      onChange={(e) => setAdding({ ...adding, price: e.target.value })} className={`${inputCls} w-full min-w-0`} />
+                    <input type="text" inputMode="decimal" value={adding.price} placeholder="optional"
+                      onChange={(e) => setAdding({ ...adding, price: e.target.value.replace(/[^0-9.]/g, '') })} className={`${inputCls} w-full min-w-0`} />
                   </label>
+                  {Number(adding.price) > 0 && (
+                    <p className="text-[11px] text-s-muted">Saves as PKR {Number(adding.price).toLocaleString('en-PK', { maximumFractionDigits: 2 })} per {priceUnitOf(adding.unit)}</p>
+                  )}
                   <button type="button" disabled={busy} onClick={() => void addNew()} className="s-btn-primary px-3 py-1 text-xs font-bold disabled:opacity-50">Add and use</button>
                 </div>
               )}

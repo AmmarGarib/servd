@@ -656,14 +656,13 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
 
   // A draft from the Reorder tab arrives pre-filled; the buyer can still change anything.
   const [supplierId, setSupplierId] = useState(initial?.supplierId ?? '')
-  const [reference, setReference] = useState('')
   const [expectedDate, setExpectedDate] = useState('')
   const [notes, setNotes] = useState('')
   const [lines, setLines] = useState(initial?.lines.length ? initial.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
 
   const mut = useMutation({
     mutationFn: () => api.post('/procurement/purchase-orders', {
-      supplierId, reference: reference || null, expectedDate: expectedDate || null,
+      supplierId, expectedDate: expectedDate || null,
       notes: notes || null,
       lines: lines.map((l) => ({
         inventoryItemId: l.inventoryItemId,
@@ -711,9 +710,6 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
             <option value="">Select supplier</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </Select>
-        </Field>
-        <Field label="Reference">
-          <Input enterKeyHint="next" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="PO-2024-001" className={fi} />
         </Field>
         <Field label="Expected delivery">
           <Input type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} className={fi} />

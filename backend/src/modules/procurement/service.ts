@@ -126,11 +126,21 @@ export async function createPo(input: CreatePoInput) {
   const totalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityOrdered), 0)
   assertMoneyFits(totalCents, 'This purchase order\'s total')
 
-  const po = await prisma.purchaseOrder.create({
+  // PO numbers are servd's (owner, 2026-11-03: "remove reference from PO. it should auto generate"): PO-00001,
+  // PO-00002… per company (the supplier's), taken under a per-company advisory lock so two buyers never share one.
+  const tenantId = supplier.tenantId
+  const po = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'po.number:' + tenantId}))`
+    const last = await tx.$queryRaw<Array<{ n: number | null }>>`
+      SELECT MAX(CAST(SUBSTRING(po.reference FROM 4) AS INTEGER)) AS n
+      FROM purchase_orders po JOIN suppliers s ON s.id = po."supplierId"
+      WHERE s."tenantId" = ${tenantId} AND po.reference ~ '^PO-[0-9]{1,9}$'`
+    const reference = `PO-${String((Number(last[0]?.n ?? 0) || 0) + 1).padStart(5, '0')}`
+    return tx.purchaseOrder.create({
     data: {
       supplierId:   input.supplierId,
       expectedDate: input.expectedDate ? new Date(input.expectedDate) : null,
-      reference:    input.reference   ?? null,
+      reference,
       notes:        input.notes       ?? null,
       conceptId:    input.conceptId   ?? null,
       totalCents,
@@ -149,6 +159,7 @@ export async function createPo(input: CreatePoInput) {
       },
     },
     include: { supplier: true, lines: { include: { inventoryItem: true } } },
+  })
   })
 
   return po
