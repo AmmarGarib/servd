@@ -199,7 +199,7 @@ const purchaseOrders: ApprovalProvider = {
     type Row = {
       id: string; supplierId: string; totalCents: number; reference: string | null; notes: string | null
       createdBy: string | null; createdAt: string; orderDate: string; expectedDate: string | null
-      supplier: { name: string } | null; lines: unknown[]; viaHeadOfficeId?: string | null
+      supplier: { name: string; systemKind?: string | null } | null; lines: unknown[]; viaHeadOfficeId?: string | null
     }
     const rows = await ctx.read<Row[]>('/procurement/approvals')
     if (rows === null) return null
@@ -215,10 +215,10 @@ const purchaseOrders: ApprovalProvider = {
       tenantId: tenantOf.get(r.id) ?? null,
       submittedByIds: idList(r.createdBy),
       viaHeadOfficeId: r.viaHeadOfficeId ?? null,
-      title: `${r.supplier?.name ?? 'Supplier'} — ${pkr(r.totalCents)}`,
+      title: `${poSupplierName(r.supplier)} — ${pkr(r.totalCents)}`,
       subtitle: r.reference,
       facts: facts([
-        ['Supplier', r.supplier?.name],
+        ['Supplier', poSupplierName(r.supplier)],
         ['Total', pkr(r.totalCents)],
         ['Lines', String(r.lines?.length ?? 0)],
         ['Raised by', r.createdBy ? names.get(r.createdBy) : null],
@@ -256,7 +256,7 @@ function poStepProvider(type: 'purchase_order_buyer' | 'purchase_order_finance')
       type Row = {
         id: string; totalCents: number; reference: string | null; notes: string | null; createdBy: string | null
         submittedById: string | null; submittedAt: string | null; buyerCheckedById: string | null; createdAt: string
-        expectedDate: string | null; supplier: { name: string; tenantId: string | null } | null; lines: unknown[]
+        expectedDate: string | null; supplier: { name: string; tenantId: string | null; systemKind?: string | null } | null; lines: unknown[]
         viaHeadOfficeId?: string | null; own?: boolean; returnCount?: number
       }
       const rows = await ctx.read<Row[]>(`/procurement/po-steps?step=${buyer ? 'buyer' : 'finance'}`)
@@ -272,10 +272,10 @@ function poStepProvider(type: 'purchase_order_buyer' | 'purchase_order_finance')
           tenantId: r.supplier?.tenantId ?? null,
           submittedByIds: idList(r.createdBy, r.submittedById, buyer ? null : r.buyerCheckedById),
           viaHeadOfficeId: r.viaHeadOfficeId ?? null,
-          title: `${r.reference ?? 'PO'} — ${r.supplier?.name ?? 'Supplier'} — ${pkr(r.totalCents)}`,
+          title: `${r.reference ?? 'PO'} — ${poSupplierName(r.supplier)} — ${pkr(r.totalCents)}`,
           subtitle: buyer ? 'Waiting for the buyer\'s check' : 'Checked by the buyer — waiting for finance',
           facts: facts([
-            ['Supplier', r.supplier?.name],
+            ['Supplier', poSupplierName(r.supplier)],
             ['Total', pkr(r.totalCents)],
             ['Lines', String(r.lines?.length ?? 0)],
             ['Raised by', r.createdBy ? names.get(r.createdBy) : null],
@@ -1553,3 +1553,8 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
 ]
 
 export type { ProviderContext }
+
+/** A PO raised with no supplier is held by the company's system supplier (procurement/service.ts noSupplierFor). */
+function poSupplierName(s: { name: string; systemKind?: string | null } | null): string {
+  return !s ? 'Supplier' : s.systemKind ? 'Supplier not chosen yet' : s.name
+}

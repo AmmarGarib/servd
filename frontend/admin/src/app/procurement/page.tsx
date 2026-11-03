@@ -75,7 +75,7 @@ interface PurchaseOrder {
   createdAt: string; approvedAt?: string | null; sentAt?: string | null
   createdBy?: string | null
   cancelReason?: string | null; rejectedReason?: string | null
-  supplier?: { name: string; email?: string | null } | null
+  supplier?: { name: string; email?: string | null; tenantId?: string | null; systemKind?: string | null } | null
   lines?: PoLine[]
   // The approval chain (owner, 2026-11-03): buyer → finance → the CEO.
   submittedById?: string | null; buyerCheckedById?: string | null; financeCheckedById?: string | null
@@ -469,7 +469,7 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
       {editId && editPo && editPo.id === editId && (
         <CreatePoForm key={`edit-${editId}`} qc={qc} editId={editId} title={`Edit ${editPo.reference ?? 'purchase order'}`}
           initial={{
-            supplierId: editPo.supplierId,
+            supplierId: noSupplier(editPo) ? '' : editPo.supplierId,
             expectedDate: editPo.expectedDate ? editPo.expectedDate.slice(0, 10) : '',
             notes: editPo.notes ?? '',
             conceptId: editPo.conceptId ?? null,
@@ -516,7 +516,11 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
                       {po.reference ?? po.id.slice(-8)}
                     </LinkButton>
                   </td>
-                  <td className="px-4 py-3 text-s-text font-medium">{po.supplier?.name ?? '—'}</td>
+                  <td className="px-4 py-3 text-s-text font-medium">
+                    {noSupplier(po)
+                      ? (['cancelled', 'received'].includes(po.status) ? <span className="text-s-muted italic">Not chosen</span> : <ChooseSupplier po={po} qc={qc} />)
+                      : po.supplier?.name ?? '—'}
+                  </td>
                   <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(po.createdAt)}</td>
                   <td className="px-4 py-3 text-s-muted hidden md:table-cell">{po.expectedDate ? fmt(po.expectedDate) : '—'}</td>
                   <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(po.totalCents)}</td>
@@ -713,12 +717,12 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
     actions.push({ label: 'Return', action: 'return', cls: 'text-s-amber hover:opacity-80' })
     actions.push({ label: 'Reject', action: 'reject', cls: 'text-s-red hover:opacity-80' })
   }
-  if (po.status === 'approved') {
+  if (po.status === 'approved' && !noSupplier(po)) {
     // Approved is not sent: email/WhatsApp it, or record that it was phoned in.
     actions.push({ label: 'Send', action: 'send', cls: 'text-s-blue hover:opacity-80' })
     actions.push({ label: 'Mark sent', action: 'mark-sent', cls: 'text-s-blue hover:opacity-80' })
   }
-  if (po.status === 'sent' || po.status === 'partial') {
+  if ((po.status === 'sent' || po.status === 'partial') && !noSupplier(po)) {
     actions.push(canReceive
       ? { label: 'Receive', action: 'receive', cls: 'text-primary-ink hover:opacity-80' }
       : { label: 'View at dock', action: 'receive', cls: 'text-s-muted hover:text-s-text', title: ownPo ? 'You raised this PO, so a colleague receives it' : 'A manager takes the delivery in' })
@@ -789,6 +793,34 @@ function costPerStockUnit(price: MasterPrice | null, unit: string): number | nul
   return unit === 'pcs' || unit === 'each' ? c : null
 }
 
+/** A PO raised with no supplier (owner, 2026-11-03) is held by the company's system supplier until one is chosen. */
+const noSupplier = (po: { supplier?: { systemKind?: string | null } | null }) => !!po.supplier?.systemKind
+const poSupplierName = (po: { supplier?: { name: string; systemKind?: string | null } | null }) =>
+  noSupplier(po) ? 'Not chosen yet' : po.supplier?.name ?? '—'
+
+/** Choose the supplier of a PO raised without one (PUT /purchase-orders/:id/supplier) — suppliers of the PO's company. */
+function ChooseSupplier({ po, qc }: { po: PurchaseOrder; qc: ReturnType<typeof useQueryClient> }) {
+  const { data: suppliers = [] } = useQuery({ queryKey: ['procurement', 'suppliers'], queryFn: () => api.get<Supplier[]>('/procurement/suppliers') })
+  const mine = suppliers.filter((s) => !po.supplier?.tenantId || s.tenantId === po.supplier.tenantId)
+  const set = useMutation({
+    mutationFn: (supplierId: string) => api.put(`/procurement/purchase-orders/${po.id}/supplier`, { supplierId }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
+      void qc.invalidateQueries({ queryKey: ['procurement', 'po', po.id] })
+    },
+  })
+  return (
+    <div className="space-y-1">
+      <Select value="" disabled={set.isPending} aria-label={`Choose the supplier for ${po.reference ?? 'this PO'}`}
+        onChange={(e) => { if (e.target.value) set.mutate(e.target.value) }} className="s-input w-auto min-w-[10rem] text-sm">
+        <option value="">Choose supplier…</option>
+        {mine.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+      </Select>
+      {set.isError && <p role="alert" className="text-xs text-s-red">{(set.error as Error)?.message ?? 'Could not set the supplier.'}</p>}
+    </div>
+  )
+}
+
 // ─── Create PO form ───────────────────────────────────────────────────────────
 
 function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; initial?: PoDraft; title?: string; editId?: string }) {
@@ -820,7 +852,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   // Editing a draft PATCHes it (its brand is kept); otherwise a new draft is created.
   const mut = useMutation({
     mutationFn: () => (editId ? (body: unknown) => api.patch(`/procurement/purchase-orders/${editId}`, body) : (body: unknown) => api.post('/procurement/purchase-orders', body))({
-      supplierId, expectedDate: expectedDate || null,
+      supplierId: supplierId || null, expectedDate: expectedDate || null,
       notes: notes || null,
       ...(editId ? { conceptId: initial?.conceptId ?? null } : {}),
       lines: lines.map((l) => ({
@@ -848,8 +880,9 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   const totalCents = lines.reduce((s, l) => s + (Number(l.quantityOrdered) || 0) * Math.round((Number(l.unitCostCents) || 0) * 100), 0)
   const [tried, setTried] = useState(false)
   const lineBad = (l: typeof lines[number]) => !l.inventoryItemId || !(Number(l.quantityOrdered) > 0) || !l.unitCostCents
-  const valid = !!supplierId && lines.length > 0 && !lines.some(lineBad)
-  const msg = tried && !valid && supplierId
+  // The supplier may be chosen later (owner, 2026-11-03: "POs should be able to go thru without supplier attached").
+  const valid = lines.length > 0 && !lines.some(lineBad)
+  const msg = tried && !valid
     ? (lines.length === 0 ? 'Add at least one line.' : 'Every line needs an item, a quantity above 0 and a unit cost.')
     : null
 
@@ -865,12 +898,12 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Field label="Supplier" required error={tried && !supplierId ? 'Choose a supplier.' : null}>
+        <Field label="Supplier">
           <Select value={newSupplier ? '__new' : supplierId} onChange={(e) => {
             if (e.target.value === '__new') { setNewSupplier({ name: '', phone: '' }); return }
             setNewSupplier(null); setSupplierId(e.target.value)
           }} className={fi}>
-            <option value="">{suppliers.length ? 'Select supplier' : 'No suppliers yet — add one'}</option>
+            <option value="">No supplier yet (choose later)</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             <option value="__new">+ New supplier…</option>
           </Select>
@@ -2802,7 +2835,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                 {orders.map((po) => (
                   <tr key={po.id} className="border-b border-s-border/50 last:border-0 hover:bg-s-surface/30">
                     <td className="px-4 py-3 font-mono text-xs text-primary-ink">{po.reference ?? po.id.slice(-8)}</td>
-                    <td className="px-4 py-3 text-s-text font-medium">{po.supplier?.name ?? '—'}</td>
+                    <td className="px-4 py-3 text-s-text font-medium">{poSupplierName(po)}</td>
                     <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(po.createdAt)}</td>
                     <td className="px-4 py-3 text-s-text font-bold text-right">{fmtPkrWhole(po.totalCents)}</td>
                     <td className="px-4 py-3">

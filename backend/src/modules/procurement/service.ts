@@ -29,6 +29,7 @@ import { sendText as sendWhatsApp } from '../../lib/whatsapp.js'
 import { testCompanyBlocks, externalScope } from '../../lib/outboundScope.js'
 import { postedOpeningBalances } from './openingBalance.js'
 import { assertItemsOfCompany } from './scope.js'
+import { CASH_PURCHASE_SUPPLIER_KIND, ensureCashPurchaseSupplier } from './receiving.js'
 import type { Prisma } from '@prisma/client'
 import { type DbMoney, assertInt4Fits, assertMoneyFits, toCents } from '../../lib/money.js'
 import { assertBrandOfCompany, ensureFifoReady } from '../../lib/stockLedger.js'
@@ -83,7 +84,9 @@ async function checkPoContent(input: Pick<CreatePoInput, 'supplierId' | 'concept
     select: { id: true, name: true, tenantId: true, deletedAt: true, systemKind: true },
   })
   if (!supplier || supplier.deletedAt) throw new NotFoundError('Supplier', input.supplierId)
-  if (supplier.systemKind) throw systemSupplierError(supplier.name)
+  // The company's 'Cash purchases' system supplier stands for "no supplier yet" (owner, 2026-11-03: "POs should be
+  // able to go thru without supplier attached") — see supplierNotChosen.
+  if (supplier.systemKind && supplier.systemKind !== CASH_PURCHASE_SUPPLIER_KIND) throw systemSupplierError(supplier.name)
   if (!supplier.tenantId) {
     throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before ordering from it', 422)
   }
@@ -449,6 +452,53 @@ function assertSendable(status: string) {
  * becomes 'sent' only when at least one channel actually delivered. A
  * supplier with neither: phone it in and use markPoSent.
  */
+// ─── A PO with no supplier yet (owner, 2026-11-03: "POs should be able to go thru without supplier attached") ────
+//
+// A PO may be raised, edited and approved (buyer → finance → CEO, cash voucher included) with no supplier. It is
+// then held by its company's 'Cash purchases' system supplier (receiving.ts ensureCashPurchaseSupplier — never listed,
+// never billed), which carries the PO's company, so scope and numbering work unchanged. The real supplier is chosen
+// with PUT /purchase-orders/:id/supplier before the PO is sent or received: sending refuses it, and receiving refuses
+// it (a receipt opens GRNI and the bill against it must name the real supplier) — 422 PO_SUPPLIER_NOT_CHOSEN.
+
+/** The company's placeholder for "no supplier yet". */
+export async function noSupplierFor(tenantId: string): Promise<string> {
+  return (await prisma.$transaction((tx) => ensureCashPurchaseSupplier(tx, tenantId))).id
+}
+
+/** True when the PO's supplier is the "no supplier yet" placeholder. */
+export const supplierNotChosen = (s: { systemKind?: string | null } | null | undefined) => s?.systemKind === CASH_PURCHASE_SUPPLIER_KIND
+
+export function supplierNotChosenError(action: string): AppError {
+  return new AppError('PO_SUPPLIER_NOT_CHOSEN', `Choose this PO's supplier before it is ${action}`, 422)
+}
+
+/**
+ * Set the supplier of a PO raised without one: any open PO (not cancelled, nothing received or billed) whose supplier
+ * is not chosen yet. The supplier must be live, not a system supplier, and of the PO's own company (422
+ * SUPPLIER_NOT_IN_COMPANY). Under the PO row lock. Returns before / after for the audit.
+ */
+export async function setPoSupplier(poId: string, supplierId: string, userId: string) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${poId} FOR UPDATE`
+    const po = await tx.purchaseOrder.findUnique({
+      where: { id: poId },
+      select: { id: true, status: true, supplierId: true, supplier: { select: { tenantId: true, systemKind: true } }, lines: { select: { id: true, quantityReceived: true } } },
+    })
+    if (!po) throw new NotFoundError('PurchaseOrder', poId)
+    if (!supplierNotChosen(po.supplier)) throw new AppError('PO_SUPPLIER_ALREADY_CHOSEN', 'This PO already has its supplier — edit the draft, or cancel it and raise a new one', 409)
+    if (['cancelled', 'received'].includes(po.status)) throw new AppError('INVALID_STATE', `This PO is ${po.status}`, 409)
+    const sup = await tx.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true, tenantId: true, deletedAt: true, systemKind: true } })
+    if (!sup || sup.deletedAt) throw new NotFoundError('Supplier', supplierId)
+    if (sup.systemKind) throw systemSupplierError(sup.name)
+    if (sup.tenantId !== po.supplier.tenantId) {
+      throw new AppError('SUPPLIER_NOT_IN_COMPANY', 'Pick a supplier of this PO\'s own company', 422)
+    }
+    await tx.purchaseOrder.update({ where: { id: poId }, data: { supplierId } })
+    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId, action: 'supplier_set', details: { supplierId, supplierName: sup.name } } })
+    return { id: poId, before: po.supplierId, supplierId, supplierName: sup.name, tenantId: po.supplier.tenantId }
+  })
+}
+
 export async function sendPoToSupplier(poId: string, userId: string) {
   const po = await prisma.purchaseOrder.findUnique({
     where: { id: poId },
@@ -457,6 +507,7 @@ export async function sendPoToSupplier(poId: string, userId: string) {
   })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
   assertSendable(po.status)
+  if (supplierNotChosen(po.supplier)) throw supplierNotChosenError('sent')
 
   // A test company never contacts a real supplier (lib/outboundScope.ts). The
   // PO still moves on as if sent, so a test can run end to end (receive, bill,
@@ -577,8 +628,9 @@ export type PoSendChannel = 'phone' | 'whatsapp' | 'email' | 'in_person'
 export async function markPoSent(poId: string, userId: string, input: { channel: PoSendChannel; note?: string | null }) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${poId} FOR UPDATE`
-    const po = await tx.purchaseOrder.findUnique({ where: { id: poId }, select: { status: true } })
+    const po = await tx.purchaseOrder.findUnique({ where: { id: poId }, select: { status: true, supplier: { select: { systemKind: true } } } })
     if (!po) throw new NotFoundError('PurchaseOrder', poId)
+    if (supplierNotChosen(po.supplier)) throw supplierNotChosenError('sent')
     if ((PO_DECIDING_STATUSES as readonly string[]).includes(po.status)) {
       throw new AppError('PO_NOT_APPROVED', 'This PO has not been approved yet — it cannot be sent', 400)
     }

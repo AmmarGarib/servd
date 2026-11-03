@@ -51,6 +51,7 @@ import { requireModule } from '../notifications/requireModule.js'
 //     AP_WRITER.
 import {
   createPo, updatePoDraft, submitPo, approvePo, rejectPo, returnPo, passPoStep, cancelPo, sendPoToSupplier, markPoSent, isPoChainStatus,
+  noSupplierFor, setPoSupplier,
   createBill, voidBill, matchBill,
   createPayment, allocatePayment, unapplyPayment, voidPayment,
   agingReport, supplierAging, reorderSuggestions, type AgingTotals,
@@ -170,7 +171,9 @@ const poLineSchema = z.object({
 })
 
 const poCreateSchema = z.object({
-  supplierId:   z.string().uuid(),
+  // Optional (owner, 2026-11-03: "POs should be able to go thru without supplier attached"): none = the company's
+  // "no supplier yet" placeholder (service.ts noSupplierFor); chosen later with PUT /purchase-orders/:id/supplier.
+  supplierId:   z.string().uuid().optional().nullable(),
   expectedDate: z.string().optional().nullable(),
   reference:    z.string().optional().nullable(),
   notes:        z.string().optional().nullable(),
@@ -590,7 +593,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           ...(req.query.status     && { status: req.query.status }),
         },
         include: {
-          supplier: { select: { name: true, email: true, tenantId: true, tenant: { select: { id: true, name: true, slug: true } } } },
+          supplier: { select: { name: true, email: true, tenantId: true, systemKind: true, tenant: { select: { id: true, name: true, slug: true } } } },
           lines:    { include: { inventoryItem: { select: { name: true, unit: true } } } },
         },
         orderBy: { createdAt: 'desc' },
@@ -639,9 +642,11 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     // createPo then checks every line's item is the supplier's company's.
     // Through a head-office lens ('write' = members ∪ the lens company) a new
     // DRAFT is a proposal (spec §6.4) — allowed; it goes nowhere until submitted.
-    const supplier = await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+    // No supplier: the PO is the ACTIVE company's (422 when no single company is active).
+    const supplierId = body.supplierId ?? await noSupplierFor(activeTenantOr422(req, null))
+    const supplier = await findSupplierInScope(req, supplierId, 'write', { live: true })
     if (supplier.tenantId) await assertHoMayPropose(req, supplier.tenantId, true, 'a purchase order')
-    const po = await createPo({ ...body, createdBy: req.staffUser!.id })
+    const po = await createPo({ ...body, supplierId, createdBy: req.staffUser!.id })
     return reply.status(201).send(po)
   })
 
@@ -667,10 +672,13 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       throw new AppError('PO_EDIT_RAISER_ONLY', 'Only whoever raised this PO (or the CEO) edits it', 403)
     }
     if (po.supplier.tenantId) await assertHoMayPropose(req, po.supplier.tenantId, po.createdBy === su.id, 'editing this purchase order')
-    // The new supplier must be one the caller may see (another company's is 404, as on create).
-    await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+    // The new supplier must be one the caller may see (another company's is 404, as on create); none = this PO's
+    // company's "no supplier yet" placeholder.
+    const supplierId = body.supplierId ?? (po.supplier.tenantId ? await noSupplierFor(po.supplier.tenantId) : null)
+    if (!supplierId) throw new AppError('SUPPLIER_REQUIRED', 'Pick a supplier for this PO', 422)
+    await findSupplierInScope(req, supplierId, 'write', { live: true })
     const before = await prisma.purchaseOrder.findUnique({ where: { id: po.id }, select: { supplierId: true, totalCents: true, notes: true, expectedDate: true, conceptId: true } })
-    const updated = await updatePoDraft(po.id, su.id, body)
+    const updated = await updatePoDraft(po.id, su.id, { ...body, supplierId })
     await audit({
       category: 'accounting', action: 'po.edit', entity: 'PurchaseOrder', entityId: po.id,
       userId: su.id, userEmail: su.email ?? null, tenantId: po.supplier.tenantId,
@@ -833,7 +841,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     const rows = await prisma.purchaseOrder.findMany({
       where: { status, supplier: { tenantId: { in: view } } },
       include: {
-        supplier: { select: { name: true, tenantId: true } },
+        supplier: { select: { name: true, tenantId: true, systemKind: true } },
         lines:    { include: { inventoryItem: { select: { name: true, unit: true, category: true } } } },
       },
       orderBy: { submittedAt: 'asc' },
@@ -892,6 +900,26 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       }
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
       return cancelPo(req.params.id, req.staffUser!.id, reason)
+    },
+  )
+
+  // Choose the supplier of a PO raised without one (owner, 2026-11-03) — before it is sent or received. Whoever may
+  // raise a PO; the supplier is one of the PO's own company (service.ts setPoSupplier). Another company's PO 404.
+  fastify.put<{ Params: { id: string } }>(
+    '/purchase-orders/:id/supplier',
+    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    async (req) => {
+      await guardPo(req, req.params.id)
+      const body = z.object({ supplierId: z.string().uuid() }).parse(req.body ?? {})
+      await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+      const r = await setPoSupplier(req.params.id, body.supplierId, req.staffUser!.id)
+      const su = req.staffUser!
+      await audit({
+        category: 'accounting', action: 'po.supplier_set', entity: 'PurchaseOrder', entityId: r.id,
+        userId: su.id, userEmail: su.email ?? null, tenantId: r.tenantId,
+        before: { supplierId: r.before }, after: { supplierId: r.supplierId, supplierName: r.supplierName },
+      })
+      return { id: r.id, supplierId: r.supplierId, supplierName: r.supplierName }
     },
   )
 
@@ -1390,7 +1418,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     const rows = await prisma.purchaseOrder.findMany({
       where: { status: 'pending_approval', supplier: supplierWhere },
       include: {
-        supplier: { select: { name: true, tenantId: true } },
+        supplier: { select: { name: true, tenantId: true, systemKind: true } },
         lines:    { include: { inventoryItem: { select: { name: true, unit: true } } } },
       },
       orderBy: { createdAt: 'asc' },

@@ -62,7 +62,7 @@ export async function prepareCashVoucher(poId: string, namedHolderId: string | n
     where: { id: poId },
     select: {
       id: true, reference: true, totalCents: true, conceptId: true, createdBy: true, submittedById: true,
-      buyerCheckedById: true, financeCheckedById: true, supplier: { select: { name: true, tenantId: true } },
+      buyerCheckedById: true, financeCheckedById: true, supplier: { select: { name: true, tenantId: true, systemKind: true } },
     },
   })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
@@ -84,7 +84,7 @@ export async function prepareCashVoucher(poId: string, namedHolderId: string | n
   })
   if (!holder) throw new AppError('CASH_HOLDER_NOT_IN_COMPANY', 'Whoever takes the cash must be an active login of this PO\'s company', 422)
   return {
-    poId, tenantId, reference: po.reference ?? `PO ${po.id.slice(-8).toUpperCase()}`, supplierName: po.supplier.name, amountCents,
+    poId, tenantId, reference: po.reference ?? `PO ${po.id.slice(-8).toUpperCase()}`, supplierName: po.supplier.systemKind ? 'supplier to be chosen' : po.supplier.name, amountCents,
     conceptId: po.conceptId, holder: { id: holder.id, name: (holder.name ?? holder.email ?? 'Buyer').slice(0, 120) },
     preparedById: po.createdBy, submittedById: po.submittedById, financeCheckedById: po.financeCheckedById,
   }

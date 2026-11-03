@@ -515,6 +515,9 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
   if (!supplierId) throw new AppError('SUPPLIER_REQUIRED', 'Pick the supplier for a delivery without a PO', 400)
   const supplier = await prisma.supplier.findUnique({ where: { id: supplierId }, select: { id: true, name: true, tenantId: true, systemKind: true } })
   if (!supplier) throw new NotFoundError('Supplier', supplierId)
+  if (po && supplier.systemKind === CASH_PURCHASE_SUPPLIER_KIND) {
+    throw new AppError('PO_SUPPLIER_NOT_CHOSEN', 'Choose this PO\'s supplier before it is received', 422)
+  }
   if (supplier.systemKind) {
     throw new AppError('SYSTEM_SUPPLIER', `${supplier.name} is for goods bought with cash — record them on the petty-cash spend or cash request`, 422)
   }
