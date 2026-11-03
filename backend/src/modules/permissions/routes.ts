@@ -9,7 +9,7 @@ import {
   isKnownModuleId,
   isRetiredModuleId,
   knownModulesOnly,
-  withoutCeoOnlyModules,
+  withoutCeoOnlyModules, withoutPerPersonModules, fixedModulesOf, INTERN_ROLE, PER_PERSON_MODULES,
   CEO_ONLY_MODULES,
   invalidateModuleAccessCache,
   effectiveModulesForUser,
@@ -44,7 +44,7 @@ import { findManagedStaff, auditCompanyOf } from '../auth/staffAccounts.js'
 
 /** Roles whose module list the CEO may edit: every role except the CEO seat
  *  and the director, whose modules are fixed (lib/moduleAccess.ts DIRECTOR_MODULES). */
-const EDITABLE_ROLES = ALL_ROLES.filter((r) => r !== 'admin' && r !== 'director')
+const EDITABLE_ROLES = ALL_ROLES.filter((r) => r !== 'admin' && !fixedModulesOf(r))
 
 export async function permissionRoutes(fastify: FastifyInstance) {
   // GET /permissions/me — who am I and which modules do I have.
@@ -95,10 +95,13 @@ export async function permissionRoutes(fastify: FastifyInstance) {
     const rows = await prisma.roleModuleAccess.findMany({ select: { role: true, modules: true } })
     return {
       defaults:  DEFAULT_MODULE_ACCESS,
-      overrides: Object.fromEntries(rows.map((r) => [r.role, withoutCeoOnlyModules(knownModulesOnly(r.modules))])),
+      overrides: Object.fromEntries(rows.map((r) => [r.role, withoutPerPersonModules(withoutCeoOnlyModules(knownModulesOnly(r.modules)))])),
       // Modules no role but the CEO may hold (Brands): the Module Access
-      // matrix shows them locked; a save that lists them drops them.
-      ceoOnlyModules: CEO_ONLY_MODULES,
+      // matrix shows them locked; a save that lists them drops them. The
+      // per-person modules (marketing lead / tracker, owner 2026-11-03) are
+      // locked the same way on a ROLE: only the CEO ticks them, per person.
+      ceoOnlyModules: [...CEO_ONLY_MODULES, ...PER_PERSON_MODULES],
+      perPersonModules: PER_PERSON_MODULES,
       // Role presets are HR's within these limits (owner, 2026-10-16): the
       // admin locks these roles' columns and these modules' rows for HR.
       presetLimits: {
@@ -175,6 +178,10 @@ export async function permissionRoutes(fastify: FastifyInstance) {
     if (body.role === 'director') {
       return reply.status(422).send({ error: { code: 'DIRECTOR_PRESET_FIXED', message: 'A director sees only the Director page for their own brands — that cannot be changed.' } })
     }
+    // The marketing intern (owner, 2026-11-03) holds exactly the board — fixed like the director.
+    if (body.role === INTERN_ROLE) {
+      return reply.status(422).send({ error: { code: 'INTERN_PRESET_FIXED', message: 'A marketing intern sees only the cards they work on — that cannot be changed.' } })
+    }
     let modules: string[] | null = null
     if (body.modules) {
       // Retired ids (from rows saved before they were removed) are dropped
@@ -187,7 +194,8 @@ export async function permissionRoutes(fastify: FastifyInstance) {
       // CEO-only modules (Brands) are never granted to another role: dropped
       // quietly, like a retired id, so a matrix that still shows one ticked
       // saves the rest (effectiveModulesForUser would ignore it anyway).
-      modules = Array.from(new Set(withoutCeoOnlyModules(knownModulesOnly(body.modules))))
+      // Per-person modules (marketing lead / tracker) are never a role's: dropped quietly the same way.
+      modules = Array.from(new Set(withoutPerPersonModules(withoutCeoOnlyModules(knownModulesOnly(body.modules)))))
     }
 
     // One writer per role at a time, and HR's governance check reads the saved
@@ -268,6 +276,8 @@ function moduleCatalogue() {
   return WORKSPACES.flatMap((w) => w.sections.flatMap((s) => s.modules.map((id) => ({
     id, workspace: w.id, workspaceTitle: w.title, section: s.key, sectionTitle: s.title,
     ceoOnly: CEO_ONLY_MODULES.includes(id),
+    // Per-person only (owner, 2026-11-03): never on a role preset, only ticked for a person.
+    perPersonOnly: PER_PERSON_MODULES.includes(id),
   }))))
 }
 
@@ -277,7 +287,7 @@ async function personModulesView(target: { role: UserRole; moduleAllow: string[]
   const presetSet = new Set(rolePreset)
   return {
     role: target.role,
-    locked: target.role === 'admin' || target.role === 'director',
+    locked: target.role === 'admin' || !!fixedModulesOf(target.role),
     rolePreset,
     effective: Array.from(effective),
     allow: knownModulesOnly(target.moduleAllow).filter((m) => !presetSet.has(m)),
@@ -300,6 +310,9 @@ export async function personModuleRoutes(fastify: FastifyInstance) {
     }
     if (target.role === 'director') {
       throw new AppError('DIRECTOR_MODULES_FIXED', 'A director sees only the Director page for their own brands — pick their brands on Workforce instead.', 422)
+    }
+    if (target.role === INTERN_ROLE) {
+      throw new AppError('INTERN_MODULES_FIXED', 'A marketing intern sees only the cards they work on and their own progress — that cannot be changed.', 422)
     }
     let allow: string[] = []
     let deny: string[] = []

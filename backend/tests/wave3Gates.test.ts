@@ -254,7 +254,9 @@ describe('UI-13 the brand picker works for every role, inside its own companies'
   it('every staff role reads its own companies\' active brands with ?view=picker', async () => {
     // A director (owner, 2026-10-18) reads only GET /director/* — refused here.
     expect((await get('director', '/concepts?view=picker')).statusCode).toBe(403)
-    for (const role of ALL_ROLES.filter((r) => r !== 'director')) {
+    // So does a marketing intern (owner, 2026-11-03): the board and their own pages only (INTERN_ROUTES).
+    expect((await get('marketing_intern', '/concepts?view=picker')).statusCode).toBe(403)
+    for (const role of ALL_ROLES.filter((r) => r !== 'director' && r !== 'marketing_intern')) {
       const r = await get(role, '/concepts?view=picker')
       expect(r.statusCode, role).toBe(200)
       const rows = r.json() as Array<Record<string, unknown>>
@@ -372,7 +374,12 @@ describe('W3E-RV the page guard opens every page a role\'s work needs', () => {
 
   it('every page in a role\'s sidebar opens for it', () => {
     const blocked: string[] = []
-    for (const role of ALL_ROLES) {
+    // A marketing intern (owner, 2026-11-03) has its own shell, not the sidebar: it opens My cards and My progress
+    // only (the board's weekly report is refused to it by the API too).
+    expect(open('marketing_intern', '/marketing/board')).toBe(true)
+    expect(open('marketing_intern', '/marketing/progress')).toBe(true)
+    expect(open('marketing_intern', '/marketing/weekly')).toBe(false)
+    for (const role of ALL_ROLES.filter((r) => r !== 'marketing_intern')) {
       for (const p of pagesForModules(mods(role))) {
         const path = p.href.split('?')[0]!
         if (!open(role, path)) blocked.push(`${role} ${path}`)
@@ -388,12 +395,16 @@ describe('W3E-RV the page guard opens every page a role\'s work needs', () => {
     for (const p of ['/hr/me', '/team', '/ceo/approvals', '/help', '/w/operations']) expect(open('director', p), p).toBe(false)
     expect(open('director', '/director')).toBe(true)
     expect(open('director', '/account/password')).toBe(true)
+    // A marketing intern (owner, 2026-11-03) punches its own clock and opens My HR — but not My team, the approvals
+    // inbox, help or a workspace home (INTERN_OPEN_PREFIXES / INTERN_ROUTES).
+    for (const p of ['/team', '/ceo/approvals', '/help', '/w/operations']) expect(open('marketing_intern', p), p).toBe(false)
+    for (const p of ['/hr/me', '/account/password', '/marketing/board']) expect(open('marketing_intern', p), p).toBe(true)
     for (const role of ALL_ROLES.filter((r) => r !== 'director')) {
       expect(open(role, '/time-clock'), `${role} page`).toBe(true)
       expect((await get(role, '/time-clock/status')).statusCode, `${role} status`).toBe(200)
     }
     // The other personal / always-open pages, likewise.
-    for (const role of ALL_ROLES.filter((r) => r !== 'director')) {
+    for (const role of ALL_ROLES.filter((r) => r !== 'director' && r !== 'marketing_intern')) {
       for (const path of ['/hr/me', '/team', '/ceo/approvals', '/account/password', '/help', '/w/operations']) {
         expect(open(role, path), `${role} ${path}`).toBe(true)
       }

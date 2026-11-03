@@ -49,6 +49,13 @@ export const ASSIGNABLE_ROLES: readonly UserRole[] = ALL_ROLES.filter(
  */
 export const DIRECTOR_ROLE = 'director' as UserRole
 
+/**
+ * Marketing intern / designer logins (owner, 2026-11-03). SECURE BY DEFAULT like the director: refused on every
+ * route outside auth/middleware.ts INTERN_ROUTES, fixed modules (lib/moduleAccess.ts INTERN_MODULES), refused at the
+ * socket handshake. Marketing, the brand manager, HR and the CEO invite them (lib/workspaces.ts CHILD_ROLES).
+ */
+export const INTERN_ROLE = 'marketing_intern' as UserRole
+
 export function isDirectorRole(role: string | null | undefined): boolean {
   return role === DIRECTOR_ROLE
 }

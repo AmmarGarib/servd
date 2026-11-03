@@ -242,6 +242,9 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Social pages per brand (2026-10-26): one approved + one pending per brand, status / brand CHECKs (RLS out).
   for (const statement of migrationSection('20261026180000_social_connections',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
+  // Marketing board (owner, 2026-11-03): board / stage, one link, board kind, review month CHECKs (RLS out).
+  for (const statement of migrationSection('20261103160100_marketing_board',
+    '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
   // Compensation tickets (2026-10-27): order_complaints_kind_chk gains 'compensation' — drop wave B's version,
   // then the migration's CHECKs.
   await prisma.$executeRawUnsafe('ALTER TABLE "order_complaints" DROP CONSTRAINT IF EXISTS "order_complaints_kind_chk"')

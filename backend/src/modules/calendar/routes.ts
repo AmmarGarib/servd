@@ -8,6 +8,7 @@ import { scopeTenantWhere, assertConceptOwned, type ScopeMode, activeTenantId } 
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
+import { seesBoard } from '../marketingBoard/access.js'
 
 const EVENT_TYPES = ['social_post','menu_change','seasonal_ingredient','deal','shoot','event_promo','reminder','task'] as const
 const EVENT_STATUSES = ['draft','scheduled','live','done','cancelled'] as const
@@ -42,10 +43,12 @@ const socialPostSchema = z.object({
 // company's brand-less events (and their social posts) to every other company.
 
 
-/** The event, or 404 when it isn't a row of a company in `mode`. */
+/** The event, or 404 when it isn't a row of a company in `mode`. A marketing board card (boardId set) is
+ *  changed only through the board (modules/marketingBoard — its stage, resources and intern rules): 409 here. */
 async function findEventInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
   const event = await prisma.contentEvent.findFirst({ where: { id, ...(await scopeTenantWhere(req, mode)) } })
   if (!event) throw new NotFoundError('ContentEvent', id)
+  if (event.boardId) throw new AppError('USE_MARKETING_BOARD', 'This is a marketing board card — change it on the Board.', 409)
   return event
 }
 
@@ -63,11 +66,14 @@ async function assertAssigneeOf(tenantId: string, assigneeId: string): Promise<v
 }
 
 export async function calendarRoutes(fastify: FastifyInstance) {
-  // GET /calendar?from=&to=&department=&conceptId=&assigneeId=
+  // GET /calendar?from=&to=&department=&conceptId=&assigneeId=&boardId=&cards=only|none
+  // Marketing board cards (owner, 2026-11-03) show on their deadline, with their board and stage — only to callers
+  // who hold the board (module marketing_board); everyone else sees the calendar exactly as before.
   fastify.get<{
-    Querystring: { from?: string; to?: string; department?: string; conceptId?: string; assigneeId?: string }
+    Querystring: { from?: string; to?: string; department?: string; conceptId?: string; assigneeId?: string; boardId?: string; cards?: string }
   }>('/', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const { from, to, department, conceptId, assigneeId } = req.query
+    const { from, to, department, conceptId, assigneeId, boardId, cards } = req.query
+    const withCards = cards !== 'none' && await seesBoard(req)
     const fromDate = from ? new Date(from) : new Date(Date.now() - 7 * 864e5)
     const toDate   = to   ? new Date(to)   : new Date(Date.now() + 60 * 864e5)
 
@@ -80,11 +86,13 @@ export async function calendarRoutes(fastify: FastifyInstance) {
         ...(department  ? { department }  : {}),
         ...(conceptId   ? { conceptId }   : {}),
         ...(assigneeId  ? { assigneeId }  : {}),
+        ...(!withCards ? { boardId: null } : boardId ? { boardId } : cards === 'only' ? { boardId: { not: null } } : {}),
       },
       include: {
         assignee:   { select: { id: true, name: true } },
         createdBy:  { select: { id: true, name: true } },
         socialPost: true,
+        board:      { select: { id: true, name: true, kind: true } },
       },
       orderBy: { startDate: 'asc' },
     })

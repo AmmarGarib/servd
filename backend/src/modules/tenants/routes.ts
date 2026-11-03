@@ -101,6 +101,15 @@ async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: st
   if (Number(prepClash[0]?.n ?? 0) > 0) {
     throw new AppError('PREP_ITEM_CLASH', 'Both companies keep stock of the same prep — move one company\'s prep stock out first', 422, { count: Number(prepClash[0]!.n) })
   }
+  // Promo codes (gap closed with the marketing board, 2026-11-03): a LIVE code is unique per company
+  // (promo_codes_tenant_code_live_key) and customers type it — never renamed by a merge. Both companies holding the
+  // same live code: retire one first, then merge.
+  const promoClash = await db.$queryRaw<Array<{ n: bigint }>>`
+    SELECT COUNT(*)::bigint AS n FROM promo_codes a JOIN promo_codes b ON a."code" = b."code"
+     WHERE a."tenantId" = ${src} AND b."tenantId" = ${dst} AND a."deletedAt" IS NULL AND b."deletedAt" IS NULL`
+  if (Number(promoClash[0]?.n ?? 0) > 0) {
+    throw new AppError('PROMO_CODE_CLASH', 'Both companies have a live promo code with the same text — delete or rename one, then combine them', 422, { count: Number(promoClash[0]!.n) })
+  }
   // Head office (D1 §6.7): never merged, and a company it serves is not either.
   const [hoTenants, hoLinks, splitLines, runLines, delegations] = await Promise.all([
     db.tenant.count({ where: { id: { in: pair }, kind: 'head_office' } }),
@@ -1182,6 +1191,18 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         await tx.guestTagType.delete({ where: { id: t.id } })
       }
       await tx.guestTag.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })
+      // Marketing boards are unique by name per company: a source board whose name the target already uses keeps its
+      // cards and is renamed "<name> (<source company>)" before the repoint below.
+      {
+        const dstNames = new Set((await tx.marketingBoard.findMany({ where: { tenantId: dst }, select: { name: true } })).map((b) => b.name))
+        for (const b of await tx.marketingBoard.findMany({ where: { tenantId: src }, select: { id: true, name: true } })) {
+          if (!dstNames.has(b.name)) continue
+          let name = `${b.name} (${srcSlug})`.slice(0, 120)
+          for (let n = 2; dstNames.has(name); n++) name = `${b.name} (${srcSlug} ${n})`.slice(0, 120)
+          dstNames.add(name)
+          await tx.marketingBoard.update({ where: { id: b.id }, data: { name } })
+        }
+      }
       const repoint: Array<{
         updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<unknown>
       }> = [
@@ -1200,6 +1221,14 @@ export async function tenantRoutes(fastify: FastifyInstance) {
         // Feedback and the public contact inbox (SEO round 1): contact
         // messages carry only the company, brand feedback the brand's company.
         tx.feedbackEntry,
+        // Marketing (gap closed 2026-11-03): calendar events / board cards, CRM campaigns and promo codes (a live-code
+        // clash is refused in assertMergeable) — they were not moved before and stayed on the deleted company.
+        tx.contentEvent, tx.campaign, tx.promoCode,
+        // Marketing board + intern tracker (owner, 2026-11-03): boards (a same-named board is renamed first, below),
+        // card resources / comments / file links, tracker records (one per employee — employees move with the
+        // company, so no clash), weekly notes and monthly reviews.
+        tx.marketingBoard, tx.contentEventResource, tx.contentEventComment, tx.contentEventMedia,
+        tx.marketingTrackee, tx.marketingCheckIn, tx.marketingReview,
       ]
       for (const model of repoint) {
         await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })

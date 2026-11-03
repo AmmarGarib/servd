@@ -66,6 +66,8 @@ export type NotificationKind =
   | 'food_safety.overdue'     // a temperature check or cleaning task is overdue — the company's kitchen managers
   | 'backup.result'           // the weekly database backup was made / failed (platform-wide) — the CEO (owner S13)
   | 'period.closed'           // finance closed a company's books through a date — that company's CEO(s) (owner, 2026-11-01)
+  | 'marketing.card'          // you were put on a marketing board card, or a card you work on moved stage (owner, 2026-11-03)
+  | 'marketing.weekly'        // Monday: last week's published vs slipped per board — marketing leads + the CEO (owner, 2026-11-03)
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical'
 

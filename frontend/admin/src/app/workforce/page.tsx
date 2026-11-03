@@ -122,7 +122,7 @@ const CATEGORIES: Category[] = [
     label: 'Marketing',
     icon: 'rocket',
     blurb: 'Brand manager, CRM, campaigns, reviews, content calendar.',
-    roles: ['marketing', 'brand_manager'],
+    roles: ['marketing', 'brand_manager', 'marketing_intern'],
   },
   {
     key: 'finance',

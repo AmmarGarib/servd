@@ -12,8 +12,9 @@ import { useTeam } from '../../hooks/useTeam'
 import { useMyWorkspaces, useHeadOfficeMe } from '../../hooks/useWorkspaces'
 import { APP_ROLES, roleLabel, type ModuleId } from '../../lib/appRoles'
 import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
-import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath, isDirector } from '../../lib/moduleCatalog'
+import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath, isDirector, isMarketingIntern } from '../../lib/moduleCatalog'
 import { DirectorShell } from './DirectorShell'
+import { InternShell } from './InternShell'
 import { PortfolioWriteGuardModal } from './PortfolioWriteGuardModal'
 import { useDialog } from './Modal'
 import { PENDING_LAYOUTS_KEY } from '../storefront/ApprovalsPanel'
@@ -94,7 +95,7 @@ function wsHome(id: string): string {
 
 const PERSONAL_ICONS: Record<string, string> = {
   '/team': 'users', '/ceo/approvals': 'check', '/me/notifications': 'bell',
-  '/trash': 'trash', '/hr/me': 'idcard', '/finance/cash-vouchers': 'cash',
+  '/trash': 'trash', '/hr/me': 'idcard', '/finance/cash-vouchers': 'cash', '/marketing/progress': 'trend',
 }
 
 function isActive(pathname: string, href: string): boolean {
@@ -227,6 +228,8 @@ function NavLinks({
       '/team': hasTeam || addsLogins,
       '/ceo/approvals': !allowedModules.has('approvals') && (hasTeam || isDelegate || approvalsWaiting > 0 || (team?.pendingApprovals ?? 0) > 0),
       '/hr/me': Boolean(team?.me),
+      // Interns' and designers' own progress (owner, 2026-11-03): marketing logins only.
+      '/marketing/progress': me?.role === 'marketing' || me?.role === 'brand_manager',
       // The Trash is its own left-menu link for every login (owner, 2026-10-20).
     }
     const items: NavItem[] = PERSONAL_PAGES.filter((p) => show[p.href] ?? true).map((p) => ({
@@ -716,6 +719,11 @@ function Shell({ children }: { children: React.ReactNode }) {
   // Director page and their password, nothing else (lib/moduleCatalog.ts).
   if (isDirector(user?.role) && !UNGUARDED_PREFIXES.some((p) => pathname.startsWith(p))) {
     return <DirectorShell pathname={pathname}>{children}</DirectorShell>
+  }
+  // Marketing intern / designer logins (owner, 2026-11-03): their own minimal shell — My cards, My progress, My HR,
+  // the clock and the bell; nothing else (the API refuses the rest).
+  if (isMarketingIntern(user?.role) && !UNGUARDED_PREFIXES.some((p) => pathname.startsWith(p))) {
+    return <InternShell pathname={pathname}>{children}</InternShell>
   }
 
   const isFullScreen = FULL_SCREEN_PREFIXES.some((p) => pathname.startsWith(p))

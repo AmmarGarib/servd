@@ -230,7 +230,9 @@ export function initWebSocket(fastify: FastifyInstance): SocketIOServer {
       // Director logins (owner, 2026-10-18) read their brand's figures through
       // GET /director/* only — never the live company feeds (tenant, concept,
       // station, till or reservation rooms). Refused at the handshake.
-      if (u.role === 'director') {
+      // Marketing interns (owner, 2026-11-03) likewise: the board and their own pages only — no live company feed.
+      // The bell still works (it polls /notifications/unread-count).
+      if (u.role === 'director' || u.role === 'marketing_intern') {
         return next(new Error('UNAUTHORIZED'))
       }
 

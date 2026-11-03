@@ -9,7 +9,11 @@
 //   qr_code           QrCode            snapshot  Same id on restore, so a printed code works again.
 //   tier_config       TierConfig        snapshot  Clash on (company, tier slug); the slug is immutable, so not renamable.
 //   content_event     ContentEvent      snapshot  WITH its social post (finding F8). A post that was waiting to go out
-//                                                 comes back as a draft: nothing is published by a restore.
+//                                                 comes back as a draft: nothing is published by a restore. A marketing
+//                                                 board card (owner, 2026-11-03) also keeps its resources, comments and
+//                                                 file links; on restore, people no longer on the company's staff, files
+//                                                 gone from the library and a dish / promo / campaign that is gone are
+//                                                 dropped, and its board must still be the company's.
 //   media_asset       MediaAsset        snapshot  Row only (the stored file was never deleted).
 //   storefront_promo  StorefrontPromo   snapshot  The storefront banner cards.
 //   site_layout       SiteLayout        snapshot  CEO only. WITH every version and A/B counter (finding F8). `servd:*`
@@ -235,22 +239,55 @@ const contentEvent: TrashProvider = {
   linkOf: () => '/calendar',
   parentOf: parentBrand,
   async clashOf(tx, entry) {
-    await assertBrandLive(tx, entry.tenantId, needSnapshot(entry).row.conceptId as string | null)
+    const snap = needSnapshot(entry)
+    await assertBrandLive(tx, entry.tenantId, snap.row.conceptId as string | null)
+    const boardId = snap.row.boardId as string | null | undefined
+    if (boardId) {
+      const board = await tx.marketingBoard.findFirst({ where: { id: boardId, tenantId: entry.tenantId ?? undefined }, select: { id: true } })
+      if (!board) throw new AppError('BOARD_NOT_AVAILABLE', 'The board this card was on is no longer this company\'s — it cannot be restored', 409)
+    }
     return null
   },
   async restore(tx, _ctx, entry) {
     const snap = needSnapshot(entry)
-    // The assignee is dropped when they are no longer staff of this company.
-    let override: Record<string, unknown> | undefined
-    const assigneeId = snap.row.assigneeId as string | null
-    if (assigneeId && entry.tenantId) {
-      const staff = await tx.user.findFirst({
-        where: { id: assigneeId, deletedAt: null, OR: [{ tenantId: entry.tenantId }, { tenantMemberships: { some: { tenantId: entry.tenantId } } }] },
+    const staffOf = async (ids: string[]): Promise<Set<string>> => {
+      if (!ids.length || !entry.tenantId) return new Set()
+      const rows = await tx.user.findMany({
+        where: { id: { in: ids }, deletedAt: null, OR: [{ tenantId: entry.tenantId }, { tenantMemberships: { some: { tenantId: entry.tenantId } } }] },
         select: { id: true },
       })
-      if (!staff) override = { assigneeId: null }
+      return new Set(rows.map((r) => r.id))
     }
-    await restoreSnapshot(tx, snap, { tenantId: entry.tenantId, ...(override ? { override } : {}) })
+    // The assignee is dropped when they are no longer staff of this company.
+    const override: Record<string, unknown> = {}
+    const assigneeId = snap.row.assigneeId as string | null
+    if (assigneeId && !(await staffOf([assigneeId])).has(assigneeId)) override.assigneeId = null
+    // A board card's link to a dish / promo / campaign is dropped when that row is gone or another company's.
+    const tid = entry.tenantId ?? undefined
+    const menuItemId = snap.row.menuItemId as string | null | undefined
+    if (menuItemId && !(await tx.menuItem.findFirst({ where: { id: menuItemId, deletedAt: null, concept: { tenantId: tid } }, select: { id: true } }))) override.menuItemId = null
+    const promoCodeId = snap.row.promoCodeId as string | null | undefined
+    if (promoCodeId && !(await tx.promoCode.findFirst({ where: { id: promoCodeId, tenantId: tid }, select: { id: true } }))) override.promoCodeId = null
+    const campaignId = snap.row.campaignId as string | null | undefined
+    if (campaignId && !(await tx.campaign.findFirst({ where: { id: campaignId, tenantId: tid }, select: { id: true } }))) override.campaignId = null
+    // Children: people still on the staff, comment authors that still exist, files still in the library.
+    const kids = { ...(snap.children ?? {}) }
+    const resources = kids.ContentEventResource ?? []
+    if (resources.length) {
+      const ok = await staffOf(resources.map((r) => String(r.userId)))
+      kids.ContentEventResource = resources.filter((r) => ok.has(String(r.userId)))
+    }
+    const comments = kids.ContentEventComment ?? []
+    if (comments.length) {
+      const authors = new Set((await tx.user.findMany({ where: { id: { in: comments.map((c) => String(c.authorId)) } }, select: { id: true } })).map((u) => u.id))
+      kids.ContentEventComment = comments.filter((c) => authors.has(String(c.authorId)))
+    }
+    const files = kids.ContentEventMedia ?? []
+    if (files.length) {
+      const live = new Set((await tx.mediaAsset.findMany({ where: { id: { in: files.map((f) => String(f.mediaAssetId)) }, tenantId: tid }, select: { id: true } })).map((a) => a.id))
+      kids.ContentEventMedia = files.filter((f) => live.has(String(f.mediaAssetId)))
+    }
+    await restoreSnapshot(tx, { ...snap, children: kids }, { tenantId: entry.tenantId, ...(Object.keys(override).length ? { override } : {}) })
     // Nothing is published by a restore: a post that was still waiting to go out
     // (and whose time may be long past) comes back as a draft to schedule again.
     const post = await tx.socialPost.findUnique({ where: { eventId: entry.entityId }, select: { id: true, status: true } })

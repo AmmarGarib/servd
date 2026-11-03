@@ -40,6 +40,9 @@ export type AppRole =
   // brands on their login, on /director only. Deliberately NOT in APP_ROLES
   // below: it has no preset to edit and no "view as" (its modules are fixed).
   | 'director'
+  // Marketing intern / designer (owner, 2026-11-03): sees only the board cards they work on and their own progress;
+  // its modules are fixed and the API refuses it everywhere else (backend auth/middleware.ts INTERN_ROUTES).
+  | 'marketing_intern'
 
 export interface RoleMeta {
   value: AppRole
@@ -64,6 +67,7 @@ export const APP_ROLES: RoleMeta[] = [
   { value: 'procurement',     label: 'Procurement',      emoji: '🏭',  description: 'Supplier chat and POs. Sees deliveries at the dock; a manager receives' },
   { value: 'marketing',       label: 'Marketing',        emoji: '🚀',  description: 'CRM, campaigns, reviews, complaints, content' },
   { value: 'brand_manager',   label: 'Brand Manager',    emoji: '📣',  description: 'Owns the Brand dashboard — ARPU, LTV, AOV, retention. Marketing + growth.' },
+  { value: 'marketing_intern', label: 'Marketing intern / designer', emoji: '', description: 'Sees only the marketing board cards they work on (edit, comment, upload files) and their own progress. Cannot move cards between stages.' },
   { value: 'fnb_manager',     label: 'F&B Manager',      emoji: '🍽️',  description: 'Owns the F&B dashboard — kitchen throughput, menu, food cost, quality. BOH + FOH.' },
   { value: 'finance',         label: 'Finance',          emoji: '💰',  description: 'P&L, payroll, accounting, reconciliation' },
   { value: 'hr',              label: 'HR / Workforce',   emoji: '👥',  description: 'Staff records, attendance, payroll, scheduling' },
@@ -76,6 +80,7 @@ export function roleLabel(role: string | undefined | null): string {
   const meta = APP_ROLES.find((r) => r.value === role)
   if (meta) return meta.label
   if (role === 'director') return 'Director'
+  if (role === 'marketing_intern') return 'Marketing intern / designer'
   // Fallback: title-case the raw value
   return role.charAt(0).toUpperCase() + role.slice(1)
 }
@@ -111,6 +116,8 @@ export type ModuleId =
   | 'api_whatsapp' | 'api_pos'
   // Director → Brand performance (owner, 2026-10-18): director logins + the CEO.
   | 'director_view'
+  // Marketing → Board & team (owner, 2026-11-03). marketing_lead and marketing_tracker are per person (CEO ticks).
+  | 'marketing_board' | 'marketing_tracker' | 'marketing_lead'
 
 export interface ModuleMeta {
   id: ModuleId
@@ -170,6 +177,9 @@ export const MODULES: ModuleMeta[] = [
   { id: 'brands',             label: 'Brand info',          section: 'Marketing' },
   { id: 'storefront',         label: 'Storefront content',  section: 'Marketing' },
   { id: 'analytics',          label: 'Analytics',           section: 'Marketing' },
+  { id: 'marketing_board',    label: 'Marketing board',     section: 'Marketing' },
+  { id: 'marketing_tracker',  label: 'Intern tracker (per person)', section: 'Marketing' },
+  { id: 'marketing_lead',     label: 'Marketing lead — moves cards (per person)', section: 'Marketing' },
 
   { id: 'finance_pl',         label: 'P&L',                 section: 'Finance' },
   { id: 'payroll',            label: 'Payroll',             section: 'Finance' },

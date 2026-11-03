@@ -5,12 +5,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../lib/api'
 import { Select } from '@/components/ui/Select'
 import Link from 'next/link'
-import { Smartphone, Utensils, Leaf, Gift, Camera, PartyPopper, Bell, SquareCheck, ChevronLeft, ChevronRight, User, X, TriangleAlert, Check, type LucideIcon } from 'lucide-react'
+import { Smartphone, Utensils, Leaf, Gift, Camera, PartyPopper, Bell, SquareCheck, ChevronLeft, ChevronRight, User, X, TriangleAlert, Check, Megaphone, PenTool, type LucideIcon } from 'lucide-react'
 import { isoToPktLocal, pktLocalToIso, localYmd } from '@/lib/money'
+import { useRouter } from 'next/navigation'
+import { STAGE_LABEL, STAGE_TONE, pktYmd, type Board, type Stage } from '../marketing/board/data'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type EventType = 'social_post'|'menu_change'|'seasonal_ingredient'|'deal'|'shoot'|'event_promo'|'reminder'|'task'
+type EventType = 'social_post'|'menu_change'|'seasonal_ingredient'|'deal'|'shoot'|'event_promo'|'reminder'|'task'|'campaign'|'design_request'
 type EventStatus = 'draft'|'scheduled'|'live'|'done'|'cancelled'
 type Platform = 'instagram'|'facebook'|'tiktok'
 
@@ -30,6 +32,10 @@ interface CalEvent {
   metadata?: Record<string, unknown>
   assignee?: { id: string; name: string } | null
   createdBy?: { id: string; name: string }
+  // Marketing board cards (owner, 2026-11-03): shown on their deadline, coloured by stage; edited on the Board.
+  boardId?: string | null
+  stage?: Stage | null
+  board?: { id: string; name: string; kind: string } | null
   socialPost?: {
     id: string; platform: Platform; caption: string
     mediaUrls: string[]; scheduledFor: string; status: string; publishedAt?: string; error?: string
@@ -48,7 +54,11 @@ const TYPE_CONFIG: Record<EventType, { label: string; bg: string; dot: string; I
   event_promo:         { label: 'Event/Promo',  bg: 'bg-s-red',    dot: 'bg-s-red',    Icon: PartyPopper },
   reminder:            { label: 'Reminder',     bg: 'bg-s-amber',  dot: 'bg-s-amber',  Icon: Bell },
   task:                { label: 'Task',         bg: 'bg-s-muted',  dot: 'bg-s-muted',  Icon: SquareCheck },
+  campaign:            { label: 'Campaign',     bg: 'bg-s-purple', dot: 'bg-s-purple', Icon: Megaphone },
+  design_request:      { label: 'Design',       bg: 'bg-s-pink',   dot: 'bg-s-pink',   Icon: PenTool },
 }
+/** The types a calendar entry may be created / edited as (campaign + design request are board cards only). */
+const CALENDAR_TYPES = Object.entries(TYPE_CONFIG).filter(([k]) => k !== 'campaign' && k !== 'design_request')
 
 const DEPT_OPTIONS = ['', 'marketing', 'procurement', 'kitchen', 'ops', 'management']
 const STATUS_OPTIONS: EventStatus[] = ['draft','scheduled','live','done','cancelled']
@@ -89,19 +99,30 @@ export default function CalendarPage() {
   const [createOnDay, setCreateOnDay] = useState<Date | null>(null)
   const [filterDept, setFilterDept] = useState('')
   const [filterType, setFilterType] = useState<EventType | ''>('')
+  // '' = everything; 'none' = calendar entries only; 'cards' = every board card; else one board's cards.
+  const [filterBoard, setFilterBoard] = useState('')
+  const router = useRouter()
+  // The boards (only for holders of the marketing board — anyone else gets 403 and sees no board filter).
+  const { data: boards = [] } = useQuery<Board[]>({ queryKey: ['mkb', 'boards'], queryFn: () => api.get('/marketing-board/boards'), retry: false })
 
   // Fetch events for visible month + one week buffer each side
   const from = new Date(viewMonth.year, viewMonth.month - 1, 24).toISOString()
   const to   = new Date(viewMonth.year, viewMonth.month + 1, 8).toISOString()
   const { data: events = [] } = useQuery<CalEvent[]>({
-    queryKey: ['calendar', from, to, filterDept, filterType],
-    queryFn:  () => api.get(`/calendar?from=${from}&to=${to}${filterDept ? `&department=${filterDept}` : ''}${filterType ? `&type=${filterType}` : ''}`),
+    queryKey: ['calendar', from, to, filterDept, filterType, filterBoard],
+    queryFn:  () => api.get(`/calendar?from=${from}&to=${to}${filterDept ? `&department=${filterDept}` : ''}${filterType ? `&type=${filterType}` : ''}${
+      filterBoard === 'none' ? '&cards=none' : filterBoard === 'cards' ? '&cards=only' : filterBoard ? `&boardId=${filterBoard}` : ''}`),
   })
+  const openEvent = (e: CalEvent) => {
+    if (e.boardId) router.push(`/marketing/board?board=${e.boardId}&card=${e.id}`)
+    else setEditEvent(e)
+  }
 
   const grid = useMemo(() => calendarGrid(viewMonth.year, viewMonth.month), [viewMonth])
 
   const eventsForDay = (day: Date) =>
-    events.filter((e) => e.startDate.slice(0, 10) === localYmd(day)) // all-day events are stored as UTC midnight of the chosen date
+    // All-day events are stored as UTC midnight of the chosen date; a board card's deadline is the end of its Karachi day.
+    events.filter((e) => (e.boardId ? pktYmd(e.startDate) : e.startDate.slice(0, 10)) === localYmd(day))
 
   function prevMonth() {
     setViewMonth(({ year, month }) =>
@@ -153,6 +174,20 @@ export default function CalendarPage() {
               <option key={k} value={k}>{v.label}</option>
             ))}
           </Select>
+          {boards.length > 0 && (
+            <Select value={filterBoard} onChange={(e) => setFilterBoard(e.target.value)} aria-label="Board"
+              className="rounded-lg border border-s-border bg-s-bg px-2 py-1 text-xs text-s-text">
+              <option value="">Calendar + all boards</option>
+              <option value="none">Calendar only</option>
+              <option value="cards">All board cards</option>
+              <optgroup label="Brands">
+                {boards.filter((b) => b.kind === 'brand').map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </optgroup>
+              <optgroup label="Platforms">
+                {boards.filter((b) => b.kind === 'platform').map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </optgroup>
+            </Select>
+          )}
           <button
             onClick={() => setCreateOnDay(today)}
             className="rounded-lg bg-primary px-4 py-1.5 text-sm font-bold text-primary-on hover:opacity-90"
@@ -201,12 +236,15 @@ export default function CalendarPage() {
                     <div className="space-y-0.5">
                       {dayEvts.slice(0, 3).map((e) => {
                         const cfg = TYPE_CONFIG[e.type]
+                        // A board card is coloured by its STAGE (owner, 2026-11-03).
+                        const bg = e.stage ? STAGE_TONE[e.stage] : e.color ? '' : cfg.bg
                         return (
                           <div
                             key={e.id}
-                            onClick={(ev) => { ev.stopPropagation(); setEditEvent(e) }}
-                            className={`flex items-center gap-1 truncate rounded px-1 py-0.5 text-xs font-medium text-white cursor-pointer hover:opacity-80 ${e.color ? '' : cfg.bg}`}
-                            style={e.color ? { backgroundColor: e.color } : undefined}
+                            onClick={(ev) => { ev.stopPropagation(); openEvent(e) }}
+                            title={e.stage ? `${e.board?.name ?? ''} · ${STAGE_LABEL[e.stage]}` : undefined}
+                            className={`flex items-center gap-1 truncate rounded px-1 py-0.5 text-xs font-medium text-white cursor-pointer hover:opacity-80 ${bg}`}
+                            style={!e.stage && e.color ? { backgroundColor: e.color } : undefined}
                           >
                             <cfg.Icon size={12} aria-hidden="true" className="shrink-0" /><span className="truncate">{e.title}</span>
                           </div>
@@ -242,7 +280,7 @@ export default function CalendarPage() {
               const cfg = TYPE_CONFIG[e.type]
               return (
                 <div key={e.id}
-                  onClick={() => setEditEvent(e)}
+                  onClick={() => openEvent(e)}
                   className="mb-3 cursor-pointer rounded-xl border border-s-border p-3 hover:border-primary/50 transition-colors"
                 >
                   <div className="flex items-center gap-2 mb-1">
@@ -250,6 +288,13 @@ export default function CalendarPage() {
                     <span className="font-semibold text-sm">{e.title}</span>
                     <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-bold text-white ${cfg.bg}`}>{cfg.label}</span>
                   </div>
+                  {e.stage && (
+                    <p className="mb-1 flex items-center gap-1.5 text-xs">
+                      <span className={`h-2 w-2 rounded-full ${STAGE_TONE[e.stage]}`} aria-hidden="true" />
+                      <span className="font-semibold">{STAGE_LABEL[e.stage]}</span>
+                      <span className="text-s-muted">· {e.board?.name}</span>
+                    </p>
+                  )}
                   {e.description && <p className="text-xs text-s-muted line-clamp-2">{e.description}</p>}
                   {e.assignee && <p className="text-xs text-s-muted mt-1 flex items-center gap-1"><User size={12} aria-hidden="true" />{e.assignee.name}</p>}
                   {e.socialPost && (
@@ -415,7 +460,7 @@ function EventDrawer({ event, initialDate, onClose, onSaved }: DrawerProps) {
                 <label className="text-xs text-s-muted">Type</label>
                 <Select value={type} onChange={(e) => setType(e.target.value as EventType)}
                   className="w-full mt-1 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none text-sm">
-                  {Object.entries(TYPE_CONFIG).map(([k, v]) => (
+                  {CALENDAR_TYPES.map(([k, v]) => (
                     <option key={k} value={k}>{v.label}</option>
                   ))}
                 </Select>

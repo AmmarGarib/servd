@@ -259,6 +259,13 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   brands:         [{ label: 'Brands', href: '/ceo/brands', icon: 'tag', hint: 'Brand info — tax, legal and the look stay with the CEO' }],
   analytics:      [{ label: 'Analytics', href: '/analytics', icon: 'chart' }],
   storefront:     [{ label: 'Storefront', href: '/storefront', icon: 'layout', hint: 'Pages, pop-ups, library, approvals' }],
+  // Marketing board + intern tracker (owner, 2026-11-03). marketing_lead has no page of its own: it lets the holder
+  // move cards between stages and manage boards on the Board.
+  marketing_board: [
+    { label: 'Board', href: '/marketing/board', icon: 'layout', hint: 'Simmer, Stackd, Flipd Burgers and beanzbakes — cards from idea to published' },
+    { label: 'Published vs slipped', href: '/marketing/weekly', sub: true, hint: 'Each board\'s week: what went out, what slipped' },
+  ],
+  marketing_tracker: [{ label: 'Intern tracker', href: '/marketing/tracker', icon: 'users', hint: 'Interns and designers: their cards, on-time rate, weekly notes, monthly reviews, attendance' }],
 
   // ── HR
   staff_hr:       [
@@ -318,6 +325,9 @@ export const PERSONAL_PAGES: ModulePage[] = [
   // GET /trash scopes it per type (module + role) and per company.
   { label: 'Trash', href: '/trash', hint: 'Restore deleted items, recover voided ones' },
   { label: 'My HR', href: '/hr/me', hint: 'Leave, payslips, requests' },
+  // Marketing interns / designers (owner, 2026-11-03): their own cards, weekly notes and shared reviews. Shown to
+  // marketing logins (AppShell); interns reach it from their own shell.
+  { label: 'My progress', href: '/marketing/progress', hint: 'Your cards, weekly notes and shared reviews' },
   // Cash requests (owner, 2026-10-13): anyone who needs cash raises one here
   // and uploads the receipts afterwards; the box's custodian (the cashier)
   // pays from the same page without the accounting module. Outside the cash
@@ -419,6 +429,14 @@ export const ALWAYS_OPEN_PREFIXES: readonly string[] = [
 /** The only pages a director login opens (owner, 2026-10-18). */
 export const DIRECTOR_OPEN_PREFIXES: readonly string[] = ['/director', '/account/password', '/login', '/reset-password']
 
+/** The only pages a marketing intern login opens (owner, 2026-11-03) — the API refuses everything else too. */
+export const INTERN_OPEN_PREFIXES: readonly string[] = ['/marketing/board', '/marketing/progress', '/hr/me', '/time-clock', '/account/password', '/login', '/reset-password']
+
+/** True for a marketing intern / designer login (owner, 2026-11-03). */
+export function isMarketingIntern(role: string | null | undefined): boolean {
+  return role === 'marketing_intern'
+}
+
 /** True for a director login (owner, 2026-10-18). */
 export function isDirector(role: string | null | undefined): boolean {
   return role === 'director'
@@ -468,6 +486,7 @@ export function canOpenPath(pathname: string, role: string | undefined, modules:
   // A director login opens the Director page and its own account page — never
   // anything else, whatever is "always open" to staff (the API refuses it too).
   if (role === 'director') return DIRECTOR_OPEN_PREFIXES.some((p) => underPrefix(pathname, p))
+  if (role === 'marketing_intern') return INTERN_OPEN_PREFIXES.some((p) => underPrefix(pathname, p))
   if (ALWAYS_OPEN_PREFIXES.some((p) => underPrefix(pathname, p))) return true
   const need = modulesForPath(pathname)
   if (need.length === 0) return true

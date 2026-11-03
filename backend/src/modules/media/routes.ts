@@ -99,6 +99,66 @@ async function assertBrandForAsset(req: FastifyRequest, conceptId: string, asset
   }
 }
 
+
+export interface MediaUploadQuery {
+  filename: string; contentType: string; category: string
+  kind?: 'image' | 'video' | 'font'; name?: string; tags?: string[]; conceptId?: string; fontFamily?: string
+}
+
+/**
+ * THE media upload: sign an R2 upload URL and pre-create the MediaAsset row in `tenantId`. GET /media/upload-url and
+ * the marketing board's card-scoped upload (modules/marketingBoard — interns upload to their own cards without ever
+ * reaching /media) both come here, so the type rules, storage check and library row are one.
+ */
+export async function presignMediaUpload(req: FastifyRequest, q: MediaUploadQuery, tenantId: string | null) {
+  if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
+
+  const kind = kindOfUpload(q.filename, q.contentType)
+  if (!kind) throw new AppError('MEDIA_TYPE_NOT_ALLOWED', `Files of type '${q.contentType || 'unknown'}' cannot be uploaded`, 422)
+  if (q.kind && q.kind !== kind) throw new AppError('MEDIA_KIND_MISMATCH', `This file is a ${kind}, not a ${q.kind}`, 422)
+  if (q.conceptId) await assertBrandForAsset(req, q.conceptId, tenantId, 'create')
+
+  const missing = missingStorageEnv()
+  if (missing.length > 0) {
+    throw new AppError(
+      'STORAGE_NOT_CONFIGURED',
+      'File uploads are not set up on this server (Cloudflare R2 settings are missing). Ask IT to configure upload storage.',
+      503,
+      { missing },
+    )
+  }
+
+  const { getSignedUploadUrl } = await import('../../lib/storage.js')
+  const result = await getSignedUploadUrl(q.filename, q.contentType, q.category, kind === 'font' ? [q.contentType] : [])
+    .catch((err: Error) => {
+      if (/not allowed/.test(err.message)) throw new AppError('MEDIA_TYPE_NOT_ALLOWED', err.message, 422)
+      throw err
+    })
+
+  const baseName = path.basename(q.filename, path.extname(q.filename))
+  // Pre-create the MediaAsset record (url is public after upload completes)
+  const asset = await prisma.mediaAsset.create({
+    data: {
+      tenantId,
+      key:          result.key,
+      url:          result.publicUrl,
+      filename:     q.filename,
+      contentType:  q.contentType,
+      category:     q.category,
+      kind,
+      name:         q.name?.trim() || baseName,
+      tags:         q.tags ?? [],
+      conceptId:    q.conceptId ?? null,
+      // The family (given, else from the name / file name) is cleaned to
+      // the safe charset — never refused on upload.
+      fontFamily:   kind === 'font' ? (cleanFontFamily(q.fontFamily) || cleanFontFamily(q.name) || cleanFontFamily(baseName) || 'Font') : null,
+      uploadedById: req.staffUser!.id,
+    },
+  })
+
+  return { ...result, assetId: asset.id }
+}
+
 export async function mediaRoutes(fastify: FastifyInstance) {
   // GET /media/upload-url?filename&contentType&category&kind&name&tags&conceptId&fontFamily
   fastify.get<{ Querystring: Record<string, string | string[] | undefined> }>(
@@ -115,53 +175,7 @@ export async function mediaRoutes(fastify: FastifyInstance) {
         conceptId:   z.string().min(1).optional(),
         fontFamily:  z.string().max(120).optional(),
       }).parse(req.query)
-      const tenantId = req.staffUser?.tenantId
-      if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
-
-      const kind = kindOfUpload(q.filename, q.contentType)
-      if (!kind) throw new AppError('MEDIA_TYPE_NOT_ALLOWED', `Files of type '${q.contentType || 'unknown'}' cannot be uploaded`, 422)
-      if (q.kind && q.kind !== kind) throw new AppError('MEDIA_KIND_MISMATCH', `This file is a ${kind}, not a ${q.kind}`, 422)
-      if (q.conceptId) await assertBrandForAsset(req, q.conceptId, tenantId, 'create')
-
-      const missing = missingStorageEnv()
-      if (missing.length > 0) {
-        throw new AppError(
-          'STORAGE_NOT_CONFIGURED',
-          'File uploads are not set up on this server (Cloudflare R2 settings are missing). Ask IT to configure upload storage.',
-          503,
-          { missing },
-        )
-      }
-
-      const { getSignedUploadUrl } = await import('../../lib/storage.js')
-      const result = await getSignedUploadUrl(q.filename, q.contentType, q.category, kind === 'font' ? [q.contentType] : [])
-        .catch((err: Error) => {
-          if (/not allowed/.test(err.message)) throw new AppError('MEDIA_TYPE_NOT_ALLOWED', err.message, 422)
-          throw err
-        })
-
-      const baseName = path.basename(q.filename, path.extname(q.filename))
-      // Pre-create the MediaAsset record (url is public after upload completes)
-      const asset = await prisma.mediaAsset.create({
-        data: {
-          tenantId,
-          key:          result.key,
-          url:          result.publicUrl,
-          filename:     q.filename,
-          contentType:  q.contentType,
-          category:     q.category,
-          kind,
-          name:         q.name?.trim() || baseName,
-          tags:         q.tags ?? [],
-          conceptId:    q.conceptId ?? null,
-          // The family (given, else from the name / file name) is cleaned to
-          // the safe charset — never refused on upload.
-          fontFamily:   kind === 'font' ? (cleanFontFamily(q.fontFamily) || cleanFontFamily(q.name) || cleanFontFamily(baseName) || 'Font') : null,
-          uploadedById: req.staffUser!.id,
-        },
-      })
-
-      return { ...result, assetId: asset.id }
+      return presignMediaUpload(req, q, req.staffUser?.tenantId ?? null)
     },
   )
 

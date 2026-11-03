@@ -99,6 +99,7 @@ import { startOnAccountDailyWorker } from './workers/onAccountDaily.js'
 import { startStaffNotificationsWorker } from './workers/staffNotifications.js'
 import { startCompensationTicketsWorker } from './workers/compensationTickets.js'
 import { startHrDigestWorker } from './workers/hrDigest.js'
+import { startMarketingWeeklyWorker } from './workers/marketingWeekly.js'
 import { startShiftSessionWorker } from './workers/shiftSessions.js'
 import { startDatabaseBackupWorker } from './workers/databaseBackup.js'
 import { startFoodSafetyOverdueWorker } from './workers/foodSafetyOverdue.js'
@@ -169,6 +170,8 @@ import { timeClockRoutes } from './modules/timeclock/routes.js'
 import { locationRoutes } from './modules/locations/routes.js'
 import { paymentGatewayRoutes } from './modules/paymentGateways/routes.js'
 import { marketingActivityRoutes } from './modules/marketingActivity/routes.js'
+import { marketingBoardRoutes } from './modules/marketingBoard/routes.js'
+import { marketingTrackerRoutes, marketingProgressRoutes } from './modules/marketingBoard/tracker.js'
 import { opsReportRoutes } from './modules/opsReports/routes.js'
 import { tenantRoutes } from './modules/tenants/routes.js'
 import { domainRoutes } from './modules/domains/routes.js'
@@ -543,6 +546,10 @@ async function build() {
       await api.register(locationRoutes,     { prefix: '/locations' })
       await api.register(paymentGatewayRoutes, { prefix: '/payment-gateways' })
       await api.register(marketingActivityRoutes, { prefix: '/marketing' })
+      // Marketing board + intern tracker (owner, 2026-11-03; modules/marketingBoard/README.md).
+      await api.register(marketingBoardRoutes,    { prefix: '/marketing-board' })
+      await api.register(marketingTrackerRoutes,  { prefix: '/marketing-tracker' })
+      await api.register(marketingProgressRoutes, { prefix: '/marketing-progress' })
       await api.register(opsReportRoutes,         { prefix: '/ops' })
       await api.register(tenantRoutes,            { prefix: '/tenants' })
       await api.register(domainRoutes,            { prefix: '/domains' })
@@ -1162,6 +1169,13 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[social] legacy connection move skipped: ${(err as Error).message}`)
   }
+  // Marketing boards (owner, 2026-11-03): Simmer, Stackd, Flipd Burgers per brand + the beanzbakes platform board.
+  try {
+    const { ensureMarketingBoards } = await import('./modules/marketingBoard/boards.js')
+    await ensureMarketingBoards((m) => fastify.log.info(m))
+  } catch (err) {
+    fastify.log.warn(`[marketing-board] board seeding skipped: ${(err as Error).message}`)
+  }
   // HR requests raised by HR that are already waiting on an HR step (owner,
   // 2026-10-21): HR's raising was its sign-off — move them on once.
   try {
@@ -1372,6 +1386,7 @@ async function build() {
     startStaffNotificationsWorker()   // the bell: exception claim-poller + retention
     startCompensationTicketsWorker()  // compensation tickets from void / comp / refund / discount / price-override rows (owner 2026-10-27)
     startHrDigestWorker()             // weekly HR expiry digest + 2-day waiting-request reminders (bell)
+    startMarketingWeeklyWorker()      // Monday: last week's published vs slipped per board — marketing leads + CEO (bell)
     startShiftSessionWorker()         // sign-in = one shift: drawers closed by any path end their cashier's sessions (owner B1)
     startDatabaseBackupWorker()       // weekly encrypted database backup, Sunday 03:00 PKT (owner S13; never on the practice copy)
     startFoodSafetyOverdueWorker()    // overdue temperature checks / cleaning tasks (bell)

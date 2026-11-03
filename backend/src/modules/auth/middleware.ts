@@ -12,7 +12,7 @@ import { isRevoked } from '../../lib/tokenRevocation.js'
 import { readCookie, ACCESS_COOKIE } from '../../lib/cookies.js'
 import { enforceModuleAccess } from '../../lib/moduleAccess.js'
 import { isAccountActive } from './accountStatus.js'
-import { ALL_ROLES, DIRECTOR_ROLE } from '../../lib/roles.js'
+import { ALL_ROLES, DIRECTOR_ROLE, INTERN_ROLE } from '../../lib/roles.js'
 import { testTenantIds } from '../../lib/testCompany.js'
 import { headOfficeReach, rememberReach, routePatternOf, isHoSubmitRoute, isHoPassthrough } from '../../lib/headOffice.js'
 import { AppError } from '../../lib/errors.js'
@@ -102,6 +102,11 @@ async function attachStaffPrincipal(req: FastifyRequest, payload: { sub: string;
   // route added tomorrow is closed to directors without anyone remembering.
   if (liveRole === DIRECTOR_ROLE && !isDirectorRoute(req)) {
     throw new AppError('DIRECTOR_READ_ONLY', 'A director login opens only the Director pages.', 403)
+  }
+  // Marketing intern / designer logins (owner, 2026-11-03) — the same secure-by-default rule: refused on every
+  // route outside INTERN_ROUTES, whatever the route's own role list says.
+  if (liveRole === INTERN_ROLE && !isInternRoute(req)) {
+    throw new AppError('INTERN_ROUTE_NOT_ALLOWED', 'A marketing intern login opens only the marketing board and their own pages.', 403)
   }
 
   // Revocation-on-deactivation: a JWT outlives its user's employment unless we
@@ -273,11 +278,50 @@ export const DIRECTOR_ROUTES: ReadonlyArray<{ method: string; path: string }> = 
   { method: 'POST', path: '/auth/password/change-authed' },
 ]
 
+// ─── Marketing intern / designer logins (owner, 2026-11-03) ─────────────────
+// The ONLY routes a marketing_intern login reaches. The board API itself shows an intern only the cards they are a
+// resource / owner on and refuses stage moves, deletes and board management (modules/marketingBoard). Plus their
+// own progress (tracker record, weekly notes, SHARED reviews), their own clock, their own My HR, the bell and their
+// own session. Same matching as DIRECTOR_ROUTES. Nothing else — a route added tomorrow is closed to interns.
+export const INTERN_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
+  ...['GET', 'HEAD', 'POST', 'PATCH', 'PUT'].map((method) => ({ method, path: '/marketing-board/*' })),
+  { method: 'GET',  path: '/marketing-progress/*' },
+  { method: 'GET',  path: '/permissions/me' },
+  { method: 'GET',  path: '/auth/account' },
+  { method: 'POST', path: '/auth/refresh' },
+  { method: 'POST', path: '/auth/logout' },
+  { method: 'POST', path: '/auth/password/change-authed' },
+  // Their own clock (the punch routes punch only the caller; status shows only their own punches).
+  { method: 'GET',  path: '/time-clock/status' },
+  { method: 'POST', path: '/time-clock/punch-in' },
+  { method: 'POST', path: '/time-clock/clock-in' },
+  { method: 'POST', path: '/time-clock/punch-out' },
+  { method: 'POST', path: '/time-clock/clock-out' },
+  { method: 'POST', path: '/time-clock/hold-reason' },
+  // Their own My HR (leave, payslips, requests) — every /hr/me route reads only the caller's own record.
+  { method: 'GET',  path: '/hr/me' },
+  { method: 'GET',  path: '/hr/me/*' },
+  { method: 'POST', path: '/hr/me/*' },
+  // The bell (assignments and stage moves on their cards).
+  { method: 'GET',  path: '/notifications/inbox' },
+  { method: 'GET',  path: '/notifications/unread-count' },
+  { method: 'POST', path: '/notifications/:id/read' },
+  { method: 'POST', path: '/notifications/read-all' },
+]
+
+function isInternRoute(req: FastifyRequest): boolean {
+  return matchesAllowList(req, INTERN_ROUTES)
+}
+
 function isDirectorRoute(req: FastifyRequest): boolean {
+  return matchesAllowList(req, DIRECTOR_ROUTES)
+}
+
+function matchesAllowList(req: FastifyRequest, list: ReadonlyArray<{ method: string; path: string }>): boolean {
   const path = routePatternOf(req)
   if (!path) return false
   const method = (req.method ?? 'GET').toUpperCase()
-  return DIRECTOR_ROUTES.some((e) => {
+  return list.some((e) => {
     if (e.method !== method) return false
     if (e.path.endsWith('/*')) {
       const base = e.path.slice(0, -2)

@@ -95,6 +95,10 @@ enum UserRole {
   // Flipd). READ-ONLY, and only the brands in User.directorConceptIds, through
   // GET /director/* — every other route refuses the role (auth/middleware.ts).
   director
+  // marketing_intern — "Marketing intern / designer" (owner, 2026-11-03). Sees ONLY the marketing board cards
+  // they are a resource / owner on, and their own progress. Refused centrally on every route outside
+  // auth/middleware.ts INTERN_ROUTES (the director precedent: secure by default).
+  marketing_intern
 }
 
 // Self-signed-up staff start as `pending` until the CEO approves them. Only
@@ -228,7 +232,8 @@ enum JournalEntryType {
 // ─── Concept ──────────────────────────────────────────────────────────────────
 
 model Concept {
-  id                       String      @id @default(uuid())
+  id                       String           @id @default(uuid())
+  marketingBoards          MarketingBoard[] @relation("ConceptMarketingBoards")
   tenantId                 String? // tenant — backfilled to "main" on first boot
   // Kitchen flow (owner, 2026-10-26, K4): the company that OWNS this brand's recipes when it is not the brand's own
   // (Flipd → GS Foods: "Flipd's recipes are OWNED BY GS FOODS and USED by Flipd"). Null = the brand's own company.
@@ -236,23 +241,23 @@ model Concept {
   // brand's company's (a Flipd sale deducts Flipd's outlet stock, in Flipd's books).
   recipeOwnerTenantId      String?
   name                     String
-  slug                     String      @unique
+  slug                     String           @unique
   type                     ConceptType
   description              String?
   logoUrl                  String?
   primaryColor             String?
-  isActive                 Boolean     @default(true)
+  isActive                 Boolean          @default(true)
   // Expected monthly portions at steady state — denominator for the
   // brand's Opex per Portion calc on the Recipe page. Operator-edited
   // when projections are set or revised.
-  forecastPortionsPerMonth Int         @default(0)
-  taxRate                  Float       @default(17) // FBR GST % — legacy single rate; kept for back-compat. New calc uses the split below.
+  forecastPortionsPerMonth Int              @default(0)
+  taxRate                  Float            @default(17) // FBR GST % — legacy single rate; kept for back-compat. New calc uses the split below.
   // FBR allows a discounted GST rate on card / digital tenders to encourage
   // banked payments. The split is per-brand because some concepts negotiate
   // their own rates with the tax authority. Cash defaults to the higher rate
   // (15% as of 2026), card to the lower (8%).
-  taxRateCash              Float       @default(15)
-  taxRateCard              Float       @default(8)
+  taxRateCash              Float            @default(15)
+  taxRateCard              Float            @default(8)
 
   // Storefront CMS — editable from ops admin
   storefrontVisible  Boolean @default(true) // show/hide on customer ordering page
@@ -545,16 +550,17 @@ enum TaxClassification {
 }
 
 model MenuItem {
-  id                String  @id @default(uuid())
+  id                String         @id @default(uuid())
+  marketingCards    ContentEvent[] @relation("CardMenuItem")
   conceptId         String
   categoryId        String
   name              String
   // The item code / SKU the till searches by (till flow, 2026-10-20). Unique per brand.
   itemCode          String?
-  nameUrdu          String? @map("name_urdu")
+  nameUrdu          String?        @map("name_urdu")
   description       String?
   instructions      String? // cooking/assembly steps shown in KDS tap modal
-  instructionsUrdu  String? @map("instructions_urdu")
+  instructionsUrdu  String?        @map("instructions_urdu")
   priceCents        Int
   imageUrl          String?
   // Optional looping video shown in place of the still image on the
@@ -562,12 +568,12 @@ model MenuItem {
   // the video and falls back to the image. Operator sets one or the
   // other per item from the admin.
   videoUrl          String?
-  isAvailable       Boolean @default(true)
+  isAvailable       Boolean        @default(true)
   // The recipe gate (owner 2026-10-24): true only for dishes LIVE at go-live with no approved recipe (set by
   // migration 20261024140000) — they may come back on after an 86; every other dish needs a production recipe.
-  liveAtRecipeGate  Boolean @default(false)
+  liveAtRecipeGate  Boolean        @default(false)
   portionsAvailable Int? // null = unlimited; set per service for live stock tracking
-  displayOrder      Int     @default(0)
+  displayOrder      Int            @default(0)
   stationId         String? // default routing station
 
   // FBR tax classification per item. CA can override per-item; default is
@@ -1053,14 +1059,16 @@ model GuestTagType {
 // ─── User (Staff) ─────────────────────────────────────────────────────────────
 
 model User {
-  id                  String        @id @default(uuid())
+  id                  String                 @id @default(uuid())
+  cardResources       ContentEventResource[] @relation("CardResources")
+  cardComments        ContentEventComment[]  @relation("CardComments")
   tenantId            String? // tenant — backfilled on first boot
   name                String
   // Email is nullable so the CEO can stub a staff row from the workforce hub
   // (just a name + category) and fill the contact details in later. Postgres
   // permits multiple NULLs on a @unique column, so the uniqueness guarantee
   // still holds for real addresses. Login flows already gate on `email != null`.
-  email               String?       @unique
+  email               String?                @unique
   phone               String? // staff contact + source for the 4-digit PIN
   password            String // bcrypt hash
   pin                 String? // bcrypt hash of PIN
@@ -1071,8 +1079,8 @@ model User {
   // Set when an account is created with a generated password, or an admin
   // reissues one. A nudge for the client to prompt a change — NEVER a login
   // block: hard-blocking here is how you strand people on deploy day.
-  mustChangePassword  Boolean       @default(false)
-  pinMustReset        Boolean       @default(false)
+  mustChangePassword  Boolean                @default(false)
+  pinMustReset        Boolean                @default(false)
   // Set when a staff member taps "forgot PIN" on the login screen. Surfaces
   // the request to the CEO/owner in the staff directory; cleared when a new
   // PIN is issued. Never reveals anything about the old PIN.
@@ -1105,7 +1113,7 @@ model User {
   // session ISSUED before it ends SHIFT_CLOSE_GRACE_MS after it (time to see /
   // print the Z-report). Checked on every request and on refresh.
   sessionsEndedAt     DateTime?
-  role                UserRole      @default(kitchen)
+  role                UserRole               @default(kitchen)
   // Free-text job title shown next to the role chip in /workforce. The role
   // enum is the *category* (FOH / BOH / Procurement / etc); jobTitle is what
   // the operator actually calls them ("Sous Chef Bukhari", "Floor manager —
@@ -1113,7 +1121,7 @@ model User {
   jobTitle            String?
   // Self-signup creates accounts as `pending` — CEO approves from the user
   // dropdown before they can sign in. Existing accounts back-fill to `active`.
-  accountStatus       AccountStatus @default(active)
+  accountStatus       AccountStatus          @default(active)
   // Who added this login (a workspace owner adding staff under them, decision 47).
   // The CEO approves it before it can sign in; null = created by the CEO.
   invitedById         String?
@@ -1124,18 +1132,18 @@ model User {
   // Concepts this user is allowed to access. Empty array = no concept restriction
   // is applied (intended for admin/manager — role check is the gate). Non-admin
   // roles MUST have explicit concept IDs to access concept-scoped resources.
-  conceptIds          String[]      @default([])
+  conceptIds          String[]               @default([])
   // Stations this user is assigned to work. Drives the /kds dashboard (line
   // cook sees only their stations) and is the route the head chef uses to
   // hand a tablet to a cook without showing them every station's queue.
   // Empty = "not station-restricted" → admin / management / expediter see
   // every station via the existing /kds/stations endpoint.
-  stationIds          String[]      @default([])
+  stationIds          String[]               @default([])
   // Director logins (owner, 2026-10-18): the brands this director may see,
   // read-only, through GET /director/*. Empty = sees nothing (never "all").
   // Set only by the CEO; each id is a brand of one of the CEO's companies.
   // Deliberately NOT `conceptIds` above (decision 35: no longer read).
-  directorConceptIds  String[]      @default([])
+  directorConceptIds  String[]               @default([])
   // ─── Per-user permission + module overrides ─────────────────────────
   // The role gives a baseline (set in /configuration/roles for actions and
   // /configuration/role-modules for sidebar visibility). These four arrays
@@ -1150,19 +1158,19 @@ model User {
   //
   // Effective access = role default ± user overrides. Resolution is in
   // backend/src/lib/permissions.ts (userCan) and the frontend useCan hook.
-  permissionAllow     String[]      @default([])
-  permissionDeny      String[]      @default([])
-  moduleAllow         String[]      @default([])
-  moduleDeny          String[]      @default([])
+  permissionAllow     String[]               @default([])
+  permissionDeny      String[]               @default([])
+  moduleAllow         String[]               @default([])
+  moduleDeny          String[]               @default([])
   // Payroll: hourly rate in paisa (PKR cents). Null = unpaid (volunteer/owner).
   hourlyRateCents     Int?
   // Wage account this employee's labour posts to: 6030 kitchen / 6031 FOH /
   // 6032 management / 6035 riders. Null = derive from role.
   wageAccountCode     String?
-  isActive            Boolean       @default(true)
+  isActive            Boolean                @default(true)
   viaHeadOfficeId     String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
   deletedAt           DateTime?
 
   shifts                 Shift[]
@@ -3897,6 +3905,7 @@ model Segment {
 
 model Campaign {
   id             String          @id @default(uuid())
+  marketingCards ContentEvent[]  @relation("CardCampaign")
   tenantId       String?
   segmentId      String?
   // Brand audience. Empty = every customer we can reach, across all brands.
@@ -4376,24 +4385,25 @@ model WalletTransaction {
 // ─── PromoCode ────────────────────────────────────────────────────────────────
 
 model PromoCode {
-  id               String    @id @default(uuid())
+  id               String         @id @default(uuid())
+  marketingCards   ContentEvent[] @relation("CardPromoCode")
   tenantId         String?
   conceptId        String?
   code             String
   description      String?
-  discountType     String    @default("percentage") // percentage | fixed
+  discountType     String         @default("percentage") // percentage | fixed
   discountValue    Float
   minOrderCents    Int?
   maxDiscountCents Int?
   maxUsageCount    Int?
-  perCustomerLimit Int       @default(1)
-  usedCount        Int       @default(0)
-  channel          String    @default("both") // app | web | both
+  perCustomerLimit Int            @default(1)
+  usedCount        Int            @default(0)
+  channel          String         @default("both") // app | web | both
   startAt          DateTime
   endAt            DateTime
-  isActive         Boolean   @default(true)
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  isActive         Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
   // Trash bin (2026-10-15): orders and usages point at a code, so a deleted
   // code is soft-deleted. EVERY redemption read (lib/promoEval.ts) filters
   // deletedAt: null — a trashed code is never redeemable.
@@ -4610,6 +4620,40 @@ enum ContentEventType {
   event_promo
   reminder
   task
+  // Marketing board cards (owner, 2026-11-03): a board card IS a ContentEvent.
+  campaign
+  design_request
+}
+
+// Marketing board (owner, 2026-11-03). A card's stage — only board cards carry one (ContentEvent.stage); the
+// calendar's own `status` is untouched. Only marketing_lead holders and the CEO move a card between stages.
+enum MarketingStage {
+  idea
+  brief_ready
+  in_progress
+  in_review
+  approved
+  published
+}
+
+enum MarketingPriority {
+  low
+  normal
+  high
+  urgent
+}
+
+// A board is a BRAND (linked to its Concept) or a PLATFORM (owner, 2026-11-03: "beanzbakes is just an instagram
+// account … not a separate entity but a separate platform") — a platform has no brand, no company of its own.
+enum MarketingBoardKind {
+  brand
+  platform
+}
+
+enum MarketingRecommendation {
+  keep
+  extend
+  end
 }
 
 enum ContentEventStatus {
@@ -4639,15 +4683,170 @@ model ContentEvent {
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
 
-  concept    Concept?    @relation("ConceptCalendar", fields: [conceptId], references: [id], onDelete: SetNull)
-  assignee   User?       @relation("EventAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  createdBy  User        @relation("EventCreatedBy", fields: [createdById], references: [id])
-  socialPost SocialPost?
+  // ── Marketing board card (owner, 2026-11-03; modules/marketingBoard). A card is a ContentEvent with a boardId
+  // and a stage; startDate is its DEADLINE (so the calendar shows it on its deadline), assigneeId its OWNER and
+  // description its BRIEF. Plain calendar entries leave all of these null / empty.
+  boardId        String?
+  stage          MarketingStage?
+  priority       MarketingPriority?
+  referenceLinks String[]           @default([])
+  publishedAt    DateTime? // first move to Published; on time = publishedAt <= startDate
+  revisionCount  Int                @default(0) // moves back from In review / Approved to In progress
+  // Optional link to ONE of a dish, a promo code or a CRM campaign of the card's own company.
+  menuItemId     String?
+  promoCodeId    String?
+  campaignId     String?
 
+  concept    Concept?               @relation("ConceptCalendar", fields: [conceptId], references: [id], onDelete: SetNull)
+  assignee   User?                  @relation("EventAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  createdBy  User                   @relation("EventCreatedBy", fields: [createdById], references: [id])
+  socialPost SocialPost?
+  board      MarketingBoard?        @relation(fields: [boardId], references: [id], onDelete: Restrict)
+  menuItem   MenuItem?              @relation("CardMenuItem", fields: [menuItemId], references: [id], onDelete: SetNull)
+  promoCode  PromoCode?             @relation("CardPromoCode", fields: [promoCodeId], references: [id], onDelete: SetNull)
+  campaign   Campaign?              @relation("CardCampaign", fields: [campaignId], references: [id], onDelete: SetNull)
+  resources  ContentEventResource[]
+  comments   ContentEventComment[]
+  files      ContentEventMedia[]
+
+  @@index([boardId, stage])
   @@index([startDate])
   @@index([conceptId, startDate])
   @@index([tenantId, startDate])
   @@map("content_events")
+}
+
+// ─── Marketing board (owner, 2026-11-03; contract: modules/marketingBoard/README.md) ─────────────────────────────
+// Every table is company data (tenantId, RLS, the company-merge repoint list).
+
+/// A board: one per brand (kind brand, conceptId = the brand) or a platform (kind platform, no brand).
+/// Archived, never deleted.
+model MarketingBoard {
+  id         String             @id @default(cuid())
+  tenantId   String
+  name       String
+  kind       MarketingBoardKind @default(brand)
+  conceptId  String?
+  sort       Int                @default(0)
+  archivedAt DateTime?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  concept Concept?       @relation("ConceptMarketingBoards", fields: [conceptId], references: [id], onDelete: SetNull)
+  cards   ContentEvent[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, sort])
+  @@map("marketing_boards")
+}
+
+/// The people working on a card (company members only).
+model ContentEventResource {
+  id        String   @id @default(cuid())
+  tenantId  String
+  eventId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  event ContentEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User         @relation("CardResources", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([tenantId, userId])
+  @@map("content_event_resources")
+}
+
+/// Comments / review notes on a card.
+model ContentEventComment {
+  id        String   @id @default(cuid())
+  tenantId  String
+  eventId   String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  event  ContentEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  author User         @relation("CardComments", fields: [authorId], references: [id])
+
+  @@index([eventId, createdAt])
+  @@index([tenantId])
+  @@map("content_event_comments")
+}
+
+/// A media-library file (MediaAsset) attached to a card.
+model ContentEventMedia {
+  id           String   @id @default(cuid())
+  tenantId     String
+  eventId      String
+  mediaAssetId String
+  addedById    String?
+  createdAt    DateTime @default(now())
+
+  event      ContentEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  mediaAsset MediaAsset   @relation("CardFiles", fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, mediaAssetId])
+  @@index([tenantId])
+  @@map("content_event_media")
+}
+
+/// Tracker: one record per marketing intern / designer (an HR employee of the company).
+model MarketingTrackee {
+  id          String    @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  roleLabel   String
+  startDate   DateTime  @db.Date
+  endDate     DateTime? @db.Date
+  active      Boolean   @default(true)
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  employee HrEmployee         @relation("MarketingTrackees", fields: [employeeId], references: [id], onDelete: Restrict)
+  checkIns MarketingCheckIn[]
+  reviews  MarketingReview[]
+
+  @@unique([tenantId, employeeId])
+  @@map("marketing_trackees")
+}
+
+/// A weekly check-in note — the intern sees their own at once.
+model MarketingCheckIn {
+  id        String   @id @default(cuid())
+  tenantId  String
+  trackeeId String
+  weekStart DateTime @db.Date // Monday (Karachi) of the week
+  note      String
+  authorId  String
+  createdAt DateTime @default(now())
+
+  trackee MarketingTrackee @relation(fields: [trackeeId], references: [id], onDelete: Cascade)
+
+  @@index([trackeeId, weekStart])
+  @@index([tenantId])
+  @@map("marketing_check_ins")
+}
+
+/// A monthly review — the intern sees their own only once sharedAt is set.
+model MarketingReview {
+  id             String                  @id @default(cuid())
+  tenantId       String
+  trackeeId      String
+  month          String // YYYY-MM
+  strengths      String
+  improvements   String
+  recommendation MarketingRecommendation
+  sharedAt       DateTime?
+  authorId       String
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  trackee MarketingTrackee @relation(fields: [trackeeId], references: [id], onDelete: Cascade)
+
+  @@unique([trackeeId, month])
+  @@index([tenantId])
+  @@map("marketing_reviews")
 }
 
 enum SocialPlatform {
@@ -6190,23 +6389,24 @@ model RoleModuleAccess {
 // ─── Media Library ────────────────────────────────────────────────────────────
 
 model MediaAsset {
-  id           String   @id @default(cuid())
+  id           String              @id @default(cuid())
+  cardFiles    ContentEventMedia[] @relation("CardFiles")
   tenantId     String?
   key          String
   url          String
   filename     String
   contentType  String
-  category     String   @default("general") // menu, marketing, shoot, kds, general
+  category     String              @default("general") // menu, marketing, shoot, kds, general
   // Storefront content library (decision 41): images, videos, fonts and copy
   // snippets. Copy snippets have no file (key/url ''), the words live in text.
-  kind         String   @default("image") // image | video | font | copy
+  kind         String              @default("image") // image | video | font | copy
   name         String?
-  tags         String[] @default([])
+  tags         String[]            @default([])
   conceptId    String? // brand the asset is for; null = any brand of the company
   text         String?
   fontFamily   String? // kind=font: the CSS family name pages refer to
   uploadedById String?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime            @default(now())
 
   @@index([tenantId, kind])
   @@index([category, createdAt])
@@ -7692,7 +7892,8 @@ model CleaningLog {
 
 // The central HR database. One row per person employed, login or not.
 model HrEmployee {
-  id                String    @id @default(uuid())
+  id                String             @id @default(uuid())
+  marketingTrackees MarketingTrackee[] @relation("MarketingTrackees")
   tenantId          String
   employeeCode      String // "GSF-0001" — unique per company
   // Optional link to a servd login. Most kitchen staff never have one; when
@@ -7711,17 +7912,17 @@ model HrEmployee {
   gradeId           String? // HrOrgUnit(kind=grade)
   locationId        String? // branch / restaurant — existing Location
   managerId         String? // reporting manager, another HrEmployee
-  employmentType    String    @default("probation") // permanent | probation | contract | temporary | intern
-  status            String    @default("active") // active | on_leave | resigned | terminated | separated
+  employmentType    String             @default("probation") // permanent | probation | contract | temporary | intern
+  status            String             @default("active") // active | on_leave | resigned | terminated | separated
   joiningDate       DateTime?
   probationEnd      DateTime?
   confirmationDate  DateTime?
   contractEnd       DateTime?
   lastWorkingDay    DateTime?
   noticePeriodDays  Int?
-  basicSalaryCents  Int       @default(0)
-  grossSalaryCents  Int       @default(0)
-  monthlyTaxCents   Int       @default(0) // until slab-based tax exists, HR sets it
+  basicSalaryCents  Int                @default(0)
+  grossSalaryCents  Int                @default(0)
+  monthlyTaxCents   Int                @default(0) // until slab-based tax exists, HR sets it
   paymentMethod     String? // bank | cash | cheque
   bankName          String?
   iban              String?
@@ -7733,10 +7934,10 @@ model HrEmployee {
   kioskPinHash      String?
   // Every other field from the Employee Master format (family, dependents,
   // addresses, emergency contact, …) lives here, keyed as the format defines.
-  data              Json      @default("{}")
+  data              Json               @default("{}")
   createdById       String?
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
   documents          HrDocument[]
   records            HrRecord[]

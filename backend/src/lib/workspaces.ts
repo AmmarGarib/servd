@@ -110,13 +110,16 @@ export const WORKSPACES: readonly WorkspaceDef[] = [
     id: 'marketing',
     title: 'Marketing',
     ownerRoles: ['marketing', 'brand_manager'],
-    memberRoles: ['marketing', 'brand_manager'],
+    memberRoles: ['marketing', 'brand_manager', 'marketing_intern'],
     sections: [
       { key: 'workspace', title: 'Workspace',      modules: ['marketing_workspace', 'calendar', 'analytics', 'brand_dashboard'] },
       { key: 'customers', title: 'Customers',      modules: ['crm', 'campaigns', 'promos', 'complaints', 'reviews'] },
       // Brand info (owner, 2026-10-20: "adding brand info etc can go to marketing manager"); company creation and the
       // brand's tax / legal / look stay the CEO's (concepts/routes.ts BRAND_CEO_FIELDS).
       { key: 'brand',     title: 'Brand & site',   modules: ['brands', 'storefront'] },
+      // Marketing board + intern tracker (owner, 2026-11-03; modules/marketingBoard). marketing_lead (move cards,
+      // manage boards) and marketing_tracker are per person — the CEO ticks them for the marketing manager.
+      { key: 'board',     title: 'Board & team',   modules: ['marketing_board', 'marketing_tracker', 'marketing_lead'] },
     ],
   },
   {
@@ -197,10 +200,12 @@ export const CHILD_ROLES: Readonly<Record<UserRole, readonly UserRole[]>> = {
   manager:        ['foh', 'cashier'],
   finance:        ['finance'],
   hr:             ASSIGNABLE_ROLES.filter((r) => r !== 'owner' && !NOT_INVITED.includes(r)),
-  marketing:      ['marketing'],
-  brand_manager:  ['marketing'],
+  // The marketing intern / designer (owner, 2026-11-03): marketing and the brand manager invite them; the CEO approves.
+  marketing:      ['marketing', 'marketing_intern'],
+  brand_manager:  ['marketing', 'marketing_intern'],
   it:             [],
   director:       [],
+  marketing_intern: [],
   foh: [], boh: [], kitchen: [], expediter: [], cashier: [], procurement: [],
 }
 
