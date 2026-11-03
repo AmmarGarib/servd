@@ -242,12 +242,6 @@ describe('(1) procurement money: BIGINT amounts fit up to PKR 900bn, per-unit st
     expect(await imbalance(tenantA)).toBe(0)
   })
 
-  it('the PO approval limit above PKR 900bn is 422 and unchanged', async () => {
-    const before = (await call('ceoA', 'GET', '/procurement/settings/approval-threshold')).json().thresholdCents
-    tooBig(await call('ceoA', 'PUT', '/procurement/settings/approval-threshold', { thresholdCents: MAX_MONEY_CENTS + 1 }))
-    expect((await call('ceoA', 'GET', '/procurement/settings/approval-threshold')).json().thresholdCents).toBe(before)
-  })
-
   it('reconciliation: a split line on a bank-statement adjustment above PKR 900bn is 422 before any lookup', async () => {
     tooBig(await call('ceoA', 'POST', '/reconciliation/bank/lines/00000000-0000-0000-0000-000000000000/adjust', {
       memo: 'r5 split', lines: [

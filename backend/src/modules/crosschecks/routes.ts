@@ -147,9 +147,7 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   // PNG / WebP / PDF, checked before anything is written) — saved as record
   // files of the receipt in its transaction, and they satisfy the company's
   // photo threshold. The legacy `photoUrl` is still accepted.
-  // Managers receive; whoever RAISED a PO receives it too (owner, 2026-11-03) — receiveGoods decides (raiser-or-manager on a
-  // PO, managers only without one).
-  fastify.post('/receiving', { preHandler: requireAuth(...PROCUREMENT_TEAM), bodyLimit: RECORD_FILES_BODY_LIMIT }, async (req, reply) => {
+  fastify.post('/receiving', { preHandler: requireAuth(...MANAGERS), bodyLimit: RECORD_FILES_BODY_LIMIT }, async (req, reply) => {
     const body = z.object({
       poId:       z.string().uuid().nullable().optional(),
       supplierId: z.string().uuid().nullable().optional(),

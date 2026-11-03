@@ -38,7 +38,7 @@ import { requireModule } from '../notifications/requireModule.js'
 //     allocating, unapplying and voiding payments — money moves and the
 //     books, kept apart from whoever raised the order. Each of these writes
 //     an 'accounting' audit row under the supplier's company.
-//   ADMIN_ONLY: the approval threshold, the backfill. Approve / reject: the CEO or a live
+//   ADMIN_ONLY: the backfill. Approve / reject: the CEO or a live
 //     Procurement hand-over (lib/approvalRights.ts — see poDecisionRight below).
 //   AP_READERS (PROCUREMENT_TEAM + finance, wave 3 UI-07): READ the payables
 //     — supplier list (every supplier of the company, not just assigned
@@ -50,11 +50,10 @@ import { requireModule } from '../notifications/requireModule.js'
 //     raises, approves and receives NOTHING here; it bills and pays as an
 //     AP_WRITER.
 import {
-  createPo, submitPo, approvePo, rejectPo, returnPo, passPoStep, cancelPo, sendPoToSupplier, markPoSent, isPoChainStatus,
+  createPo, updatePoDraft, submitPo, approvePo, rejectPo, returnPo, passPoStep, cancelPo, sendPoToSupplier, markPoSent, isPoChainStatus,
   createBill, voidBill, matchBill,
   createPayment, allocatePayment, unapplyPayment, voidPayment,
   agingReport, supplierAging, reorderSuggestions, type AgingTotals,
-  getApprovalThresholdCents, setApprovalThresholdCents,
 } from './service.js'
 import {
   CREDIT_NOTE_REASONS, createCreditNote, creditableBill, applyCreditNote, unapplyCreditNote, voidCreditNote,
@@ -655,6 +654,30 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     return po
   }
 
+  // Edit a draft (never submitted, or returned for correction — owner, 2026-11-03: "yes add editing"): whoever raised
+  // it, or the CEO. Same body as create (minus the number); the same checks (service.ts updatePoDraft). Another
+  // company's PO is 404; not a draft 409 PO_NOT_DRAFT; someone else's 403 PO_EDIT_RAISER_ONLY. Audited.
+  fastify.patch<{ Params: { id: string } }>('/purchase-orders/:id', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req) => {
+    const po = await guardPo(req, req.params.id)
+    const body = poCreateSchema.omit({ reference: true }).parse(req.body)
+    const su = req.staffUser!
+    if (su.role !== 'admin' && po.createdBy !== su.id) {
+      throw new AppError('PO_EDIT_RAISER_ONLY', 'Only whoever raised this PO (or the CEO) edits it', 403)
+    }
+    if (po.supplier.tenantId) await assertHoMayPropose(req, po.supplier.tenantId, po.createdBy === su.id, 'editing this purchase order')
+    // The new supplier must be one the caller may see (another company's is 404, as on create).
+    await findSupplierInScope(req, body.supplierId, 'write', { live: true })
+    const before = await prisma.purchaseOrder.findUnique({ where: { id: po.id }, select: { supplierId: true, totalCents: true, notes: true, expectedDate: true, conceptId: true } })
+    const updated = await updatePoDraft(po.id, su.id, body)
+    await audit({
+      category: 'accounting', action: 'po.edit', entity: 'PurchaseOrder', entityId: po.id,
+      userId: su.id, userEmail: su.email ?? null, tenantId: po.supplier.tenantId,
+      before: before ? { ...before, totalCents: toCents(before.totalCents) } : undefined,
+      after: { supplierId: updated.supplierId, totalCents: toCents(updated.totalCents), lineCount: updated.lines.length, notes: updated.notes, conceptId: updated.conceptId },
+    })
+    return updated
+  })
+
   // Submit. Through a head-office lens only your OWN PO (createdBy), and it
   // always goes to pending_approval whatever the threshold — the CEO (or the
   // Procurement hand-over) decides it (spec §6.4, A3). Everyone else: as before.
@@ -898,8 +921,9 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // threshold and the raiser-can't-receive rule (CEO exempt).
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/receive',
-    // Whoever raised the PO receives it (owner, 2026-11-03; receiveGoods checks raiser-or-manager).
-    { preHandler: requireAuth(...PROCUREMENT_TEAM), bodyLimit: RECORD_FILES_BODY_LIMIT },
+    // Managers receive — never the PO's own raiser (decision 27, re-confirmed by the owner 2026-11-03: "raiser cannot
+    // mark recvd"; receiveGoods' assertNotSelfApproval, the CEO exempt).
+    { preHandler: requireAuth(...MANAGERS), bodyLimit: RECORD_FILES_BODY_LIMIT },
     async (req, reply) => {
       await guardPo(req, req.params.id)
       const body = z.object({
@@ -1435,29 +1459,9 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     }
     return { dryRun: body.dryRun, rows }
   })
+  // The PO approval amount (procurement.approvalThresholdCents) is retired (owner, 2026-11-03): every PO goes
+  // buyer → finance → CEO (service.ts), so nothing reads or writes it any more.
 
-  // ── Settings: approval threshold ───────────────────────────────────────────
-
-  // Per company: `procurement.approvalThresholdCents:<tenantId>`, read with
-  // the old company-less key as the fallback until the company saves its own
-  // (service.ts getApprovalThresholdCents). It used to be one global row, so
-  // one company's admin changed every company's approval limit.
-  const thresholdQuery = z.object({ tenantId: z.string().min(1).optional() })
-
-  fastify.get('/settings/approval-threshold', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const tenantId = activeTenantOr422(req, thresholdQuery.parse(req.query ?? {}).tenantId ?? null)
-    return { tenantId, thresholdCents: await getApprovalThresholdCents(tenantId) }
-  })
-
-  fastify.put('/settings/approval-threshold', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const { thresholdCents, tenantId: picked } = z.object({
-      thresholdCents: zMoneyCents('The approval limit'),
-      tenantId:       z.string().min(1).optional(),
-    }).parse(req.body)
-    const tenantId = activeTenantOr422(req, picked ?? null)
-    await setApprovalThresholdCents(tenantId, thresholdCents)
-    return { tenantId, thresholdCents }
-  })
 }
 
 /** A bill is overdue once its due DAY is before Karachi today. dueDate is stored

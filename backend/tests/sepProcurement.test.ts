@@ -210,30 +210,14 @@ describe('an operator with no company sees nothing', () => {
     expect((await call('nobody', 'POST', `/procurement/suppliers/${supA}/portal-token`, {})).statusCode).toBe(404)
   })
 
-  it('can\'t create a company-less supplier or read a threshold', async () => {
+  it('can\'t create a company-less supplier', async () => {
     const res = await call('nobody', 'POST', '/procurement/suppliers', { name: 'Stray Co' })
     expect(res.statusCode).toBe(422)
     expect(await prisma.supplier.count({ where: { name: 'Stray Co' } })).toBe(0)
-    expect((await call('nobody', 'GET', '/procurement/settings/approval-threshold')).statusCode).toBe(422)
   })
 })
 
-describe('approval threshold is per company', () => {
-  it('falls back to the old global key, and one company\'s change leaves the other alone', async () => {
-    await prisma.setting.create({ data: { key: 'procurement.approvalThresholdCents', value: '777' } })
-    expect((await call('ceoB', 'GET', '/procurement/settings/approval-threshold')).json().thresholdCents).toBe(777)
-
-    const put = await call('ceoA', 'PUT', '/procurement/settings/approval-threshold', { thresholdCents: 1_000_000 })
-    expect(put.statusCode).toBe(200)
-    expect((await call('ceoA', 'GET', '/procurement/settings/approval-threshold')).json().thresholdCents).toBe(1_000_000)
-    expect((await call('ceoB', 'GET', '/procurement/settings/approval-threshold')).json().thresholdCents).toBe(777)
-    // The legacy row is never rewritten.
-    expect((await prisma.setting.findUniqueOrThrow({ where: { key: 'procurement.approvalThresholdCents' } })).value).toBe('777')
-
-    // B can't set A's.
-    expect((await call('ceoB', 'PUT', '/procurement/settings/approval-threshold', { thresholdCents: 1, tenantId: tenantA })).statusCode).toBe(403)
-  })
-
+describe('every PO goes through the chain', () => {
   it('the threshold no longer skips anything: every PO goes to the buyer, then finance, then the CEO (owner, 2026-11-03)', async () => {
     const a = await createPo({ supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: 50_000 }], createdBy: users['ceoA']!.id })
     expect((await submitPo(a.id, users['ceoA']!.id)).status).toBe('buyer_check')

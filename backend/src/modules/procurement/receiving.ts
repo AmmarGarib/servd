@@ -43,9 +43,9 @@
 // Owner decision 27 (2026-09-27), receiveGoods only:
 //   - receiving WITHOUT a PO is allowed (market runs, ad-hoc deliveries), but
 //     the unit cost must be entered at the dock;
-//   - only manager tiers may receive (MANAGERS) — and, on a PO, whoever raised it;
-//   - (replaced 2026-11-03, owner: "person that created po marks received") whoever raised the PO RECEIVES it — the
-//     PO has passed the buyer, finance and the CEO first (service.ts submitPo).
+//   - only manager tiers may receive (MANAGERS);
+//   - whoever raised the PO cannot receive it — everyone except the CEO (re-confirmed by the owner 2026-11-03:
+//     "raiser cannot mark recvd").
 // A cash-settled receipt is not a delivery taken at the dock: the cash area
 // restricts its stock lines to stock keepers itself.
 
@@ -54,6 +54,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { flagException, type ExceptionKind } from '../../lib/exceptions.js'
+import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
 import { MANAGERS } from '../auth/middleware.js'
 import { assertInt4Fits, assertMoneyFits, toCents } from '../../lib/money.js'
@@ -486,14 +487,8 @@ interface PreparedLine {
 }
 
 export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveGoodsResult> {
-  // Owner, 2026-11-03: "person that created po marks received" — whoever raised a PO receives it; the managers still
-  // may. Without a PO (the dock), managers only.
-  const raiserOfPo = input.poId
-    ? (await prisma.purchaseOrder.findUnique({ where: { id: input.poId }, select: { createdBy: true } }))?.createdBy ?? null
-    : null
-  const isRaiser = !!raiserOfPo && raiserOfPo === input.actor.id
-  if (!(MANAGERS as string[]).includes(input.actor.role) && !isRaiser) {
-    throw new ForbiddenError(input.poId ? 'Only whoever raised this purchase order, or a manager, can receive it.' : 'Only managers can receive goods.')
+  if (!(MANAGERS as string[]).includes(input.actor.role)) {
+    throw new ForbiddenError('Only managers can receive goods.')
   }
   if (input.lines.length === 0) throw new AppError('NO_LINES', 'Nothing to receive', 400)
   for (const l of input.lines) {
@@ -532,8 +527,14 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
 
   if (po) {
     assertReceivable(po.status)
-    // The raiser-can't-receive rule (decision 27) is REPLACED for POs (owner, 2026-11-03): the PO now passes the
-    // buyer, finance and the CEO before anything is bought, and its raiser marks it received.
+    // Decision 27, re-confirmed by the owner 2026-11-03 ("raiser cannot mark recvd"): whoever raised the PO never
+    // receives it — the CEO exempt.
+    await assertNotSelfApproval({
+      tenantId,
+      actor: input.actor, creatorId: po.createdBy,
+      action: 'receive goods', entity: 'PurchaseOrder', entityId: po.id,
+      message: 'You raised this purchase order, so someone else has to receive it (or the CEO).',
+    })
   }
 
   // ── Prepare lines ──────────────────────────────────────────────────────────

@@ -37,8 +37,9 @@ import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
 // the list comes from the server (lib/roles.ts). The buyer sees the dock read-only.
 
-// Whoever raised a PO RECEIVES it (owner, 2026-11-03: "person that created po marks received"); managers may too.
-// raisedByMe also keeps the raiser off every approval step of their own PO (the server's rule; the CEO exempt).
+// Whoever raised a PO can't receive it (decision 27, re-confirmed by the owner 2026-11-03: "raiser cannot mark
+// recvd"), nor take any approval step of it; the CEO (role admin) is exempt — the server's rules. They (or the CEO)
+// EDIT it while it is a draft (owner, 2026-11-03: "yes add editing").
 const raisedByMe = (po: { createdBy?: string | null }, me: { id: string; role: string } | null) =>
   !!me && me.role !== 'admin' && !!po.createdBy && po.createdBy === me.id
 
@@ -166,6 +167,10 @@ interface ReorderGroup {
 interface PoDraft {
   supplierId: string
   lines: Array<{ inventoryItemId: string; quantityOrdered: string; unitCostCents: string; notes: string }>
+  /** Editing a draft (owner, 2026-11-03): its other fields, kept as they are unless changed. */
+  expectedDate?: string
+  notes?: string
+  conceptId?: string | null
 }
 
 const errText = (e: unknown) => stockErrorText(e)
@@ -371,6 +376,13 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
   const [decide, setDecide] = useState<{ id: string; kind: 'approve' | 'return' | 'reject'; status: string } | null>(null)
   const [decideNote, setDecideNote] = useState('')
   const [payByCash, setPayByCash] = useState(true)
+  // Editing a draft (owner, 2026-11-03: "yes add editing") — the create form, pre-filled from the PO.
+  const [editId, setEditId] = useState<string | null>(null)
+  const { data: editPo } = useQuery({
+    queryKey: ['procurement', 'po', editId],
+    queryFn: () => api.get<PurchaseOrder & { conceptId?: string | null }>(`/procurement/purchase-orders/${editId}`),
+    enabled: !!editId,
+  })
   const [cancelId, setCancelId] = useState<string | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   // Approved ≠ sent: "Mark sent" records that the buyer sent it themselves.
@@ -454,6 +466,21 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
           onClose={() => setShowCreate(false)} />
       )}
 
+      {editId && editPo && editPo.id === editId && (
+        <CreatePoForm key={`edit-${editId}`} qc={qc} editId={editId} title={`Edit ${editPo.reference ?? 'purchase order'}`}
+          initial={{
+            supplierId: editPo.supplierId,
+            expectedDate: editPo.expectedDate ? editPo.expectedDate.slice(0, 10) : '',
+            notes: editPo.notes ?? '',
+            conceptId: editPo.conceptId ?? null,
+            lines: (editPo.lines ?? []).map((l) => ({
+              inventoryItemId: l.inventoryItemId, quantityOrdered: String(l.quantityOrdered),
+              unitCostCents: String(l.unitCostCents / 100), notes: l.notes ?? '',
+            })),
+          }}
+          onClose={() => setEditId(null)} />
+      )}
+
       {sentNotice && <p className="text-xs font-bold text-success">{sentNotice}</p>}
       {actionMut.error && (
         <p className="text-xs text-s-red">{actionMut.error instanceof Error ? actionMut.error.message : 'That did not work'}</p>
@@ -498,6 +525,7 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
                     <PoActions po={po} onAction={(action, body) => {
                       if (action === 'reject' || action === 'return' || action === 'approve') { setDecide({ id: po.id, kind: action, status: po.status }); return }
                       if (action === 'pass') { stepMut.mutate({ id: po.id, kind: 'pass', status: po.status }); return }
+                      if (action === 'edit') { setShowCreate(false); setEditId(po.id); return }
                       if (action === 'cancel') { setCancelId(po.id); return }
                       if (action === 'mark-sent') { setMarkSentId(po.id); return }
                       if (action === 'receive') { router.push(`/procurement/receiving?poId=${po.id}`); return }
@@ -664,8 +692,9 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
   const ownPo = raisedByMe(po, me)
   const role = me?.role ?? ''
   const isCeo = role === 'admin'
-  // Whoever raised the PO receives it (owner, 2026-11-03); managers may too.
-  const canReceive = isManager || ownPo
+  // A manager receives — never one who raised it (the CEO exempt).
+  const canReceive = isManager && !ownPo
+  const canEdit = po.status === 'draft' && !!me && (me.role === 'admin' || po.createdBy === me.id)
   // The step's own people (the server decides every click): the buyer, then finance, then the CEO. Never the raiser,
   // never whoever passed an earlier step (the CEO exempt).
   const mine = !!me && !isCeo && [po.createdBy, po.submittedById, ...(po.status === 'finance_check' ? [po.buyerCheckedById] : [])].includes(me.id)
@@ -674,6 +703,7 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
     || (po.status === 'finance_check' && (role === 'finance' || isCeo))
     || (po.status === 'pending_approval' && isCeo))
   const actions: { label: string; action: string; cls: string; title?: string }[] = []
+  if (canEdit) actions.push({ label: 'Edit', action: 'edit', cls: 'text-primary-ink hover:opacity-80' })
   if (po.status === 'draft') {
     actions.push({ label: 'Submit', action: 'submit', cls: 'text-s-amber hover:text-s-amber' })
   }
@@ -691,7 +721,7 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
   if (po.status === 'sent' || po.status === 'partial') {
     actions.push(canReceive
       ? { label: 'Receive', action: 'receive', cls: 'text-primary-ink hover:opacity-80' }
-      : { label: 'View at dock', action: 'receive', cls: 'text-s-muted hover:text-s-text', title: 'Whoever raised this PO, or a manager, takes the delivery in' })
+      : { label: 'View at dock', action: 'receive', cls: 'text-s-muted hover:text-s-text', title: ownPo ? 'You raised this PO, so a colleague receives it' : 'A manager takes the delivery in' })
   }
   if (['draft', ...PO_CHAIN, 'approved'].includes(po.status)) {
     actions.push({ label: 'Cancel', action: 'cancel', cls: 'text-s-muted hover:text-s-red' })
@@ -751,7 +781,7 @@ function PoChainPanel({ po }: { po: PurchaseOrder }) {
 
 // ─── Create PO form ───────────────────────────────────────────────────────────
 
-function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; initial?: PoDraft; title?: string }) {
+function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; initial?: PoDraft; title?: string; editId?: string }) {
   const { data: suppliers = [] } = useQuery({
     queryKey: ['procurement', 'suppliers'],
     queryFn: () => api.get<Supplier[]>('/procurement/suppliers'),
@@ -763,14 +793,16 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
 
   // A draft from the Reorder tab arrives pre-filled; the buyer can still change anything.
   const [supplierId, setSupplierId] = useState(initial?.supplierId ?? '')
-  const [expectedDate, setExpectedDate] = useState('')
-  const [notes, setNotes] = useState('')
+  const [expectedDate, setExpectedDate] = useState(initial?.expectedDate ?? '')
+  const [notes, setNotes] = useState(initial?.notes ?? '')
   const [lines, setLines] = useState(initial?.lines.length ? initial.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
 
+  // Editing a draft PATCHes it (its brand is kept); otherwise a new draft is created.
   const mut = useMutation({
-    mutationFn: () => api.post('/procurement/purchase-orders', {
+    mutationFn: () => (editId ? (body: unknown) => api.patch(`/procurement/purchase-orders/${editId}`, body) : (body: unknown) => api.post('/procurement/purchase-orders', body))({
       supplierId, expectedDate: expectedDate || null,
       notes: notes || null,
+      ...(editId ? { conceptId: initial?.conceptId ?? null } : {}),
       lines: lines.map((l) => ({
         inventoryItemId: l.inventoryItemId,
         quantityOrdered: Number(l.quantityOrdered),
@@ -782,6 +814,7 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
       void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
       // What is on order changes what the reorder list suggests.
       void qc.invalidateQueries({ queryKey: ['procurement', 'reorder'] })
+      if (editId) void qc.invalidateQueries({ queryKey: ['procurement', 'po', editId] })
       onClose()
     },
   })
@@ -867,7 +900,7 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
         <p className="text-sm font-bold text-s-text">Total: {fmtPkrWhole(totalCents)}</p>
         <div className="flex gap-2">
           <Button type="submit" disabled={mut.isPending}>
-            {mut.isPending ? 'Creating…' : 'Create PO'}
+            {mut.isPending ? (editId ? 'Saving…' : 'Creating…') : editId ? 'Save changes' : 'Create PO'}
           </Button>
           <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
         </div>

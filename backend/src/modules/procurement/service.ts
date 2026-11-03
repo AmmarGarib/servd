@@ -52,38 +52,6 @@ import { takeSnapshot } from '../trash/snapshot.js'
 // to 1210 like stock (see createBill). Above either it is refused here, before
 // anything is written, with 422 AMOUNT_TOO_LARGE (lib/money.ts).
 
-// ─── Settings ────────────────────────────────────────────────────────────────
-
-/**
- * Approval threshold from the Settings table. Above this, POs require admin
- * approval. Stored in paisa. Default 50,000 PKR = 5,000,000 paisa.
- *
- * Per company: `procurement.approvalThresholdCents:<tenantId>`. The old
- * company-less key is the read fallback until the company saves its own —
- * it used to be the one row every company shared, and it is never written
- * any more.
- */
-const APPROVAL_THRESHOLD_KEY = 'procurement.approvalThresholdCents'
-const DEFAULT_APPROVAL_THRESHOLD_CENTS = 5_000_000
-
-export async function getApprovalThresholdCents(tenantId: string | null): Promise<number> {
-  const row =
-    (tenantId ? await prisma.setting.findUnique({ where: { key: `${APPROVAL_THRESHOLD_KEY}:${tenantId}` } }) : null) ??
-    (await prisma.setting.findUnique({ where: { key: APPROVAL_THRESHOLD_KEY } }))
-  if (!row?.value) return DEFAULT_APPROVAL_THRESHOLD_CENTS
-  const n = parseInt(row.value, 10)
-  return Number.isFinite(n) ? n : DEFAULT_APPROVAL_THRESHOLD_CENTS
-}
-
-export async function setApprovalThresholdCents(tenantId: string, thresholdCents: number): Promise<void> {
-  const key = `${APPROVAL_THRESHOLD_KEY}:${tenantId}`
-  await prisma.setting.upsert({
-    where:  { key },
-    create: { key, value: String(thresholdCents) },
-    update: { value: String(thresholdCents) },
-  })
-}
-
 // ─── PO lifecycle ────────────────────────────────────────────────────────────
 
 export interface CreatePoInput {
@@ -97,7 +65,12 @@ export interface CreatePoInput {
   createdBy: string
 }
 
-export async function createPo(input: CreatePoInput) {
+/**
+ * The checks every PO's content passes (createPo and updatePoDraft): at least one line; the supplier live, not a
+ * system supplier, of a company; every item and the brand of THAT company; unit costs INT4, line and PO totals BIGINT
+ * (422 AMOUNT_TOO_LARGE). Returns the supplier's company and the total.
+ */
+async function checkPoContent(input: Pick<CreatePoInput, 'supplierId' | 'conceptId' | 'lines'>): Promise<{ tenantId: string; totalCents: number }> {
   if (input.lines.length === 0) {
     throw new AppError('NO_LINES', 'A PO needs at least one line', 400)
   }
@@ -125,10 +98,14 @@ export async function createPo(input: CreatePoInput) {
   })
   const totalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityOrdered), 0)
   assertMoneyFits(totalCents, 'This purchase order\'s total')
+  return { tenantId: supplier.tenantId, totalCents }
+}
+
+export async function createPo(input: CreatePoInput) {
+  const { tenantId, totalCents } = await checkPoContent(input)
 
   // PO numbers are servd's (owner, 2026-11-03: "remove reference from PO. it should auto generate"): PO-00001,
   // PO-00002… per company (the supplier's), taken under a per-company advisory lock so two buyers never share one.
-  const tenantId = supplier.tenantId
   const po = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'po.number:' + tenantId}))`
     const last = await tx.$queryRaw<Array<{ n: number | null }>>`
@@ -165,11 +142,63 @@ export async function createPo(input: CreatePoInput) {
   return po
 }
 
+export type UpdatePoInput = Omit<CreatePoInput, 'createdBy' | 'reference'>
+
+/**
+ * Edit a DRAFT PO — never submitted, or returned for correction (owner, 2026-11-03: "yes add editing"). Only whoever
+ * raised it, or the CEO (the route checks who; 403 PO_EDIT_RAISER_ONLY). The same checks as createPo
+ * (checkPoContent); a new supplier must be of the PO's own company (422 SUPPLIER_NOT_IN_COMPANY — the PO number is
+ * that company's). Lines are replaced and the total recomputed, under the PO's row lock, claimed on status 'draft'
+ * (409 PO_NOT_DRAFT). Refused (409 PO_HAS_DOCUMENTS) once anything was received or billed against it. The PO number
+ * stays. Activity-logged ('edited', before → after totals); the route audits it. Submit again to restart the chain.
+ */
+export async function updatePoDraft(poId: string, actorId: string, input: UpdatePoInput) {
+  const cur = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { status: true, totalCents: true, supplier: { select: { tenantId: true } } } })
+  if (!cur) throw new NotFoundError('PurchaseOrder', poId)
+  if (cur.status !== 'draft') throw new AppError('PO_NOT_DRAFT', `This PO is ${cur.status.replace(/_/g, ' ')} — only a draft (or one returned for correction) is edited`, 409)
+  const { tenantId, totalCents } = await checkPoContent(input)
+  if (tenantId !== cur.supplier.tenantId) {
+    throw new AppError('SUPPLIER_NOT_IN_COMPANY', 'Pick a supplier of this PO\'s own company — raise a new PO for another company', 422)
+  }
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${poId} FOR UPDATE`
+    const po = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: poId }, select: { status: true, lines: { select: { id: true, quantityReceived: true } } } })
+    if (po.status !== 'draft') throw new AppError('PO_NOT_DRAFT', `This PO is ${po.status.replace(/_/g, ' ')} — only a draft is edited`, 409)
+    const lineIds = po.lines.map((l) => l.id)
+    const docs = lineIds.length === 0 ? 0 : (await tx.grniMatch.count({ where: { poLineId: { in: lineIds } } }))
+      + (await tx.supplierBillLine.count({ where: { poLineId: { in: lineIds } } }))
+      + (await tx.goodsReceiptLine.count({ where: { poLineId: { in: lineIds } } }))
+    if (docs > 0 || po.lines.some((l) => l.quantityReceived > 0)) {
+      throw new AppError('PO_HAS_DOCUMENTS', 'Goods were received or billed against this PO — it cannot be edited; cancel it and raise a new one', 409)
+    }
+    await tx.purchaseOrderLine.deleteMany({ where: { purchaseOrderId: poId } })
+    await tx.purchaseOrder.update({
+      where: { id: poId },
+      data: {
+        supplierId: input.supplierId,
+        expectedDate: input.expectedDate ? new Date(input.expectedDate) : null,
+        notes: input.notes ?? null,
+        conceptId: input.conceptId ?? null,
+        totalCents,
+        lines: {
+          create: input.lines.map((l) => ({
+            inventoryItemId: l.inventoryItemId, quantityOrdered: l.quantityOrdered, unitCostCents: l.unitCostCents, notes: l.notes ?? null,
+          })),
+        },
+      },
+    })
+    await tx.poActivityLog.create({
+      data: { purchaseOrderId: poId, userId: actorId, action: 'edited', details: { beforeTotalCents: toCents(cur.totalCents), totalCents, lineCount: input.lines.length } },
+    })
+    return tx.purchaseOrder.findUniqueOrThrow({ where: { id: poId }, include: { supplier: true, lines: { include: { inventoryItem: true } } } })
+  })
+}
+
 /**
  * The PO approval chain (owner, 2026-11-03: "Whatever is being purchased, lets start making PO on servd. PO goes to
  * Asif. Asif push to Hasnain. Hasnain push to me. approved by me. asif takes cash from hasnain. asif buys. person that
- * created po marks received"). REPLACES the amount threshold: every PO now goes through every step, whatever its
- * total (the threshold setting is no longer read here).
+ * created po marks received" — the receiving half was reversed the same day: "raiser cannot mark recvd"). REPLACES the
+ * amount threshold (retired, owner 2026-11-03): every PO goes through every step, whatever its total.
  *
  *   draft ──submit──▶ buyer_check ──buyer passes──▶ finance_check ──finance passes──▶ pending_approval ──CEO──▶ approved
  *     ▲                 │ return (note)             │ return                          │ return                  │

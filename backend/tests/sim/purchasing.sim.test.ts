@@ -18,7 +18,7 @@
 //            drinks, packaging); PO0 (flour, under the approval threshold —
 //            auto-approved) received at once and NEVER billed;
 //   2 Oct    PO1 (above the threshold → the CEO approves), phoned in; the dock
-//            refuses it without a photo (since 2026-11-03 the raiser MAY receive);
+//            refuses it without a photo and refuses the buyer who raised it;
 //            the store manager receives it with a dock photo FILE (record file
 //            of the receipt);
 //   3 Oct    0.5 kg chicken wasted (cost waits on 1290);
@@ -213,7 +213,8 @@ describe('the simulated month — purchasing and stock', () => {
       const noPhoto = await sim.as(s.store, co).post(`/procurement/purchase-orders/${po1.id}/receive`, { lines })
       expect(noPhoto.statusCode, noPhoto.body).toBe(400)
       expect(errCode(noPhoto)).toBe('PHOTO_REQUIRED')
-      // (Owner, 2026-11-03: the raiser MAY receive their own PO now — the store manager takes this one.)
+      const own = await mgr.post(`/procurement/purchase-orders/${po1.id}/receive`, { photos: [dockPhoto()], lines })
+      expect(own.statusCode, `the raiser receives: ${own.body}`).toBe(403)
       const r = ok(await sim.as(s.store, co).post(`/procurement/purchase-orders/${po1.id}/receive`, { photos: [dockPhoto(1), dockPhoto(2)], notes: 'All in, cold chain fine', lines }), 201)
       expect(r.status).toBe('received')
       expect(r.files.length).toBe(2)

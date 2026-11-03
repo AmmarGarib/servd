@@ -1,5 +1,5 @@
-// Cash for a purchase order (owner, 2026-11-03: "asif takes cash from hasnain. asif buys. person that created po
-// marks received" — and, asked how the cash is handled: "Cash voucher tied to PO").
+// Cash for a purchase order (owner, 2026-11-03: "asif takes cash from hasnain. asif buys" — and, asked how the cash is
+// handled: "Cash voucher tied to PO").
 //
 // THE DESIGN (money is booked exactly once; every step reuses an existing engine):
 //
@@ -18,7 +18,8 @@
 //      The cash is now in the buyer's custody ON THE BOOKS (1011, his box's float) — never an advance account (1355 /
 //      1357 are retired) and never an expense.
 //
-//   3. The buyer buys; whoever raised the PO receives it on the PO (receiving.ts receiveGoods — the existing route):
+//   3. The buyer buys; a manager who did NOT raise the PO receives it (receiving.ts receiveGoods — the existing route;
+//      owner 2026-11-03: "raiser cannot mark recvd"):
 //         'procurement.receipt:<receiptId>'  Dr 12x0 per class (6045 for non-food) / Cr 2015 GRNI
 //
 //   4. Finance records the supplier's bill against that receipt (createBill); the buyer (the box's custodian) — or

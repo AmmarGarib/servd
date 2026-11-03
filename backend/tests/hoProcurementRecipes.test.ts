@@ -27,7 +27,7 @@ import { AppError } from '../src/lib/errors.js'
 import { runWithRlsContext } from '../src/lib/rlsContext.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
 import { recipeRoutes } from '../src/modules/recipes/routes.js'
-import { setApprovalThresholdCents, passPoStep } from '../src/modules/procurement/service.js'
+import { passPoStep } from '../src/modules/procurement/service.js'
 
 const P = `hopr-${Date.now()}`
 let app: FastifyInstance
@@ -96,8 +96,6 @@ beforeAll(async () => {
   conceptA = (await prisma.concept.create({ data: { name: 'A Cafe', slug: `${P}-a-cafe`, type: 'restaurant', tenantId: A } })).id
   catA = (await prisma.category.create({ data: { conceptId: conceptA, name: 'Mains' } })).id
   // Threshold PKR 50,000: every PO below it would auto-approve for a member.
-  await setApprovalThresholdCents(A, 5_000_000)
-  await setApprovalThresholdCents(B, 5_000_000)
   delegationId = (await prisma.approvalDelegation.create({
     data: { tenantId: HO, section: 'procurement', delegateUserId: U.deleg!.id, grantedById: U.ceo!.id, note: 'HO-wide procurement' },
   })).id
