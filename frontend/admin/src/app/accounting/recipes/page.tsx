@@ -14,7 +14,7 @@ import { isExecutive } from '../../../lib/appRoles'
 import { useBrandFilter } from '../../../store/brandFilter'
 import { fmtPkr } from '../../../lib/money'
 import { useKitchenView } from '../../inventory/kitchenView'
-import { KitchenMethod, KitchenSections, KitchenServiceSteps, KIND_META, measureUnit, type KitchenIngredient, type MethodStep } from './KitchenRecipe'
+import { KitchenMethod, KitchenSections, KitchenServiceSteps, KIND_META, measureUnit, RecipeScaler, type KitchenIngredient, type MethodStep } from './KitchenRecipe'
 import { Select } from '@/components/ui/Select'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { toast } from 'sonner'
@@ -402,65 +402,34 @@ export default function RecipesPage() {
   return (
     <div className="min-h-screen bg-s-bg">
 
-      {/* Header */}
-      <header className="sticky top-0 z-10 bg-s-bg/80 backdrop-blur border-b border-s-border px-6 py-4">
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <p className="text-xs text-success">{kitchenView ? 'Kitchen' : 'Accounting'}</p>
-            <h1 className="text-xl font-bold text-s-text">{kitchenView ? 'Recipes' : 'Recipe Costing'}</h1>
-          </div>
-          {!kitchenView && (
-            <div className="flex items-center gap-3">
-              <Link href="/accounting" className="text-xs text-primary-ink hover:underline">← Hub</Link>
-              {isCeo && (
-                <Link href="/accounting/recipes/approvals" className="text-xs text-primary-ink hover:underline">Approvals</Link>
-              )}
-              <Link href="/accounting/recipes/new" className="s-btn-primary text-xs px-3 py-1.5">+ New Recipe</Link>
-            </div>
+      {/* Header (owner, 2026-11-03: "This header is too big. Just a floating button and floating search bar is
+          enough. And the filters dont really matter."): a one-line title; search and New recipe float at the bottom. */}
+      <header className="px-6 pt-4">
+        <p className="text-xs text-success">{kitchenView ? 'Kitchen' : 'Accounting'}</p>
+        <div className="flex items-baseline gap-3 flex-wrap">
+          <h1 className="text-xl font-bold text-s-text">{kitchenView ? 'Recipes' : 'Recipe Costing'}</h1>
+          {!kitchenView && isCeo && (
+            <Link href="/accounting/recipes/approvals" className="text-xs text-primary-ink hover:underline">Approvals</Link>
           )}
-        </div>
-
-        {/* Search + season filter strip */}
-        <div className="mt-3 flex items-center gap-2 flex-wrap">
-          <Input
-            value={searchQ}
-            onChange={(e) => setSearchQ(e.target.value)}
-            placeholder="Search recipes by name or notes…"
-            className="flex-1 min-w-[220px] text-sm px-3 py-1.5 rounded-lg"
-          />
-          <div className="flex rounded-lg overflow-hidden text-xs font-bold border border-s-border">
-            {[
-              { key: '',          label: 'All' },
-              { key: 'current',   label: 'Current season' },
-              { key: 'spring',    label: 'Spring' },
-              { key: 'summer',    label: 'Summer' },
-              { key: 'monsoon',   label: 'Monsoon' },
-              { key: 'autumn',    label: 'Autumn' },
-              { key: 'winter',    label: 'Winter' },
-              { key: 'ramadan',   label: 'Ramadan' },
-              { key: 'year-round', label: 'Year-round' },
-            ].map((s) => (
-              <button
-                key={s.key || 'all'}
-                onClick={() => setSeasonFilter(s.key)}
-                className={`px-2.5 py-1.5 transition-colors border-r border-s-border last:border-r-0 ${
-                  seasonFilter === s.key ? 'bg-accent-dim text-s-text' : 'text-s-muted hover:text-s-text'
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-          <CheckLabel>
-            <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)} className="accent-accent" />
-            Active only
-          </CheckLabel>
         </div>
       </header>
 
+      {/* Floating search (clear of the company switcher bottom-left) and the floating New recipe button. */}
+      <div className="fixed bottom-4 left-20 right-20 z-20 md:left-1/2 md:right-auto md:w-[28rem] md:-translate-x-1/2">
+        <Input type="search" value={search} onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search recipes…" aria-label="Search recipes"
+          className="w-full rounded-full px-4 py-2.5 text-sm shadow-lg" />
+      </div>
+      {!kitchenView && (
+        <Link href="/accounting/recipes/new" aria-label="New recipe" title="New recipe"
+          className="s-btn-primary fixed bottom-4 right-4 z-20 flex h-12 w-12 items-center justify-center rounded-full p-0 text-2xl font-bold shadow-lg">
+          +
+        </Link>
+      )}
+
       {!kitchenView && <LiveWithoutRecipe conceptId={conceptFilter || undefined} />}
 
-      <div className="p-6 space-y-4 max-w-7xl mx-auto">
+      <div className="p-6 pb-28 space-y-4 max-w-7xl mx-auto">
 
         {/* Summary strip */}
         {(recipes?.length ?? 0) > 0 && (
@@ -480,44 +449,7 @@ export default function RecipesPage() {
           </div>
         )}
 
-        {/* Filters */}
-        <div className="flex flex-wrap gap-3 items-center">
-          <Input type="text" placeholder="Search recipes…"
-            value={search} onChange={(e) => setSearch(e.target.value)}
-            className="text-sm h-9 w-56" />
-          <Select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)}
-            className="s-select text-sm h-9 w-44">
-            <option value="">All Concepts</option>
-            {concepts?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
-          {/* Kind filter — plates vs components, next to the brand filter. */}
-          <div className="flex rounded-lg overflow-hidden text-xs font-bold border border-s-border">
-            {([
-              { key: '',          label: 'All' },
-              { key: 'plate',     label: 'Plates' },
-              { key: 'component', label: 'Components' },
-              { key: 'modifier',  label: 'Add-ons' },
-            ] as const).map((k) => (
-              <button key={k.key || 'all'} type="button"
-                onClick={() => setKindFilter(k.key)}
-                className={`px-2.5 py-1.5 transition-colors border-r border-s-border last:border-r-0 ${
-                  kindFilter === k.key ? 'bg-accent-dim text-s-text' : 'text-s-muted hover:text-s-text'
-                }`}>
-                {k.label}
-              </button>
-            ))}
-          </div>
-          {anyPackagingBrand && (
-            <CheckLabel
-              title="Dishes of a brand that serves in packaging, with no Packaging line">
-              <input type="checkbox" checked={noPackagingOnly} onChange={(e) => setNoPackagingOnly(e.target.checked)} className="accent-accent" />
-              No packaging{noPackagingCount > 0 ? ` (${noPackagingCount})` : ''}
-            </CheckLabel>
-          )}
-          <span className="ml-auto text-xs text-s-muted">
-            {filtered.length} recipe{filtered.length !== 1 ? 's' : ''}
-          </span>
-        </div>
+        <p className="text-xs text-s-muted">{filtered.length} recipe{filtered.length !== 1 ? 's' : ''}</p>
 
         {/* Recipe list */}
         {isLoading ? (
@@ -705,6 +637,13 @@ export default function RecipesPage() {
                           </div>
                         ))}
                       </div>
+
+                      {/* Scale (R&D, 2026-11-03): the quantities for a bigger / smaller batch, nothing saved. */}
+                      {r.kind !== 'modifier' && (
+                        <div className="px-4 pt-3">
+                          <RecipeScaler rows={kitchenRowsOf(r)} baseYieldG={r.kind === 'plate' ? recipeWeightG ?? r.yieldGrams : r.yieldGrams} />
+                        </div>
+                      )}
 
                       {/* Ingredient breakdown table */}
                       <div className="overflow-x-auto max-w-full">
@@ -1290,7 +1229,18 @@ function Metric({ label, value, bold, teal, dim, className }: {
 // Yield, ingredients with their quantities, the method and the service steps.
 // No cost, margin or price — the API sends none (costsHidden).
 function KitchenSheet({ r }: { r: Recipe }) {
-  const rows: KitchenIngredient[] = r.ingredients.map((ing) => ing.prepRecipeId
+  const rows = kitchenRowsOf(r)
+  const fmtG = (g: number) => `${g.toLocaleString('en', { maximumFractionDigits: 1 })}g`
+  // Plates written by the recipe form carry the total yield; older ones a
+  // portion size. Show whichever the recipe has.
+  const totalG   = r.yieldGrams ?? (r.portionSizeG && r.servings ? r.portionSizeG * r.servings : null)
+  const portionG = r.portionSizeG ?? (r.yieldGrams && r.servings > 0 ? r.yieldGrams / r.servings : null)
+  return <KitchenSheetBody r={r} rows={rows} fmtG={fmtG} totalG={totalG} portionG={portionG} />
+}
+
+/** A recipe's lines as the read-only kitchen rows (also what the scaler multiplies). */
+function kitchenRowsOf(r: Recipe): KitchenIngredient[] {
+  return r.ingredients.map((ing) => ing.prepRecipeId
     ? {
         id: ing.id, name: ing.prepRecipe?.name ?? 'Sub-recipe', quantity: ing.quantity,
         unit: 'g', yieldPct: null, notes: ing.notes, subRecipeId: ing.prepRecipeId, section: ing.section,
@@ -1300,11 +1250,11 @@ function KitchenSheet({ r }: { r: Recipe }) {
         unit: measureUnit(ing.inventoryItem?.unit), yieldPct: ing.yieldPct,
         notes: ing.notes, subRecipeId: null, section: ing.section,
       })
-  const fmtG = (g: number) => `${g.toLocaleString('en', { maximumFractionDigits: 1 })}g`
-  // Plates written by the recipe form carry the total yield; older ones a
-  // portion size. Show whichever the recipe has.
-  const totalG   = r.yieldGrams ?? (r.portionSizeG && r.servings ? r.portionSizeG * r.servings : null)
-  const portionG = r.portionSizeG ?? (r.yieldGrams && r.servings > 0 ? r.yieldGrams / r.servings : null)
+}
+
+function KitchenSheetBody({ r, rows, fmtG, totalG, portionG }: {
+  r: Recipe; rows: KitchenIngredient[]; fmtG: (g: number) => string; totalG: number | null; portionG: number | null
+}) {
   const facts = r.kind === 'modifier'
     ? [{ label: 'PER', value: 'one add-on' }]
     : r.kind === 'plate'
@@ -1329,6 +1279,7 @@ function KitchenSheet({ r }: { r: Recipe }) {
       </div>
       <div className="px-3 py-3 space-y-3">
         <KitchenSections rows={rows} kind={r.kind} Wrap={SheetBlock} />
+        {r.kind !== 'modifier' && <RecipeScaler rows={rows} baseYieldG={r.kind === 'plate' ? totalG : r.yieldGrams} />}
       </div>
       <div className="px-6 py-4 border-t border-s-border/40 space-y-4">
         <div>

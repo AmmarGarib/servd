@@ -17,6 +17,7 @@
 // quantity, shown as "Removes".
 
 import Link from 'next/link'
+import { useState } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { recipeStatusMeta, type RecipeStatus } from './RecipeForm'
@@ -125,6 +126,61 @@ export function KitchenIngredients({ rows, empty = 'No ingredients on this recip
           })}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// ─── Scale (owner / R&D, 2026-11-03: "scale the recipe based on what we want to make — e.g. 0.7 of the
+// current yield — and it calculates for me") ─────────────────────────────────────────────────────────────────
+// Read-only: multiplies every line for the batch you want to make. Nothing is saved; the recipe stays as it is.
+// By a factor (0.7×) or by the weight you want (700 g of a 1,000 g recipe = 0.7×).
+
+export function RecipeScaler({ rows, baseYieldG }: { rows: KitchenIngredient[]; baseYieldG: number | null }) {
+  const [mode, setMode] = useState<'factor' | 'weight'>('factor')
+  const [value, setValue] = useState('')
+  const n = Number(value)
+  const factor = !value.trim() || !Number.isFinite(n) || n <= 0
+    ? null
+    : mode === 'factor' ? n : (baseYieldG && baseYieldG > 0 ? n / baseYieldG : null)
+  const { ingredients, packaging } = splitBySection(rows)
+  const scaled = (list: KitchenIngredient[]) => list.map((r) => ({ ...r, quantity: r.quantity * (factor ?? 1) }))
+  return (
+    <div className="space-y-3 rounded-xl border border-s-border bg-s-surface p-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-bold text-s-text">Scale</span>
+        <div className="flex overflow-hidden rounded-lg border border-s-border text-xs font-bold">
+          {([['factor', '× times'], ['weight', 'Target weight']] as const).map(([k, label]) => (
+            <button key={k} type="button" onClick={() => { setMode(k); setValue('') }}
+              disabled={k === 'weight' && !baseYieldG}
+              className={`px-2.5 py-1.5 border-r border-s-border last:border-r-0 disabled:opacity-40 ${mode === k ? 'bg-accent-dim text-s-text' : 'text-s-muted'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <input type="number" inputMode="decimal" min="0" step="any" value={value} onChange={(e) => setValue(e.target.value)}
+          placeholder={mode === 'factor' ? 'e.g. 0.7' : `e.g. ${baseYieldG ? Math.round(baseYieldG * 0.7) : 700}`}
+          aria-label={mode === 'factor' ? 'Scale factor' : 'Target weight in grams'}
+          className="w-28 rounded-md border border-s-border bg-s-bg px-2 py-1 text-sm text-s-text focus:border-primary focus:outline-none" />
+        {mode === 'weight' && <span className="text-xs text-s-muted">g</span>}
+        {factor != null && (
+          <span className="text-xs text-s-muted">
+            = {qty(factor)}× {baseYieldG ? `· makes ${qty(baseYieldG * factor)} g` : ''}
+          </span>
+        )}
+      </div>
+      {factor == null ? (
+        <p className="text-xs text-s-muted">Type how much you want to make. The quantities below are worked out for it; the recipe is not changed.</p>
+      ) : (
+        <>
+          <KitchenIngredients rows={scaled(ingredients)} />
+          {packaging.length > 0 && (
+            <div>
+              <p className="mt-2 text-xs font-black uppercase tracking-wider text-s-muted">Pack in</p>
+              <KitchenIngredients rows={scaled(packaging)} />
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -389,6 +445,12 @@ export function KitchenRecipeView({ recipe }: { recipe: KitchenRecipeDetail }) {
         </section>
 
         <KitchenSections rows={rows} kind={recipe.kind} Wrap={Section} />
+
+        {recipe.kind !== 'modifier' && (
+          <Section title="Scale this recipe">
+            <RecipeScaler rows={rows} baseYieldG={recipe.kind === 'plate' ? totalG : recipe.yieldGrams} />
+          </Section>
+        )}
 
         <Section title="Method">
           <KitchenMethod methodSteps={recipe.methodSteps} steps={recipe.steps} stepsUrdu={recipe.stepsUrdu} />
