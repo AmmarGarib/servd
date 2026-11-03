@@ -105,7 +105,7 @@ interface PreviewResult extends McFields {
 // Component (sub-recipe) option for the ingredient picker. Cost-per-gram is
 // precomputed by GET /par-sheet/preps?for=recipe — the one component picker,
 // company-scoped (already batch-yield-adjusted).
-interface PrepOption { id: string; name: string; costPerGramCents: number }
+interface PrepOption { id: string; name: string; costPerGramCents: number; yieldGrams?: number | null; portionGrams?: number | null }
 
 export type RecipeStatus = 'iteration' | 'pending_approval' | 'production'
 
@@ -595,7 +595,13 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                       )}
                       {isComp ? (
                         <Select value={row.prepRecipeId}
-                          onChange={(e) => updateRow(row.key, { prepRecipeId: e.target.value })}
+                          onChange={(e) => {
+                            // The weight comes from the component's own recipe (owner, 2026-11-03): one portion when
+                            // it has portions, else its whole batch yield. Still editable after.
+                            const p = availablePreps.find((x) => x.id === e.target.value)
+                            const base = p?.portionGrams ?? p?.yieldGrams ?? null
+                            updateRow(row.key, { prepRecipeId: e.target.value, ...(base && base > 0 ? { quantity: base } : {}) })
+                          }}
                           className={inputCls + ' min-w-[150px]'}>
                           <option value="">— Pick component —</option>
                           {availablePreps.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -745,13 +751,21 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
           {/* Section 1 — Header */}
           <Section title="1 · Recipe header">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Brand always first — it scopes everything below. */}
+              {/* Brand always first — it scopes everything below. A sub recipe has no brand (owner, 2026-11-03:
+                  "let me select multiple brands"): it belongs to the company and every brand's dishes can use it,
+                  so the field (never saved for a sub recipe) is replaced by that note. */}
+              {kind === 'component' ? (
+                <Field label="Brands">
+                  <p className="text-sm text-s-muted">Every brand. A sub recipe belongs to the company, and any brand&rsquo;s dish can use it.</p>
+                </Field>
+              ) : (
               <Field label="Brand *" hint={kind === 'plate' && activeConcept?.serviceVessel === 'packaging' ? 'This brand serves in packaging — every order uses the dish\'s Packaging section.' : undefined}>
                 <Select value={brandId} onChange={(e) => { setBrandId(e.target.value); if (!isEdit) { setMenuItemId(''); setNewItemCategoryId(''); setModMenuItemId(''); setModGroupId(''); setModifierId('') } }} className={inputCls} disabled={isEdit}>
                   <option value="">— Pick brand —</option>
                   {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </Select>
               </Field>
+              )}
 
               {/* Plate recipes always create their own menu item (opened on
                   approval). An already-live plate shows its item read-only. */}
