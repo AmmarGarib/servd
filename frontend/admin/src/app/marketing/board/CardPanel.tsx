@@ -43,8 +43,9 @@ export function CardPanel({ id, me, onClose, onChanged }: { id: string; me: Boar
   const addComment = () => run('comment', async () => { await api.post(`/marketing-board/cards/${id}/comments`, { body: comment.trim() }); setComment('') })
   const upload = (file: File) => run('upload', async () => {
     const q = new URLSearchParams({ filename: file.name, contentType: file.type || 'application/octet-stream' })
-    const { uploadUrl } = await api.get<{ uploadUrl: string }>(`/marketing-board/cards/${id}/upload-url?${q}`)
-    const put = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } }).catch(() => null)
+    const { uploadUrl, contentType } = await api.get<{ uploadUrl: string; contentType?: string }>(`/marketing-board/cards/${id}/upload-url?${q}`)
+    // PUT with the exact type the URL was signed for (design files are typed by the server from their extension).
+    const put = await fetch(uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': contentType || file.type } }).catch(() => null)
     if (!put || !put.ok) throw new ApiError(0, 'UPLOAD_FAILED', `${file.name}: file storage did not accept the upload — ask IT to check the storage settings.`)
   })
   const unlink = (linkId: string) => run(`unlink:${linkId}`, () => api.delete(`/marketing-board/cards/${id}/files/${linkId}`))
@@ -129,10 +130,10 @@ export function CardPanel({ id, me, onClose, onChanged }: { id: string; me: Boar
           </ul>
           <label className="s-btn-secondary inline-flex cursor-pointer items-center px-3 py-2 text-sm">
             {busy === 'upload' ? 'Uploading…' : 'Upload a file'}
-            <input type="file" accept="image/*,video/*" className="sr-only" disabled={!!busy}
+            <input type="file" accept="image/*,video/*,.pdf,.psd,.ai,.eps,.indd,.fig,.sketch,.xd,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx" className="sr-only" disabled={!!busy}
               onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void upload(f) }} />
           </label>
-          <p className="text-xs text-s-muted">Files go to the media library and stay listed on this card by name.</p>
+          <p className="text-xs text-s-muted">Images, video, PDFs and design files (PSD, AI, Figma, Office, ZIP). Files go to the media library and stay listed on this card by name.</p>
         </section>
 
         {/* Comments */}

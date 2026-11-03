@@ -303,7 +303,13 @@ describe('cards', () => {
   })
 
   it('delete parks the card with its resources and comments in the Trash; restore brings them back', async () => {
-    expect((await call('mkt', 'DELETE', `/marketing-board/cards/${cardA}`)).statusCode).toBe(204)
+    // Only the marketing lead and the CEO delete cards (owner, 2026-11-03).
+    const plain = await call('mkt', 'DELETE', `/marketing-board/cards/${cardA}`)
+    expect(plain.statusCode).toBe(403)
+    expect(plain.json().error.code).toBe('CARD_DELETE_LEAD_ONLY')
+    expect((await call('lead', 'GET', '/marketing-board/me')).json().canDelete).toBe(true)
+    expect((await call('mkt', 'GET', '/marketing-board/me')).json().canDelete).toBe(false)
+    expect((await call('lead', 'DELETE', `/marketing-board/cards/${cardA}`)).statusCode).toBe(204)
     expect(await prisma.contentEvent.count({ where: { id: cardA } })).toBe(0)
     const entry = await prisma.trashEntry.findFirstOrThrow({ where: { entityId: cardA } })
     const r = await call('ceo', 'POST', `/trash/content_event/${entry.entityId}/restore`, {})
@@ -412,5 +418,15 @@ describe('tracker', () => {
     expect(a.present).toBe(2)
     expect(a.late).toBe(1)
     expect(a.absent).toBe(2)
+  })
+})
+
+describe('card files: PDFs and design files (owner, 2026-11-03)', () => {
+  it('types a design file from its extension on the card upload only; the general library still refuses it', async () => {
+    const { cardDocumentType } = await import('../src/modules/media/routes.js')
+    expect(cardDocumentType('Menu final.PDF')).toBe('application/pdf')
+    expect(cardDocumentType('poster.psd')).toBe('image/vnd.adobe.photoshop')
+    expect(cardDocumentType('logo.ai')).toBe('application/postscript')
+    expect(cardDocumentType('script.exe')).toBeNull()
   })
 })

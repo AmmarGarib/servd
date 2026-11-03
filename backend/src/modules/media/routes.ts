@@ -59,6 +59,32 @@ export function missingStorageEnv(env: NodeJS.ProcessEnv = process.env): string[
   return R2_REQUIRED_ENV.filter((k) => !env[k]?.trim())
 }
 
+/**
+ * Documents and design files on a marketing board card (owner, 2026-11-03: PDFs and design files allowed) —
+ * ONLY through the card upload (`allowDocuments`), never the general /media library upload. Matched by extension
+ * (browsers send PSD / AI as '' or application/octet-stream), stored with a content type from this table.
+ */
+export const CARD_DOCUMENT_TYPES: Readonly<Record<string, string>> = {
+  '.pdf': 'application/pdf',
+  '.psd': 'image/vnd.adobe.photoshop',
+  '.ai': 'application/postscript',
+  '.eps': 'application/postscript',
+  '.indd': 'application/x-indesign',
+  '.fig': 'application/octet-stream',
+  '.sketch': 'application/octet-stream',
+  '.xd': 'application/octet-stream',
+  '.zip': 'application/zip',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+}
+export function cardDocumentType(filename: string): string | null {
+  return CARD_DOCUMENT_TYPES[path.extname(filename).toLowerCase()] ?? null
+}
+
 function kindOfUpload(filename: string, contentType: string): Exclude<Kind, 'copy'> | null {
   if (contentType.startsWith('image/')) return 'image'
   if (contentType.startsWith('video/')) return 'video'
@@ -103,6 +129,8 @@ async function assertBrandForAsset(req: FastifyRequest, conceptId: string, asset
 export interface MediaUploadQuery {
   filename: string; contentType: string; category: string
   kind?: 'image' | 'video' | 'font'; name?: string; tags?: string[]; conceptId?: string; fontFamily?: string
+  /** Marketing board card uploads only: PDFs and design files (CARD_DOCUMENT_TYPES) as kind 'document'. */
+  allowDocuments?: boolean
 }
 
 /**
@@ -113,7 +141,9 @@ export interface MediaUploadQuery {
 export async function presignMediaUpload(req: FastifyRequest, q: MediaUploadQuery, tenantId: string | null) {
   if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
 
-  const kind = kindOfUpload(q.filename, q.contentType)
+  const docType = q.allowDocuments && !kindOfUpload(q.filename, q.contentType) ? cardDocumentType(q.filename) : null
+  if (docType) q = { ...q, contentType: docType }
+  const kind: string | null = docType ? 'document' : kindOfUpload(q.filename, q.contentType)
   if (!kind) throw new AppError('MEDIA_TYPE_NOT_ALLOWED', `Files of type '${q.contentType || 'unknown'}' cannot be uploaded`, 422)
   if (q.kind && q.kind !== kind) throw new AppError('MEDIA_KIND_MISMATCH', `This file is a ${kind}, not a ${q.kind}`, 422)
   if (q.conceptId) await assertBrandForAsset(req, q.conceptId, tenantId, 'create')
@@ -129,7 +159,7 @@ export async function presignMediaUpload(req: FastifyRequest, q: MediaUploadQuer
   }
 
   const { getSignedUploadUrl } = await import('../../lib/storage.js')
-  const result = await getSignedUploadUrl(q.filename, q.contentType, q.category, kind === 'font' ? [q.contentType] : [])
+  const result = await getSignedUploadUrl(q.filename, q.contentType, q.category, kind === 'font' || kind === 'document' ? [q.contentType] : [])
     .catch((err: Error) => {
       if (/not allowed/.test(err.message)) throw new AppError('MEDIA_TYPE_NOT_ALLOWED', err.message, 422)
       throw err
@@ -156,7 +186,8 @@ export async function presignMediaUpload(req: FastifyRequest, q: MediaUploadQuer
     },
   })
 
-  return { ...result, assetId: asset.id }
+  // contentType: the type the upload URL was signed for — the browser must PUT with exactly this one.
+  return { ...result, assetId: asset.id, contentType: q.contentType }
 }
 
 export async function mediaRoutes(fastify: FastifyInstance) {

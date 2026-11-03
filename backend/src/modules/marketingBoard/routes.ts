@@ -122,7 +122,8 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
     lead: await isLead(req),
     intern: isIntern(req),
     canCreate: !isIntern(req),
-    canDelete: !isIntern(req),
+    // Only the marketing lead and the CEO delete cards (owner, 2026-11-03).
+    canDelete: await isLead(req),
     // A deleted card is in the Trash under the calendar's own type, which the managers restore (trash provider
     // content_event) — the page offers Undo only to them.
     canUndoDelete: (MANAGERS as string[]).includes(req.staffUser!.role),
@@ -355,9 +356,10 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
     return cardDto(fresh)
   })
 
-  // DELETE /marketing-board/cards/:id — board staff (never an intern; INTERN_ROUTES has no DELETE either). Into the
-  // Trash with its resources, comments and file links (the content_event provider).
+  // DELETE /marketing-board/cards/:id — the marketing lead (Anusha) and the CEO only (owner, 2026-11-03: "no they
+  // can't delete the cards"); never an intern. Into the Trash with its resources, comments and file links.
   fastify.delete<{ Params: { id: string } }>('/cards/:id', staffOnly, async (req, reply) => {
+    if (!(await isLead(req))) throw new AppError('CARD_DELETE_LEAD_ONLY', 'Only the marketing lead or the CEO can delete a card', 403)
     const card = await cardInScope(req, req.params.id, 'write')
     await prisma.$transaction(async (tx) => {
       const row = await tx.contentEvent.findUniqueOrThrow({ where: { id: card.id } })
@@ -403,7 +405,7 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
       name: z.string().max(120).optional(),
     }).parse(req.query)
     const card = await cardInScope(req, req.params.id, 'write')
-    const signed = await presignMediaUpload(req, { filename: q.filename, contentType: q.contentType, category: 'marketing', name: q.name }, card.tenantId)
+    const signed = await presignMediaUpload(req, { filename: q.filename, contentType: q.contentType, category: 'marketing', name: q.name, allowDocuments: true }, card.tenantId)
     await prisma.$transaction(async (tx) => {
       if (card.conceptId) await tx.mediaAsset.update({ where: { id: signed.assetId }, data: { conceptId: card.conceptId } })
       await tx.contentEventMedia.create({ data: { tenantId: card.tenantId, eventId: card.id, mediaAssetId: signed.assetId, addedById: req.staffUser!.id } })
