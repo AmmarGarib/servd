@@ -229,6 +229,11 @@ export interface CashVoucher {
   taxStatus?: 'deducted' | 'not_deducted' | 'not_applicable' | null
   nonDeductionReason?: string | null
   supplierBill?: { id: string; billNumber: string; status: string; dueDate: string; totalCents: number; whtCents: number; paidCents: number } | null
+  /** The purchase order this voucher is the cash for (owner, 2026-11-03): its pay tops up the buyer's box — never an expense. */
+  purchaseOrderId?: string | null
+  purchaseOrder?: { id: string; reference: string | null; status: string; totalCents: number; supplier: { name: string } } | null
+  /** A PO voucher once paid: the buyer's box the cash went into. */
+  toBoxName?: string | null
   payAccountCode?: string | null
   payBankAccountId?: string | null
   /** Words for it once paid: the box's name, "Cash on hand" or the bank's name. */

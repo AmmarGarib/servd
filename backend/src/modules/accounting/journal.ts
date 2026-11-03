@@ -243,6 +243,7 @@ export const ACCT = {
   COST_ADJUSTMENT:          '5060',
   RENT:                     '6010',
   GRATUITY:                 '6036',
+  OPERATING_SUPPLIES:       '6045',   // non-food stock items, expensed on receipt (owner, 2026-11-03)
   MARKETING_PROMO:          '6060',
   PROFESSIONAL_FEES:        '6110',
   DEPRECIATION:             '6150',

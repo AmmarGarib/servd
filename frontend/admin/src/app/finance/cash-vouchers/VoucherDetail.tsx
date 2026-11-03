@@ -319,7 +319,9 @@ export function VoucherDetail({ id }: { id: string }) {
             )}
             <Fact label="In words" value={v.amountInWords || amountInWords(v.amountCents)} wide />
             <Fact label="Particulars" value={v.purpose} wide />
-            <Fact label={v.assetClassId ? 'Booked to' : 'Expense account'} value={categoryLabel} />
+            {v.purchaseOrderId
+              ? <Fact label="For purchase order" value={`${v.purchaseOrder?.reference ?? 'PO'}${v.purchaseOrder ? ` — ${v.purchaseOrder.supplier.name}` : ''} · paid into the buyer's petty-cash box${v.toBoxName ? ` (${v.toBoxName})` : ''}, not an expense — the goods are booked when the PO is received`} wide />
+              : <Fact label={v.assetClassId ? 'Booked to' : 'Expense account'} value={categoryLabel} />}
             {v.assetClassId && <Fact label="Outlet" value={v.assetLocationName ?? (v.conceptName ? `— (brand ${v.conceptName})` : '—')} />}
             {v.capitalisation && (
               <Fact label="Capitalisation" value={v.capitalisation.status === 'posted' ? 'Approved by the CEO — on the fixed-asset register'
@@ -560,17 +562,22 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   const [cls, setCls] = useState<PaymentClassificationValue>(v.classification
     ? { classification: v.classification, taxStatus: v.taxStatus ?? '', nonDeductionReason: v.nonDeductionReason ?? '' }
     : EMPTY_PAYMENT_CLASSIFICATION)
-  const clsError = credit ? null : paymentClassificationError(cls)
+  // A PO's cash (owner, 2026-11-03) is not a payment: it moves into the buyer's box (Dr 1011) — no classification.
+  const forPo = !!v.purchaseOrderId
+  const clsError = credit || forPo ? null : paymentClassificationError(cls)
   const pay = useMutation({
     mutationFn: () => api.post(`${CV_BASE}/${v.id}/pay`,
       {
         ...(box ? { source: 'box', boxId: box.id } : bank ? { source: 'bank', bankAccountId: bank.id } : credit ? { source: 'credit' } : { source: 'cash_on_hand' }),
         ...(notEquipment && { notEquipment: true, notEquipmentReason: notEquipmentReason.trim() }),
-        ...(credit ? {} : paymentClassificationBody(cls)),
+        ...(credit || forPo ? {} : paymentClassificationBody(cls)),
       },
       { tenantId: v.tenantId }),
     meta: { inlineErrors: true },
-    onSuccess: () => { toast.success(`${v.number} is paid and booked — now waiting for the supporting documents.`); onDone() },
+    onSuccess: () => {
+      toast.success(forPo ? `${v.number} is paid into ${holder}'s cash box — receive the PO when the goods arrive.` : `${v.number} is paid and booked — now waiting for the supporting documents.`)
+      onDone()
+    },
   })
   const short = !!box && box.floatCents < v.amountCents
   const nothing = !isLoading && options.length === 0
@@ -580,7 +587,11 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
     <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
       <p className="text-sm font-black text-white/90">Pay {holder}</p>
       <p className="text-xs text-s-muted">
-        Hand PKR {formatPkr(v.amountCents)} to {holder} and confirm here. {v.assetClassId
+        Hand PKR {formatPkr(v.amountCents)} to {holder} and confirm here. {forPo
+          ? <>This is the cash for {v.purchaseOrder?.reference ?? 'a purchase order'}: it goes into {holder}&rsquo;s petty-cash box (one is
+            opened if they have none) — nothing is expensed. The goods are booked when the PO is received, and the supplier&rsquo;s
+            bill is paid from that box.</>
+          : v.assetClassId
           ? <>Paying books it to CapEx advances (1340) now, in one entry against where the money comes from (a cash box,
             the cash on hand or a bank), and asks the CEO to approve the equipment onto the fixed-asset register.</>
           : <>Paying books the expense now, in one entry (the voucher&rsquo;s expense account against where the cash comes from).</>}
@@ -639,10 +650,10 @@ function PayPanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
           )}
         </div>
       )}
-      {!credit && <PaymentClassificationFields value={cls} onChange={setCls} compact />}
+      {!credit && !forPo && <PaymentClassificationFields value={cls} onChange={setCls} compact />}
       <Button type="submit" disabled={pay.isPending || !chosen || overrideIncomplete || !!clsError} title={clsError ?? undefined} 
         onClick={async () => {
-          const what = v.assetClassId ? 'booked to CapEx advances (the CEO then approves the capitalisation)' : 'booked as expense now'
+          const what = forPo ? `put into ${holder}'s petty-cash box (no expense)` : v.assetClassId ? 'booked to CapEx advances (the CEO then approves the capitalisation)' : 'booked as expense now'
           const ok = await confirm(credit
             ? { title: `Book ${v.number} on credit?`, body: `PKR ${formatPkr(v.amountCents)} is owed to ${v.supplierName ?? 'the supplier'} — ${v.assetClassId ? 'the CapEx line and its capitalisation request are raised' : 'a supplier bill is raised'}; no cash is handed over.`, confirmLabel: 'Book on credit' }
             : { title: `Cash handed to ${holder}?`, body: `PKR ${formatPkr(v.amountCents)} for ${v.number} is paid from ${fromWords} and ${what}.`, confirmLabel: 'Cash handed over' })

@@ -580,6 +580,9 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   { prefix: '/procurement/bills',           anyOf: ['procurement', 'accounting'] },
   { prefix: '/procurement/credit-notes',    anyOf: ['procurement', 'accounting'] },
   { prefix: '/procurement/payments',        anyOf: ['procurement', 'accounting'] },
+  // The PO chain's buyer and finance steps (owner, 2026-11-03): the buyer checks with 'procurement', finance with
+  // 'accounting' — each route holds its role to its own module (procurement/routes.ts STEP_MODULE).
+  { prefix: '/procurement/po-steps',        anyOf: ['procurement', 'accounting'] },
   { prefix: '/procurement/purchase-orders', anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
   // 'capital' reads the supplier picker (?view=picker) of the OpEx / CapEx
   // forms (vendor, filer status, WHT section); adding a supplier stays procurement.

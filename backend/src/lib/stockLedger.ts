@@ -107,7 +107,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { AppError } from './errors.js'
-import { costClassOf, COST_CLASSES, zeroByClass, type CostClass } from './inventoryClass.js'
+import { costClassOf, COST_CLASSES, isNonFoodCategory, lotClassOf, zeroByClass, type CostClass } from './inventoryClass.js'
 import { assertInt4Fits, assertMoneyFits, sumCents, toCents } from './money.js'
 import { brandSharesJson, brandUsageShares, type BrandShare } from './brandShare.js'
 import { ensureSiteCutover, rebuildStockBalancesTx, relocateStrandedLotsTx, stockHomeOf, strandedSiteIdsTx } from './stockSite.js'
@@ -614,6 +614,11 @@ export async function consumeFifoTx(tx: Tx, a: {
   if (!Number.isFinite(a.qty) || a.qty < 0) throw new AppError('INVALID_QTY', 'A stock quantity must be zero or more', 422)
 
   const item = await itemForWrite(tx, a.inventoryItemId, a.tenantId)
+  // Non-food holds no stock (expensed on receipt): nothing to waste, count off, ship or return. (A sale never draws
+  // it — a recipe refuses non-food lines.)
+  if (a.kind !== 'sale' && isNonFoodCategory(item.category)) {
+    throw new AppError('NON_FOOD_NOT_STOCK', `${item.name} is a non-food item — it is expensed when received and is never held as stock`, 422)
+  }
 
   const prior = await tx.stockMovement.findMany({
     where: { tenantId: item.tenantId, sourceType: a.sourceType, sourceId: a.sourceId, inventoryItemId: item.id, kind: a.kind },
@@ -1102,7 +1107,9 @@ export async function reclassItemLotsTx(tx: Tx, a: {
  *     taps since undone;
  *   • when the item is issue-on-receipt (unmeasured consumables), is consumed
  *     in full at once ('issue_on_receipt', brand shares by usage) and posted
- *     Dr 50x0 / Cr 12x0 (postIssueOnReceiptTx).
+ *     Dr 50x0 / Cr 12x0 (postIssueOnReceiptTx). A NON-FOOD item (category
+ *     'non_food', lot class 'non_food') is always issued on receipt and its
+ *     issue posts nothing: its receipt already debited 6045.
  */
 export async function addLotTx(tx: Tx, a: {
   tenantId: string; inventoryItemId: string; qty: number; unitCostCents: number; valueCents?: number
@@ -1153,6 +1160,10 @@ export async function addLotTx(tx: Tx, a: {
     return { lotId: existing.id, movementId: m?.id ?? '' }
   }
 
+  if (isNonFoodCategory(item.category) && a.kind !== 'receipt') {
+    // Non-food is expensed on receipt (lib/inventoryClass.ts): it is never counted, returned or carried as stock.
+    throw new AppError('NON_FOOD_NOT_STOCK', `${item.name} is a non-food item — it is expensed when received and is never held as stock`, 422)
+  }
   await assertBrandOfCompany(tx, item.tenantId, a.conceptId)
   const site = await resolveSiteTx(tx, item, a.locationId)
   if (a.kind !== 'fifo_cutover') {
@@ -1160,7 +1171,8 @@ export async function addLotTx(tx: Tx, a: {
     if (hasLots) await assertStockOnLots(tx, item, site)
   }
 
-  const costClass = a.costClass ?? costClassOf(item.category)
+  // A non-food item's lots carry 'non_food' (lib/inventoryClass.ts): expensed on receipt, never stock value.
+  const costClass = isNonFoodCategory(item.category) ? lotClassOf(item.category) : (a.costClass ?? costClassOf(item.category))
   const lot = await tx.stockLot.create({
     data: {
       tenantId: item.tenantId, inventoryItemId: item.id, locationId: site, conceptId: a.conceptId ?? null,
@@ -1194,7 +1206,9 @@ export async function addLotTx(tx: Tx, a: {
     const lotNow = { id: lot.id, tenantId: item.tenantId, locationId: site, conceptId: a.conceptId ?? null, inventoryItemId: item.id, costClass, unitCostCents: a.unitCostCents, remainingQty: a.qty, remainingValueCents: value }
     const s = await settleShortfallsTx(tx, item, lotNow, a.receivedAt)
     if (s > 0) settled = { valueCents: s }
-    if (item.issueOnReceipt) {
+    // A non-food item is ALWAYS issued on receipt (owner, 2026-11-03: "Expense on receipt") — its receipt posting
+    // already debited 6045, so the issue posts nothing (postIssueOnReceiptTx); the lot ends at zero.
+    if (item.issueOnReceipt || isNonFoodCategory(item.category)) {
       const i = await issueOnReceiptTx(tx, item, lotNow, a.receivedAt, a.createdById ?? null)
       if (i > 0) issued = { valueCents: i }
     }

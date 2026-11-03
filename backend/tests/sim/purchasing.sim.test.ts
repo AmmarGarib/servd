@@ -18,7 +18,7 @@
 //            drinks, packaging); PO0 (flour, under the approval threshold —
 //            auto-approved) received at once and NEVER billed;
 //   2 Oct    PO1 (above the threshold → the CEO approves), phoned in; the dock
-//            refuses it without a photo and refuses the manager who raised it;
+//            refuses it without a photo (since 2026-11-03 the raiser MAY receive);
 //            the store manager receives it with a dock photo FILE (record file
 //            of the receipt);
 //   3 Oct    0.5 kg chicken wasted (cost waits on 1290);
@@ -61,6 +61,17 @@ let sim: Sim
 // A 1×1 PNG — the dock-door photo (record files take images + PDF).
 const PNG_1PX = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
 const dockPhoto = (n = 1) => ({ fileName: `dock-${n}.png`, mime: 'image/png', dataBase64: PNG_1PX })
+
+/**
+ * The PO chain (owner, 2026-11-03): the buyer raises and submits (their buyer step is signed by raising) → finance
+ * passes → the CEO approves. These POs are bought on the supplier's credit (billed and paid through AP), so the CEO
+ * approves WITHOUT the cash voucher.
+ */
+async function approveChain(co: SimCompany, buyer: SimUser, poId: string) {
+  expect(ok(await sim.as(buyer, co).post(`/procurement/purchase-orders/${poId}/submit`, {}), 200).status).toBe('finance_check')
+  expect(ok(await sim.as(co.finance, co).post(`/procurement/po-steps/${poId}/pass`, {}), 200).status).toBe('pending_approval')
+  ok(await sim.as(sim.ceo, co).post(`/procurement/purchase-orders/${poId}/approve`, { payByCash: false }), 200)
+}
 
 type CoKey = 'A' | 'B'
 const T = (co: SimCompany, a: string, b: string) => (co.key === 'A' ? a : b)
@@ -150,7 +161,7 @@ describe('the simulated month — purchasing and stock', () => {
 
       // PO0: 20 kg flour @ PKR 150 — under the approval threshold, auto-approved on submit
       const po0 = ok(await mgr.post('/procurement/purchase-orders', { supplierId: s.meats, lines: [{ inventoryItemId: s.items.flour, quantityOrdered: 20, unitCostCents: 15_000 }] }), 201)
-      expect(ok(await mgr.post(`/procurement/purchase-orders/${po0.id}/submit`, {}), 200).status).toBe('approved')
+      await approveChain(co, s.buyer, po0.id)
       ok(await mgr.post(`/procurement/purchase-orders/${po0.id}/mark-sent`, { channel: 'phone' }), 200)
       const r0 = ok(await sim.as(s.store, co).post(`/procurement/purchase-orders/${po0.id}/receive`, {
         photos: [dockPhoto()], lines: [{ poLineId: po0.lines[0].id, quantityReceived: 20 }],
@@ -183,10 +194,12 @@ describe('the simulated month — purchasing and stock', () => {
         ],
       }), 201)
       expect(Number(po1.totalCents)).toBe(5_400_000)
-      expect(ok(await mgr.post(`/procurement/purchase-orders/${po1.id}/submit`, {}), 200).status).toBe('pending_approval')
-      // the manager cannot approve; the CEO does
+      expect(ok(await mgr.post(`/procurement/purchase-orders/${po1.id}/submit`, {}), 200).status).toBe('finance_check')
+      // the buyer cannot pass finance's step nor approve; finance passes, the CEO approves
+      expect((await mgr.post(`/procurement/po-steps/${po1.id}/pass`, {})).statusCode).toBe(403)
+      ok(await sim.as(co.finance, co).post(`/procurement/po-steps/${po1.id}/pass`, {}), 200)
       expect((await mgr.post(`/procurement/purchase-orders/${po1.id}/approve`, {})).statusCode).toBe(403)
-      ok(await sim.as(sim.ceo, co).post(`/procurement/purchase-orders/${po1.id}/approve`, {}), 200)
+      ok(await sim.as(sim.ceo, co).post(`/procurement/purchase-orders/${po1.id}/approve`, { payByCash: false }), 200)
       ok(await mgr.post(`/procurement/purchase-orders/${po1.id}/mark-sent`, { channel: 'phone', note: 'Phoned to Karachi Meats' }), 200)
       const lineOf = (itemId: string) => (po1.lines as Array<{ id: string; inventoryItemId: string }>).find((l) => l.inventoryItemId === itemId)!.id
       s.po1 = { id: po1.id, lines: { chicken: lineOf(s.items.chicken), cola: lineOf(s.items.cola), boxes: lineOf(s.items.boxes), mint: lineOf(s.items.mint), flour: '' } }
@@ -200,8 +213,7 @@ describe('the simulated month — purchasing and stock', () => {
       const noPhoto = await sim.as(s.store, co).post(`/procurement/purchase-orders/${po1.id}/receive`, { lines })
       expect(noPhoto.statusCode, noPhoto.body).toBe(400)
       expect(errCode(noPhoto)).toBe('PHOTO_REQUIRED')
-      const own = await mgr.post(`/procurement/purchase-orders/${po1.id}/receive`, { photos: [dockPhoto()], lines })
-      expect(own.statusCode, `the raiser receives: ${own.body}`).toBe(403)
+      // (Owner, 2026-11-03: the raiser MAY receive their own PO now — the store manager takes this one.)
       const r = ok(await sim.as(s.store, co).post(`/procurement/purchase-orders/${po1.id}/receive`, { photos: [dockPhoto(1), dockPhoto(2)], notes: 'All in, cold chain fine', lines }), 201)
       expect(r.status).toBe('received')
       expect(r.files.length).toBe(2)
@@ -304,7 +316,7 @@ describe('the simulated month — purchasing and stock', () => {
       const s = S(co)
       const mgr = sim.as(s.buyer, co)
       const po2 = ok(await mgr.post('/procurement/purchase-orders', { supplierId: s.unknown, lines: [{ inventoryItemId: s.items.chicken, quantityOrdered: 20, unitCostCents: 80_000 }] }), 201)
-      expect(ok(await mgr.post(`/procurement/purchase-orders/${po2.id}/submit`, {}), 200).status).toBe('approved')
+      await approveChain(co, s.buyer, po2.id)
       ok(await mgr.post(`/procurement/purchase-orders/${po2.id}/mark-sent`, { channel: 'whatsapp' }), 200)
       s.po2 = { id: po2.id, lineId: po2.lines[0].id }
       const bill = ok(await sim.as(co.finance, co).post('/procurement/bills', {
@@ -328,7 +340,7 @@ describe('the simulated month — purchasing and stock', () => {
       expect(errCode(cancel)).toBe('PO_BILLED_AHEAD')
       // the other side of the guard: a cancelled PO cannot be billed ahead
       const po3 = ok(await mgr.post('/procurement/purchase-orders', { supplierId: s.unknown, lines: [{ inventoryItemId: s.items.cola, quantityOrdered: 10, unitCostCents: 6_000 }] }), 201)
-      ok(await mgr.post(`/procurement/purchase-orders/${po3.id}/submit`, {}), 200)
+      await approveChain(co, s.buyer, po3.id)
       ok(await mgr.post(`/procurement/purchase-orders/${po3.id}/cancel`, { reason: 'Ordered by mistake' }), 200)
       const ahead = await sim.as(co.finance, co).post('/procurement/bills', {
         supplierId: s.unknown, poId: po3.id, billNumber: `UT-78-${co.key}`, billDate: '2026-10-07',

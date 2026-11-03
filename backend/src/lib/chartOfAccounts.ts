@@ -206,6 +206,10 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   // Petty-cash expense heads (owner, 2026-10-15: "Misc. expense, Petty expense, IT and other expense heads usually
   // required to record petty expenses"). Added to every company's chart at boot.
   { code: '6042', name: 'Pest Control & Fumigation',          type: 'expense' },
+  // Non-food stock items (owner, 2026-11-03: "want to use this system for non food purposes"): cleaning, stationery,
+  // gas and other supplies bought on a PO are EXPENSED ON RECEIPT here — never stock value, never cost of sales
+  // (lib/inventoryClass.ts NON_FOOD_EXPENSE_CODE).
+  { code: '6045', name: 'Operating Supplies (Non-food)',      type: 'expense',   description: 'Non-food items bought through purchasing (cleaning, stationery, gas, smallwares) — expensed when received, never held as stock or food cost' },
   { code: '6075', name: 'IT & Computer Expenses',             type: 'expense',   description: 'IT consumables, accessories, small IT repairs, toner and cables — software subscriptions stay on 6070; computers and equipment go through CapEx' },
   { code: '6145', name: 'Vehicle Running & Fuel',             type: 'expense',   description: 'Fuel, tolls, parking and small running costs of company vehicles and bikes' },
   { code: '6146', name: 'Freight & Cartage (non-stock)',      type: 'expense',   description: 'Loading, cartage and freight that is not part of a stock purchase (stock freight is in the stock cost)' },

@@ -311,8 +311,10 @@ describe('purchasing and a client invoice for the return (3–20 Oct)', () => {
       { inventoryItemId: chicken.id, quantityOrdered: 100, unitCostCents: 3_000 },
       { inventoryItemId: boxes.id, quantityOrdered: 500, unitCostCents: 60 },
     ] }), 201)
-    let s = ok(await mgr.post(`/procurement/purchase-orders/${po.id}/submit`, {}), 200)
-    if (s.status === 'pending_approval') s = ok(await sim.as(sim.ceo, A).post(`/procurement/purchase-orders/${po.id}/approve`, {}), 200)
+    // The PO chain (owner, 2026-11-03): the buyer's step is signed by raising → finance → the CEO (bought on credit).
+    expect(ok(await mgr.post(`/procurement/purchase-orders/${po.id}/submit`, {}), 200).status).toBe('finance_check')
+    ok(await sim.as(A.finance, A).post(`/procurement/po-steps/${po.id}/pass`, {}), 200)
+    ok(await sim.as(sim.ceo, A).post(`/procurement/purchase-orders/${po.id}/approve`, { payByCash: false }), 200)
     ok(await mgr.post(`/procurement/purchase-orders/${po.id}/mark-sent`, { channel: 'phone' }), 200)
     const poRow = await sim.prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } })
     const poLine = (itemId: string) => poRow.lines.find((l) => l.inventoryItemId === itemId)!

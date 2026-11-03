@@ -113,6 +113,13 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   staff_login: spec(() => '/workforce'),
   storefront_publish: spec(() => '/storefront?tab=approvals'),
   purchase_order: spec(() => '/procurement'),
+  // The PO chain (owner, 2026-11-03): the buyer, then finance, then the CEO (purchase_order).
+  purchase_order_buyer: spec(() => '/procurement', {
+    waitingTitle: (_s, f) => `${f.ref} waiting for your buyer check${f.companyName ? ` (${f.companyName})` : ''}`,
+  }),
+  purchase_order_finance: spec(() => '/procurement', {
+    waitingTitle: (_s, f) => `${f.ref} waiting for finance's check${f.companyName ? ` (${f.companyName})` : ''}`,
+  }),
   recipe: spec((id) => `/accounting/recipes/${encodeURIComponent(id)}`),
   hr_request: spec(() => '/hr/me', {
     // The employee is told the OUTCOME (final approval or a rejection), never each step.
@@ -190,7 +197,9 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       const l = await db.siteLayout.findFirst({ where: { OR: [{ id }, { slug: id }] }, select: { title: true, slug: true } })
       return l && { ref: `Website change ${l.title ?? l.slug}` }
     }
-    case 'purchase_order': {
+    case 'purchase_order':
+    case 'purchase_order_buyer':
+    case 'purchase_order_finance': {
       const p = await db.purchaseOrder.findUnique({ where: { id }, select: { reference: true, totalCents: true, supplier: { select: { name: true } } } })
       return p && { ref: `PO ${p.reference ?? short(id)}`, amountCents: Number(p.totalCents), detail: p.supplier?.name ? `Supplier: ${p.supplier.name}` : null }
     }
@@ -418,7 +427,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
   let final = e.final
   if (final === undefined && outcome === 'approved') {
     if (type === 'hr_request') final = s.status === 'approved'
-    else if (type === 'cash_request_finance' || type === 'payroll_finance_review') final = false
+    else if (type === 'cash_request_finance' || type === 'payroll_finance_review' || type === 'purchase_order_buyer' || type === 'purchase_order_finance') final = false
   }
   const nonFinal = outcome === 'approved' && final === false
 
@@ -433,7 +442,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
       verb = 'approved'
       if (nonFinal) {
         const next = await nextStepLabel(type, e.id)
-        verb = type === 'cash_request_finance' ? 'approved by finance' : type === 'payroll_finance_review' ? 'checked by finance' : 'approved at this step'
+        verb = type === 'cash_request_finance' ? 'approved by finance' : type === 'payroll_finance_review' || type === 'purchase_order_finance' ? 'checked by finance' : type === 'purchase_order_buyer' ? 'checked by the buyer' : 'approved at this step'
         body = next ? `Now with ${next}.` : null
       } else if (type === 'storefront_publish') {
         const at = iso(e.publishAt)
@@ -477,6 +486,8 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
 /** "HR", "the CEO" … — who a multi-step item is with now. */
 async function nextStepLabel(type: ApprovalType, id: string): Promise<string | null> {
   if (type === 'cash_request_finance' || type === 'payroll_finance_review') return 'the CEO'
+  if (type === 'purchase_order_buyer') return 'finance'
+  if (type === 'purchase_order_finance') return 'the CEO'
   if (type !== 'hr_request') return null
   try {
     const rec = await serviceClient.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, formVersion: true, currentStep: true, status: true, data: true, amountCents: true } })

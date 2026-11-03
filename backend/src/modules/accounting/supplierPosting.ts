@@ -57,7 +57,7 @@ import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { assertInt4Fits, sumCents, toCents, type DbMoney } from '../../lib/money.js'
-import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, costClassOf, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
+import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, costClassOf, isNonFoodCategory, NON_FOOD_EXPENSE_CODE, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
 import { brandUsageShares, splitCents } from '../../lib/brandShare.js'
 import {
   addLotTx, consumeFifoTx, readFifoCutoverAt, repriceLotTx, returnToLotsTx, PURCHASE_PRICE_SOURCES, type MovementRow,
@@ -110,12 +110,23 @@ function classLines(byClass: Record<CostClass, number>, memo: (c: CostClass) => 
   return COST_CLASSES.flatMap((c) => signed(CLASS_ACCOUNTS[c].inv, byClass[c] ?? 0, memo(c)))
 }
 
-/** Signed 5060 lines, each item's amount split by its brands' recipe use (H20; brand-less when none). Positive = debit. */
+/**
+ * Signed 5060 lines, each item's amount split by its brands' recipe use (H20; brand-less when none). Positive = debit.
+ * A NON-FOOD item's difference goes to 6045 Operating Supplies instead (owner, 2026-11-03: expensed on receipt —
+ * never cost of sales), brand-less.
+ */
 async function costAdjustLines(tx: Tx, tenantId: string, byItem: Map<string, number>, memo: string): Promise<JournalLineInput[]> {
   const out: JournalLineInput[] = []
   const now = new Date()
+  const ids = [...byItem.keys()].filter(Boolean)
+  const nonFood = new Set(ids.length === 0 ? [] : (await tx.inventoryItem.findMany({ where: { id: { in: ids } }, select: { id: true, category: true } }))
+    .filter((i) => isNonFoodCategory(i.category)).map((i) => i.id))
   for (const [itemId, cents] of byItem) {
     if (!cents) continue
+    if (nonFood.has(itemId)) {
+      out.push(...signed(NON_FOOD_EXPENSE_CODE, cents, `${memo} (non-food, expensed)`))
+      continue
+    }
     const shares = itemId ? await brandUsageShares(tx, tenantId, itemId, now) : []
     for (const p of splitCents(cents, shares)) out.push(...signed(ACCT.COST_ADJUSTMENT, p.cents, memo, p.conceptId))
   }

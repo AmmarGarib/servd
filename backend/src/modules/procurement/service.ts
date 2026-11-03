@@ -2,8 +2,8 @@
 //
 // Owns:
 //  - Purchase order lifecycle (create → submit → approve → send → receive → close)
-//      draft → pending_approval (at/above the company's threshold) → approved
-//      draft → approved (below it: auto-approved)
+//      draft → buyer_check → finance_check → pending_approval (the CEO) → approved
+//      (owner, 2026-11-03 — every PO, whatever its total; see submitPo below)
 //      approved → sent ONLY when it actually goes out: emailed / WhatsApped by
 //      sendPoToSupplier, or marked sent by staff who phoned it in (markPoSent).
 //      Approval used to stamp 'sent' + sentAt though nothing was sent, so staff
@@ -166,15 +166,46 @@ export async function createPo(input: CreatePoInput) {
 }
 
 /**
- * Submit a draft PO for approval, or auto-approve it under the threshold.
- * Approved is not sent: the PO goes to the supplier through sendPoToSupplier
- * or markPoSent.
+ * The PO approval chain (owner, 2026-11-03: "Whatever is being purchased, lets start making PO on servd. PO goes to
+ * Asif. Asif push to Hasnain. Hasnain push to me. approved by me. asif takes cash from hasnain. asif buys. person that
+ * created po marks received"). REPLACES the amount threshold: every PO now goes through every step, whatever its
+ * total (the threshold setting is no longer read here).
  *
- * Head office (D1/D3, spec §6.4 + A3): a PO submitted through a head office
- * (`viaHeadOfficeId`, from lib/headOffice.ts viaHeadOfficeForSubmit) ALWAYS
- * goes to pending_approval, whatever the threshold (`forceApproval`), and is
- * stamped with that head office in the same transaction. With neither option
- * the behaviour is exactly the pre-head-office one.
+ *   draft ──submit──▶ buyer_check ──buyer passes──▶ finance_check ──finance passes──▶ pending_approval ──CEO──▶ approved
+ *     ▲                 │ return (note)             │ return                          │ return                  │
+ *     └─────────────────┴───────────────────────────┴─────────────────────────────────┘                         │
+ *   reject (note) at any step → cancelled                                    cash voucher for the buyer (poCash.ts)
+ *
+ *   • buyer_check — role 'procurement' (the buyer) of the PO's company. A PO a buyer raises skips it: the buyer step
+ *     is signed by raising (buyerCheckedById = the raiser), as a request HR or finance raises skips its own step.
+ *   • finance_check — role 'finance' holding 'accounting'.
+ *   • pending_approval — the CEO (APPROVAL_RIGHTS.purchase_order: the CEO, or a live Procurement hand-over).
+ * Separation of duties (lib/approvalRights.ts approvalSubject): the raiser / submitter never decides a step; whoever
+ * passed an earlier step never decides a later one; the CEO is exempt (the final authority). Who may act is decided
+ * by the ROUTE (assertCanApprove on the step's approval type); these functions only claim the status.
+ */
+export const PO_CHAIN_STATUSES = ['buyer_check', 'finance_check', 'pending_approval'] as const
+export type PoChainStatus = typeof PO_CHAIN_STATUSES[number]
+export const isPoChainStatus = (s: string): s is PoChainStatus => (PO_CHAIN_STATUSES as readonly string[]).includes(s)
+
+/** Statuses where a PO is still being decided (lists, reorder, cancel). */
+export const PO_DECIDING_STATUSES = ['draft', ...PO_CHAIN_STATUSES] as const
+
+const STEP_LABEL: Record<PoChainStatus, string> = {
+  buyer_check: 'the buyer',
+  finance_check: 'finance',
+  pending_approval: 'the CEO',
+}
+export const poStepLabel = (status: string): string | null => (isPoChainStatus(status) ? STEP_LABEL[status] : null)
+
+/**
+ * Submit a draft PO into the chain: draft → buyer_check, or → finance_check when the submitter (or the raiser) is a
+ * buyer (role 'procurement') — their own buyer step is signed by raising. Approved is not sent: the PO goes to the
+ * supplier through sendPoToSupplier or markPoSent.
+ *
+ * Head office (D1/D3, spec §6.4 + A3): a PO submitted through a head office is stamped with that head office in the
+ * same transaction (`viaHeadOfficeId`); at the CEO's step it then goes to the CEO (or a hand-over). `forceApproval`
+ * is kept for the callers' signature and changes nothing (every PO goes through every step now).
  */
 export async function submitPo(
   poId: string,
@@ -184,23 +215,25 @@ export async function submitPo(
   const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, include: { supplier: { select: { tenantId: true } } } })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
   if (po.status !== 'draft') throw new AppError('INVALID_STATE', `Cannot submit PO in status ${po.status}`, 400)
-
-  // The PO's company's threshold (its supplier's company).
-  const threshold = await getApprovalThresholdCents(po.supplier.tenantId)
   const total = toCents(po.totalCents)
+  if (!(total > 0)) throw new AppError('PO_TOTAL_ZERO', 'This PO is worth nothing — give its lines a quantity and a price first', 422)
   const via = opts.viaHeadOfficeId ?? null
-  const forced = !!opts.forceApproval && total < threshold
-  const needsApproval = total >= threshold || !!opts.forceApproval
+  // A buyer raising (or submitting) signs the buyer step by raising.
+  const people = await prisma.user.findMany({ where: { id: { in: [userId, po.createdBy ?? ''].filter(Boolean) } }, select: { id: true, role: true } })
+  const buyerSigner = people.find((u) => u.id === userId && u.role === 'procurement')?.id
+    ?? people.find((u) => u.id === po.createdBy && u.role === 'procurement')?.id ?? null
+  const now = new Date()
+  const newStatus: PoChainStatus = buyerSigner ? 'finance_check' : 'buyer_check'
 
   return prisma.$transaction(async (tx) => {
-    const newStatus = needsApproval ? 'pending_approval' : 'approved'
     // Claim the draft: two submits racing never both pass.
     const claimed = await tx.purchaseOrder.updateMany({
       where: { id: poId, status: 'draft' },
       data: {
-        ...(needsApproval
-          ? { status: 'pending_approval' }
-          : { status: 'approved', approvedById: userId, approvedAt: new Date() }),
+        status: newStatus, submittedById: userId, submittedAt: now,
+        buyerCheckedById: buyerSigner, buyerCheckedAt: buyerSigner ? now : null,
+        financeCheckedById: null, financeCheckedAt: null, rejectedReason: null,
+        approvedById: null, approvedAt: null,
         ...(via ? { viaHeadOfficeId: via } : {}),
       },
     })
@@ -208,15 +241,10 @@ export async function submitPo(
     await tx.poActivityLog.create({
       data: {
         purchaseOrderId: poId, userId, action: 'submitted',
-        details: { needsApproval, threshold, total, ...(via ? { viaHeadOfficeId: via } : {}), ...(forced ? { forcedApproval: true } : {}) },
+        details: { status: newStatus, total, ...(via ? { viaHeadOfficeId: via } : {}), ...(buyerSigner ? { buyerStepSignedByRaising: buyerSigner } : {}) },
       },
     })
-    if (!needsApproval) {
-      await tx.poActivityLog.create({
-        data: { purchaseOrderId: poId, userId, action: 'auto_approved', details: { reason: 'below_threshold' } },
-      })
-    }
-    return { id: poId, status: newStatus, needsApproval }
+    return { id: poId, status: newStatus, needsApproval: true }
   })
 }
 
@@ -232,40 +260,97 @@ function decisionDetails(via?: PoDecisionVia): Record<string, unknown> | null {
 }
 
 /**
- * pending_approval → approved. The claim is a conditional update on the
- * status: a second approver (a deputy, the CEO) racing this one gets 409.
+ * The buyer's or finance's pass (the route proved the right): buyer_check → finance_check, finance_check →
+ * pending_approval, stamped with who passed it. Claimed on the status (a lost race → 409).
  */
-export async function approvePo(poId: string, approverId: string, decision?: PoDecisionVia) {
-  const po = await prisma.purchaseOrder.findUnique({ where: { id: poId } })
-  if (!po) throw new NotFoundError('PurchaseOrder', poId)
-  if (po.status !== 'pending_approval') throw new AppError('INVALID_STATE', `Cannot approve PO in status ${po.status}`, 400)
-
+export async function passPoStep(poId: string, actorId: string, expected: 'buyer_check' | 'finance_check', note?: string | null) {
+  const next: PoChainStatus = expected === 'buyer_check' ? 'finance_check' : 'pending_approval'
+  const now = new Date()
   return prisma.$transaction(async (tx) => {
     const claimed = await tx.purchaseOrder.updateMany({
-      where: { id: poId, status: 'pending_approval' },
-      data:  { status: 'approved', approvedById: approverId, approvedAt: new Date() },
+      where: { id: poId, status: expected },
+      data: expected === 'buyer_check'
+        ? { status: next, buyerCheckedById: actorId, buyerCheckedAt: now }
+        : { status: next, financeCheckedById: actorId, financeCheckedAt: now },
     })
     if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO was decided meanwhile — reload it', 409)
-    const details = decisionDetails(decision)
-    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'approved', ...(details ? { details: details as Prisma.InputJsonValue } : {}) } })
-    return { id: poId, status: 'approved' }
+    await tx.poActivityLog.create({
+      data: { purchaseOrderId: poId, userId: actorId, action: expected === 'buyer_check' ? 'buyer_checked' : 'finance_checked', details: { next, ...(note ? { note } : {}) } },
+    })
+    return { id: poId, status: next }
   })
 }
 
-/** pending_approval → draft with the reason; claimed on the status like approvePo. */
-export async function rejectPo(poId: string, approverId: string, reason: string, decision?: PoDecisionVia) {
+/**
+ * pending_approval → approved (the CEO's final step). When the PO is paid by cash (the default; the CEO may untick
+ * it for a supplier who gives credit), the same transaction raises the PO's cash voucher in the buyer's name
+ * (procurement/poCash.ts raisePoCashVoucherTx) — finance then pays it into the buyer's petty-cash box. The claim is a
+ * conditional update on the status: a second approver racing this one gets 409.
+ */
+export async function approvePo(
+  poId: string, approverId: string, decision?: PoDecisionVia,
+  opts: { payByCash?: boolean; cashHolderUserId?: string | null } = {},
+) {
   const po = await prisma.purchaseOrder.findUnique({ where: { id: poId } })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
-  if (po.status !== 'pending_approval') throw new AppError('INVALID_STATE', `Cannot reject PO in status ${po.status}`, 400)
+  if (po.status !== 'pending_approval') throw new AppError('INVALID_STATE', `Cannot approve PO in status ${po.status}`, 400)
+  const payByCash = opts.payByCash ?? po.payByCash
+  const { raisePoCashVoucherTx, prepareCashVoucher } = await import('./poCash.js')
+  const plan = payByCash ? await prepareCashVoucher(poId, opts.cashHolderUserId ?? null) : null
 
   return prisma.$transaction(async (tx) => {
     const claimed = await tx.purchaseOrder.updateMany({
       where: { id: poId, status: 'pending_approval' },
-      data:  { status: 'draft', rejectedReason: reason },
+      data:  { status: 'approved', approvedById: approverId, approvedAt: new Date(), payByCash },
     })
     if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO was decided meanwhile — reload it', 409)
-    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'rejected', details: { reason, ...(decisionDetails(decision) ?? {}) } as Prisma.InputJsonValue } })
-    return { id: poId, status: 'draft' }
+    const voucher = plan ? await raisePoCashVoucherTx(tx, plan, approverId) : null
+    const details = { ...(decisionDetails(decision) ?? {}), payByCash, ...(voucher ? { cashVoucherId: voucher.id, cashVoucherNumber: voucher.number } : {}) }
+    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'approved', details: details as Prisma.InputJsonValue } })
+    return { id: poId, status: 'approved', cashVoucher: voucher }
+  })
+}
+
+/**
+ * Return a PO for correction (owner rule: every approval is returnable) — from any step back to draft with the note;
+ * the step stamps are cleared and the raiser edits / resubmits. Claimed on the status it was read in.
+ */
+export async function returnPo(poId: string, actorId: string, note: string, decision?: PoDecisionVia) {
+  const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { status: true } })
+  if (!po) throw new NotFoundError('PurchaseOrder', poId)
+  if (!isPoChainStatus(po.status)) throw new AppError('INVALID_STATE', `Cannot return a PO that is ${po.status}`, 400)
+  const now = new Date()
+  return prisma.$transaction(async (tx) => {
+    const claimed = await tx.purchaseOrder.updateMany({
+      where: { id: poId, status: po.status },
+      data: {
+        status: 'draft', returnNote: note, returnedById: actorId, returnedAt: now, returnCount: { increment: 1 },
+        buyerCheckedById: null, buyerCheckedAt: null, financeCheckedById: null, financeCheckedAt: null,
+      },
+    })
+    if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO was decided meanwhile — reload it', 409)
+    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: actorId, action: 'returned', details: { note, from: po.status, ...(decisionDetails(decision) ?? {}) } as Prisma.InputJsonValue } })
+    return { id: poId, status: 'draft', from: po.status }
+  })
+}
+
+/**
+ * Reject a PO at any step (final): → cancelled with the reason. A rejected PO is not edited again — the raiser
+ * raises a new one (or the Trash's "Recover as copy").
+ */
+export async function rejectPo(poId: string, approverId: string, reason: string, decision?: PoDecisionVia) {
+  const po = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { status: true } })
+  if (!po) throw new NotFoundError('PurchaseOrder', poId)
+  if (!isPoChainStatus(po.status)) throw new AppError('INVALID_STATE', `Cannot reject PO in status ${po.status}`, 400)
+
+  return prisma.$transaction(async (tx) => {
+    const claimed = await tx.purchaseOrder.updateMany({
+      where: { id: poId, status: po.status },
+      data:  { status: 'cancelled', rejectedReason: reason, cancelledById: approverId, cancelledAt: new Date(), cancelReason: `Rejected: ${reason}`.slice(0, 500) },
+    })
+    if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO was decided meanwhile — reload it', 409)
+    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'rejected', details: { reason, from: po.status, ...(decisionDetails(decision) ?? {}) } as Prisma.InputJsonValue } })
+    return { id: poId, status: 'cancelled', from: po.status }
   })
 }
 
@@ -306,7 +391,13 @@ export async function cancelPo(poId: string, userId: string, reason: string) {
       data:  { status: 'cancelled', cancelledById: userId, cancelledAt: new Date(), cancelReason: reason },
     })
     if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO changed meanwhile — reload it', 409)
-    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId, action: 'cancelled', details: { reason } } })
+    // Its cash voucher (procurement/poCash.ts) is cancelled with it while finance has not paid it yet; a paid one
+    // stays — the cash is in the buyer's box and goes back through a box return.
+    const voucher = await tx.cashVoucher.updateMany({
+      where: { purchaseOrderId: poId, status: 'approved' },
+      data: { status: 'cancelled', cancelledById: userId, cancelledAt: new Date(), cancelNote: `PO cancelled: ${reason}`.slice(0, 500) },
+    })
+    await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId, action: 'cancelled', details: { reason, ...(voucher.count ? { cashVoucherCancelled: true } : {}) } } })
     return { id: poId, status: 'cancelled' }
   })
 }
@@ -315,7 +406,7 @@ export async function cancelPo(poId: string, userId: string, reason: string) {
 const SENDABLE_PO_STATUSES = ['approved', 'sent', 'partial']
 
 function assertSendable(status: string) {
-  if (status === 'draft' || status === 'pending_approval') {
+  if ((PO_DECIDING_STATUSES as readonly string[]).includes(status)) {
     throw new AppError('PO_NOT_APPROVED', 'This PO has not been approved yet — submit it (and get it approved) before sending it', 400)
   }
   if (!SENDABLE_PO_STATUSES.includes(status)) {
@@ -459,7 +550,7 @@ export async function markPoSent(poId: string, userId: string, input: { channel:
     await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${poId} FOR UPDATE`
     const po = await tx.purchaseOrder.findUnique({ where: { id: poId }, select: { status: true } })
     if (!po) throw new NotFoundError('PurchaseOrder', poId)
-    if (po.status === 'draft' || po.status === 'pending_approval') {
+    if ((PO_DECIDING_STATUSES as readonly string[]).includes(po.status)) {
       throw new AppError('PO_NOT_APPROVED', 'This PO has not been approved yet — it cannot be sent', 400)
     }
     if (po.status !== 'approved') throw new AppError('INVALID_STATE', `This PO is already ${po.status}`, 400)
@@ -1500,7 +1591,7 @@ export async function reorderSuggestions(tenantIds: string[], opts: { demand?: M
   const openLines = await prisma.purchaseOrderLine.findMany({
     where: {
       inventoryItemId: { in: items.map((i) => i.id) },
-      purchaseOrder: { status: { in: ['draft', 'pending_approval', 'approved', 'sent', 'partial'] } },
+      purchaseOrder: { status: { in: [...PO_DECIDING_STATUSES, 'approved', 'sent', 'partial'] } },
     },
     include: { purchaseOrder: { select: { status: true } } },
   })

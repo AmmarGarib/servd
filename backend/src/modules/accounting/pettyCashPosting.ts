@@ -103,7 +103,7 @@ import { fmtPktDate } from './dates.js'
 import { assertNotEquipmentLine } from '../fixedAssets/classes.js'
 import { liveRevision } from './sourcePosting.js'
 import { toPurchaseUnits } from '../../lib/recipeCost.js'
-import { CLASS_ACCOUNTS, costClassOf } from '../../lib/inventoryClass.js'
+import { CLASS_ACCOUNTS, costClassOf, isNonFoodCategory, NON_FOOD_EXPENSE_CODE } from '../../lib/inventoryClass.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -272,7 +272,8 @@ export async function resolveSpendLinesTx(
         ...base,
         kind: 'stock',
         categoryKey: null,
-        accountCode: CLASS_ACCOUNTS[costClassOf(item.category)].inv,
+        // A non-food item is expensed on receipt (owner, 2026-11-03): 6045, never a 12x0.
+        accountCode: isNonFoodCategory(item.category) ? NON_FOOD_EXPENSE_CODE : CLASS_ACCOUNTS[costClassOf(item.category)].inv,
         description: ((line.description ?? '').trim() || item.name).slice(0, 200),
         inventoryItemId: item.id,
         quantity: qty,
@@ -666,9 +667,14 @@ export function cashRequestPayLine(v: { number: string; purpose: string; categor
 export async function cashRequestPaidAccountTx(tx: Tx | typeof prisma, voucherId: string): Promise<string> {
   const v = await tx.cashVoucher.findUnique({
     where: { id: voucherId },
-    select: { number: true, pettyCashMovementId: true, payJournalEntryId: true, bookedAtPay: true, expenseOnVerify: true, postedJournalEntryId: true },
+    select: { number: true, pettyCashMovementId: true, payJournalEntryId: true, bookedAtPay: true, expenseOnVerify: true, postedJournalEntryId: true, purchaseOrderId: true },
   })
   if (!v) throw new NotFoundError('CashVoucher', voucherId)
+  // A PO's cash went INTO the buyer's box (procurement/poCash.ts) — there is no paid account to send change back to:
+  // what is left stays in that box, or goes back with a box return.
+  if (v.purchaseOrderId) {
+    throw new AppError('PO_CASH_IN_BOX', `${v.number} put the PO's cash into the buyer's petty-cash box — return any change from that box (a box return), not on the voucher`, 409)
+  }
   if (v.bookedAtPay && v.expenseOnVerify && v.postedJournalEntryId) {
     // A hold converted to one entry (trustops/voucherHoldConversion.ts): the expense account its conversion debited.
     const debit = await tx.journalLine.findFirst({

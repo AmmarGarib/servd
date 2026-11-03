@@ -27,7 +27,7 @@ import { AppError } from '../src/lib/errors.js'
 import { runWithRlsContext } from '../src/lib/rlsContext.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
 import { recipeRoutes } from '../src/modules/recipes/routes.js'
-import { setApprovalThresholdCents } from '../src/modules/procurement/service.js'
+import { setApprovalThresholdCents, passPoStep } from '../src/modules/procurement/service.js'
 
 const P = `hopr-${Date.now()}`
 let app: FastifyInstance
@@ -65,6 +65,10 @@ async function lensPo(who: string, submit = true): Promise<string> {
   if (submit) {
     const s = await call(who, 'POST', `/procurement/purchase-orders/${id}/submit`, { lens: A })
     expect(s.statusCode, s.body).toBe(200)
+    // The PO chain (owner, 2026-11-03): a buyer's own step is signed by raising; finance's check (service level here)
+    // brings it to the CEO's step, where the head-office rules below apply.
+    expect(s.json().status).toBe('finance_check')
+    await passPoStep(id, U.ceo!.id, 'finance_check')
   }
   return id
 }
@@ -124,7 +128,7 @@ describe('purchase orders through head office', () => {
     expect(po.viaHeadOfficeId).toBe(HO)
     expect(po.supplier.tenantId).toBe(A)   // the write carries A's company
     const log = await prisma.poActivityLog.findFirst({ where: { purchaseOrderId: id, action: 'submitted' } })
-    expect(log?.details).toMatchObject({ needsApproval: true, viaHeadOfficeId: HO, forcedApproval: true })
+    expect(log?.details).toMatchObject({ viaHeadOfficeId: HO, buyerStepSignedByRaising: U.hodA!.id })
     const audit = await prisma.auditLog.findFirst({ where: { entityId: id, action: 'po.submit' } })
     expect(audit?.tenantId).toBe(A)
     expect(audit?.metadata).toMatchObject({ viaHeadOfficeId: HO })
@@ -136,11 +140,11 @@ describe('purchase orders through head office', () => {
     expect((await call('gmA', 'GET', '/procurement/approvals')).statusCode).toBe(403)
   })
 
-  it('a company member below the threshold still auto-approves (unchanged)', async () => {
+  it('a company member below the old threshold no longer auto-approves: it goes to finance (owner, 2026-11-03)', async () => {
     const res = await call('buyerA', 'POST', '/procurement/purchase-orders', { payload: poBody(supA, itemA) })
     expect(res.statusCode).toBe(201)
     const s = await call('buyerA', 'POST', `/procurement/purchase-orders/${res.json().id}/submit`)
-    expect(s.json()).toMatchObject({ status: 'approved', needsApproval: false })
+    expect(s.json()).toMatchObject({ status: 'finance_check', needsApproval: true })
     const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: res.json().id } })
     expect(po.viaHeadOfficeId).toBeNull()
   })
@@ -171,7 +175,8 @@ describe('purchase orders through head office', () => {
     expect(dq.statusCode).toBe(200)
     expect((dq.json() as Array<{ id: string }>).map((r) => r.id)).toContain(id)
 
-    const res = await call('deleg', 'POST', `/procurement/purchase-orders/${id}/approve`)
+    // An HO buyer raised it: no login of A takes the cash — approved without the cash voucher.
+    const res = await call('deleg', 'POST', `/procurement/purchase-orders/${id}/approve`, { payload: { payByCash: false } })
     expect(res.statusCode, res.body).toBe(200)
     expect(res.json().status).toBe('approved')
     const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id } })
@@ -200,7 +205,7 @@ describe('purchase orders through head office', () => {
 
     const rej = await call('ceo', 'POST', `/procurement/purchase-orders/${id}/reject`, { payload: { reason: 'too much' } })
     expect(rej.statusCode, rej.body).toBe(200)
-    expect(rej.json().status).toBe('draft')
+    expect(rej.json().status).toBe('cancelled')   // a reject is final (owner, 2026-11-03); a correction is a return
     const audit = await prisma.auditLog.findFirst({ where: { entityId: id, action: 'approval.decide' } })
     expect(audit?.metadata).toMatchObject({ decision: 'reject', via: 'role' })
   })
@@ -213,11 +218,13 @@ describe('purchase orders through head office', () => {
 
     const b = await call('ceoB', 'POST', '/procurement/purchase-orders', { payload: poBody(supB, itemB, 6_000_000) })
     expect(b.statusCode).toBe(201)
-    expect((await call('ceoB', 'POST', `/procurement/purchase-orders/${b.json().id}/submit`)).json().status).toBe('pending_approval')
+    expect((await call('ceoB', 'POST', `/procurement/purchase-orders/${b.json().id}/submit`)).json().status).toBe('buyer_check')
+    await passPoStep(b.json().id, U.ceoB!.id, 'buyer_check')
+    await passPoStep(b.json().id, U.ceoB!.id, 'finance_check')
     expect((await call('deleg', 'POST', `/procurement/purchase-orders/${b.json().id}/approve`)).statusCode).toBe(404)
     expect((await call('deleg', 'GET', '/procurement/approvals')).json().map((r: { id: string }) => r.id)).not.toContain(b.json().id)
     // B's own admin: unchanged role path.
-    expect((await call('ceoB', 'POST', `/procurement/purchase-orders/${b.json().id}/approve`)).statusCode).toBe(200)
+    expect((await call('ceoB', 'POST', `/procurement/purchase-orders/${b.json().id}/approve`, { payload: { payByCash: false } })).statusCode).toBe(200)
   })
 
   it('a revoked hand-over stops at once (no right left → the old 403)', async () => {

@@ -31,12 +31,9 @@ import { asUploadBody, type PickedFile } from '@/components/files/recordFiles'
 import { FIcon } from '../../../components/finance/ui/icons'
 
 // The API's MANAGERS take a delivery in (owner decision 27) — the list comes
-// from the server (lib/roles.ts useManagerRoles).
-
-// Whoever raised a PO can't receive it; the CEO (role admin) is exempt — the
-// server's assertNotSelfApproval rule (lib/separation-of-duties.ts), which
-// also raises a high-severity exception flag on every blocked attempt, so the
-// page must not offer it. A PO with no creator on file predates tracking.
+// from the server (lib/roles.ts useManagerRoles) — and whoever RAISED a PO
+// receives it (owner, 2026-11-03: "person that created po marks received"),
+// a buyer included. A delivery without a PO stays the managers'.
 const raisedByMe = (po: { createdBy?: string | null }, me: { id: string; role: string } | null) =>
   !!me && me.role !== 'admin' && !!po.createdBy && po.createdBy === me.id
 
@@ -91,8 +88,11 @@ const pkrOf = (cents: number): string => (cents > 0 ? String(cents / 100) : '')
 export default function ReceivingPage() {
   const qc = useQueryClient()
   const me = useAuthStore((s) => s.user)
-  const canReceive = useManagerRoles().has(me?.role ?? '')
+  const isManager = useManagerRoles().has(me?.role ?? '')
   const { data: pos = [], error: posError } = useQuery<OpenPo[]>({ queryKey: ['receiving', 'open-pos'], queryFn: () => api.get('/crosschecks/receiving/open-pos') })
+  /** May this login take THIS PO in: a manager, or whoever raised it. */
+  const canTake = (po: OpenPo) => isManager || raisedByMe(po, me)
+  const canReceive = isManager || pos.some((p) => raisedByMe(p, me))
   const { data: suppliers = [] } = useQuery<Supplier[]>({ queryKey: ['receiving', 'suppliers'], queryFn: () => api.get('/crosschecks/receiving/suppliers') })
   // Only the receiving form needs the item list (deliveries without a PO).
   const { data: items = [] } = useQuery<InventoryItem[]>({ queryKey: ['inventory'], queryFn: () => api.get('/inventory'), enabled: canReceive })
@@ -137,8 +137,8 @@ export default function ReceivingPage() {
   useEffect(() => {
     if (!wantedPo || poId || !canReceive) return
     const po = pos.find((p) => p.id === wantedPo)
-    // Your own PO stays unselected (and wantedPo stays set, for the note).
-    if (po && !raisedByMe(po, me)) { loadFromPo(po); setWantedPo(null) }
+    // A PO this login may not take stays unselected (and wantedPo stays set, for the note).
+    if (po && canTake(po)) { loadFromPo(po); setWantedPo(null) }
   }, [wantedPo, pos, poId, canReceive, me])
 
   function loadFromPo(po: OpenPo) {
@@ -267,7 +267,7 @@ export default function ReceivingPage() {
   // The PO the Procurement "Receive" link pointed at, when it is one the
   // signed-in manager raised themselves.
   const ownWantedPo = canReceive && !poId && wantedPo
-    ? pos.find((p) => p.id === wantedPo && raisedByMe(p, me)) ?? null
+    ? pos.find((p) => p.id === wantedPo && !canTake(p)) ?? null
     : null
 
   return (
@@ -277,7 +277,7 @@ export default function ReceivingPage() {
         <h1 className="text-2xl font-black text-white/90 mt-2">Receiving (dock door)</h1>
         <p className="text-sm text-white/40 mt-1 max-w-2xl">
           Mark what physically arrived. Stock, the PO and the ingredient cost update together; short shipments and
-          variances over 5% go to the Exceptions inbox. Whoever raised a PO can&apos;t receive it.
+          variances over 5% go to the Exceptions inbox. Whoever raised a PO marks it received (or a manager).
         </p>
         <p className="text-xs text-s-muted mt-2 max-w-2xl">
           Goods are booked to <span className="font-semibold">Goods received not invoiced</span> until the bill arrives, then the bill clears
@@ -305,9 +305,9 @@ export default function ReceivingPage() {
           <>
             <div role="status" className="rounded-xl px-4 py-3 text-sm font-bold"
               style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.12)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
-              A manager takes the delivery in.
+              Whoever raised the PO, or a manager, takes the delivery in.
               <span className="block text-xs font-normal text-s-muted mt-1">
-                You can see what is due at the dock and what has arrived. Whoever orders the goods does not also sign for them.
+                You can see what is due at the dock and what has arrived.
               </span>
             </div>
             <Section title="Due at the dock">
@@ -359,32 +359,35 @@ export default function ReceivingPage() {
               {ownWantedPo && (
                 <div role="status" className="rounded-lg px-3 py-2 mb-3 text-xs font-bold"
                   style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.12)', color: 'rgb(var(--fg-rgb) / 0.85)' }}>
-                  You raised {poLabel(ownWantedPo)}, so a colleague receives it.
+                  {poLabel(ownWantedPo)} is received by whoever raised it, or a manager.
                 </div>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {pos.length === 0 && !posError && <p className="text-xs text-s-muted italic">No purchase orders waiting to be received.</p>}
                 {pos.map((po) => {
-                  const own = raisedByMe(po, me)
+                  const own = !canTake(po)
                   return (
                     <button type="button" key={po.id} onClick={() => { if (!own) loadFromPo(po) }} disabled={own}
-                      title={own ? 'You raised this PO, so a colleague receives it' : undefined}
+                      title={own ? 'Whoever raised this PO, or a manager, receives it' : undefined}
                       className="rounded-lg p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                       style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
                       <p className="text-sm font-bold text-white/90">{poLabel(po)}</p>
                       <p className="text-xs text-s-muted">{po.supplier.name} · {po.lines.length} lines{po.status === 'partial' ? ' · part-received' : ''}</p>
-                      {own && <p className="text-xs text-s-muted mt-1">You raised this, a colleague receives it</p>}
+                      {own && <p className="text-xs text-s-muted mt-1">Its raiser or a manager receives it</p>}
                     </button>
                   )
                 })}
               </div>
-              <FormField className="mt-3" label="Or a delivery without a PO (market run, ad-hoc) from"
-                error={tried && !poId && !supplierId ? 'Pick a PO above, or choose the supplier.' : undefined}>
-                <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls}>
-                  <option value="">— choose supplier —</option>
-                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </Select>
-              </FormField>
+              {/* A delivery without a PO is a manager's (receiveGoods). */}
+              {isManager ? (
+                <FormField className="mt-3" label="Or a delivery without a PO (market run, ad-hoc) from"
+                  error={tried && !poId && !supplierId ? 'Pick a PO above, or choose the supplier.' : undefined}>
+                  <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls}>
+                    <option value="">— choose supplier —</option>
+                    {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </Select>
+                </FormField>
+              ) : tried && !poId ? <p role="alert" className="mt-3 text-xs text-s-red">Pick the PO you raised above.</p> : null}
             </>
           )}
         </Section>

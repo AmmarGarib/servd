@@ -61,7 +61,7 @@
 import type { Prisma, PrismaClient, ScheduledReport } from '@prisma/client'
 import { sumCents, toCents } from '../../lib/money.js'
 import { AppError } from '../../lib/errors.js'
-import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, costClassOf, type CostClass } from '../../lib/inventoryClass.js'
+import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, costClassOf, isNonFoodCategory, NON_FOOD_CLASS, type CostClass } from '../../lib/inventoryClass.js'
 import { parseBrandShares, splitCents } from '../../lib/brandShare.js'
 import { lotValuation, ORDER_COGS_KINDS, readFifoCutoverAt, STOCK_SOURCE } from '../../lib/stockLedger.js'
 import { menuItemPlateCosts, type RecipeCost } from '../../lib/recipeCost.js'
@@ -556,6 +556,8 @@ async function companyBlock(db: Db, tenantId: string, a: FoodCostQuery): Promise
   const docRows = await db.stockMovement.findMany({
     where: {
       tenantId, occurredAt: { gte: from, lte: to }, kind: { in: [...DOC_KINDS] },
+      // Non-food (expensed on receipt to 6045) is never food cost (owner, 2026-11-03).
+      costClass: { not: NON_FOOD_CLASS },
       ...(locationId ? { locationId } : {}),
     },
     select: { id: true, kind: true, inventoryItemId: true, valueCents: true, costClass: true, conceptId: true, brandShares: true, sourceType: true, sourceId: true, lotId: true },
@@ -903,7 +905,8 @@ export async function ingredientVariance(db: Db, a: {
     where: { tenantId },
     select: { id: true, name: true, unit: true, category: true, unitCostCents: true, deletedAt: true },
   })
-  const items = itemsAll.filter((i) => !a.costClass || costClassOf(i.category) === a.costClass)
+  // Non-food items are expensed on receipt — never in the food-cost variance (owner, 2026-11-03).
+  const items = itemsAll.filter((i) => !isNonFoodCategory(i.category) && (!a.costClass || costClassOf(i.category) === a.costClass))
   if (items.length === 0) return []
   const itemIds = items.map((i) => i.id)
   const loc = a.locationId ? { locationId: a.locationId } : {}
@@ -1187,9 +1190,10 @@ export async function itemMovements(db: Db, a: { tenantId: string; inventoryItem
       },
     }),
   ])
+  const nonFood = isNonFoodCategory(item.category)
   const cls = costClassOf(item.category)
   return {
-    item: { ...item, costClass: cls, classLabel: CLASS_LABEL[cls] },
+    item: { ...item, costClass: nonFood ? NON_FOOD_CLASS : cls, classLabel: nonFood ? 'Non-food (expensed on receipt)' : CLASS_LABEL[cls] },
     lots: lots.map((l) => ({ ...l, valueInCents: toCents(l.valueInCents), remainingValueCents: toCents(l.remainingValueCents) })),
     movements: movements.map((m) => ({
       ...m, valueCents: toCents(m.valueCents), shortfallValueCents: m.shortfallValueCents == null ? null : toCents(m.shortfallValueCents),

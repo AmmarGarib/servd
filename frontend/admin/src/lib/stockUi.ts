@@ -6,7 +6,8 @@
 // (INVENTORY_CATEGORIES + costClassOf + CLASS_ACCOUNTS): the server refuses a
 // category outside it (400), and the category decides the item's cost class —
 // Drinks (beverage) = 1220 / 5020, Packaging = 1230 / 5030, everything else
-// food = 1210 / 5010. Keep it in step with that file.
+// food = 1210 / 5010. Non-food (owner, 2026-11-03) is NOT stock: it is expensed
+// on receipt to 6045 Operating Supplies, never food cost. Keep it in step with that file.
 
 import { ApiError } from './api'
 
@@ -20,6 +21,7 @@ export interface CategoryOption {
 const FOOD = '1210 Inventory – Food'
 const DRINKS = '1220 Inventory – Beverage'
 const PACKAGING = '1230 Inventory – Packaging'
+const NON_FOOD = 'expensed on receipt (6045 Operating Supplies)'
 
 export const INVENTORY_CATEGORY_OPTIONS: readonly CategoryOption[] = [
   { value: 'protein',   label: 'Protein',     stock: FOOD },
@@ -36,6 +38,7 @@ export const INVENTORY_CATEGORY_OPTIONS: readonly CategoryOption[] = [
   { value: 'beverage',  label: 'Drinks',      stock: DRINKS },
   { value: 'packaging', label: 'Packaging',   stock: PACKAGING },
   { value: 'other',     label: 'Other food',  stock: FOOD },
+  { value: 'non_food',  label: 'Non-food',    stock: NON_FOOD },
 ]
 
 /** "Drinks — 1220 Inventory – Beverage": the select's option text. */
@@ -51,6 +54,7 @@ export function categoryValueOf(raw: string | null | undefined): string {
   if (c === 'packing') return 'packaging'
   if (c === 'spice') return 'spices'
   if (c === 'sweeteners' || c === 'sugar') return 'sweetener'
+  if (c === 'nonfood' || c === 'non_foods' || c === 'non_food_supplies') return 'non_food'
   return 'other'
 }
 
@@ -63,6 +67,10 @@ export function categoryLabel(raw: string | null | undefined): string {
 // The server's message names the item and the figures, so it always leads. For
 // the codes below we add the next step in plain words after it.
 const NEXT_STEP: Record<string, string> = {
+  NON_FOOD_NOT_STOCK: 'Non-food is expensed when it is received — it is never counted, wasted or moved as stock.',
+  NON_FOOD_HAS_STOCK: 'Use it up or count it to zero first, then make it non-food.',
+  NON_FOOD_ON_RECIPE: 'Take it off the recipes first — non-food never goes on a recipe.',
+  NON_FOOD_NOT_IN_RECIPE: 'Pick a food, drinks or packaging item instead.',
   COST_FROM_DELIVERIES: 'Its cost changes when stock is received, not by typing a number.',
   OPENING_NOT_ALLOWED: 'Use a spot count for stock that is already on the books.',
   OPENING_COST_REQUIRED: 'Type the unit cost for this line.',

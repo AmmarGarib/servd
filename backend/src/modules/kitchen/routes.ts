@@ -80,7 +80,7 @@ async function shoppingDemand(tenantId: string, locationId: string, date: string
   }
   // Consumables issued on receipt (oil, salt) are never counted — they are bought by par, not by recipe.
   if (demand.size > 0) {
-    const ior = await prisma.inventoryItem.findMany({ where: { id: { in: [...demand.keys()] }, issueOnReceipt: true }, select: { id: true } })
+    const ior = await prisma.inventoryItem.findMany({ where: { id: { in: [...demand.keys()] }, OR: [{ issueOnReceipt: true }, { category: 'non_food' }] }, select: { id: true } })
     for (const i of ior) demand.delete(i.id)
   }
   return { demand, notStocked: [...missing.values()] }

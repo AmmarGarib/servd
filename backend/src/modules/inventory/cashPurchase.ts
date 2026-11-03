@@ -5,7 +5,8 @@
 // document, at exactly the amount paid per line.
 //
 // It posts NOTHING: the cash document's own entry carries Dr 12x0 (the
-// accountCode returned per line, by the item's class) / Cr its cash account
+// accountCode returned per line, by the item's class; 6045 for a NON-FOOD item —
+// expensed on receipt, lib/inventoryClass.ts) / Cr its cash account
 // (1011 box / 1355 advance) for exactly these values, so the receipt adds no
 // 2015 and the books and the lots agree to the paisa.
 //
@@ -16,7 +17,7 @@ import type { Prisma } from '@prisma/client'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertMoneyFits } from '../../lib/money.js'
 import { toPurchaseUnits } from '../../lib/recipeCost.js'
-import { CLASS_ACCOUNTS, costClassOf, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
+import { CLASS_ACCOUNTS, costClassOf, isNonFoodCategory, NON_FOOD_EXPENSE_CODE, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
 import { receiveGoodsTx, type SettledBy } from '../procurement/receiving.js'
 
 type Tx = Prisma.TransactionClient
@@ -93,12 +94,14 @@ export async function recordCashPurchaseStockTx(tx: Tx, a: {
   const byClass = zeroByClass()
   const lines = prepared.map((p, i) => {
     const r = done.lines[i]!
+    // Non-food (owner, 2026-11-03): the cash line is the expense — Dr 6045, never a 12x0 / byClass.
+    const nonFood = isNonFoodCategory(p.item.category)
     const cls = costClassOf(p.item.category)
-    byClass[cls] += p.l.totalCents
+    if (!nonFood) byClass[cls] += p.l.totalCents
     if (r.valueCents !== p.l.totalCents) {
       throw new AppError('CASH_PURCHASE_VALUE_MISMATCH', `${p.item.name}: the lot came to ${r.valueCents}, the cash line to ${p.l.totalCents}`, 500)
     }
-    return { spendLineId: p.l.spendLineId, receiptLineId: r.receiptLineId, accountCode: CLASS_ACCOUNTS[cls].inv, valueCents: p.l.totalCents }
+    return { spendLineId: p.l.spendLineId, receiptLineId: r.receiptLineId, accountCode: nonFood ? NON_FOOD_EXPENSE_CODE : CLASS_ACCOUNTS[cls].inv, valueCents: p.l.totalCents }
   })
   return { goodsReceiptId: done.receiptId, lines, byClass }
 }

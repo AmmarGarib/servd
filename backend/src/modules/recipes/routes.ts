@@ -10,7 +10,7 @@ import {
   buildRecipeGraph, loadRecipeGraph, localiseGraph, recipeCost, withLatestCosts, withAverageCosts,
   type CostRecipe, type RecipeCost, type RecipeGraph, type RecipeLineCost,
 } from '../../lib/recipeCost.js'
-import { costClassOf } from '../../lib/inventoryClass.js'
+import { costClassOf, isNonFoodCategory } from '../../lib/inventoryClass.js'
 import { scopeTenantWhere, assertConceptOwned, resolveTenantScope, type ScopeMode, type TenantIdWhere } from '../../lib/tenantScope.js'
 import { serviceClient } from '../../lib/prisma.js'
 import { ForbiddenError } from '../../lib/errors.js'
@@ -820,6 +820,10 @@ async function validateRecipeLines(
       refuse('ITEM_HAS_NO_COMPANY', `${item.name} belongs to no company — a sale never uses it. Pick this company's own stock item.`)
     } else if (!allowed.has(item.tenantId)) {
       refuse('ITEM_NOT_IN_COMPANY', `${item.name} is another company's stock — pick this company's own item`)
+    }
+    if (isNonFoodCategory(item.category)) {
+      // Non-food supplies are expensed on receipt (owner, 2026-11-03) — never on a recipe, never recipe cost.
+      throw new AppError('NON_FOOD_NOT_IN_RECIPE', `${item.name} is a non-food item — it is expensed when received and never goes on a recipe`, 422)
     }
     const isPackagingItem = costClassOf(item.category) === 'packaging'
     if (isPackagingItem && !isPlate) {

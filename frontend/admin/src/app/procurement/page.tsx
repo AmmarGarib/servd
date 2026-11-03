@@ -37,9 +37,8 @@ import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
 // the list comes from the server (lib/roles.ts). The buyer sees the dock read-only.
 
-// Whoever raised a PO can't receive it; the CEO (role admin) is exempt — the
-// server's assertNotSelfApproval rule (lib/separation-of-duties.ts). A PO with
-// no creator on file predates tracking and is receivable.
+// Whoever raised a PO RECEIVES it (owner, 2026-11-03: "person that created po marks received"); managers may too.
+// raisedByMe also keeps the raiser off every approval step of their own PO (the server's rule; the CEO exempt).
 const raisedByMe = (po: { createdBy?: string | null }, me: { id: string; role: string } | null) =>
   !!me && me.role !== 'admin' && !!po.createdBy && po.createdBy === me.id
 
@@ -77,6 +76,14 @@ interface PurchaseOrder {
   cancelReason?: string | null; rejectedReason?: string | null
   supplier?: { name: string; email?: string | null } | null
   lines?: PoLine[]
+  // The approval chain (owner, 2026-11-03): buyer → finance → the CEO.
+  submittedById?: string | null; buyerCheckedById?: string | null; financeCheckedById?: string | null
+  buyerCheckedAt?: string | null; financeCheckedAt?: string | null
+  returnNote?: string | null; returnCount?: number; returnedAt?: string | null
+  payByCash?: boolean
+  names?: { createdBy: string | null; submittedBy: string | null; buyerCheckedBy: string | null; financeCheckedBy: string | null; approvedBy: string | null; returnedBy: string | null }
+  /** The PO's cash voucher (raised by the CEO's approval, in the buyer's name; finance pays it into the buyer's box). */
+  cashVoucher?: { id: string; number: string; status: string; amountCents: number; payeeName: string; disbursedAt: string | null } | null
 }
 
 // A supplier credit note is a bill row too (kind 'credit_note', against
@@ -181,6 +188,8 @@ type Tab = 'pos' | 'bills' | 'payments' | 'suppliers' | 'aging' | 'reorder' | 'a
 
 const STATUS_COLORS: Record<string, string> = {
   draft: 'text-s-muted bg-s-elevated',
+  buyer_check: 'text-s-amber bg-s-amber-dim/60',
+  finance_check: 'text-s-amber bg-s-amber-dim/60',
   pending_approval: 'text-s-amber bg-s-amber-dim/60',
   approved: 'text-success bg-accent-dim',
   sent: 'text-s-blue bg-s-blue-dim/60',
@@ -195,11 +204,15 @@ const STATUS_COLORS: Record<string, string> = {
   overdue: 'text-s-red bg-s-red/10',
 }
 
+/** The PO chain's steps, as the badge says them (owner, 2026-11-03). */
+const CHAIN_STATUS_LABEL: Record<string, string> = { buyer_check: 'With buyer', finance_check: 'With finance', pending_approval: 'With CEO' }
+const PO_CHAIN = ['buyer_check', 'finance_check', 'pending_approval']
+
 function Badge({ status }: { status: string }) {
   const cls = STATUS_COLORS[status] ?? 'text-s-muted bg-s-elevated'
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide ${cls}`}>
-      {status.replace(/_/g, ' ')}
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide whitespace-nowrap ${cls}`}>
+      {CHAIN_STATUS_LABEL[status] ?? status.replace(/_/g, ' ')}
     </span>
   )
 }
@@ -222,7 +235,7 @@ const pkrOf = (cents: number): string => (cents > 0 ? String(cents / 100) : '')
 
 // Human labels for the status filter chips ('pending_approval' → 'Pending approval').
 const STATUS_LABEL: Record<string, string> = {
-  '': 'All', draft: 'Draft', pending_approval: 'Pending approval', approved: 'Approved', sent: 'Sent',
+  '': 'All', draft: 'Draft', buyer_check: 'With the buyer', finance_check: 'With finance', pending_approval: 'With the CEO', approved: 'Approved', sent: 'Sent',
   partial: 'Part-received', received: 'Received', cancelled: 'Cancelled',
   open: 'Open', partially_paid: 'Partly paid', paid: 'Paid', applied: 'Applied', void: 'Void', overdue: 'Overdue',
 }
@@ -354,8 +367,10 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
     : undefined
   const waitingForItem = !!newPo?.item && stockItems === undefined && !stockItemsFailed
   const [detailId, setDetailId] = useState<string | null>(null)
-  const [rejectId, setRejectId] = useState<string | null>(null)
-  const [rejectReason, setRejectReason] = useState('')
+  // A decision at the PO's current step (owner, 2026-11-03: buyer → finance → the CEO; every step returns / rejects).
+  const [decide, setDecide] = useState<{ id: string; kind: 'approve' | 'return' | 'reject'; status: string } | null>(null)
+  const [decideNote, setDecideNote] = useState('')
+  const [payByCash, setPayByCash] = useState(true)
   const [cancelId, setCancelId] = useState<string | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   // Approved ≠ sent: "Mark sent" records that the buyer sent it themselves.
@@ -387,8 +402,8 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
     onSuccess: (res, vars) => {
       // A submit that lands in the approvals inbox says so (also via a head office).
       const r = res as { status?: string; viaHeadOfficeId?: string | null } | null
-      if (vars.action === 'submit' && r && ((r.status && ['pending_approval', 'submitted'].includes(r.status)) || r.viaHeadOfficeId)) {
-        setSentNotice('Sent for approval')
+      if (vars.action === 'submit' && r && ((r.status && [...PO_CHAIN, 'submitted'].includes(r.status)) || r.viaHeadOfficeId)) {
+        setSentNotice(r.status === 'buyer_check' ? 'Sent to the buyer to check' : r.status === 'finance_check' ? 'Sent to finance to check' : 'Sent for approval')
         if (sentTimer.current) clearTimeout(sentTimer.current)
         sentTimer.current = setTimeout(() => setSentNotice(null), 6000)
       }
@@ -398,7 +413,23 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
     },
   })
 
-  const statuses = ['', 'draft', 'pending_approval', 'approved', 'sent', 'partial', 'received', 'cancelled']
+  // The chain's own routes: the buyer's and finance's pass / return / reject (po-steps), the CEO's approve / reject.
+  const stepMut = useMutation({
+    mutationFn: ({ id, kind, status, body }: { id: string; kind: 'pass' | 'approve' | 'return' | 'reject'; status: string; body?: unknown }) => {
+      const path = kind === 'approve' ? `/procurement/purchase-orders/${id}/approve`
+        : kind === 'reject' && status === 'pending_approval' ? `/procurement/purchase-orders/${id}/reject`
+          : `/procurement/po-steps/${id}/${kind}`
+      return api.post(path, body ?? {})
+    },
+    onSuccess: () => {
+      setDecide(null); setDecideNote(''); setPayByCash(true); setTriedReason(false)
+      void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
+      void qc.invalidateQueries({ queryKey: ['procurement', 'po', detailId] })
+      void qc.invalidateQueries({ queryKey: ['procurement', 'approvals'] })
+    },
+  })
+
+  const statuses = ['', 'draft', 'buyer_check', 'finance_check', 'pending_approval', 'approved', 'sent', 'partial', 'received', 'cancelled']
 
   return (
     <div className="p-6 space-y-4">
@@ -426,6 +457,9 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
       {sentNotice && <p className="text-xs font-bold text-success">{sentNotice}</p>}
       {actionMut.error && (
         <p className="text-xs text-s-red">{actionMut.error instanceof Error ? actionMut.error.message : 'That did not work'}</p>
+      )}
+      {stepMut.error && !decide && (
+        <p role="alert" className="text-xs text-s-red">{stepMut.error instanceof Error ? stepMut.error.message : 'That did not work'}</p>
       )}
 
       {isLoading ? (
@@ -462,7 +496,8 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
                   <td className="px-4 py-3"><Badge status={po.status} /></td>
                   <td className="px-4 py-3">
                     <PoActions po={po} onAction={(action, body) => {
-                      if (action === 'reject') { setRejectId(po.id); return }
+                      if (action === 'reject' || action === 'return' || action === 'approve') { setDecide({ id: po.id, kind: action, status: po.status }); return }
+                      if (action === 'pass') { stepMut.mutate({ id: po.id, kind: 'pass', status: po.status }); return }
                       if (action === 'cancel') { setCancelId(po.id); return }
                       if (action === 'mark-sent') { setMarkSentId(po.id); return }
                       if (action === 'receive') { router.push(`/procurement/receiving?poId=${po.id}`); return }
@@ -515,33 +550,58 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
             </table>
             </div>
           )}
+          <PoChainPanel po={detail} />
           {detail.notes && <p className="text-xs text-s-muted">Notes: {detail.notes}</p>}
           {detail.rejectedReason && <p className="text-xs text-s-red">Rejected: {detail.rejectedReason}</p>}
           {detail.cancelReason && <p className="text-xs text-s-muted">Cancelled: {detail.cancelReason}</p>}
         </div>
       )}
 
-      {/* Reject modal */}
-      {rejectId && (
-        <Modal title="Reject PO" onClose={() => { setRejectId(null); setRejectReason('') }} dirty={rejectReason !== ''}>
-          <form noValidate className="space-y-4" onSubmit={(e) => {
-            e.preventDefault()
-            setTriedReason(true)
-            if (!rejectReason.trim() || actionMut.isPending) return
-            actionMut.mutate({ id: rejectId, action: 'reject', body: { reason: rejectReason.trim() } }); setRejectId(null); setRejectReason(''); setTriedReason(false)
-          }}>
-            <Field label="Reason" required error={triedReason && !rejectReason.trim() ? 'Say why this PO is rejected.' : null}>
-              <Input required value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} className={fi} autoFocus />
-            </Field>
-            <div className="flex gap-2">
-              <Button variant="danger" type="submit" disabled={actionMut.isPending}>
-                Reject
-              </Button>
-              <Button variant="secondary" type="button" onClick={() => { setRejectId(null); setRejectReason(''); setTriedReason(false) }}>Cancel</Button>
-            </div>
-          </form>
-        </Modal>
-      )}
+      {/* A decision at the PO's step: approve (the CEO — with or without the cash voucher), return, reject */}
+      {decide && (() => {
+        const needsNote = decide.kind !== 'approve'
+        const min = decide.status === 'pending_approval' && decide.kind === 'reject' ? 1 : 10
+        const noteOk = decideNote.trim().length >= min
+        const title = decide.kind === 'approve' ? 'Approve purchase order' : decide.kind === 'return' ? 'Return for correction' : 'Reject purchase order'
+        const close = () => { setDecide(null); setDecideNote(''); setPayByCash(true); setTriedReason(false); stepMut.reset() }
+        return (
+          <Modal title={title} onClose={close} dirty={decideNote !== ''}>
+            <form noValidate className="space-y-4" onSubmit={(e) => {
+              e.preventDefault()
+              setTriedReason(true)
+              if ((needsNote && !noteOk) || stepMut.isPending) return
+              const body = decide.kind === 'approve' ? { payByCash }
+                : decide.kind === 'return' ? { note: decideNote.trim() } : { reason: decideNote.trim() }
+              stepMut.mutate({ id: decide.id, kind: decide.kind, status: decide.status, body })
+            }}>
+              {decide.kind === 'approve' && (
+                <CheckLabel className="flex items-start gap-2 text-sm text-s-text cursor-pointer">
+                  <input type="checkbox" className="mt-1 accent-accent" checked={payByCash} onChange={(e) => setPayByCash(e.target.checked)} />
+                  <span>
+                    Pay in cash — raise a cash voucher for the PO total in the buyer&apos;s name
+                    <span className="block text-xs text-s-muted">Finance pays it into the buyer&apos;s petty-cash box; the supplier is paid from that box. Untick when the supplier gives credit.</span>
+                  </span>
+                </CheckLabel>
+              )}
+              {decide.kind === 'return' && <p className="text-xs text-s-muted">It goes back to draft for whoever raised it to fix and submit again.</p>}
+              {decide.kind === 'reject' && <p className="text-xs text-s-muted">Rejecting is final: the PO is cancelled.</p>}
+              {needsNote && (
+                <Field label={decide.kind === 'return' ? 'What needs to change' : 'Reason'} required
+                  error={triedReason && !noteOk ? (min > 1 ? `At least ${min} characters.` : 'Say why.') : null}>
+                  <Input required value={decideNote} onChange={(e) => setDecideNote(e.target.value)} className={fi} autoFocus />
+                </Field>
+              )}
+              {stepMut.error && <p role="alert" className="text-xs text-s-red">{stepMut.error instanceof Error ? stepMut.error.message : 'That did not work'}</p>}
+              <div className="flex flex-wrap gap-2">
+                <Button variant={decide.kind === 'reject' ? 'danger' : decide.kind === 'return' ? 'secondary' : 'primary'} type="submit" disabled={stepMut.isPending}>
+                  {decide.kind === 'approve' ? 'Approve' : decide.kind === 'return' ? 'Return' : 'Reject'}
+                </Button>
+                <Button variant="secondary" type="button" onClick={close}>Back</Button>
+              </div>
+            </form>
+          </Modal>
+        )
+      })()}
 
       {/* Mark sent modal — the PO went out by phone / own WhatsApp / in person */}
       {markSentId && (
@@ -602,13 +662,25 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
   const me = useAuthStore((s) => s.user)
   const isManager = useManagerRoles().has(me?.role ?? '')
   const ownPo = raisedByMe(po, me)
-  const canReceive = isManager && !ownPo
+  const role = me?.role ?? ''
+  const isCeo = role === 'admin'
+  // Whoever raised the PO receives it (owner, 2026-11-03); managers may too.
+  const canReceive = isManager || ownPo
+  // The step's own people (the server decides every click): the buyer, then finance, then the CEO. Never the raiser,
+  // never whoever passed an earlier step (the CEO exempt).
+  const mine = !!me && !isCeo && [po.createdBy, po.submittedById, ...(po.status === 'finance_check' ? [po.buyerCheckedById] : [])].includes(me.id)
+  const stepIsMine = !mine && (
+    (po.status === 'buyer_check' && (role === 'procurement' || isCeo))
+    || (po.status === 'finance_check' && (role === 'finance' || isCeo))
+    || (po.status === 'pending_approval' && isCeo))
   const actions: { label: string; action: string; cls: string; title?: string }[] = []
   if (po.status === 'draft') {
     actions.push({ label: 'Submit', action: 'submit', cls: 'text-s-amber hover:text-s-amber' })
   }
-  if (po.status === 'pending_approval') {
-    actions.push({ label: 'Approve', action: 'approve', cls: 'text-primary-ink hover:opacity-80' })
+  if (stepIsMine) {
+    if (po.status === 'pending_approval') actions.push({ label: 'Approve', action: 'approve', cls: 'text-primary-ink hover:opacity-80' })
+    else actions.push({ label: po.status === 'buyer_check' ? 'Pass to finance' : 'Pass to CEO', action: 'pass', cls: 'text-primary-ink hover:opacity-80' })
+    actions.push({ label: 'Return', action: 'return', cls: 'text-s-amber hover:opacity-80' })
     actions.push({ label: 'Reject', action: 'reject', cls: 'text-s-red hover:opacity-80' })
   }
   if (po.status === 'approved') {
@@ -617,27 +689,62 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
     actions.push({ label: 'Mark sent', action: 'mark-sent', cls: 'text-s-blue hover:opacity-80' })
   }
   if (po.status === 'sent' || po.status === 'partial') {
-    // A manager receives; anyone else (the buyer) opens the dock page
-    // read-only. A manager who raised this PO can't receive it (decision 27).
     actions.push(canReceive
       ? { label: 'Receive', action: 'receive', cls: 'text-primary-ink hover:opacity-80' }
-      : {
-          label: 'View at dock', action: 'receive', cls: 'text-s-muted hover:text-s-text',
-          title: ownPo ? 'You raised this PO, so a colleague receives it' : 'A manager takes the delivery in',
-        })
+      : { label: 'View at dock', action: 'receive', cls: 'text-s-muted hover:text-s-text', title: 'Whoever raised this PO, or a manager, takes the delivery in' })
   }
-  if (['draft', 'pending_approval', 'approved'].includes(po.status)) {
+  if (['draft', ...PO_CHAIN, 'approved'].includes(po.status)) {
     actions.push({ label: 'Cancel', action: 'cancel', cls: 'text-s-muted hover:text-s-red' })
   }
   if (actions.length === 0) return null
   return (
-    <div className="flex gap-2">
+    <div className="flex flex-wrap gap-x-3 gap-y-1">
       {actions.map((a) => (
-        <button key={a.action} onClick={() => onAction(a.action)} title={a.title}
-          className={`text-xs font-semibold transition-colors ${a.cls}`}>
+        <button key={a.action} type="button" onClick={() => onAction(a.action)} title={a.title}
+          className={`text-xs font-semibold whitespace-nowrap transition-colors ${a.cls}`}>
           {a.label}
         </button>
       ))}
+    </div>
+  )
+}
+
+/**
+ * Where the PO is in its chain (owner, 2026-11-03: "PO goes to Asif. Asif push to Hasnain. Hasnain push to me.
+ * approved by me. asif takes cash from hasnain"): who raised, checked and approved it, a return note, and the
+ * cash voucher the CEO's approval raised for the buyer.
+ */
+function PoChainPanel({ po }: { po: PurchaseOrder }) {
+  const n = po.names
+  const steps: Array<{ label: string; who: string | null; done: boolean; current: boolean }> = [
+    { label: 'Raised', who: n?.createdBy ?? null, done: po.status !== 'draft' || !!po.createdBy, current: po.status === 'draft' },
+    { label: 'Buyer check', who: n?.buyerCheckedBy ?? null, done: !!po.buyerCheckedById, current: po.status === 'buyer_check' },
+    { label: 'Finance check', who: n?.financeCheckedBy ?? null, done: !!po.financeCheckedById, current: po.status === 'finance_check' },
+    { label: 'CEO approval', who: n?.approvedBy ?? null, done: !!po.approvedAt && !['draft', ...PO_CHAIN, 'cancelled'].includes(po.status), current: po.status === 'pending_approval' },
+  ]
+  const v = po.cashVoucher
+  return (
+    <div className="space-y-2">
+      <ol className="flex flex-wrap gap-2" aria-label="Approval steps">
+        {steps.map((st) => (
+          <li key={st.label}
+            className={`rounded-lg border px-2.5 py-1.5 text-xs ${st.current ? 'border-s-amber bg-s-amber-dim/40' : st.done ? 'border-s-border bg-accent-dim/40' : 'border-s-border bg-s-bg'}`}>
+            <span className={`font-semibold ${st.done && !st.current ? 'text-success' : 'text-s-text'}`}>{st.label}</span>
+            <span className="block text-s-muted">{st.current ? 'Waiting' : st.done ? (st.who ?? 'Done') : '—'}</span>
+          </li>
+        ))}
+      </ol>
+      {po.status === 'draft' && po.returnNote && (
+        <p className="text-xs text-s-amber">Returned{n?.returnedBy ? ` by ${n.returnedBy}` : ''}: {po.returnNote}</p>
+      )}
+      {v ? (
+        <p className="text-xs text-s-text">
+          Cash for this PO: <Link className="font-semibold text-primary-ink underline" href={`/finance/cash-vouchers?id=${encodeURIComponent(v.id)}`}>{v.number}</Link>
+          {' '}— {fmtPkrWhole(v.amountCents)} to {v.payeeName} · {v.status === 'approved' ? 'waiting for finance to pay' : v.status.replace(/_/g, ' ')}
+        </p>
+      ) : po.status === 'approved' && po.payByCash === false ? (
+        <p className="text-xs text-s-muted">Approved without cash — the supplier is paid against their bill.</p>
+      ) : null}
     </div>
   )
 }
@@ -2558,25 +2665,17 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
     queryFn: () => api.get<PurchaseOrder[]>('/procurement/approvals'),
   })
 
-  const [threshold, setThreshold] = useState<number | null>(null)
-  const [newThreshold, setNewThreshold] = useState('')
-  const [thresholdTried, setThresholdTried] = useState(false)
-
-  const { data: thresholdData, refetch: refetchThreshold } = useQuery({
-    queryKey: ['procurement', 'threshold'],
-    queryFn: () => api.get<{ thresholdCents: number }>('/procurement/settings/approval-threshold'),
-  })
-
+  // The CEO's step (owner, 2026-11-03): approve (raises the PO's cash voucher for the buyer), return to draft, reject.
   const approveRejectMut = useMutation({
-    mutationFn: ({ id, action, body }: { id: string; action: 'approve' | 'reject'; body?: { reason: string } }) =>
-      api.post(`/procurement/purchase-orders/${id}/${action}`, body ?? {}),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ['procurement', 'approvals'] }),
+    mutationFn: ({ id, action, body }: { id: string; action: 'approve' | 'reject' | 'return'; body?: Record<string, unknown> }) =>
+      api.post(action === 'return' ? `/procurement/po-steps/${id}/return` : `/procurement/purchase-orders/${id}/${action}`, body ?? {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['procurement', 'approvals'] })
+      void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
+    },
   })
-
-  const thresholdMut = useMutation({
-    mutationFn: (thresholdCents: number) => api.put('/procurement/settings/approval-threshold', { thresholdCents }),
-    onSuccess: () => { void refetchThreshold(); setNewThreshold('') },
-  })
+  const [returnId, setReturnId] = useState<string | null>(null)
+  const [returnNote, setReturnNote] = useState('')
 
   const [rejectId, setRejectId] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
@@ -2586,32 +2685,13 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 
   return (
     <div className="p-6 space-y-4">
-      {/* Threshold setting */}
-      <div className="rounded-xl border border-s-border bg-s-surface p-4 flex flex-wrap items-center gap-4">
-        <div>
-          <p className="text-xs text-s-muted font-medium">Auto-approval threshold</p>
-          <p className="text-sm font-bold text-s-text">
-            {thresholdData ? fmtPkrWhole(thresholdData.thresholdCents) : '…'}
-          </p>
-          <p className="text-xs text-s-muted">POs above this value require manual approval</p>
-        </div>
-        <form noValidate className="flex flex-wrap items-center gap-2 ml-auto"
-          onSubmit={(e) => {
-            e.preventDefault()
-            setThresholdTried(true)
-            if (!newThreshold || thresholdMut.isPending) return
-            thresholdMut.mutate(Math.round(Number(newThreshold) * 100))
-            setThresholdTried(false)
-          }}>
-          <MoneyInput placeholder="New threshold (PKR)" ariaLabel="New auto-approval threshold in rupees"
-            value={centsOf(newThreshold)} onChange={(cts) => setNewThreshold(pkrOf(cts))}
-            className="w-44 rounded-lg bg-s-bg border border-s-border px-3 py-1.5 text-sm text-s-text focus:border-primary focus:outline-none" />
-          <Button size="sm" type="submit" disabled={thresholdMut.isPending}>
-            Update
-          </Button>
-          {thresholdTried && !newThreshold && <p role="alert" className="basis-full text-xs text-s-red">Type the new threshold in rupees.</p>}
-        </form>
-      </div>
+      <p className="text-xs text-s-muted">
+        Every purchase order goes to the buyer, then finance, then here for the final approval. Approving raises a cash
+        voucher for the PO total in the buyer&apos;s name (finance pays it); open the PO to approve one bought on credit.
+      </p>
+      {approveRejectMut.error && (
+        <p role="alert" className="text-xs text-s-red">{approveRejectMut.error instanceof Error ? approveRejectMut.error.message : 'That did not work'}</p>
+      )}
 
       {orders.length === 0 ? (
         <EmptyState icon="" title="No pending approvals" sub="All purchase orders have been reviewed" />
@@ -2641,6 +2721,7 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
                       <div className="flex gap-2">
                         <LinkButton type="button" onClick={() => approveRejectMut.mutate({ id: po.id, action: 'approve' })}
                           disabled={approveRejectMut.isPending}>Approve</LinkButton>
+                        <LinkButton type="button" onClick={() => { setReturnId(po.id); setReturnNote('') }}>Return</LinkButton>
                         <LinkButton tone="danger" type="button" onClick={() => { setRejectId(po.id); setRejectReason('') }}>Reject</LinkButton>
                       </div>
                     </td>
@@ -2651,6 +2732,25 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
             </div>
           </div>
         </>
+      )}
+
+      {returnId && (
+        <Modal title="Return PO for correction" onClose={() => { setReturnId(null); setRejectTried(false) }} dirty={returnNote !== ''}>
+          <form noValidate className="space-y-4" onSubmit={(e) => {
+            e.preventDefault()
+            setRejectTried(true)
+            if (returnNote.trim().length < 10 || approveRejectMut.isPending) return
+            approveRejectMut.mutate({ id: returnId, action: 'return', body: { note: returnNote.trim() } }); setReturnId(null); setRejectTried(false)
+          }}>
+            <Field label="What needs to change" required error={rejectTried && returnNote.trim().length < 10 ? 'At least 10 characters.' : null}>
+              <Input required value={returnNote} onChange={(e) => setReturnNote(e.target.value)} className={fi} autoFocus />
+            </Field>
+            <div className="flex gap-2">
+              <Button variant="secondary" type="submit" disabled={approveRejectMut.isPending}>Return</Button>
+              <Button variant="secondary" type="button" onClick={() => { setReturnId(null); setRejectTried(false) }}>Back</Button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {rejectId && (

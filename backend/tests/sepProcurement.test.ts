@@ -9,7 +9,7 @@
 //   - A PO / bill can't reference another company's inventory items, POs or
 //     PO lines (422), and a foreign supplier is 404.
 //   - The PO approval threshold is per company, with the old global key as a
-//     read fallback; submitPo applies the PO's own company's threshold.
+//     read fallback (the setting no longer skips the PO chain — owner, 2026-11-03).
 //   - Price history without a supplier is its item's company's only.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
@@ -19,7 +19,7 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
-import { createPo, submitPo } from '../src/modules/procurement/service.js'
+import { createPo, submitPo, passPoStep } from '../src/modules/procurement/service.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
 import { supplierChatRoutes } from '../src/modules/procurement/chat.js'
 
@@ -234,15 +234,18 @@ describe('approval threshold is per company', () => {
     expect((await call('ceoB', 'PUT', '/procurement/settings/approval-threshold', { thresholdCents: 1, tenantId: tenantA })).statusCode).toBe(403)
   })
 
-  it('submitPo applies the PO\'s own company\'s threshold', async () => {
-    // 50,000 paisa: under A's 1,000,000 → auto-approved; over B's fallback 777 → needs approval.
+  it('the threshold no longer skips anything: every PO goes to the buyer, then finance, then the CEO (owner, 2026-11-03)', async () => {
     const a = await createPo({ supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: 50_000 }], createdBy: users['ceoA']!.id })
-    expect((await submitPo(a.id, users['ceoA']!.id)).status).toBe('approved')
+    expect((await submitPo(a.id, users['ceoA']!.id)).status).toBe('buyer_check')
     const b = await createPo({ supplierId: supB, lines: [{ inventoryItemId: itemB, quantityOrdered: 1, unitCostCents: 50_000 }], createdBy: users['ceoB']!.id })
-    expect((await submitPo(b.id, users['ceoB']!.id)).status).toBe('pending_approval')
+    expect((await submitPo(b.id, users['ceoB']!.id)).status).toBe('buyer_check')
+    await passPoStep(b.id, users['ceoB']!.id, 'buyer_check')
+    await passPoStep(b.id, users['ceoB']!.id, 'finance_check')
 
     const approvalsA = (await call('ceoA', 'GET', '/procurement/approvals')).json() as Array<{ id: string }>
     expect(approvalsA.map((p) => p.id)).not.toContain(b.id)
+    const approvalsB = (await call('ceoB', 'GET', '/procurement/approvals')).json() as Array<{ id: string }>
+    expect(approvalsB.map((p) => p.id)).toContain(b.id)
   })
 })
 

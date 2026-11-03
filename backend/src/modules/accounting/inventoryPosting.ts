@@ -14,7 +14,8 @@
 //     reads what was posted;
 //   • never changes stock (lots change only through lib/stockLedger.ts).
 //
-//   1  procurement.receipt:<receiptId>          Dr 12x0 per class / Cr 2015 GRNI            (in the receipt's tx; cash-settled receipts post nothing)
+//   1  procurement.receipt:<receiptId>          Dr 12x0 per class / Cr 2015 GRNI            (in the receipt's tx; cash-settled receipts post nothing;
+//                                               a NON-FOOD lot debits 6045 Operating Supplies instead — expensed on receipt)
 //   2  inventory.waste:<wasteLogId>             Dr 1290 / Cr 12x0 at the FIFO value taken    (brand = the log's, else usage split)
 //   3  inventory.count:<countId>                spot: Dr/Cr 1290 vs 12x0; opening: Dr 12x0 / Cr 3010 owner's capital (H19 — never 1290 / 5050)
 //   4  inventory.prep_draw:<batchId>            Dr 50x0 / Cr 12x0 at the FIFO value drawn    (ad-hoc batches; usage split)
@@ -52,7 +53,7 @@ import { AppError } from '../../lib/errors.js'
 import { sumCents, toCents } from '../../lib/money.js'
 import { withSavepoint } from '../../lib/savepoint.js'
 import { ledgerBalancesByCode } from '../../lib/bankAccounts.js'
-import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, costClassOf, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
+import { CLASS_ACCOUNTS, CLASS_LABEL, COST_CLASSES, costClassOf, isNonFoodClass, NON_FOOD_EXPENSE_CODE, zeroByClass, type CostClass } from '../../lib/inventoryClass.js'
 import { brandSharesJson, brandUsageShares, parseBrandShares, splitCents, type BrandShare } from '../../lib/brandShare.js'
 import { lotValuation, readFifoCutoverAt, STOCK_SOURCE } from '../../lib/stockLedger.js'
 import {
@@ -188,7 +189,8 @@ async function systemDate(tx: Tx, tenantId: string, natural: Date): Promise<{ en
 // ─── 1. Goods receipt (H17) ──────────────────────────────────────────────────
 
 /**
- * 'procurement.receipt:<receiptId>': Dr 1210/1220/1230 per class for the
+ * 'procurement.receipt:<receiptId>': Dr 1210/1220/1230 per class (6045 for a
+ * non-food lot — expensed on receipt, lib/inventoryClass.ts) for the
  * value of the lots the receipt opened (their 'receipt' movements — a
  * pending-bill quantity's lot is at the billed price, so its 2015 credit nets
  * that bill's pending debit) / Cr 2015. Brand-less, dated receivedAt, in the
@@ -221,7 +223,17 @@ export async function postGoodsReceiptTx(tx: Tx, receiptId: string): Promise<{ p
   })
   // Brand stock (owner B13 (a)): each class debit is tagged with the brand that owns the lot (NULL = shared).
   const byClassBrand = new Map<string, { costClass: CostClass; conceptId: string | null; cents: number }>()
+  // Non-food (owner, 2026-11-03: "Expense on receipt"): its lots debit 6045 Operating Supplies, never a 12x0 — the
+  // lot is issued at once and its issue posts nothing (postIssueOnReceiptTx).
+  const nonFoodByBrand = new Map<string, { conceptId: string | null; cents: number }>()
   for (const m of ins) {
+    if (isNonFoodClass(m.costClass)) {
+      const conceptId = (m.lotId ? brandOfLot.get(m.lotId) : null) ?? null
+      const b = nonFoodByBrand.get(conceptId ?? '') ?? { conceptId, cents: 0 }
+      b.cents += toCents(m.valueCents)
+      nonFoodByBrand.set(conceptId ?? '', b)
+      continue
+    }
     const cls = asClass(m.costClass)
     const conceptId = (m.lotId ? brandOfLot.get(m.lotId) : null) ?? null
     const key = `${cls}|${conceptId ?? ''}`
@@ -229,7 +241,7 @@ export async function postGoodsReceiptTx(tx: Tx, receiptId: string): Promise<{ p
     b.cents += toCents(m.valueCents)
     byClassBrand.set(key, b)
   }
-  const total = [...byClassBrand.values()].reduce((s, b) => s + b.cents, 0)
+  const total = [...byClassBrand.values(), ...nonFoodByBrand.values()].reduce((s, b) => s + b.cents, 0)
   if (total <= 0) return { posted: false }
 
   const ref = `GRN ${receipt.id.slice(-8).toUpperCase()}`
@@ -238,6 +250,9 @@ export async function postGoodsReceiptTx(tx: Tx, receiptId: string): Promise<{ p
     for (const b of [...byClassBrand.values()].filter((x) => x.costClass === c)) {
       if (b.cents > 0) lines.push({ accountCode: CLASS_ACCOUNTS[c].inv, type: 'debit', amountCents: b.cents, memo: `Goods received (${CLASS_LABEL[c]}) — ${supplier.name}, ${ref}`.slice(0, 250), conceptId: b.conceptId })
     }
+  }
+  for (const b of nonFoodByBrand.values()) {
+    if (b.cents > 0) lines.push({ accountCode: NON_FOOD_EXPENSE_CODE, type: 'debit', amountCents: b.cents, memo: `Non-food supplies received (expensed) — ${supplier.name}, ${ref}`.slice(0, 250), conceptId: b.conceptId })
   }
   lines.push({ accountCode: ACCT.GRNI, type: 'credit', amountCents: total, memo: `Received, not yet billed — ${supplier.name}, ${ref}`.slice(0, 250) })
   assertBalanced(lines, `procurement.receipt:${receipt.id}`)
@@ -560,11 +575,14 @@ export async function postGrniWriteOffTx(tx: Tx, receiptLineId: string, actor: {
   if (!(open > 0)) throw new AppError('NOTHING_OPEN', 'Nothing on this receipt line is waiting for a bill', 409)
 
   const shares = line.inventoryItemId ? await brandUsageShares(tx, tenantId, line.inventoryItemId, new Date()) : []
+  // A non-food receipt was expensed to 6045 (owner, 2026-11-03): its write-off comes back off 6045, never 5060.
+  const lotClass = line.lots.length > 0 ? (await tx.stockLot.findUnique({ where: { id: line.lots[0]!.id }, select: { costClass: true } }))?.costClass : null
+  const creditCode = isNonFoodClass(lotClass) ? NON_FOOD_EXPENSE_CODE : ACCT.COST_ADJUSTMENT
   const what = `${line.description} — ${supplier.name}, GRN ${line.receipt.id.slice(-8).toUpperCase()}`
   const lines: JournalLineInput[] = [
     { accountCode: ACCT.GRNI, type: 'debit', amountCents: open, memo: `Received, never to be billed — ${what}`.slice(0, 250) },
     ...splitCents(open, shares).map((p) => ({
-      accountCode: ACCT.COST_ADJUSTMENT, type: 'credit' as const, amountCents: p.cents, conceptId: p.conceptId,
+      accountCode: creditCode, type: 'credit' as const, amountCents: p.cents, conceptId: p.conceptId,
       memo: `Unbilled receipt written off — ${what}`.slice(0, 250),
     })),
   ]
@@ -822,6 +840,8 @@ export async function postIssueOnReceiptTx(tx: Tx, a: { lotId: string }): Promis
   for (const r of rows) if (r.tenantId !== lot.tenantId) throw crossCompany(`Lot ${a.lotId}`)
   const value = -rows.reduce((s, r) => s + toCents(r.valueCents), 0)
   if (value <= 0) return
+  // A non-food lot was expensed by its receipt (6045, or the cash document's line): nothing more to post.
+  if (isNonFoodClass(first.costClass)) return
   const cls = asClass(first.costClass)
   const shares = await sharesFor(tx, lot.tenantId, first.inventoryItemId, first.occurredAt, rows, true)
   const lines = brandPairs(CLASS_ACCOUNTS[cls].cogs, CLASS_ACCOUNTS[cls].inv, splitCents(value, shares), {

@@ -7,7 +7,7 @@ import { requireAuth, MANAGERS, PROCUREMENT_TEAM, FINANCIALS_VIEWERS } from '../
 import { assertConceptOwned, resolveTenantScope } from '../../lib/tenantScope.js'
 import { belowParWhere, isBelowPar } from '../../lib/recipeCost.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
-import { INVENTORY_CATEGORIES, costClassOf, COST_CLASSES } from '../../lib/inventoryClass.js'
+import { INVENTORY_CATEGORIES, costClassOf, isNonFoodCategory, COST_CLASSES } from '../../lib/inventoryClass.js'
 import { assertInt4Fits, sumCents, zInt4Cents } from '../../lib/money.js'
 import { stockSiteForDocument } from '../../lib/stockSite.js'
 import { consumeFifoTx, ensureFifoReady, latestCostsMany, lockItemsTx, reclassItemLotsTx, STOCK_SOURCE, type LatestCost } from '../../lib/stockLedger.js'
@@ -303,6 +303,25 @@ function rejectStockWrites(body: unknown, { allowZero }: { allowZero: boolean })
 export async function moveItemLotsToCategoryTx(tx: Prisma.TransactionClient, a: {
   itemId: string; itemName: string; tenantId: string; fromCategory: string | null; toCategory: string | null; actor: { id: string; email?: string | null }
 }): Promise<void> {
+  // Non-food (owner, 2026-11-03: expensed on receipt) holds no stock, so a change INTO it is refused while the item
+  // holds stock or sits on a recipe, and makes the item issue-on-receipt; a change OUT of it moves nothing (its lots
+  // are all issued). Neither posts.
+  const toNonFood = isNonFoodCategory(a.toCategory)
+  const fromNonFood = isNonFoodCategory(a.fromCategory)
+  if (toNonFood || fromNonFood) {
+    if (toNonFood && !fromNonFood) {
+      const held = await tx.stockLot.aggregate({ where: { inventoryItemId: a.itemId, remainingQty: { gt: STOCK_EPS } }, _sum: { remainingQty: true } })
+      if ((held._sum.remainingQty ?? 0) > STOCK_EPS) {
+        throw new AppError('NON_FOOD_HAS_STOCK', `${a.itemName} still holds stock — use it up or count it to zero before making it non-food (non-food is expensed on receipt, never held as stock)`, 422)
+      }
+      const onRecipe = await tx.recipeIngredient.count({ where: { inventoryItemId: a.itemId } })
+      if (onRecipe > 0) {
+        throw new AppError('NON_FOOD_ON_RECIPE', `${a.itemName} is on ${onRecipe} recipe line${onRecipe === 1 ? '' : 's'} — take it off the recipes before making it non-food`, 422)
+      }
+      await tx.inventoryItem.update({ where: { id: a.itemId }, data: { issueOnReceipt: true } })
+    }
+    return
+  }
   const fromClass = costClassOf(a.fromCategory)
   const toClass = costClassOf(a.toCategory)
   if (fromClass === toClass) return
@@ -440,6 +459,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
           ...rest, ...itemFieldsFromMaster(master, body.unit),
           ...(body.purchaseUnit != null && !master.purchaseUnit ? { purchaseUnit: body.purchaseUnit, purchaseUnitFactor: body.purchaseUnitFactor ?? 1 } : {}),
           unit: body.unit, masterIngredientId: master.id, name: body.name.trim(), currentStock: 0, tenantId,
+          // Non-food is always issued (expensed) on receipt (owner, 2026-11-03).
+          ...(isNonFoodCategory(body.category ?? master.category) ? { issueOnReceipt: true } : {}),
         },
         include: { tenant: { select: { id: true, name: true, slug: true } } },
       })
@@ -576,6 +597,9 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         }
       }
 
+      if (issueOnReceipt === false && isNonFoodCategory(data.category !== undefined ? data.category : item.category)) {
+        throw new AppError('NON_FOOD_ISSUED_ON_RECEIPT', `${item.name} is non-food — it is always expensed (issued) when received`, 422)
+      }
       const iorChanges = issueOnReceipt !== undefined && issueOnReceipt !== item.issueOnReceipt
       if (iorChanges) {
         if (!isInventoryManager(req)) throw new ForbiddenError('Only a manager sets an ingredient to be issued on receipt.')

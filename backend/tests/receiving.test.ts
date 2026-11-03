@@ -11,8 +11,8 @@
 //   - Only sent / partial POs can be received (not draft, pending, approved-
 //     but-never-sent, received).
 //   - Owner decision 27: receiving without a PO is allowed for manager tiers
-//     with a unit cost; non-managers are refused; the PO raiser can't
-//     receive it — except the CEO.
+//     with a unit cost; non-managers are refused; the PO's raiser RECEIVES
+//     it (owner, 2026-11-03 — replaces "the raiser can't receive it").
 //   - The dock photo threshold and the >5% variance flag.
 //   - GET /crosschecks/receiving and the dock PO picker are company-scoped.
 //   - One assertNotSelfApproval: CEO exempt, blocked attempts flagged.
@@ -27,7 +27,8 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
-import { createPo, submitPo, markPoSent, createPayment, agingReport } from '../src/modules/procurement/service.js'
+import { createPo, markPoSent, createPayment, agingReport } from '../src/modules/procurement/service.js'
+import { approvePoChain } from './poChain.js'
 import { postSupplierPayment } from '../src/modules/accounting/supplierPosting.js'
 import { syncSupplierOpeningBalance } from '../src/modules/procurement/openingBalance.js'
 import { assertNotSelfApproval } from '../src/lib/separation-of-duties.js'
@@ -62,7 +63,7 @@ async function sentPo(createdBy: string, lines: Array<{ item: string; qty: numbe
     lines: lines.map((l) => ({ inventoryItemId: l.item, quantityOrdered: l.qty, unitCostCents: l.cost })),
     createdBy,
   })
-  const r = await submitPo(po.id, createdBy)   // under the approval threshold → approved (not sent)
+  const r = await approvePoChain(po.id, createdBy)   // buyer → finance → the CEO (owner, 2026-11-03): approved, not sent
   expect(r.status).toBe('approved')
   await markPoSent(po.id, createdBy, { channel: 'phone' })
   return po
@@ -129,18 +130,14 @@ describe('receiving against a PO — one path, PO + stock + cost together', () =
     expect((await item(flour)).currentStock).toBe(10)
   })
 
-  it('the PO raiser cannot receive it (flagged); the CEO can receive their own', async () => {
+  it('the PO raiser receives it (owner, 2026-11-03: "person that created po marks received"); a non-manager stranger cannot', async () => {
     const po = await sentPo(users['mgr']!.id, [{ item: flour, qty: 1, cost: 100 }])
     const line = (await prisma.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: po.id } })).id
+    // A cook neither raised it nor manages: refused at the route.
+    expect((await call('cook', 'POST', `/procurement/purchase-orders/${po.id}/receive`, { photoUrl: PHOTO, lines: [{ poLineId: line, quantityReceived: 1 }] })).statusCode).toBe(403)
     const res = await call('mgr', 'POST', '/crosschecks/receiving', { poId: po.id, photoUrl: PHOTO, lines: [{ poLineId: line, quantityReceived: 1 }] })
-    expect(res.statusCode).toBe(403)
-    expect(res.json().error.code).toBe('SELF_APPROVAL_BLOCKED')
-    expect(await prisma.exceptionFlag.count({ where: { kind: 'self_approval', entityId: po.id } })).toBe(1)
-
-    const ceoPo = await sentPo(users['ceo']!.id, [{ item: flour, qty: 1, cost: 100 }])
-    const ceoLine = (await prisma.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: ceoPo.id } })).id
-    const ok = await call('ceo', 'POST', `/procurement/purchase-orders/${ceoPo.id}/receive`, { photoUrl: PHOTO, lines: [{ poLineId: ceoLine, quantityReceived: 1 }] })
-    expect(ok.statusCode).toBe(201)
+    expect(res.statusCode, res.body).toBe(201)
+    expect(await prisma.exceptionFlag.count({ where: { kind: 'self_approval', entityId: po.id } })).toBe(0)
     // Flour: 10 @ 100 + 1 @ 100 → 11 @ 100
     expect(await item(flour)).toMatchObject({ currentStock: 11, unitCostCents: 100 })
   })

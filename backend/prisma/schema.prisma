@@ -3032,6 +3032,24 @@ model PurchaseOrder {
 
   viaHeadOfficeId String? // D1/A3: the head office it was submitted through (stamped at submit; plain id, no FK)
 
+  // The approval chain (owner, 2026-11-03: "PO goes to Asif. Asif push to Hasnain. Hasnain push to me. approved by
+  // me"): draft → buyer_check (the buyer, role procurement) → finance_check (finance with accounting) →
+  // pending_approval (the CEO) → approved. A PO a buyer raised skips the buyer step (signed by raising). Every step
+  // may return it to draft with a note (returnNote / returnCount) or reject it (cancelled). Plain ids, no FKs.
+  submittedById      String?
+  submittedAt        DateTime?
+  buyerCheckedById   String?
+  buyerCheckedAt     DateTime?
+  financeCheckedById String?
+  financeCheckedAt   DateTime?
+  returnedById       String?
+  returnedAt         DateTime?
+  returnNote         String?
+  returnCount        Int       @default(0)
+  // The CEO's approval raises a cash voucher for the PO (owner: "Cash voucher tied to PO") unless the CEO unticks it
+  // (bought on credit). The voucher row carries purchaseOrderId.
+  payByCash          Boolean   @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -6376,7 +6394,7 @@ model StockLot {
   // count_gain/opening: '<countLineId>'; fifo_cutover: '<tenantId>'.
   sourceId            String
   receiptLineId       String?
-  costClass           String // food | beverage | packaging
+  costClass           String // food | beverage | packaging | non_food (expensed on receipt, lib/inventoryClass.ts)
   receivedAt          DateTime
   qtyIn               Float // purchase units
   remainingQty        Float
@@ -8587,6 +8605,10 @@ model CashVoucher {
   plannedClassification     String?
   plannedTaxStatus          String?
   plannedNonDeductionReason String?
+  // The PO this voucher pays for (owner, 2026-11-03: "asif takes cash from hasnain"): raised by the CEO's approval
+  // of the PO (procurement/poCash.ts), holder = the buyer. Finance's pay TOPS UP the buyer's petty-cash box (Dr 1011 /
+  // Cr 1010 | the bank) — never an expense: the goods are booked at the dock and the supplier is paid from the box.
+  purchaseOrderId           String?         @unique
 
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
   // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).

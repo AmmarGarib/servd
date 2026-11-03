@@ -229,13 +229,78 @@ const purchaseOrders: ApprovalProvider = {
       waitingSince: iso(r.createdAt),
       link: '/procurement',
       actions: [
-        { kind: 'approve', label: 'Approve', method: 'POST', path: `/procurement/purchase-orders/${r.id}/approve`, body: {} },
+        { kind: 'approve', label: 'Approve', method: 'POST', path: `/procurement/purchase-orders/${r.id}/approve`, body: {},
+          confirm: 'Approve this PO? A cash voucher for its total is raised in the buyer\'s name for finance to pay (open the PO to approve it without cash).' },
+        { kind: 'return', label: 'Return', method: 'POST', path: `/procurement/po-steps/${r.id}/return`, body: {},
+          input: { field: 'note', label: 'What needs to change (at least 10 characters)', required: true } },
         { kind: 'reject', label: 'Reject', method: 'POST', path: `/procurement/purchase-orders/${r.id}/reject`, body: {},
           input: { field: 'reason', label: 'Reason', required: true } },
       ],
     }))
   },
 }
+
+// ── The PO chain's buyer and finance checks (owner, 2026-11-03) ─────────────
+// procurement/routes.ts: GET /procurement/po-steps?step=buyer|finance, POST /procurement/po-steps/:id/pass |
+// return {note ≥10} | reject {reason ≥10} — the step's role (procurement / finance) of the PO's company, never the
+// raiser, submitter or an earlier step's signer.
+function poStepProvider(type: 'purchase_order_buyer' | 'purchase_order_finance'): ApprovalProvider {
+  const buyer = type === 'purchase_order_buyer'
+  return {
+    type,
+    label: buyer ? 'Purchase orders — buyer check' : 'Purchase orders — finance check',
+    module: buyer ? 'procurement' : 'accounting',
+    link: '/procurement',
+    ...rightsOf(type),
+    async load(ctx) {
+      type Row = {
+        id: string; totalCents: number; reference: string | null; notes: string | null; createdBy: string | null
+        submittedById: string | null; submittedAt: string | null; buyerCheckedById: string | null; createdAt: string
+        expectedDate: string | null; supplier: { name: string; tenantId: string | null } | null; lines: unknown[]
+        viaHeadOfficeId?: string | null; own?: boolean; returnCount?: number
+      }
+      const rows = await ctx.read<Row[]>(`/procurement/po-steps?step=${buyer ? 'buyer' : 'finance'}`)
+      if (rows === null) return null
+      if (rows.length === 0) return []
+      const names = await userNames(rows.flatMap((r) => [r.createdBy, r.buyerCheckedById]))
+      return rows.map((r): ApprovalItem => {
+        const base = `/procurement/po-steps/${r.id}`
+        const own = r.own ? { disabledReason: 'You raised or checked this PO — someone else takes this step' } : {}
+        return {
+          type,
+          id: r.id,
+          tenantId: r.supplier?.tenantId ?? null,
+          submittedByIds: idList(r.createdBy, r.submittedById, buyer ? null : r.buyerCheckedById),
+          viaHeadOfficeId: r.viaHeadOfficeId ?? null,
+          title: `${r.reference ?? 'PO'} — ${r.supplier?.name ?? 'Supplier'} — ${pkr(r.totalCents)}`,
+          subtitle: buyer ? 'Waiting for the buyer\'s check' : 'Checked by the buyer — waiting for finance',
+          facts: facts([
+            ['Supplier', r.supplier?.name],
+            ['Total', pkr(r.totalCents)],
+            ['Lines', String(r.lines?.length ?? 0)],
+            ['Raised by', r.createdBy ? names.get(r.createdBy) : null],
+            ['Buyer check', !buyer && r.buyerCheckedById ? names.get(r.buyerCheckedById) : null],
+            ['Expected', r.expectedDate ? ymd(r.expectedDate) : null],
+            ['Returned before', r.returnCount ? String(r.returnCount) : null],
+            ['Notes', r.notes],
+          ]),
+          amountCents: r.totalCents,
+          waitingSince: iso(r.submittedAt ?? r.createdAt),
+          link: '/procurement',
+          actions: [
+            { kind: 'approve', label: buyer ? 'Pass to finance' : 'Pass to CEO', method: 'POST', path: `${base}/pass`, body: {}, ...own },
+            { kind: 'return', label: 'Return', method: 'POST', path: `${base}/return`, body: {},
+              input: { field: 'note', label: 'What needs to change (at least 10 characters)', required: true }, ...own },
+            { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
+              input: { field: 'reason', label: 'Reason (at least 10 characters)', required: true }, ...own },
+          ],
+        }
+      })
+    },
+  }
+}
+const purchaseOrdersBuyer = poStepProvider('purchase_order_buyer')
+const purchaseOrdersFinance = poStepProvider('purchase_order_finance')
 
 // ── Recipe sign-off ──────────────────────────────────────────────────────────
 // recipes/routes.ts: GET /recipes/pending-approval, POST /recipes/:id/approve|
@@ -1455,6 +1520,8 @@ const connectorChanges: ApprovalProvider = {
 export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   staffLogins,
   storefrontPublish,
+  purchaseOrdersBuyer,
+  purchaseOrdersFinance,
   purchaseOrders,
   recipes,
   hrRequests,

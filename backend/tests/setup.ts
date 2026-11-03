@@ -262,6 +262,11 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Void & re-issue (2026-10-21): the tender-reference and no-food / no-money-returned CHECKs.
   for (const statement of migrationSection('20261021140000_shift_correction_reissue',
     '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
+  // Non-food items (2026-11-03): the lot / movement class CHECKs learn 'non_food' — drop wave B's, then the migration's.
+  await prisma.$executeRawUnsafe('ALTER TABLE "stock_lots" DROP CONSTRAINT IF EXISTS "stock_lots_class_chk"')
+  await prisma.$executeRawUnsafe('ALTER TABLE "stock_movements" DROP CONSTRAINT IF EXISTS "stock_movements_class_chk"')
+  for (const statement of migrationSection('20261103140000_non_food_po_chain',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
   // The Trash bin (2026-10-15): one OPEN entry per thing, and promo codes /
   // allocation rules unique over LIVE rows only (migration 20261015170000).
   await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "trash_entries_open_key" ON "trash_entries"("entityType", "entityId") WHERE "restoredAt" IS NULL AND "purgedAt" IS NULL`)

@@ -87,7 +87,7 @@ import { brandSalesByAccount } from './brandRevenueAccount.js'
 import { fmtPktDate } from './dates.js'
 import { homeShiftOf } from './orderPosting.js'
 import { sumCents, toCents } from '../../lib/money.js'
-import { costClassOf, type CostClass } from '../../lib/inventoryClass.js'
+import { costClassOf, isNonFoodCategory, type CostClass } from '../../lib/inventoryClass.js'
 import {
   AUTHORITIES, AUTHORITY_LIST, TAX_AUTHORITY_KEYS, authorityOfOutputCode, isAuthorityKey, outputTaxCodeFor, isUnregisteredProvince,
   type AuthorityKey,
@@ -281,7 +281,8 @@ async function eligibleShareOfDocs(db: Db, tenantId: string, ids: string[]): Pro
   const items = itemIds.length > 0
     ? await db.inventoryItem.findMany({ where: { id: { in: itemIds }, tenantId }, select: { id: true, category: true } })
     : []
-  const eligibleItem = new Set(items.filter((i) => CROSS_SETOFF_ELIGIBLE_CLASSES.includes(costClassOf(i.category))).map((i) => i.id))
+  // Non-food supplies (expensed on receipt) are not food / drink / packaging stock: never cross-set-off (H34).
+  const eligibleItem = new Set(items.filter((i) => !isNonFoodCategory(i.category) && CROSS_SETOFF_ELIGIBLE_CLASSES.includes(costClassOf(i.category))).map((i) => i.id))
   const own = new Map<string, { eligible: number; all: number }>()
   for (const d of all) {
     let eligible = 0, whole = 0

@@ -147,7 +147,9 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   // PNG / WebP / PDF, checked before anything is written) — saved as record
   // files of the receipt in its transaction, and they satisfy the company's
   // photo threshold. The legacy `photoUrl` is still accepted.
-  fastify.post('/receiving', { preHandler: requireAuth(...MANAGERS), bodyLimit: RECORD_FILES_BODY_LIMIT }, async (req, reply) => {
+  // Managers receive; whoever RAISED a PO receives it too (owner, 2026-11-03) — receiveGoods decides (raiser-or-manager on a
+  // PO, managers only without one).
+  fastify.post('/receiving', { preHandler: requireAuth(...PROCUREMENT_TEAM), bodyLimit: RECORD_FILES_BODY_LIMIT }, async (req, reply) => {
     const body = z.object({
       poId:       z.string().uuid().nullable().optional(),
       supplierId: z.string().uuid().nullable().optional(),
@@ -601,7 +603,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
     const dow = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7
     const weekStart = parsePktStartOfDay(new Date(new Date(`${today}T00:00:00Z`).getTime() - dow * DAY_MS).toISOString().slice(0, 10))
     const items = await prisma.inventoryItem.findMany({
-      where: { tenantId, deletedAt: null, issueOnReceipt: false },
+      // Non-food (expensed on receipt) is never counted either (owner, 2026-11-03).
+      where: { tenantId, deletedAt: null, issueOnReceipt: false, OR: [{ category: null }, { category: { not: 'non_food' } }] },
       select: { id: true, name: true, unit: true, countFrequency: true, kind: true },
       orderBy: { name: 'asc' },
     })
