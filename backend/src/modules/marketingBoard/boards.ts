@@ -63,7 +63,12 @@ export async function ensureMarketingBoards(log: (msg: string) => void = (m) => 
     }
   }
   for (const seed of PLATFORM_BOARD_SEEDS) {
-    const company = await prisma.tenant.findFirst({ where: { name: seed.companyName, kind: 'company', deletedAt: null }, select: { id: true } })
+    // The company by name, case / spacing-insensitive, else by its slug (live's GS Foods is slug gs-foods-…; owner
+    // 2026-11-03: "where is the board section for beanzbakes?" — an exact-name match had skipped it).
+    const slugStem = seed.companyName.trim().toLowerCase().replace(/\s+/g, '-')
+    const company = await prisma.tenant.findFirst({ where: { name: { equals: seed.companyName, mode: 'insensitive' }, kind: 'company', deletedAt: null }, select: { id: true } })
+      ?? await prisma.tenant.findFirst({ where: { name: { equals: ` ${seed.companyName} `.trim(), mode: 'insensitive' }, kind: 'company', deletedAt: null }, select: { id: true } })
+      ?? await prisma.tenant.findFirst({ where: { slug: { startsWith: slugStem }, kind: 'company', deletedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true } })
     if (!company) { log(`[marketing-board] no company named "${seed.companyName}" — the ${seed.name} board was not seeded`); continue }
     const key = `platform:${seed.key}:${company.id}`
     if (await claimed(key)) continue
