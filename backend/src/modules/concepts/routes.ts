@@ -527,9 +527,20 @@ export async function conceptRoutes(fastify: FastifyInstance) {
       const err = await inTrashConflict(TRASH_COMPANY.brand, holder.id, visible, 'A brand with this web address')
       if (err) throw err
     }
-    const concept = await prisma.concept.create({
-      data: { ...body, tenantId: req.staffUser!.tenantId! },
-    })
+    // A live brand already on this address (owner, 2026-11-03: the hidden "G's Kitchen" held /g-s-kitchen and the
+    // onboarding save answered "Internal server error") — say so; never a bare unique-key crash.
+    const slugTaken = () => new AppError('SLUG_TAKEN',
+      `Another brand already uses the web address /${body.slug}. Pick a different one under Advanced, or edit that brand instead.`, 409)
+    if (holder && !holder.deletedAt) throw slugTaken()
+    let concept
+    try {
+      concept = await prisma.concept.create({
+        data: { ...body, tenantId: req.staffUser!.tenantId! },
+      })
+    } catch (e) {
+      if ((e as { code?: string }).code === 'P2002') throw slugTaken()
+      throw e
+    }
     // One sales account per brand (owner, 2026-10-17): "Sales — <brand>" in
     // its company's chart. Never blocks the create — on a failure the brand
     // posts to 4090 until the boot step gives it its account.
