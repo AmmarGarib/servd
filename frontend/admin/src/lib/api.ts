@@ -156,6 +156,9 @@ const PORTFOLIO_GUARD_EXCLUSIONS: readonly RegExp[] = [
   /^\/storefront\b/,
   /^\/reservations\b/,
   /^\/inventory\b/,
+  // The servd-wide ingredient master (owner, 2026-11-03: "Im creating ingredients for servd master data
+  // right. So why … ask which company?"): it has no company (IngredientMaster has no tenantId).
+  /^\/ingredient-master\b/,
   /^\/recipes\b/,
   /^\/components\b/,
   // Projections span multiple brands (often multiple tenants too) — they're
