@@ -47,6 +47,8 @@ export interface MasterPrice {
 export interface PickedItem { id: string; name: string; unit: string; category: string | null; yieldPct: number; masterIngredientId: string }
 
 const UNITS = ['g', 'ml', 'pcs', 'kg', 'litres', 'each']
+/** servd prices are per kg / litre / pcs whatever the stock unit (lib/ingredientPrices.ts). */
+const priceUnitOf = (u: string) => (u === 'g' || u === 'kg' ? 'kg' : u === 'ml' || u === 'litres' ? 'litre' : 'pcs')
 const inputCls = 'rounded-md border border-s-border bg-s-bg px-2 py-1 text-sm text-s-text focus:border-primary focus:outline-none'
 
 export function MasterIngredientPicker({ label, onPicked, className = '' }: {
@@ -58,7 +60,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [adding, setAdding] = useState<{ unit: string; category: string } | null>(null)
+  const [adding, setAdding] = useState<{ unit: string; category: string; price: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const btn = useRef<HTMLInputElement>(null)
@@ -89,6 +91,12 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
     setBusy(true); setErr('')
     try {
       const m = await api.post<MasterRow>('/ingredient-master', { name: q.trim(), unit: adding.unit, category: adding.category || null })
+      // The price typed with it (owner, 2026-11-03: "Adding here should allow me to add price too") — servd's ONE
+      // price, per kg / litre / pcs (PUT /ingredient-master/:id/price, the same as the Ingredients sheet).
+      const price = Number(adding.price)
+      if (adding.price.trim() && Number.isFinite(price) && price > 0) {
+        await api.put(`/ingredient-master/${m.id}/price`, { priceCents: Math.round(price * 100) })
+      }
       await pick(m.id)
     } catch (e) {
       setErr(stockErrorText(e)); setBusy(false)
@@ -123,7 +131,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
               <li key={r.id}>
                 <button type="button" disabled={busy} onMouseDown={(e) => e.preventDefault()} onMouseEnter={() => setActive(i)} onClick={() => void pick(r.id)}
                   className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-s-bg-soft disabled:opacity-50 ${i === active ? 'bg-s-bg-soft' : ''}`}>
-                  <span className="truncate text-s-text">{r.name} <span className="text-xs text-s-muted">({r.stockUnit})</span></span>
+                  <span className="truncate text-s-text">{r.name} <span className="text-xs text-s-muted">({r.stockUnit}{r.price?.latestCents != null ? ` · PKR ${(r.price.latestCents / 100).toLocaleString('en-PK')}/${r.price.displayUnit}` : ''})</span></span>
                   <span className="shrink-0 text-[11px] text-s-muted">
                     {r.status === 'needs_review' ? 'needs review' : r.companyItemId ? 'in stock list' : 'not stocked yet'}
                   </span>
@@ -135,7 +143,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
           {q.trim() && !exact && (
             <div className="mt-2 border-t border-s-border pt-2">
               {!adding ? (
-                <button type="button" onClick={() => setAdding({ unit: 'kg', category: '' })} className="text-xs font-semibold text-primary-ink hover:underline">
+                <button type="button" onClick={() => setAdding({ unit: 'kg', category: '', price: '' })} className="text-xs font-semibold text-primary-ink hover:underline">
                   Add new ingredient &ldquo;{q.trim()}&rdquo;
                 </button>
               ) : (
@@ -150,6 +158,11 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
                       {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                   </div>
+                  <label className="flex items-center gap-2 text-xs text-s-muted">
+                    <span className="shrink-0">Price PKR per {priceUnitOf(adding.unit)}</span>
+                    <input type="number" inputMode="decimal" min="0" step="0.01" value={adding.price} placeholder="optional"
+                      onChange={(e) => setAdding({ ...adding, price: e.target.value })} className={`${inputCls} w-full min-w-0`} />
+                  </label>
                   <button type="button" disabled={busy} onClick={() => void addNew()} className="s-btn-primary px-3 py-1 text-xs font-bold disabled:opacity-50">Add and use</button>
                 </div>
               )}
