@@ -187,9 +187,6 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Kitchen flow (2026-10-26): the servd-wide ingredient master's live-name and one-item-per-company keys + CHECKs.
   for (const statement of migrationSection('20261026120000_ingredient_master',
     '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
-  // Ingredients sheet clean-up (2026-11-03): the status CHECK learns 'retired'.
-  await prisma.$executeRawUnsafe('ALTER TABLE "ingredient_masters" DROP CONSTRAINT IF EXISTS "ingredient_masters_status_chk"')
-  await prisma.$executeRawUnsafe(`ALTER TABLE "ingredient_masters" ADD CONSTRAINT "ingredient_masters_status_chk" CHECK ("status" IN ('approved', 'needs_review', 'retired'))`)
   // Kitchen flow (2026-10-26): par targets and the recipe portion CHECKs (RLS out).
   for (const statement of migrationSection('20261026120200_par_targets',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
