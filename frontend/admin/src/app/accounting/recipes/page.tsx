@@ -566,12 +566,8 @@ export default function RecipesPage() {
                             No packaging
                           </span>
                         )}
-                        {!!r.warnings?.outsideCompany.length && (
-                          <span className="s-badge-red text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5"
-                            title={r.warnings.outsideCompany.map((o) => o.itemName).join(', ')}>
-                            Other company&apos;s stock
-                          </span>
-                        )}
+                        {/* No "Other company's stock" pill (owner, 2026-11-03): recipes are costing, priced from
+                            servd's one ingredient master — stock is the stock module's business. */}
                         {r.warnings?.costedWhileUnapproved && (
                           <span className="s-badge-red text-xs font-black uppercase tracking-wider rounded-full px-2 py-0.5"
                             title="This dish is on sale and its cost comes from a recipe that is not approved yet">

@@ -1140,8 +1140,7 @@ const LEGACY_LINE_TEXT: Record<string, string> = {
 }
 
 /**
- * The recipe's warnings as banners: stock of another company and a live dish
- * costed while unapproved are RED; no packaging at a brand that serves in
+ * The recipe's warnings as banners: a live dish costed while unapproved is RED; no packaging at a brand that serves in
  * packaging is AMBER and never blocks saving or approval.
  */
 export function CostWarningBanners({ warnings, lineWarnings, brandName }: {
@@ -1149,16 +1148,11 @@ export function CostWarningBanners({ warnings, lineWarnings, brandName }: {
   lineWarnings?: string[] | null
   brandName?: string | null
 }) {
-  const legacy = (lineWarnings ?? []).filter((c) => c in LEGACY_LINE_TEXT && !(c === 'ITEM_NOT_IN_COMPANY' && warnings?.outsideCompany.length))
+  // No "another company's stock" warning on the recipe (owner, 2026-11-03): a costing screen, not stock.
+  const legacy = (lineWarnings ?? []).filter((c) => c in LEGACY_LINE_TEXT && c !== 'ITEM_NOT_IN_COMPANY')
   if (!warnings && legacy.length === 0) return null
   return (
     <div className="space-y-2">
-      {!!warnings?.outsideCompany.length && (
-        <div className="rounded-xl border p-3 text-xs" style={dangerBox}>
-          <strong>Stock of another company:</strong> {warnings.outsideCompany.map((o) => o.itemName).join(', ')}.
-          {' '}A sale never takes it, so this cost is wrong — replace it with this company&apos;s own item.
-        </div>
-      )}
       {warnings?.costedWhileUnapproved && (
         <div className="rounded-xl border p-3 text-xs" style={dangerBox}>
           <strong>On sale, not approved:</strong> this dish is on the menu and every sale is costed and taken from stock with this recipe, but the recipe is not approved yet. Submit it for approval.
