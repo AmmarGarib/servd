@@ -51,11 +51,13 @@ const UNITS = ['g', 'ml', 'pcs', 'kg', 'litres', 'each']
 const priceUnitOf = (u: string) => (u === 'g' || u === 'kg' ? 'kg' : u === 'ml' || u === 'litres' ? 'litre' : 'pcs')
 const inputCls = 'rounded-md border border-s-border bg-s-bg px-2 py-1 text-sm text-s-text focus:border-primary focus:outline-none'
 
-export function MasterIngredientPicker({ label, onPicked, className = '' }: {
+export function MasterIngredientPicker({ label, onPicked, className = '', tenantId }: {
   /** What the control shows while closed (the line's current ingredient). */
   label: string
   onPicked: (item: PickedItem) => void
   className?: string
+  /** The company the stock item must be in (e.g. a PO's supplier's company); default the active company. */
+  tenantId?: string | null
 }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
@@ -78,7 +80,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '' }: {
   async function pick(masterId: string) {
     setBusy(true); setErr('')
     try {
-      const item = await api.post<PickedItem & { masterIngredientId: string }>('/inventory/from-master', { masterIngredientId: masterId })
+      const item = await api.post<PickedItem & { masterIngredientId: string }>('/inventory/from-master', { masterIngredientId: masterId }, tenantId ? { tenantId } : undefined)
       onPicked(item)
       setOpen(false); setQ(''); setAdding(null)
     } catch (e) {

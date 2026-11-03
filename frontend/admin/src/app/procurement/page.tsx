@@ -1,5 +1,6 @@
 'use client'
 import { CompanyTicks } from '../../components/ui/TenantPicker'
+import { MasterIngredientPicker } from '../../components/kitchen/MasterIngredientPicker'
 import { fmtUnitCost, priceSourceLabel } from '../../lib/unitCost'
 import { Button, CheckLabel, FieldLabel, Input, LinkButton } from '@/components/finance/ui'
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -728,10 +729,16 @@ function CreatePoForm({ qc, onClose, initial, title }: { qc: ReturnType<typeof u
         {lines.map((line, i) => (
           <div key={i} className="grid grid-cols-12 gap-2 items-end">
             <div className="col-span-5">
-              <Select value={line.inventoryItemId} aria-label={`Line ${i + 1} item`} onChange={(e) => updateLine(i, 'inventoryItemId', e.target.value)} className={fi}>
-                <option value="">Select item</option>
-                {invItems.map((it) => <option key={it.id} value={it.id}>{it.name} ({it.unit})</option>)}
-              </Select>
+              {/* servd's ingredient list, with "Add new ingredient" (owner, 2026-11-03: "give option to add from
+                  here also. same as recipe area"); the stock item is made in the SUPPLIER's company. */}
+              <MasterIngredientPicker className="w-full"
+                tenantId={suppliers.find((s) => s.id === supplierId)?.tenantId ?? null}
+                label={(() => { const it = invItems.find((x) => x.id === line.inventoryItemId); return it ? `${it.name} (${it.unit})` : '' })()}
+                onPicked={(item) => {
+                  qc.setQueryData<InventoryItem[]>(['inventory'], (prev = []) => prev.some((x) => x.id === item.id) ? prev : [...prev, { id: item.id, name: item.name, unit: item.unit }])
+                  void qc.invalidateQueries({ queryKey: ['inventory'] })
+                  updateLine(i, 'inventoryItemId', item.id)
+                }} />
             </div>
             <div className="col-span-2">
               <NumberField decimals={3} min={0} enterKeyHint="next" placeholder="Qty" aria-label={`Line ${i + 1} quantity`}
