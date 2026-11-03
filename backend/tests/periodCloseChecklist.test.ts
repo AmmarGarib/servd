@@ -372,16 +372,29 @@ describe('Raast keeps its own answer and switch, only when it is the one block',
 describe('year end', () => {
   it('a close across the company\'s fiscal year end is a year-end close', async () => {
     await prisma.periodLock.deleteMany({ where: { tenantId: A } })
+    // Year end is its own close (owner, 2026-11-03): a month close passing 30 June is refused…
     const view = await call('ceo', 'GET', '/accounting/period-close?lockedThrough=2026-07-31', undefined, A)
-    expect(view.json().isYearEnd).toBe(true)
+    expect(view.json().isYearEnd).toBe(false)
+    expect(view.json().yearEndFirst).toBe(true)
+    expect(view.json().yearEndDate).toBe('2026-06-30')
     expect(view.json().fiscalYear).toMatchObject({ endMonth: 6, label: 'FY2026-27' })
-    expect(view.json().months).toEqual(['2026-05', '2026-06', '2026-07'])
-    expect(view.json().closesFiscalYear).toBe('FY2025-26')
-    const ok = await call('ceo', 'POST', '/accounting/period-close', { lockedThrough: '2026-07-31' }, A)
+    const refused = await call('ceo', 'POST', '/accounting/period-close', { lockedThrough: '2026-07-31' }, A)
+    expect(refused.statusCode).toBe(422)
+    expect(refused.json().error.code).toBe('YEAR_END_FIRST')
+    // …the year closes on its own, exactly through its last day…
+    const yv = await call('ceo', 'GET', '/accounting/period-close?lockedThrough=2026-06-30', undefined, A)
+    expect(yv.json().isYearEnd).toBe(true)
+    expect(yv.json().yearEndFirst).toBe(false)
+    expect(yv.json().closesFiscalYear).toBe('FY2025-26')
+    const ok = await call('ceo', 'POST', '/accounting/period-close', { lockedThrough: '2026-06-30' }, A)
     expect(ok.statusCode).toBe(201)
     expect(ok.json().isYearEnd).toBe(true)
     const actions = (await prisma.auditLog.findMany({ where: { entityId: ok.json().id }, select: { action: true } })).map((a) => a.action).sort()
     expect(actions).toEqual(['period.close', 'period.year_end_close'])
+    // …then July is a plain month close.
+    const jul = await call('ceo', 'POST', '/accounting/period-close', { lockedThrough: '2026-07-31' }, A)
+    expect(jul.statusCode).toBe(201)
+    expect(jul.json().isYearEnd).toBe(false)
 
     // August alone (after the July lock) is not.
     const aug = await close('ceo', A)
