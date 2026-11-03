@@ -476,34 +476,72 @@ function CompanySuppliers({ master }: { master: MasterRow }) {
     queryFn: () => api.getAcrossTenants('/procurement/suppliers'),
   })
   const [err, setErr] = useState('')
+  // "+ New supplier…" right here (owner, 2026-11-03: "i want to be able to create the supplier from here … going to
+  // the other tab is annoying"): name (+ phone), created in THAT company, then picked for it.
+  const [adding, setAdding] = useState<{ tenantId: string; name: string; phone: string } | null>(null)
+  const assign = async (tenantId: string, supplierId: string | null) => {
+    let item = items.find((i) => i.tenantId === tenantId && i.masterIngredientId === master.id)
+    if (!item) item = await api.post<{ id: string; tenantId: string }>('/inventory/from-master', { masterIngredientId: master.id }, { tenantId })
+    return api.patch(`/inventory/${item!.id}`, { supplierId }, { tenantId })
+  }
   const set = useMutation({
-    mutationFn: async ({ tenantId, supplierId }: { tenantId: string; supplierId: string | null }) => {
-      let item = items.find((i) => i.tenantId === tenantId && i.masterIngredientId === master.id)
-      if (!item) item = await api.post<{ id: string; tenantId: string }>('/inventory/from-master', { masterIngredientId: master.id }, { tenantId })
-      return api.patch(`/inventory/${item!.id}`, { supplierId }, { tenantId })
-    },
+    mutationFn: ({ tenantId, supplierId }: { tenantId: string; supplierId: string | null }) => assign(tenantId, supplierId),
     onMutate: () => setErr(''),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['inventory'] }) },
+    onError: (e) => setErr(stockErrorText(e)),
+  })
+  const create = useMutation({
+    mutationFn: async (a: { tenantId: string; name: string; phone: string }) => {
+      const sup = await api.post<{ id: string }>('/procurement/suppliers', { name: a.name.trim(), phone: a.phone.trim() || undefined, tenantId: a.tenantId }, { tenantId: a.tenantId })
+      await assign(a.tenantId, sup.id)
+    },
+    onMutate: () => setErr(''),
+    onSuccess: () => {
+      setAdding(null)
+      void qc.invalidateQueries({ queryKey: ['inventory'] })
+      void qc.invalidateQueries({ queryKey: ['procurement', 'suppliers'] })
+    },
     onError: (e) => setErr(stockErrorText(e)),
   })
   if (companies.length === 0) return null
   return (
     <div className="border-t border-s-border pt-3 space-y-2">
       <p className="text-sm font-semibold text-s-text">Supplier</p>
-      <p className="text-xs text-s-muted">Who each company buys it from. Suppliers are each company&rsquo;s own.</p>
+      <p className="text-xs text-s-muted">Who each company buys it from. Pick one, or add a new supplier right here — it is saved straight away.</p>
       {companies.map((c) => {
         const item = items.find((i) => i.tenantId === c.id && i.masterIngredientId === master.id)
         const mine = suppliers.filter((s) => s.tenantId === c.id)
+        const isAdding = adding?.tenantId === c.id
         return (
-          <label key={c.id} className="flex items-center gap-3 text-sm">
-            <span className="w-28 shrink-0 truncate text-s-muted">{c.name}</span>
-            <select value={item?.supplierId ?? ''} disabled={set.isPending}
-              onChange={(e) => set.mutate({ tenantId: c.id, supplierId: e.target.value || null })}
-              className="s-input flex-1">
-              <option value="">{mine.length ? '— no supplier —' : 'No suppliers in this company yet'}</option>
-              {mine.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </label>
+          <div key={c.id} className="space-y-1.5">
+            <label className="flex items-center gap-3 text-sm">
+              <span className="w-28 shrink-0 truncate text-s-muted">{c.name}</span>
+              <select value={isAdding ? '__new' : (item?.supplierId ?? '')} disabled={set.isPending || create.isPending}
+                onChange={(e) => {
+                  if (e.target.value === '__new') { setAdding({ tenantId: c.id, name: '', phone: '' }); return }
+                  if (isAdding) setAdding(null)
+                  set.mutate({ tenantId: c.id, supplierId: e.target.value || null })
+                }}
+                className="s-input flex-1">
+                <option value="">— no supplier —</option>
+                {mine.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                <option value="__new">+ New supplier…</option>
+              </select>
+            </label>
+            {isAdding && adding && (
+              <div className="ml-0 sm:ml-[7.75rem] flex flex-wrap items-center gap-2">
+                <input autoFocus value={adding.name} onChange={(e) => setAdding({ ...adding, name: e.target.value })}
+                  placeholder="Supplier name" aria-label={`New supplier for ${c.name}`} className="s-input w-auto flex-1 min-w-[9rem]"
+                  onKeyDown={(e) => { if (e.key === 'Enter' && adding.name.trim()) { e.preventDefault(); create.mutate(adding) } if (e.key === 'Escape') setAdding(null) }} />
+                <input value={adding.phone} onChange={(e) => setAdding({ ...adding, phone: e.target.value })}
+                  placeholder="Phone (optional)" inputMode="tel" aria-label="Supplier phone" className="s-input w-auto min-w-[8rem]" />
+                <Button size="sm" disabled={!adding.name.trim() || create.isPending} onClick={() => create.mutate(adding)}>
+                  {create.isPending ? 'Adding…' : 'Add'}
+                </Button>
+                <button type="button" className="text-xs text-s-muted hover:underline" onClick={() => setAdding(null)}>Cancel</button>
+              </div>
+            )}
+          </div>
         )
       })}
       {err && <p role="alert" className="text-xs text-s-red">{err}</p>}
