@@ -806,6 +806,16 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   const [expectedDate, setExpectedDate] = useState(initial?.expectedDate ?? '')
   const [notes, setNotes] = useState(initial?.notes ?? '')
   const [lines, setLines] = useState(initial?.lines.length ? initial.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
+  // "+ New supplier…" right in the PO (owner, 2026-11-03: create the supplier from here, not another tab).
+  const [newSupplier, setNewSupplier] = useState<{ name: string; phone: string } | null>(null)
+  const addSupplier = useMutation({
+    mutationFn: () => api.post<Supplier>('/procurement/suppliers', { name: newSupplier!.name.trim(), phone: newSupplier!.phone.trim() || undefined }),
+    onSuccess: (sup) => {
+      qc.setQueryData<Supplier[]>(['procurement', 'suppliers'], (prev = []) => [...prev.filter((x) => x.id !== sup.id), sup])
+      void qc.invalidateQueries({ queryKey: ['procurement', 'suppliers'] })
+      setSupplierId(sup.id); setNewSupplier(null)
+    },
+  })
 
   // Editing a draft PATCHes it (its brand is kept); otherwise a new draft is created.
   const mut = useMutation({
@@ -856,11 +866,29 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Field label="Supplier" required error={tried && !supplierId ? 'Choose a supplier.' : null}>
-          <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fi}>
-            <option value="">Select supplier</option>
+          <Select value={newSupplier ? '__new' : supplierId} onChange={(e) => {
+            if (e.target.value === '__new') { setNewSupplier({ name: '', phone: '' }); return }
+            setNewSupplier(null); setSupplierId(e.target.value)
+          }} className={fi}>
+            <option value="">{suppliers.length ? 'Select supplier' : 'No suppliers yet — add one'}</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            <option value="__new">+ New supplier…</option>
           </Select>
         </Field>
+        {newSupplier && (
+          <div className="col-span-2 sm:col-span-4 flex flex-wrap items-center gap-2 rounded-lg border border-s-border p-2">
+            <Input autoFocus value={newSupplier.name} onChange={(e) => setNewSupplier({ ...newSupplier, name: e.target.value })}
+              placeholder="Supplier name" aria-label="New supplier name" className="s-input w-auto flex-1 min-w-[9rem]"
+              onKeyDown={(e) => { if (e.key === 'Enter' && newSupplier.name.trim()) { e.preventDefault(); addSupplier.mutate() } if (e.key === 'Escape') setNewSupplier(null) }} />
+            <Input value={newSupplier.phone} onChange={(e) => setNewSupplier({ ...newSupplier, phone: e.target.value })}
+              placeholder="Phone (optional)" inputMode="tel" aria-label="New supplier phone" className="s-input w-auto min-w-[8rem]" />
+            <Button type="button" size="sm" disabled={!newSupplier.name.trim() || addSupplier.isPending} onClick={() => addSupplier.mutate()}>
+              {addSupplier.isPending ? 'Adding…' : 'Add supplier'}
+            </Button>
+            <LinkButton tone="muted" type="button" onClick={() => setNewSupplier(null)}>Cancel</LinkButton>
+            {addSupplier.isError && <p role="alert" className="w-full text-xs text-s-red">{(addSupplier.error as Error)?.message ?? 'Could not add the supplier.'}</p>}
+          </div>
+        )}
         <Field label="Expected delivery">
           <Input type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} className={fi} />
         </Field>

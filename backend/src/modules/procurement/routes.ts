@@ -306,7 +306,9 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       })
     }
     // Finance reads every supplier of its companies (AP), as the buyer does.
-    const isManager = ['admin', 'manager', 'management', 'foh_management', 'boh_management', 'procurement', 'finance'].includes(user.role)
+    // Everyone who may raise a PO sees the suppliers (owner, 2026-11-03: the F&B manager and co-owners saw an empty
+    // supplier list on New PO, as only suppliers ASSIGNED to them were listed).
+    const isManager = ([...PROCUREMENT_TEAM, 'finance'] as string[]).includes(user.role)
     const tenantWhere = await supplierScopeWhere(req, 'read')
     // System suppliers ('Cash purchases') are never listed.
     const scopeWhere = isManager
