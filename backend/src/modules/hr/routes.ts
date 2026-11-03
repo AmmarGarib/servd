@@ -1242,8 +1242,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
   fastify.post('/org/units', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) => {
     const tenantId = activeTenant(req)
     const body = z.object({ kind: z.enum(ORG_UNIT_KINDS), name: z.string().min(1).max(120), code: z.string().max(40).optional(), parentId: z.string().uuid().nullable().optional() }).parse(req.body)
-    const exists = await prisma.hrOrgUnit.findFirst({ where: { tenantId, kind: body.kind, name: body.name.trim() } })
-    if (exists) throw new AppError('DUPLICATE', `"${body.name}" already exists`, 409)
+    const exists = await prisma.hrOrgUnit.findFirst({ where: { tenantId, kind: body.kind, name: { equals: body.name.trim(), mode: 'insensitive' } } })
+    if (exists) throw new AppError('DUPLICATE', exists.isActive
+      ? `"${body.name.trim()}" already exists — use Edit on it to change its name or code`
+      : `"${body.name.trim()}" already exists but is deactivated — Reactivate it, then use Edit to change its code`, 409)
     const unit = await prisma.hrOrgUnit.create({ data: { tenantId, kind: body.kind, name: body.name.trim(), code: body.code || null, parentId: body.parentId ?? null } })
     return reply.status(201).send(unit)
   })
@@ -1252,7 +1254,14 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const body = z.object({ name: z.string().min(1).max(120).optional(), code: z.string().max(40).nullable().optional(), isActive: z.boolean().optional() }).parse(req.body)
     const unit = await prisma.hrOrgUnit.findFirst({ where: { id: req.params.id, ...writeTenants(req) } })
     if (!unit) throw new NotFoundError('Org unit', req.params.id)
-    return prisma.hrOrgUnit.update({ where: { id: unit.id }, data: body })
+    // A rename onto another unit's name is a clear 409, never a unique-key 500.
+    const name = body.name?.trim()
+    if (name && name.toLowerCase() !== unit.name.toLowerCase()
+      && await prisma.hrOrgUnit.findFirst({ where: { tenantId: unit.tenantId, kind: unit.kind, name: { equals: name, mode: 'insensitive' }, NOT: { id: unit.id } } })) {
+      throw new AppError('DUPLICATE', `"${name}" already exists`, 409)
+    }
+    const code = body.code === undefined ? undefined : (body.code?.trim() || null)
+    return prisma.hrOrgUnit.update({ where: { id: unit.id }, data: { ...(name && { name }), ...(code !== undefined && { code }), ...(body.isActive !== undefined && { isActive: body.isActive }) } })
   })
 
   // Departments are written HERE only (item 76): Workforce → Positions reads

@@ -142,7 +142,7 @@ function UnitsPanel({ kind, units }: { kind: string; units: Unit[] }) {
       <ul className="space-y-1 mb-3">
         {units.map((u) => (
           <UnitRow key={u.id} u={u}
-            onRename={(n) => patch.mutate({ id: u.id, body: { name: n } })}
+            onRename={(n, c) => patch.mutate({ id: u.id, body: { name: n, code: c || null } })}
             onToggle={() => patch.mutate({ id: u.id, body: { isActive: !u.isActive } })} />
         ))}
       </ul>
@@ -156,10 +156,12 @@ function UnitsPanel({ kind, units }: { kind: string; units: Unit[] }) {
   )
 }
 
-function UnitRow({ u, onRename, onToggle }: { u: Unit; onRename: (name: string) => void; onToggle: () => void }) {
+function UnitRow({ u, onRename, onToggle }: { u: Unit; onRename: (name: string, code: string) => void; onToggle: () => void }) {
   const confirm = useConfirm()
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(u.name)
+  // The code is edited with the name (HR, 2026-11-03: "I want to edit the code, but the system only allows me to edit the name").
+  const [code, setCode] = useState(u.code ?? '')
   const toggle = async () => {
     if (u.isActive) {
       const ok = await confirm({ title: `Deactivate "${u.name}"?`, body: 'It is hidden from new forms; past records keep it. You can reactivate it.', confirmLabel: 'Deactivate', danger: true })
@@ -167,22 +169,29 @@ function UnitRow({ u, onRename, onToggle }: { u: Unit; onRename: (name: string) 
     }
     onToggle()
   }
+  const save = () => { if (!name.trim()) return; onRename(name.trim(), code.trim()); setEditing(false) }
+  const cancel = () => { setName(u.name); setCode(u.code ?? ''); setEditing(false) }
   return (
     <li className="flex items-center gap-2 text-sm">
       {editing ? (
         <>
           <input className={inp} value={name} onChange={(e) => setName(e.target.value)} autoFocus aria-label="Name"
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && name.trim()) { onRename(name.trim()); setEditing(false) }
-              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setName(u.name); setEditing(false) }
+              if (e.key === 'Enter') save()
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel() }
             }} />
-          <button className="text-xs text-primary-ink font-bold px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={!name.trim()} onClick={() => { onRename(name.trim()); setEditing(false) }}>Save</button>
-          <button className={SMALL_BTN} onClick={() => { setName(u.name); setEditing(false) }}>Cancel</button>
+          <input className={`${inp} max-w-[110px]`} value={code} onChange={(e) => setCode(e.target.value)} aria-label="Code" placeholder="Code"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') save()
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel() }
+            }} />
+          <button className="text-xs text-primary-ink font-bold px-2 py-2 [@media(pointer:coarse)]:min-h-[44px]" disabled={!name.trim()} onClick={save}>Save</button>
+          <button className={SMALL_BTN} onClick={cancel}>Cancel</button>
         </>
       ) : (
         <>
           <span className={`flex-1 ${u.isActive ? 'text-white/80' : 'text-white/30 line-through'}`}>{u.name}{u.code && <span className="text-white/35"> · {u.code}</span>}</span>
-          <button className={SMALL_BTN} onClick={() => { setName(u.name); setEditing(true) }}>Rename</button>
+          <button className={SMALL_BTN} onClick={() => { setName(u.name); setCode(u.code ?? ''); setEditing(true) }}>Edit</button>
           <button className={SMALL_BTN} onClick={() => void toggle()}>{u.isActive ? 'Deactivate' : 'Reactivate'}</button>
         </>
       )}
