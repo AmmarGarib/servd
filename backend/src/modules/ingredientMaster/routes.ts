@@ -49,6 +49,7 @@ import { audit } from '../../lib/audit.js'
 import { ensureFifoReady, lockItemsTx } from '../../lib/stockLedger.js'
 import { cleanIngredientName, factorForItemUnit, findOrCreateMasterTx, normalizeIngredientName, sameUnitFamily, unitFamily } from '../../lib/ingredientMaster.js'
 import { moveItemLotsToCategoryTx, costsHiddenFor } from '../inventory/routes.js'
+import { ingredientMasterCleanupRoutes } from './cleanup.js'
 import { AVERAGE_DAYS, displayUnitOf, masterPriceHistory, masterPricesMany, type MasterPrice } from '../../lib/ingredientPrices.js'
 
 /** Who fixes a master definition: the recipe editors (POST/PUT /recipes are MANAGERS). */
@@ -125,14 +126,17 @@ async function loadLive(id: string): Promise<MasterDb> {
 }
 
 export async function ingredientMasterRoutes(fastify: FastifyInstance) {
+  // The CEO's clean-up of the old mastersheet (cleanup.ts).
+  await fastify.register(ingredientMasterCleanupRoutes)
   const readers = { preHandler: [requireAuth(...ALL_STAFF), requireModule(...READ_MODULES)] }
 
   fastify.get<{ Querystring: { q?: string; status?: string; limit?: string } }>('/', readers, async (req) => {
     const q = normalizeIngredientName(req.query.q ?? '')
-    const status = req.query.status === 'needs_review' || req.query.status === 'approved' ? req.query.status : undefined
+    const status = req.query.status === 'needs_review' || req.query.status === 'approved' || req.query.status === 'retired' ? req.query.status : undefined
     const limit = Math.min(Math.max(parseInt(req.query.limit ?? '30', 10) || 30, 1), 500)
     const rows = await prisma.ingredientMaster.findMany({
-      where: { mergedIntoId: null, ...(status ? { status } : {}), ...(q ? { normalizedName: { contains: q } } : {}) },
+      // Removed by the clean-up (status 'retired', cleanup.ts) never shows unless asked for.
+      where: { mergedIntoId: null, ...(status ? { status } : { status: { not: 'retired' } }), ...(q ? { normalizedName: { contains: q } } : {}) },
       orderBy: [{ name: 'asc' }],
       take: limit,
     })

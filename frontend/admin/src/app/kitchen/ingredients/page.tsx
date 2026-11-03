@@ -52,14 +52,16 @@ export default function IngredientsPage() {
   const canPrice = canEdit || role === 'procurement'
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [tab, setTab] = useState<'all' | 'needs_review'>('all')
+  const [tab, setTab] = useState<'all' | 'needs_review' | 'retired'>('all')
+  const isCeo = role === 'admin'
+  const [cleaning, setCleaning] = useState(false)
   const [open, setOpen] = useState<MasterRow | null>(null)
   const [adding, setAdding] = useState(false)
   useEffect(() => { const t = setTimeout(() => setDebounced(q.trim()), 250); return () => clearTimeout(t) }, [q])
 
   const { data: rows = [], isLoading } = useQuery<MasterRow[]>({
     queryKey: ['ingredient-master', 'page', debounced, tab],
-    queryFn: () => api.get<MasterRow[]>(`/ingredient-master?limit=500${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}${tab === 'needs_review' ? '&status=needs_review' : ''}`),
+    queryFn: () => api.get<MasterRow[]>(`/ingredient-master?limit=500${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}${tab === 'needs_review' ? '&status=needs_review' : tab === 'retired' ? '&status=retired' : ''}`),
   })
   const pricesShown = rows.some((r) => r.price != null)
   const listKey = ['ingredient-master', 'page', debounced, tab]
@@ -89,17 +91,20 @@ export default function IngredientsPage() {
           <h1 className="text-xl font-bold text-s-text">Ingredients</h1>
           <p className="text-xs text-s-muted">servd&rsquo;s ingredients and their prices. Recipes are costed at the latest price paid anywhere in servd; the 90-day average is beside it. Stock in and out is on <Link href="/inventory" className="text-primary-ink underline">Inventory</Link>.</p>
         </div>
-        {canEdit && <Button onClick={() => setAdding(true)}>Add ingredient</Button>}
+        <div className="flex flex-wrap gap-2">
+          {isCeo && <Button variant="secondary" onClick={() => setCleaning(true)}>Clean up old sheet</Button>}
+          {canEdit && <Button onClick={() => setAdding(true)}>Add ingredient</Button>}
+        </div>
       </header>
 
       <div className="p-6 max-w-6xl mx-auto space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ingredients…" className="s-input w-auto min-w-[16rem]" aria-label="Search ingredients" />
           <div role="tablist" className="flex gap-1 text-sm">
-            {(['all', 'needs_review'] as const).map((t) => (
+            {(isCeo ? ['all', 'needs_review', 'retired'] as const : ['all', 'needs_review'] as const).map((t) => (
               <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
                 className={`px-3 py-1.5 border-b-2 ${tab === t ? 'border-accent font-semibold text-s-text' : 'border-transparent text-s-muted'}`}>
-                {t === 'all' ? 'All' : 'Needs review'}
+                {t === 'all' ? 'All' : t === 'needs_review' ? 'Needs review' : 'Removed'}
               </button>
             ))}
           </div>
@@ -171,7 +176,9 @@ export default function IngredientsPage() {
                     <InlineText value={m.spec ?? ''} label={`Spec of ${m.name}`} placeholder="—" disabled={!canEdit} onSave={cell(m, 'spec')} />
                   </td>
                   <td className="px-1 py-1 text-right">
-                    <button type="button" onClick={() => setOpen(m)} className="text-xs font-semibold text-primary-ink hover:underline px-1 py-1.5 whitespace-nowrap">Details</button>
+                    {tab === 'retired'
+                      ? <RestoreButton id={m.id} />
+                      : <button type="button" onClick={() => setOpen(m)} className="text-xs font-semibold text-primary-ink hover:underline px-1 py-1.5 whitespace-nowrap">Details</button>}
                   </td>
                 </tr>
               ))}
@@ -184,7 +191,72 @@ export default function IngredientsPage() {
 
       {open && <Editor master={open} canEdit={canEdit} canPrice={canPrice} isReviewer={isReviewer} onClose={() => setOpen(null)} onPriced={(saved) => setOpen({ ...open, ...saved })} />}
       {adding && <AddDialog onClose={() => setAdding(false)} />}
+      {cleaning && <CleanupDialog onClose={() => setCleaning(false)} />}
     </div>
+  )
+}
+
+/** Put a removed ingredient back on the sheet (CEO). */
+function RestoreButton({ id }: { id: string }) {
+  const qc = useQueryClient()
+  const m = useMutation({
+    mutationFn: () => api.post(`/ingredient-master/${id}/restore`, {}),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ingredient-master'] }),
+  })
+  return (
+    <button type="button" disabled={m.isPending} onClick={() => m.mutate()}
+      className="text-xs font-semibold text-primary-ink hover:underline px-1 py-1.5 whitespace-nowrap disabled:opacity-50">
+      {m.isPending ? 'Restoring…' : 'Restore'}
+    </button>
+  )
+}
+
+/**
+ * The CEO's clean-up of the old seasonal mastersheet (owner, 2026-11-03): removes every ingredient that is in no
+ * recipe, was not typed in by a person and has no typed price (and nothing bought or in stock). Preview first;
+ * removed ones go to the Removed tab and can be restored.
+ */
+function CleanupDialog({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const preview = useQuery<{ toRemove: Array<{ id: string; name: string; stockUnit: string }>; kept: Record<string, number>; counts: { total: number; toRemove: number; kept: number } }>({
+    queryKey: ['ingredient-master', 'cleanup'],
+    queryFn: () => api.get('/ingredient-master/cleanup'),
+  })
+  const run = useMutation({
+    mutationFn: () => api.post<{ counts: { removed: number; skipped: number } }>('/ingredient-master/cleanup', { ids: (preview.data?.toRemove ?? []).map((r) => r.id) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['ingredient-master'] }),
+  })
+  const d = preview.data
+  return (
+    <Dialog title="Clean up the old mastersheet" onClose={onClose} wide>
+      {preview.isLoading && <p className="text-sm text-s-muted">Checking every ingredient…</p>}
+      {preview.isError && <ErrorBanner message={stockErrorText(preview.error)} />}
+      {d && !run.data && (
+        <div className="space-y-3 text-sm">
+          <p className="text-s-text">
+            <strong>{d.counts.toRemove}</strong> of {d.counts.total} ingredients are in no recipe, were not added by hand, have no typed price, and were never bought or stocked. They will be removed.
+          </p>
+          <p className="text-xs text-s-muted">
+            Kept: {Object.entries(d.kept).map(([k, n]) => `${k.toLowerCase()} ${n}`).join(' · ') || 'none'}. Removed ones move to the Removed tab and can be restored; nothing is deleted.
+          </p>
+          <ul className="max-h-72 overflow-y-auto rounded-lg border border-s-border divide-y divide-s-border text-xs">
+            {d.toRemove.map((r) => <li key={r.id} className="px-3 py-1.5 text-s-text">{r.name} <span className="text-s-muted">({r.stockUnit})</span></li>)}
+            {d.toRemove.length === 0 && <li className="px-3 py-3 text-s-muted">Nothing to remove.</li>}
+          </ul>
+        </div>
+      )}
+      {run.data && (
+        <p className="text-sm text-s-text">Removed {run.data.counts.removed}{run.data.counts.skipped ? `; ${run.data.counts.skipped} kept (they changed while running)` : ''}.</p>
+      )}
+      {run.isError && <ErrorBanner message={stockErrorText(run.error)} />}
+      <DialogFooter onCancel={onClose}>
+        {!run.data && (
+          <Button disabled={!d || d.counts.toRemove === 0 || run.isPending} onClick={() => run.mutate()}>
+            {run.isPending ? 'Removing…' : `Remove ${d?.counts.toRemove ?? ''}`}
+          </Button>
+        )}
+      </DialogFooter>
+    </Dialog>
   )
 }
 
