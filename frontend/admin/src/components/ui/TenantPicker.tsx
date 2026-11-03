@@ -114,6 +114,42 @@ export function TenantField({
 }
 
 /**
+ * Several companies at once (owner, 2026-11-03: "allow me to pick multiple companies … just need it in operations
+ * stuff"). Tick boxes for a CREATE of an operations setup record (supplier, stock item…): the form saves one copy per
+ * ticked company, each its own row in its own company. Never for a money / finance entry, which lives in one company.
+ */
+export function CompanyTicks({ tenants, value, onChange, label = 'Companies', className, required = true }: {
+  tenants: Array<{ id: string; name: string }>
+  value: string[]
+  onChange: (ids: string[]) => void
+  label?: string
+  className?: string
+  required?: boolean
+}) {
+  return (
+    <fieldset className={className}>
+      <legend className="mb-1 text-[11px] font-bold uppercase tracking-wider text-s-muted">
+        {label}{required && <span className="text-red-700"> *</span>}
+        <span className="ml-2 normal-case tracking-normal font-normal text-s-muted/70">{required ? 'tick one or more — each gets its own copy' : 'optional — each gets its own copy'}</span>
+      </legend>
+      <div className="flex flex-wrap gap-2">
+        {tenants.map((t) => {
+          const on = value.includes(t.id)
+          return (
+            <label key={t.id}
+              className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${on ? 'border-primary bg-primary/10 text-s-text' : 'border-s-border text-s-muted'}`}>
+              <input type="checkbox" checked={on} className="h-4 w-4"
+                onChange={() => onChange(on ? value.filter((x) => x !== t.id) : [...value, t.id])} />
+              {t.name}
+            </label>
+          )
+        })}
+      </div>
+    </fieldset>
+  )
+}
+
+/**
  * Indigo brand chip — drop on a list row in portfolio view so the operator
  * sees which company each item belongs to. Falls back to an orange "No
  * company" badge for orphan rows (tenantId null). Stays hidden in single-

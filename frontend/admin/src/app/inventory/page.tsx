@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { api, ApiError } from '../../lib/api'
 import { todayPktIso } from '../../lib/money'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
-import { TenantChip, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
+import { CompanyTicks, TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
 import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
 import { useKitchenView, useStockActions } from './kitchenView'
 import { canOpenPath } from '../../lib/moduleCatalog'
@@ -169,6 +169,8 @@ export default function InventoryPage() {
   // A panel's Save was pressed once: show what is missing next to each field.
   const [tried, setTried] = useState(false)
   const [addForm, setAddForm] = useState({ name: '', unit: 'kg', parLevel: '', category: '', notes: '', tenantId: '' })
+  // Several companies at once (owner, 2026-11-03): one stock item per ticked company.
+  const [addTenantIds, setAddTenantIds] = useState<string[]>([])
   const { data: tenants = [] } = useMyTenants()
   const viewAll = useViewAllTenants()
 
@@ -249,18 +251,28 @@ export default function InventoryPage() {
   const siteName = (id: string) => outlets.find((o) => o.id === id)?.name ?? 'Outlet'
 
   const addMutation = useMutation({
-    mutationFn: () => api.post('/inventory', {
-      name: addForm.name,
-      unit: addForm.unit,
-      parLevel: Number(addForm.parLevel),
-      category: addForm.category || null,
-      notes: addForm.notes || undefined,
-      ...(needsCompanyPick && addForm.tenantId ? { tenantId: addForm.tenantId } : {}),
-    }),
+    mutationFn: async () => {
+      const body = {
+        name: addForm.name,
+        unit: addForm.unit,
+        parLevel: Number(addForm.parLevel),
+        category: addForm.category || null,
+        notes: addForm.notes || undefined,
+      }
+      if (!needsCompanyPick) return api.post('/inventory', body)
+      const saved: string[] = []
+      for (const t of addTenantIds) {
+        const name = tenants.find((x) => x.id === t)?.name ?? t
+        try { await api.post('/inventory', { ...body, tenantId: t }, { tenantId: t }); saved.push(name) }
+        catch (e) { throw new Error(`${saved.length ? `Saved in ${saved.join(', ')}. ` : ''}Not saved in ${name}: ${(e as Error).message}`) }
+      }
+      return undefined
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['inventory'] })
       setShowAdd(false)
       setAddForm({ name: '', unit: 'kg', parLevel: '', category: '', notes: '', tenantId: '' })
+      setAddTenantIds([])
     },
   })
 
@@ -518,7 +530,7 @@ export default function InventoryPage() {
               onSubmit={(e) => {
                 e.preventDefault()
                 setTried(true)
-                if (!addForm.name.trim() || addForm.parLevel === '' || (needsCompanyPick && !addForm.tenantId) || addMutation.isPending) return
+                if (!addForm.name.trim() || addForm.parLevel === '' || (needsCompanyPick && addTenantIds.length === 0) || addMutation.isPending) return
                 addMutation.mutate()
               }}>
               <p className="font-bold text-s-text text-sm">Add inventory item</p>
@@ -557,11 +569,9 @@ export default function InventoryPage() {
                 <Link href="/inventory/count" className="text-primary-ink hover:underline">opening count</Link>.
               </p>
               {needsCompanyPick && (
-                <TenantField value={addForm.tenantId} autoDefault={false}
-                  onChange={(id) => setAddForm({ ...addForm, tenantId: id })}
-                  required={!addForm.tenantId} />
+                <CompanyTicks tenants={tenants} value={addTenantIds} onChange={setAddTenantIds} />
               )}
-              {tried && needsCompanyPick && !addForm.tenantId && <p role="alert" className="text-xs text-s-red">Pick the company this item belongs to.</p>}
+              {tried && needsCompanyPick && addTenantIds.length === 0 && <p role="alert" className="text-xs text-s-red">Tick the company (or companies) this item belongs to.</p>}
               <div className="flex gap-2">
                 <button type="submit" disabled={addMutation.isPending}
                   className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90 disabled:opacity-50">

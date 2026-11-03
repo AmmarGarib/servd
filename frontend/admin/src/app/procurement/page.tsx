@@ -1,4 +1,5 @@
 'use client'
+import { CompanyTicks } from '../../components/ui/TenantPicker'
 import { fmtUnitCost, priceSourceLabel } from '../../lib/unitCost'
 import { Button, CheckLabel, FieldLabel, Input, LinkButton } from '@/components/finance/ui'
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -2253,6 +2254,8 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
     // (transfer happens via the Monitor edit drawer's Company dropdown).
     tenantId: supplier?.tenantId ?? (viewAll ? '' : (tenants[0]?.id ?? '')),
   })
+  // A NEW supplier may go to several companies at once (owner, 2026-11-03): one copy each, own bills and balance.
+  const [tenantIds, setTenantIds] = useState<string[]>([])
 
   // Once tenants resolve, default-pick the first one in single-tenant mode so
   // the user doesn't see an empty dropdown on a fresh form.
@@ -2260,7 +2263,8 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
     if (!viewAll && !form.tenantId && tenants[0]) {
       setForm((f) => ({ ...f, tenantId: tenants[0]!.id }))
     }
-  }, [tenants, viewAll, form.tenantId])
+    if (!supplier && !viewAll && tenantIds.length === 0 && tenants[0]) setTenantIds([tenants[0].id])
+  }, [tenants, viewAll, form.tenantId, supplier, tenantIds.length])
 
   const [err, setErr] = useState<string | null>(null)
 
@@ -2281,9 +2285,37 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         defaultWhtSection: form.defaultWhtSection || null,
         ...(form.tenantId ? { tenantId: form.tenantId } : {}),
       }
-      return supplier
-        ? api.patch(`/procurement/suppliers/${supplier.id}`, data)
-        : api.post('/procurement/suppliers', data)
+      if (supplier) {
+        // Editing: save it, then add a copy to any other company ticked under "Also add a copy to" (no opening
+        // balance — that belongs to one company).
+        const tenantId = supplier.tenantId
+        const extras = tenantIds.filter((t) => t !== tenantId)
+        if (extras.length === 0) return api.patch(`/procurement/suppliers/${supplier.id}`, data)
+        return (async () => {
+          await api.patch(`/procurement/suppliers/${supplier.id}`, data)
+          const { tenantId: _own, ...copyBase } = data as typeof data & { tenantId?: string }
+          const copy = { ...copyBase, openingBalanceCents: 0, openingBalanceDate: null }
+          const saved: string[] = []
+          for (const t of extras) {
+            const name = tenants.find((x) => x.id === t)?.name ?? t
+            try { await api.post('/procurement/suppliers', { ...copy, tenantId: t }, { tenantId: t }); saved.push(name) }
+            catch (e) { throw new Error(`Supplier saved${saved.length ? `; copied to ${saved.join(', ')}` : ''}. Not copied to ${name}: ${stockErrorText(e, 'refused')}`) }
+          }
+        })()
+      }
+      // One copy per ticked company, one after another; a refusal names where it saved and where it did not.
+      const targets = tenants.length > 1 ? tenantIds : [form.tenantId].filter(Boolean)
+      if (targets.length <= 1) return api.post('/procurement/suppliers', { ...data, ...(targets[0] ? { tenantId: targets[0] } : {}) }, targets[0] ? { tenantId: targets[0] } : undefined)
+      return (async () => {
+        const saved: string[] = []
+        for (const t of targets) {
+          const name = tenants.find((x) => x.id === t)?.name ?? t
+          try { await api.post('/procurement/suppliers', { ...data, tenantId: t }, { tenantId: t }); saved.push(name) }
+          catch (e) {
+            throw new Error(`${saved.length ? `Saved in ${saved.join(', ')}. ` : ''}Not saved in ${name}: ${stockErrorText(e, 'refused')}`)
+          }
+        }
+      })()
     },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['procurement', 'suppliers'] }); onClose() },
     onError:   (e: unknown) => setErr(stockErrorText(e, 'Failed to save supplier')),
@@ -2292,8 +2324,11 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
   function submit() {
     setErr(null)
     if (!form.name.trim()) return setErr('Supplier name is required.')
-    if (!supplier && tenants.length > 0 && !form.tenantId) {
-      return setErr('Pick which company this supplier is for.')
+    if (!supplier && tenants.length > 1 && tenantIds.length === 0) {
+      return setErr('Tick the company (or companies) this supplier is for.')
+    }
+    if (!supplier && tenants.length > 1 && tenantIds.length > 1 && Number(form.openingBalanceCents || 0) !== 0) {
+      return setErr('An opening balance belongs to one company. Leave it empty here and set it on each company\'s copy afterwards.')
     }
     mut.mutate()
   }
@@ -2313,12 +2348,11 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
             hidden for edits (transfer happens via the Monitor edit drawer to
             keep audit logging on the dedicated transfer surface). */}
         {!supplier && tenants.length > 1 && (
-          <Field label="Company" required>
-            <Select value={form.tenantId} onChange={(e) => setForm({ ...form, tenantId: e.target.value })} className={fi}>
-              {viewAll && <option value="">— pick a company —</option>}
-              {tenants.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </Select>
-          </Field>
+          <CompanyTicks tenants={tenants} value={tenantIds} onChange={setTenantIds} className="col-span-2 sm:col-span-3" />
+        )}
+        {supplier && tenants.filter((t) => t.id !== supplier.tenantId).length > 0 && (
+          <CompanyTicks label="Also add a copy to" required={false} tenants={tenants.filter((t) => t.id !== supplier.tenantId)}
+            value={tenantIds} onChange={setTenantIds} className="col-span-2 sm:col-span-3" />
         )}
         <Field label="Phone">
           <Input type="tel" inputMode="tel" enterKeyHint="next" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={fi} />

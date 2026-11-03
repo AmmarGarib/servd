@@ -188,7 +188,7 @@ function isPortfolioGuarded(path: string, method: string): boolean {
 // Promise-based bridge to the global PortfolioWriteGuardModal. Resolves
 // when the user picks a tenant; rejects when they cancel. Used inside the
 // request fetcher so callers don't need to know the modal exists.
-function awaitPortfolioTenantPick(intent: string): Promise<void> {
+function awaitPortfolioTenantPick(intent: string, multi = false): Promise<void> {
   return new Promise((resolve, reject) => {
     const onResolve = (e: Event) => {
       window.removeEventListener('servd:portfolio-write-resolve', onResolve)
@@ -198,9 +198,24 @@ function awaitPortfolioTenantPick(intent: string): Promise<void> {
     }
     window.addEventListener('servd:portfolio-write-resolve', onResolve)
     window.dispatchEvent(new CustomEvent('servd:portfolio-write-request', {
-      detail: { intent },
+      detail: { intent, multi },
     }))
   })
+}
+
+// Operations setup records the CEO may create in several companies at once (owner, 2026-11-03: "allow me to pick
+// multiple companies everywhere it tells me to pick company … keep multi select out of finance, just need it in
+// operations stuff"). One copy per ticked company, each its own row in its own company. CREATE (POST) only; never a
+// money or finance path.
+const MULTI_COMPANY_PATHS: readonly RegExp[] = [
+  /^\/procurement\/suppliers\/?$/,
+  /^\/inventory\/?$/,
+  /^\/reservations\/guest-tag-types\/?$/,
+  /^\/food-safety\/units\/?$/,
+  /^\/setup\/modifier-templates\/?$/,
+]
+export function isMultiCompanyCreate(path: string, method: string): boolean {
+  return method.toUpperCase() === 'POST' && MULTI_COMPANY_PATHS.some((rx) => rx.test(path.split('?')[0]!))
 }
 
 // Best-effort guess at what the user is doing, for the modal's copy.
@@ -224,6 +239,33 @@ interface RequestExtra {
   tenantId?: string
 }
 
+/**
+ * One copy of a create in each ticked company (isMultiCompanyCreate paths only). Sent one after another, each pinned
+ * with `x-servd-active-tenant`; the first result is returned. A refusal in one company never undoes the others: the
+ * error names where it was saved and where it was not.
+ */
+async function createInEach<T>(path: string, options: RequestInit, tenantIds: string[]): Promise<T> {
+  const results: T[] = []
+  const failed: Array<{ tenantId: string; message: string }> = []
+  for (const tenantId of tenantIds) {
+    try { results.push(await request<T>(path, options, true, { tenantId })) }
+    catch (e) { failed.push({ tenantId, message: e instanceof Error ? e.message : String(e) }) }
+  }
+  if (failed.length > 0) {
+    const names = await companyNames()
+    const saved = tenantIds.filter((t) => !failed.some((f) => f.tenantId === t)).map((t) => names.get(t) ?? t)
+    const why = failed.map((f) => `${names.get(f.tenantId) ?? f.tenantId}: ${f.message}`).join('; ')
+    throw new ApiError(422, 'PARTLY_SAVED', saved.length > 0 ? `Saved in ${saved.join(', ')}. Not saved in ${why}` : `Not saved — ${why}`)
+  }
+  return results[0] as T
+}
+async function companyNames(): Promise<Map<string, string>> {
+  try {
+    const rows = await request<Array<{ id: string; name: string }>>('/tenants/mine')
+    return new Map(rows.map((r) => [r.id, r.name]))
+  } catch { return new Map() }
+}
+
 async function request<T>(path: string, options: RequestInit = {}, retry = true, extra: RequestExtra = {}): Promise<T> {
   const token = getToken()
   const method = (options.method ?? 'GET').toUpperCase()
@@ -237,11 +279,14 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
   // useEnsureTenant; we consume it here and forward as the header.
   let resolvedTenantId = extra.tenantId
   if (isPortfolioGuarded(path, method) && !resolvedTenantId) {
-    await awaitPortfolioTenantPick(describeIntent(method, path))
-    // Side-effect: modal stashed the picked id. Pull + clear so the next
+    const multi = isMultiCompanyCreate(path, method)
+    await awaitPortfolioTenantPick(describeIntent(method, path), multi)
+    // Side-effect: modal stashed the picked id(s). Pull + clear so the next
     // unrelated write doesn't accidentally inherit it.
-    const { consumePickedTenantId } = await import('../hooks/useEnsureTenant')
+    const { consumePickedTenantId, consumePickedTenantIds } = await import('../hooks/useEnsureTenant')
+    const many = consumePickedTenantIds()
     resolvedTenantId = consumePickedTenantId() ?? undefined
+    if (multi && many.length > 1) return createInEach<T>(path, options, many)
   }
 
   // Portfolio mode: when the operator has flipped the sidebar tenant

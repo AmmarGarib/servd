@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { Modal } from './Modal'
-import { onPortfolioWriteRequest, resolvePortfolioWrite, setPickedTenantId } from '../../hooks/useEnsureTenant'
+import { onPortfolioWriteRequest, resolvePortfolioWrite, setPickedTenantId, setPickedTenantIds } from '../../hooks/useEnsureTenant'
 
 interface Tenant {
   id: string
@@ -30,6 +30,9 @@ interface Tenant {
 export function PortfolioWriteGuardModal() {
   const [open, setOpen] = useState(false)
   const [intent, setIntent] = useState<string | undefined>(undefined)
+  // Operations setup records (owner, 2026-11-03): tick several companies, one copy each.
+  const [multi, setMulti] = useState(false)
+  const [ticked, setTicked] = useState<string[]>([])
 
   const { data: tenants = [] } = useQuery<Tenant[]>({
     queryKey: ['my-tenants'],
@@ -49,14 +52,23 @@ export function PortfolioWriteGuardModal() {
   }, [])
 
   useEffect(() => {
-    return onPortfolioWriteRequest((intentText) => {
+    return onPortfolioWriteRequest((intentText, isMulti) => {
       setIntent(intentText)
+      setMulti(!!isMulti)
+      setTicked([])
       setOpen(true)
     })
   }, [])
 
   function pick(id: string) {
     setPickedTenantId(id)
+    setOpen(false)
+    queueMicrotask(() => resolvePortfolioWrite('picked'))
+  }
+
+  function pickTicked() {
+    if (ticked.length === 0) return
+    setPickedTenantIds(ticked)
     setOpen(false)
     queueMicrotask(() => resolvePortfolioWrite('picked'))
   }
@@ -83,14 +95,37 @@ export function PortfolioWriteGuardModal() {
       <p className="text-[10px] font-black uppercase tracking-[0.24em] text-primary-ink">Portfolio mode</p>
       <p className="text-xs text-white/45">
         {intent
-          ? <>You&rsquo;re trying to <strong className="text-white/85">{intent}</strong>. Pick the company it should land in — just this one write, no session switch.</>
+          ? multi
+            ? <>You&rsquo;re trying to <strong className="text-white/85">{intent}</strong>. Tick every company it is for — each gets its own copy.</>
+            : <>You&rsquo;re trying to <strong className="text-white/85">{intent}</strong>. Pick the company it should land in — just this one write, no session switch.</>
           : <>Pick the company this change should land in. You&rsquo;ll stay viewing all companies — only this write goes to the picked one.</>}
       </p>
       <div className="space-y-2">
         {tenants.length === 0 && (
           <p className="text-xs text-white/40 text-center py-6">Loading your companies…</p>
         )}
-        {tenants.map((t) => (
+        {multi && tenants.map((t) => {
+          const on = ticked.includes(t.id)
+          return (
+            <label key={t.id}
+              className="w-full cursor-pointer rounded-xl px-4 py-3 flex items-center gap-3"
+              style={{ background: on ? 'rgb(var(--erp-primary-rgb) / 0.08)' : 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.08)' }}>
+              <input type="checkbox" checked={on} className="h-4 w-4"
+                onChange={() => setTicked((cur) => on ? cur.filter((x) => x !== t.id) : [...cur, t.id])} />
+              <span className="min-w-0 flex-1">
+                <span className="block font-bold text-sm text-white/90 truncate">{t.name}</span>
+                <span className="block text-[11px] text-white/40 mt-0.5">{t.industry ?? 'Restaurant'} · {t.role ?? 'member'}</span>
+              </span>
+            </label>
+          )
+        })}
+        {multi && tenants.length > 0 && (
+          <button type="button" onClick={pickTicked} disabled={ticked.length === 0}
+            className="s-btn-primary w-full rounded-xl px-4 py-2.5 text-sm font-bold disabled:opacity-50">
+            {ticked.length > 1 ? `Save to ${ticked.length} companies` : 'Save'}
+          </button>
+        )}
+        {!multi && tenants.map((t) => (
           <button
             key={t.id}
             type="button"

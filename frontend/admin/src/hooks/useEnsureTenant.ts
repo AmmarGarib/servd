@@ -21,6 +21,8 @@ const GUARD_RESOLVE_EVENT  = 'servd:portfolio-write-resolve'
 interface RequestDetail {
   // Optional context for the modal copy ("Add this brand to…", "Run this campaign as…")
   intent?: string
+  /** Operations setup record (owner, 2026-11-03): the CEO may tick several companies — one copy each. */
+  multi?: boolean
 }
 interface ResolveDetail {
   // 'picked' = user picked a tenant; pickedTenantId() returns the chosen id.
@@ -37,6 +39,17 @@ export function setPickedTenantId(id: string | null): void {
 export function consumePickedTenantId(): string | null {
   const v = _pickedTenantId
   _pickedTenantId = null
+  return v
+}
+// Several companies ticked (multi prompts only): api.ts sends one copy of the write to each.
+let _pickedTenantIds: string[] = []
+export function setPickedTenantIds(ids: string[]): void {
+  _pickedTenantIds = ids
+  _pickedTenantId = ids[0] ?? null
+}
+export function consumePickedTenantIds(): string[] {
+  const v = _pickedTenantIds
+  _pickedTenantIds = []
   return v
 }
 
@@ -63,10 +76,10 @@ export function useEnsureTenant() {
   }
 }
 
-export function onPortfolioWriteRequest(handler: (intent?: string) => void): () => void {
+export function onPortfolioWriteRequest(handler: (intent?: string, multi?: boolean) => void): () => void {
   const wrapped = (e: Event) => {
     const detail = (e as CustomEvent<RequestDetail>).detail
-    handler(detail?.intent)
+    handler(detail?.intent, detail?.multi)
   }
   window.addEventListener(GUARD_REQUEST_EVENT, wrapped)
   return () => window.removeEventListener(GUARD_REQUEST_EVENT, wrapped)
