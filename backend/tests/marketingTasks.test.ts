@@ -134,11 +134,20 @@ describe('a board card is a task of its people', () => {
     expect(ids((await list('designer')).open)).toContain(card)
   })
 
-  it('a lead on the task never approves it; the CEO may', async () => {
-    const r = await call('mkt', 'POST', '/marketing-board/cards', { boardId: boardA, title: `${P} own`, type: 'shoot', deadline: '2026-12-02', resourceIds: [U.lead!.id] })
+  it('the marketing lead approves tasks she is on too (owner, 2026-11-04); others on a task never do', async () => {
+    const r = await call('mkt', 'POST', '/marketing-board/cards', { boardId: boardA, title: `${P} own`, type: 'shoot', deadline: '2026-12-02', ownerId: U.lead!.id, resourceIds: [U.lead!.id, U.designer!.id] })
     const id = r.json().id
     expect((await call('lead', 'POST', `/my-tasks/${id}/done`, { done: true })).statusCode).toBe(200)
-    expect(code(await call('lead', 'POST', `/my-tasks/${id}/approve`, { approved: true }))).toBe('SELF_APPROVAL_BLOCKED')
+    expect(ids((await list('lead')).toApprove)).toContain(id)
+    expect((await call('designer', 'POST', `/my-tasks/${id}/approve`, { approved: true })).statusCode).toBe(403)
+    expect((await call('lead', 'POST', `/my-tasks/${id}/approve`, { approved: true })).statusCode).toBe(200)
+  })
+
+  it('a calendar task\'s creator who is also on it never approves it; the CEO may', async () => {
+    const r = await call('fnb', 'POST', '/calendar', { title: `${P} self`, type: 'task', startDate: '2026-12-07T10:00:00.000Z', assigneeId: U.fnb!.id })
+    const id = r.json().id
+    expect((await call('fnb', 'POST', `/my-tasks/${id}/done`, { done: true })).statusCode).toBe(200)
+    expect(code(await call('fnb', 'POST', `/my-tasks/${id}/approve`, { approved: true }))).toBe('SELF_APPROVAL_BLOCKED')
     expect((await call('ceo', 'POST', `/my-tasks/${id}/approve`, { approved: true })).statusCode).toBe(200)
   })
 })

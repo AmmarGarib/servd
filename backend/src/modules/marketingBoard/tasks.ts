@@ -10,7 +10,7 @@
 //
 // Leadership: a board card → the CEO or a `marketing_lead` holder (the people who move cards). A calendar entry →
 // the CEO, a `marketing_lead` holder, or whoever created it (they set the task). Never your own task (403
-// SELF_APPROVAL_BLOCKED), the CEO excepted. Reopening (approved → open) is the same people.
+// SELF_APPROVAL_BLOCKED), the CEO and the marketing lead excepted (owner, 2026-11-04). Reopening (approved → open) is the same people.
 //
 // Company scope: a person's own tasks across every company they belong to (teamMode 'write'); a task of another
 // company is 404. Interns are admitted (auth/middleware.ts INTERN_ROUTES) and see only their own.
@@ -205,7 +205,7 @@ export async function myTasksRoutes(fastify: FastifyInstance) {
       ...(lead ? {} : { boardId: null, createdById: me }),
     }
     const waiting = su.role === INTERN_ROLE ? [] : await prisma.contentEvent.findMany({ where: waitingWhere, include: TASK_INCLUDE, orderBy: [{ taskDoneAt: 'asc' }], take: 300 })
-    const toApprove = waiting.filter((t) => su.role === 'admin' || !peopleOnTask(t).includes(me))
+    const toApprove = waiting.filter((t) => lead || !peopleOnTask(t).includes(me))
     const names = await namesOf([...active, ...done, ...toApprove])
     return {
       open: active.filter((t) => !t.taskDoneAt).map((t) => taskDto(t, me, names)),
@@ -231,7 +231,7 @@ export async function myTasksRoutes(fastify: FastifyInstance) {
         AND: [
           { OR: [{ boardId: null }, { board: { archivedAt: null } }] },
           // Not your own (a NULL owner must not hide the row — SQL NOT over NULL).
-          ...(su.role === 'admin' ? [] : [{ OR: [{ assigneeId: null }, { assigneeId: { not: me } }] }, { resources: { none: { userId: me } } }]),
+          ...(lead ? [] : [{ OR: [{ assigneeId: null }, { assigneeId: { not: me } }] }, { resources: { none: { userId: me } } }]),
         ],
         ...(lead ? {} : { boardId: null, createdById: me }),
       } }),
@@ -268,7 +268,9 @@ export async function myTasksRoutes(fastify: FastifyInstance) {
       throw new ForbiddenError(t.boardId ? 'Only the marketing lead or the CEO approves a board task' : 'Only the CEO, the marketing lead or whoever set this task approves it')
     }
     const me = req.staffUser!.id
-    if (req.staffUser!.role !== 'admin' && peopleOnTask(t).includes(me)) {
+    // The marketing lead approves tasks she is on too (owner, 2026-11-04: "give access to Anusha to mark this as
+    // complete"); a calendar task's creator who is also on it still needs someone else.
+    if (req.staffUser!.role !== 'admin' && !(await isLead(req)) && peopleOnTask(t).includes(me)) {
       throw new AppError('SELF_APPROVAL_BLOCKED', 'You are on this task — someone else in leadership approves it.', 403)
     }
     if (approved && !t.taskDoneAt) throw new AppError('TASK_NOT_DONE', 'Nobody has marked this task done yet.', 409)
