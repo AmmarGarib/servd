@@ -23,7 +23,7 @@ import { TestCompanyBanner } from './TestCompanyBanner'
 import { LensBanner } from './LensBanner'
 import { SandboxBanner } from '../SandboxBanner'
 import { NotificationBell } from './NotificationBell'
-import { TaskBell, showsTaskBar } from './TaskBell'
+import { TaskBell } from './TaskBell'
 import { NavIcon } from './NavIcon'
 import { QuickJump } from './QuickJump'
 import { checkInOncePerDay } from '../../lib/checkInOnSignIn'
@@ -940,7 +940,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
               </svg>
             </button>
-            {showsTaskBar(user?.role) && <span className={`${FAB} !p-0`}><TaskBell role={user?.role} /></span>}
+            <TaskBell role={user?.role} wrapClass={`${FAB} !p-0`} />
             <span className={`${FAB} !p-0`}><NotificationBell variant="mobile" /></span>
           </div>
         </>

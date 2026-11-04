@@ -1,34 +1,42 @@
 'use client'
 // The top-bar "My tasks" button (owner, 2026-11-04: "the person who is working on the task to be notified through the
 // 'my tasks' bar on the portal. the bar should be next to notification panel only for MARKETING resources"). Shown
-// to marketing, brand-manager and marketing-intern logins only. The badge = tasks still to do + tasks waiting on your
+// to marketing, brand-manager and marketing-intern logins, and to anyone else on a board card (a designer whose
+// login has another role; owner, 2026-11-04). The badge = tasks still to do + tasks waiting on your
 // approval (GET /my-tasks/count, every minute and on focus); the drop-down lists them and opens My tasks.
 import { useRef, useState } from 'react'
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { ListChecks } from 'lucide-react'
 import { api } from '../../lib/api'
+import { usePermissions } from '../../hooks/useCan'
 import { AnchoredMenu } from './AnchoredMenu'
 
 export const TASK_BAR_ROLES = ['marketing', 'brand_manager', 'marketing_intern']
 export const showsTaskBar = (role: string | null | undefined) => !!role && TASK_BAR_ROLES.includes(role)
+/** Anyone else who holds the board (a designer whose login has another role) is checked against their cards. */
+const mayHaveBoardTasks = (role: string | null | undefined, modules: readonly string[] | undefined) =>
+  !!role && role !== 'admin' && !!modules?.includes('marketing_board')
 
 interface TaskLite { id: string; title: string; deadline: string; overdue: boolean; link: string; board: { name: string } | null }
-interface Counts { open: number; awaitingApproval: number; toApprove: number; badge: number }
+interface Counts { open: number; awaitingApproval: number; toApprove: number; badge: number; onBoard?: boolean }
 
 const day = (iso: string) => new Date(iso).toLocaleDateString('en-PK', { day: 'numeric', month: 'short', timeZone: 'Asia/Karachi' })
 
-export function TaskBell({ role, size = 'h-11 w-11', bordered = false }: { role: string | null | undefined; size?: string; bordered?: boolean }) {
-  const show = showsTaskBar(role)
+export function TaskBell({ role, size = 'h-11 w-11', bordered = false, wrapClass }: { role: string | null | undefined; size?: string; bordered?: boolean; wrapClass?: string }) {
+  const { data: perms } = usePermissions()
+  const byRole = showsTaskBar(role)
+  const check = byRole || mayHaveBoardTasks(role, perms?.modules)
   const btn = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const { data: counts } = useQuery<Counts>({
     queryKey: ['my-tasks', 'count'], queryFn: () => api.get('/my-tasks/count'),
-    enabled: show, refetchInterval: 60_000, refetchOnWindowFocus: true, staleTime: 20_000,
+    enabled: check, refetchInterval: 60_000, refetchOnWindowFocus: true, staleTime: 20_000,
   })
   const { data: list } = useQuery<{ open: TaskLite[]; toApprove: TaskLite[] }>({
-    queryKey: ['my-tasks'], queryFn: () => api.get('/my-tasks'), enabled: show && open,
+    queryKey: ['my-tasks'], queryFn: () => api.get('/my-tasks'), enabled: check && open,
   })
+  const show = byRole || (check && !!counts?.onBoard)
   if (!show) return null
   const badge = counts?.badge ?? 0
   const rows = (items: TaskLite[]) => items.slice(0, 6).map((t) => (
@@ -40,7 +48,7 @@ export function TaskBell({ role, size = 'h-11 w-11', bordered = false }: { role:
     </Link>
   ))
   return (
-    <>
+    <span className={wrapClass ?? 'contents'}>
       <button ref={btn} type="button" onClick={() => setOpen((o) => !o)} title="My tasks"
         aria-label={`My tasks${badge ? `, ${badge} waiting` : ''}`} aria-expanded={open} aria-haspopup="menu"
         className={`relative flex ${size} shrink-0 items-center justify-center rounded-lg text-white/50 transition-colors hover:text-white/90`}
@@ -74,6 +82,6 @@ export function TaskBell({ role, size = 'h-11 w-11', bordered = false }: { role:
           </Link>
         </div>
       </AnchoredMenu>
-    </>
+    </span>
   )
 }

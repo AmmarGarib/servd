@@ -165,6 +165,8 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
     async extraRecipients(id) { return hrEmployeeLogin(id) },
   }),
   customer_export: spec(() => '/crm?exports=1'),
+  // tasks.ts rings its own bells (done → approvers, approved / reopened → the people).
+  marketing_task: spec(() => '/me/tasks', { eventless: true }),
 }
 
 /** The inbox, filtered to the type (every login may open it). */
@@ -220,6 +222,10 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       if (!h) return null
       const emp = h.employeeId ? await db.hrEmployee.findFirst({ where: { id: h.employeeId, tenantId: h.tenantId }, select: { fullName: true } }) : null
       return { ref: `${h.section === 'promotion' ? 'Promotion pay' : 'Wage change'}${emp?.fullName ? ` — ${emp.fullName}` : ''}`, amountCents: h.amountCents ?? null, detail: 'New gross monthly salary' }
+    }
+    case 'marketing_task': {
+      const t = await db.contentEvent.findUnique({ where: { id }, select: { title: true } })
+      return t && { ref: `Task: ${t.title}` }
     }
     case 'customer_export': {
       const r = await db.customerExportRequest.findUnique({ where: { id }, select: { kind: true, requestedById: true } })

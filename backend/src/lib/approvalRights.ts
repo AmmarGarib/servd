@@ -109,6 +109,7 @@ export const APPROVAL_TYPES = [
   // Wage changes and guest-list downloads (owner, 2026-10-27).
   'wage_change',           // an HR salary revision / promotion with a new gross, at its last (CEO) step
   'customer_export',       // a download of the guest list with phones / emails a non-CEO asked for
+  'marketing_task',        // a board card / calendar task marked done, waiting for "Approved by leadership" (owner, 2026-11-04)
   // Work locations as map pins (owner, 2026-10-27).
   'work_pin',              // an employee's own work map pin (new or moved) waiting for the CEO
 ] as const
@@ -330,6 +331,14 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // steps) and the CEO gives the FINAL approval. The owner will hand these over later: until then section
     // ceo and never delegable (decideRight refuses every non-CEO on a 'ceo' step — flip both together).
     label: 'Wage changes', section: 'ceo', queueModule: 'staff_hr', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  marketing_task: {
+    // A ContentEvent (board card or calendar entry) marked done, waiting for "Approved by leadership"
+    // (modules/marketingBoard/tasks.ts): POST /my-tasks/:id/approve | /done {done:false} (send back). Per item:
+    // the CEO, a marketing_lead holder (per person), or a calendar entry's creator — never one of its own people
+    // (the CEO excepted). Never handed over. The route's own guard decides; the inbox only lists GET /my-tasks.
+    label: 'Marketing tasks', section: 'marketing', queueModule: 'marketing_board', roles: ['admin', 'marketing', 'brand_manager'], perItem: true,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   customer_export: {
@@ -1169,6 +1178,12 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const status = r.status === 'submitted' ? (atCeo ? 'pending' : 'with_managers') : r.status
       return subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.createdById], viaHeadOfficeId: null, status, submittedAt: r.updatedAt })
     }
+    case 'marketing_task': {
+      const t = await db.contentEvent.findUnique({ where: { id }, select: { tenantId: true, taskDoneAt: true, taskDoneById: true, leadApprovedAt: true } })
+      if (!t?.tenantId) return null
+      const status = t.leadApprovedAt ? 'approved' : t.taskDoneAt ? 'pending' : 'open'
+      return subject({ companyIds: [t.tenantId], ownerTenantId: t.tenantId, submitterIds: [t.taskDoneById], viaHeadOfficeId: null, status, submittedAt: t.taskDoneAt })
+    }
     case 'customer_export': {
       const r = await db.customerExportRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, requestedAt: true, kind: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.requestedAt, kind: r.kind })
@@ -1296,6 +1311,7 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   reservation_overbook: ['pending'],
   wage_change: ['pending'],
   customer_export: ['pending'],
+  marketing_task: ['pending'],
 }
 
 /**

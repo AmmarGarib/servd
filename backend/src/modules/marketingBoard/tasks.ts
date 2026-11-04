@@ -223,7 +223,7 @@ export async function myTasksRoutes(fastify: FastifyInstance) {
     const base = await myTaskWhere(req)
     const su = req.staffUser!
     const lead = su.role === 'admin' || (su.role !== INTERN_ROLE && await isLead(req))
-    const [open, awaiting, toApprove] = await Promise.all([
+    const [open, awaiting, toApprove, onBoard] = await Promise.all([
       prisma.contentEvent.count({ where: { ...base, leadApprovedAt: null, taskDoneAt: null } }),
       prisma.contentEvent.count({ where: { ...base, leadApprovedAt: null, taskDoneAt: { not: null } } }),
       su.role === INTERN_ROLE ? 0 : prisma.contentEvent.count({ where: {
@@ -235,8 +235,11 @@ export async function myTasksRoutes(fastify: FastifyInstance) {
         ],
         ...(lead ? {} : { boardId: null, createdById: me }),
       } }),
+      // On any live board card at all — the top-bar button shows for them whatever their login role (owner,
+      // 2026-11-04: Basit, a graphic designer).
+      prisma.contentEvent.findFirst({ where: { ...base, boardId: { not: null } }, select: { id: true } }),
     ])
-    return { open, awaitingApproval: awaiting, toApprove, badge: open + toApprove }
+    return { open, awaitingApproval: awaiting, toApprove, badge: open + toApprove, onBoard: !!onBoard }
   })
 
   // POST /my-tasks/:id/done {done} — someone on the task, or leadership. Undone only until approved (409 TASK_APPROVED).

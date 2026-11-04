@@ -28,6 +28,7 @@ import { workPins } from '../hr/workPinApprovalProvider.js'
 import { socialConnections } from '../socialConnections/approvalProvider.js'
 import { stationChanges } from '../stations/approvalProvider.js'
 import { reservationOverbooks } from '../reservations/overbookProvider.js'
+import { marketingTasks } from '../marketingBoard/approvalProvider.js'
 import { karachiDay } from '../../connectors/util.js'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -1550,6 +1551,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   reservationOverbooks,
   wageChanges,
   customerExports,
+  marketingTasks,
 ]
 
 export type { ProviderContext }

@@ -96,7 +96,7 @@ describe('a board card is a task of its people', () => {
     expect(sent[0]!.subject).toContain(`${P} reel`)
     expect(ids((await list('designer')).open)).toContain(card)
     expect(ids((await list('intern')).open)).toContain(card)
-    expect((await call('intern', 'GET', '/my-tasks/count')).json()).toMatchObject({ open: 1, badge: 1 })
+    expect((await call('intern', 'GET', '/my-tasks/count')).json()).toMatchObject({ open: 1, badge: 1, onBoard: true })
     expect(ids((await list('mkt')).open)).not.toContain(card)
     expect(INTERN_ROUTES.some((x) => x.path === '/my-tasks/*' && x.method === 'POST')).toBe(true)
   })
@@ -110,6 +110,11 @@ describe('a board card is a task of its people', () => {
     expect(ids((await list('designer')).awaitingApproval)).toContain(card)
     expect(ids((await list('lead')).toApprove)).toContain(card)
     expect((await call('lead', 'GET', '/my-tasks/count')).json()).toMatchObject({ toApprove: 1 })
+    // …and in the approvals inbox, read as the lead through GET /my-tasks (owner, 2026-11-04).
+    const { marketingTasks } = await import('../src/modules/marketingBoard/approvalProvider.js')
+    const items = await marketingTasks.load({ read: async (path: string) => (await call('lead', 'GET', path)).json() } as never)
+    expect(items?.map((i) => i.id)).toContain(card)
+    expect(items?.find((i) => i.id === card)?.actions.map((a) => a.path)).toEqual([`/my-tasks/${card}/approve`, `/my-tasks/${card}/done`])
     expect((await call('designer', 'GET', '/my-tasks/count')).json()).toMatchObject({ open: 0, awaitingApproval: 1, toApprove: 0 })
     expect((await call('intern', 'POST', `/my-tasks/${card}/approve`, { approved: true })).statusCode).toBe(403)
     expect((await call('designer', 'POST', `/my-tasks/${card}/approve`, { approved: true })).statusCode).toBe(403)
@@ -153,6 +158,8 @@ describe('a content-calendar entry is a task of its assignee', () => {
     expect(ids((await list('fnb')).toApprove)).toContain(entry)
     expect((await call('fnb', 'POST', `/my-tasks/${entry}/approve`, { approved: true })).statusCode).toBe(200)
     expect(ids((await list('chef')).done)).toContain(entry)
+    // A calendar task alone never shows the board's task button.
+    expect((await call('chef', 'GET', '/my-tasks/count')).json()).toMatchObject({ onBoard: false })
   })
 
   it('re-assigning emails the new assignee only', async () => {
