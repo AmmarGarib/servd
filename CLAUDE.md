@@ -1475,6 +1475,14 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `subAccounts` show none; old tags stay. Opening a sub-account switches its account on;
   `PUT /setup/chart-of-accounts/:id/sub-accounts-switch {enabled}` (CHART_EDITORS, audit
   `account.sub_accounts_switch`); chart page "Sub-accounts on".
+  **Office wages go to the company's own Wages Expense account (owner, 2026-11-04: "Payroll for October not logged
+  in individual sub account of wages expense" → "2343 Wages Expense — Yes").** `hr/ledger.ts companyWagesExpenseCode`
+  (the ONE live expense account named "Wages Expense" — `WAGES_EXPENSE_NAME` — other than 6032; none or two → 6032)
+  is where `wageAccountFor` puts office / management pay (payroll, F&F, tags); a sub-account finance opened in the
+  employee's name on it is adopted (`ensureEmployeeSubAccountTx`), never duplicated. Runs accrued on 6032 before get
+  ONE move `hr.payroll.wages_reclass:<runId>` (Dr Wages Expense / Cr 6032, tagged per employee; boot step
+  `moveOfficeWagesToWagesExpense`), reversed with the accrual on reopen. Labour % and the brand P&L count the account
+  as wages. Not in the head-office pool (6030–6036). Tests: `tests/payrollWagesExpense.test.ts`.
 - **Trial balance presentation (owner, 2026-10-16):** ONE net balance per
   account — debits − credits in the Debit column when positive, the Credit
   column when negative, never both — and accounts at zero are not listed (a
