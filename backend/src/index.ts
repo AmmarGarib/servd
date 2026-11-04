@@ -172,6 +172,7 @@ import { paymentGatewayRoutes } from './modules/paymentGateways/routes.js'
 import { marketingActivityRoutes } from './modules/marketingActivity/routes.js'
 import { marketingBoardRoutes } from './modules/marketingBoard/routes.js'
 import { marketingTrackerRoutes, marketingProgressRoutes } from './modules/marketingBoard/tracker.js'
+import { myTasksRoutes } from './modules/marketingBoard/tasks.js'
 import { opsReportRoutes } from './modules/opsReports/routes.js'
 import { tenantRoutes } from './modules/tenants/routes.js'
 import { domainRoutes } from './modules/domains/routes.js'
@@ -550,6 +551,7 @@ async function build() {
       await api.register(marketingBoardRoutes,    { prefix: '/marketing-board' })
       await api.register(marketingTrackerRoutes,  { prefix: '/marketing-tracker' })
       await api.register(marketingProgressRoutes, { prefix: '/marketing-progress' })
+      await api.register(myTasksRoutes,           { prefix: '/my-tasks' })
       await api.register(opsReportRoutes,         { prefix: '/ops' })
       await api.register(tenantRoutes,            { prefix: '/tenants' })
       await api.register(domainRoutes,            { prefix: '/domains' })

@@ -9,6 +9,7 @@ import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 import { TRASH_MARKETING } from '../trash/providers/masters/marketing.js'
 import { seesBoard } from '../marketingBoard/access.js'
+import { announceTaskAssigned } from '../marketingBoard/tasks.js'
 
 const EVENT_TYPES = ['social_post','menu_change','seasonal_ingredient','deal','shoot','event_promo','reminder','task'] as const
 const EVENT_STATUSES = ['draft','scheduled','live','done','cancelled'] as const
@@ -129,6 +130,8 @@ export async function calendarRoutes(fastify: FastifyInstance) {
         socialPost: true,
       },
     })
+    // On the assignee's task list now: bell + email (owner, 2026-11-04).
+    if (event.assigneeId) announceTaskAssigned(event.id, [event.assigneeId], req.staffUser!.id)
     return reply.status(201).send(event)
   })
 
@@ -147,7 +150,7 @@ export async function calendarRoutes(fastify: FastifyInstance) {
         await assertAssigneeOf(existing.tenantId, body.assigneeId)
       }
 
-      return prisma.contentEvent.update({
+      const updated = await prisma.contentEvent.update({
         where: { id: req.params.id },
         data: {
           title:       body.title,
@@ -168,6 +171,9 @@ export async function calendarRoutes(fastify: FastifyInstance) {
           socialPost: true,
         },
       })
+      // A new assignee: on their task list now — bell + email (owner, 2026-11-04).
+      if (body.assigneeId && body.assigneeId !== existing.assigneeId) announceTaskAssigned(existing.id, [body.assigneeId], req.staffUser!.id)
+      return updated
     },
   )
 

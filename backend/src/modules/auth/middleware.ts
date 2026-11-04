@@ -286,6 +286,10 @@ export const DIRECTOR_ROUTES: ReadonlyArray<{ method: string; path: string }> = 
 export const INTERN_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   ...['GET', 'HEAD', 'POST', 'PATCH', 'PUT'].map((method) => ({ method, path: '/marketing-board/*' })),
   { method: 'GET',  path: '/marketing-progress/*' },
+  // Their own task list (owner, 2026-11-04) — marking done only; approving refuses an intern.
+  { method: 'GET',  path: '/my-tasks' },
+  { method: 'GET',  path: '/my-tasks/*' },
+  { method: 'POST', path: '/my-tasks/*' },
   { method: 'GET',  path: '/permissions/me' },
   { method: 'GET',  path: '/auth/account' },
   { method: 'POST', path: '/auth/refresh' },

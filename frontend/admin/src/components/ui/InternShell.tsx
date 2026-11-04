@@ -18,6 +18,7 @@ import { CompactEmptyState } from './CompactEmptyState'
 
 const LINKS = [
   { href: '/marketing/board', label: 'My cards' },
+  { href: '/me/tasks', label: 'My tasks' },
   { href: '/marketing/progress', label: 'My progress' },
   { href: '/hr/me', label: 'My HR' },
   { href: '/time-clock', label: 'Clock' },

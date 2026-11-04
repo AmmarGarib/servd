@@ -69,6 +69,10 @@ export function cardDto(c: CardRow, now: Date = new Date()) {
       url: f.mediaAsset.url, contentType: f.mediaAsset.contentType, kind: f.mediaAsset.kind,
     })),
     commentCount: c._count.comments,
+    // Task ticks (owner, 2026-11-04; tasks.ts): done by someone on it, then "Approved by leadership".
+    taskStatus: c.leadApprovedAt ? 'done' as const : c.taskDoneAt ? 'awaiting_approval' as const : 'open' as const,
+    taskDoneAt: c.taskDoneAt,
+    leadApprovedAt: c.leadApprovedAt,
     createdBy: c.createdBy,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,

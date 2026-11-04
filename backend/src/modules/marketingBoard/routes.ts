@@ -28,6 +28,7 @@ import { presignMediaUpload } from '../media/routes.js'
 import { BOARD_ROLES, BOARD_STAFF, isIntern, isLead, internCardWhere, assertCompanyMembers } from './access.js'
 import { CARD_INCLUDE, CARD_TYPES, PRIORITIES, STAGES, STAGE_LABEL, cardDto, isRevision, type Stage } from './cards.js'
 import { weeklyReport, weeklyReportTable } from './weekly.js'
+import { announceTaskAssigned } from './tasks.js'
 import { isYmd, mondayOf, pktDay } from './week.js'
 
 // ── Validation ─────────────────────────────────────────────────────────────
@@ -120,6 +121,7 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
 
   // GET /marketing-board/me — what the caller may do here (drives the page).
   fastify.get('/me', anyBoard, async (req) => ({
+    userId: req.staffUser!.id,
     lead: await isLead(req),
     intern: isIntern(req),
     canCreate: !isIntern(req),
@@ -289,6 +291,8 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
       return tx.contentEvent.findUniqueOrThrow({ where: { id: ev.id }, include: CARD_INCLUDE })
     })
     tellAboutCard({ id: created.id, tenantId: board.tenantId, title: created.title }, peopleOnCard(created), req.staffUser!.id, 'You were put on a marketing card', 'assigned:create')
+    // And an email: the card is on their task list now (owner, 2026-11-04).
+    announceTaskAssigned(created.id, peopleOnCard(created), req.staffUser!.id)
     return reply.status(201).send(cardDto(created))
   })
 
@@ -330,7 +334,10 @@ export async function marketingBoardRoutes(fastify: FastifyInstance) {
       if (body.ownerId && body.ownerId !== card.assigneeId) newPeople.push(body.ownerId)
       return tx.contentEvent.findUniqueOrThrow({ where: { id: card.id }, include: CARD_INCLUDE })
     })
-    if (newPeople.length) tellAboutCard(card, newPeople, req.staffUser!.id, 'You were put on a marketing card', `assigned:${Date.now()}`)
+    if (newPeople.length) {
+      tellAboutCard(card, newPeople, req.staffUser!.id, 'You were put on a marketing card', `assigned:${Date.now()}`)
+      announceTaskAssigned(card.id, newPeople, req.staffUser!.id)
+    }
     return cardDto(updated)
   })
 

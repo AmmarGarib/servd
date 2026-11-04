@@ -31,10 +31,12 @@ export interface Card {
   revisionCount: number; outcome: Outcome
   menuItem: { id: string; name: string } | null; promoCode: { id: string; code: string } | null; campaign: { id: string; name: string } | null
   files: CardFile[]; commentCount: number; createdBy: Person | null; createdAt: string; updatedAt: string
+  /** Task ticks (owner, 2026-11-04): done by someone on it, then approved by leadership. */
+  taskStatus: 'open' | 'awaiting_approval' | 'done'; taskDoneAt: string | null; leadApprovedAt: string | null
 }
 export interface Comment { id: string; body: string; createdAt: string; author: Person }
 export interface CardDetail extends Card { comments: Comment[] }
-export interface BoardMe { lead: boolean; intern: boolean; canCreate: boolean; canDelete: boolean; canUndoDelete: boolean }
+export interface BoardMe { userId: string; lead: boolean; intern: boolean; canCreate: boolean; canDelete: boolean; canUndoDelete: boolean }
 
 /** YYYY-MM-DD of an instant in Karachi (PKT = UTC+5). */
 export function pktYmd(iso: string): string {

@@ -321,6 +321,8 @@ export const PERSONAL_PAGES: ModulePage[] = [
   { label: 'Approvals', href: '/ceo/approvals', hint: 'Everything waiting on you' },
   // The bell's full list (owner, 2026-10-16): personal, every login.
   { label: 'Notifications', href: '/me/notifications', hint: 'Approvals, night audit and warnings sent to you' },
+  // Task list (owner, 2026-11-04): board cards and calendar entries you are on; personal, every login.
+  { label: 'My tasks', href: '/me/tasks', hint: 'Cards and calendar entries you are working on' },
   // The Trash: openable by every login without the `trash` module because
   // GET /trash scopes it per type (module + role) and per company.
   { label: 'Trash', href: '/trash', hint: 'Restore deleted items, recover voided ones' },
@@ -430,7 +432,7 @@ export const ALWAYS_OPEN_PREFIXES: readonly string[] = [
 export const DIRECTOR_OPEN_PREFIXES: readonly string[] = ['/director', '/account/password', '/login', '/reset-password']
 
 /** The only pages a marketing intern login opens (owner, 2026-11-03) — the API refuses everything else too. */
-export const INTERN_OPEN_PREFIXES: readonly string[] = ['/marketing/board', '/marketing/progress', '/hr/me', '/time-clock', '/account/password', '/login', '/reset-password']
+export const INTERN_OPEN_PREFIXES: readonly string[] = ['/marketing/board', '/me/tasks', '/marketing/progress', '/hr/me', '/time-clock', '/account/password', '/login', '/reset-password']
 
 /** True for a marketing intern / designer login (owner, 2026-11-03). */
 export function isMarketingIntern(role: string | null | undefined): boolean {

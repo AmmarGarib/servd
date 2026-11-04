@@ -89,6 +89,34 @@ export function CardPanel({ id, me, onClose, onChanged }: { id: string; me: Boar
           )}
         </section>
 
+        {/* Task ticks (owner, 2026-11-04): the people on it tick Done; it leaves their task lists once leadership
+            (the marketing lead or the CEO) ticks Approved by leadership. */}
+        <section aria-label="Task" className="space-y-2 rounded-lg border border-s-border p-3">
+          <h3 className="text-sm font-bold">Task</h3>
+          {(() => {
+            const onIt = card.owner?.id === me.userId || card.resources.some((r) => r.id === me.userId)
+            const done = card.taskStatus !== 'open'
+            const approved = card.taskStatus === 'done'
+            return (
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                <label className={`inline-flex items-center gap-2 font-semibold ${onIt || me.lead ? 'cursor-pointer' : 'text-s-muted'}`}>
+                  <input type="checkbox" className="h-4 w-4" checked={done} disabled={!!busy || approved || !(onIt || me.lead)}
+                    onChange={() => void run('task-done', () => api.post(`/my-tasks/${id}/done`, { done: !done }))} />
+                  Done
+                </label>
+                <label className={`inline-flex items-center gap-2 font-semibold ${me.lead ? 'cursor-pointer' : 'text-s-muted'}`}>
+                  <input type="checkbox" className="h-4 w-4" checked={approved} disabled={!!busy || !me.lead || (!done && !approved)}
+                    onChange={() => void run('task-ok', () => api.post(`/my-tasks/${id}/approve`, { approved: !approved }))} />
+                  Approved by leadership
+                </label>
+                <span className="text-xs text-s-muted">
+                  {approved ? 'Checked off everyone’s list.' : done ? 'Waiting for the marketing lead or the CEO.' : 'On the task lists of the owner and the people working on it.'}
+                </span>
+              </div>
+            )
+          })()}
+        </section>
+
         {/* Content */}
         <section aria-label="Content" className="space-y-3">
           <Field label="Title"><Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} /></Field>

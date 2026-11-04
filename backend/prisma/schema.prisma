@@ -4696,6 +4696,13 @@ model ContentEvent {
   menuItemId     String?
   promoCodeId    String?
   campaignId     String?
+  // Task lists (owner, 2026-11-04): a card or calendar entry is a task of its owner / resources / assignee. It leaves
+  // their list only once someone on it marked it done AND leadership ticked "Approved by leadership"
+  // (modules/marketingBoard/tasks.ts). Plain ids, no FKs.
+  taskDoneAt       DateTime?
+  taskDoneById     String?
+  leadApprovedAt   DateTime?
+  leadApprovedById String?
 
   concept    Concept?               @relation("ConceptCalendar", fields: [conceptId], references: [id], onDelete: SetNull)
   assignee   User?                  @relation("EventAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
@@ -4713,6 +4720,7 @@ model ContentEvent {
   @@index([startDate])
   @@index([conceptId, startDate])
   @@index([tenantId, startDate])
+  @@index([tenantId, leadApprovedAt])
   @@map("content_events")
 }
 

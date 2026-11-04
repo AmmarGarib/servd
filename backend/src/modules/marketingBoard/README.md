@@ -50,3 +50,14 @@ Attendance is read from HR (`hr/service.ts attendanceWithin` + standing attendan
 Bell: `marketing.card` (put on a card, stage move, comment — to the card's owner and resources) and
 `marketing.weekly` (workers/marketingWeekly.ts, Monday). Delete = the `content_event` Trash provider, snapshot with
 resources, comments and file links. Tests: `tests/marketingBoard.test.ts`.
+
+## Task lists (owner, 2026-11-04) — `tasks.ts`, `/my-tasks`
+A card (owner + resources) or a plain content-calendar entry (assignee) IS a task of those people — no task table.
+Put on one → bell + EMAIL (`announceTaskAssigned`, after the commit; cards keep their `marketing.card` bell, calendar
+entries ring `marketing.task`). Two ticks on the row: `taskDoneAt` (someone on it, or leadership; undone freely until
+approved) and `leadApprovedAt` ("Approved by leadership": only after done — 409 `TASK_NOT_DONE`; never on your own
+task — 403 `SELF_APPROVAL_BLOCKED`, the CEO excepted). Leadership = the CEO or a `marketing_lead` holder; for a
+calendar entry also whoever created it. Approved → off everyone's list; reopen (approved false) puts it back as open.
+`GET /my-tasks` = { open, awaitingApproval, done (30 days), toApprove, canApprove } across the caller's companies
+(foreign → 404). Open to every staff login and the intern (INTERN_ROUTES). Admin: `/me/tasks` (My tasks) + the Task
+box on the card panel. Tests: `tests/marketingTasks.test.ts`.

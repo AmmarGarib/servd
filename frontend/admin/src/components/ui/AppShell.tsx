@@ -94,7 +94,7 @@ function wsHome(id: string): string {
 }
 
 const PERSONAL_ICONS: Record<string, string> = {
-  '/team': 'users', '/ceo/approvals': 'check', '/me/notifications': 'bell',
+  '/team': 'users', '/ceo/approvals': 'check', '/me/notifications': 'bell', '/me/tasks': 'check',
   '/trash': 'trash', '/hr/me': 'idcard', '/finance/cash-vouchers': 'cash', '/marketing/progress': 'trend',
 }
 
