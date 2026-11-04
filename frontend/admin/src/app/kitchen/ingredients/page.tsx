@@ -69,7 +69,7 @@ export default function IngredientsPage() {
   const saveCell = useMutation({
     mutationFn: ({ m, field, value }: { m: MasterRow; field: 'name' | 'spec' | 'category' | 'unit' | 'price'; value: string }) =>
       field === 'price'
-        ? api.put<MasterRow>(`/ingredient-master/${m.id}/price`, { priceCents: Math.round(Number(value) * 100) })
+        ? api.put<MasterRow>(`/ingredient-master/${m.id}/price`, { priceCents: priceCentsOf(m, Number(value)) })
         : api.patch<MasterRow>(`/ingredient-master/${m.id}`, { [field]: field === 'category' || field === 'spec' ? (value || null) : value }),
     onMutate: () => setCellError(''),
     onSuccess: (saved) => {
@@ -162,8 +162,8 @@ export default function IngredientsPage() {
                   </td>
                   {pricesShown && (
                     <td className="px-2 py-1 text-right min-w-[11rem]">
-                      <InlinePrice cents={m.price?.latestCents ?? null} unit={m.price?.displayUnit ?? 'kg'} label={`Price of ${m.name}`}
-                        disabled={!canPrice} onSave={cell(m, 'price')} />
+                      <InlinePrice master={m} label={`Price of ${m.name}`} disabled={!canPrice} onSave={cell(m, 'price')} />
+                      <PerUnitNote master={m} />
                     </td>
                   )}
                   {pricesShown && <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap text-s-muted">{priceText(m.price?.averageCents, m.price)}</td>}
@@ -335,6 +335,26 @@ function priceText(cents: number | null | undefined, p: MasterPrice | null | und
   return `PKR ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / ${p.displayUnit}`
 }
 
+/**
+ * The pack an ingredient is bought in (owner, 2026-11-04: "1 packet = 710 rs and each packet has 10 slices"): the
+ * master's "Bought by" + "Stock units in one …" (`purchaseUnitFactor`, in the master's stock unit g / ml / pcs).
+ * When there is one, the price is TYPED per pack and servd stores it per kg / litre / pcs (the server's
+ * displayUnitOf: kg and litre are 1000 base units, pcs 1) — so a recipe's 1 slice costs PKR 71, not 710.
+ */
+interface Pack { unit: string; factor: number; baseUnits: number }
+function packOf(m: MasterRow): Pack | null {
+  const factor = Number(m.purchaseUnitFactor)
+  const unit = (m.purchaseUnit ?? '').trim()
+  if (!unit || !(factor > 0) || factor === 1) return null
+  const d = m.price?.displayUnit ?? ''
+  return { unit, factor, baseUnits: d === 'kg' || d === 'litre' ? 1000 : 1 }
+}
+const packCents = (displayCents: number, p: Pack) => (displayCents / p.baseUnits) * p.factor
+const displayCentsFromPack = (pack: number, p: Pack) => (pack / p.factor) * p.baseUnits
+function packLabel(m: MasterRow, p: Pack): string {
+  return `${p.unit} of ${p.factor.toLocaleString('en-PK', { maximumFractionDigits: 3 })} ${m.stockUnit}`
+}
+
 /** "12 Oct · Karachi Meat · GS Foods" for the latest price. */
 function lastBought(p: MasterPrice | null | undefined): string | null {
   if (!p || p.latestCents == null) return null
@@ -374,10 +394,11 @@ function ServdPriceHistory({ ingredientId }: { ingredientId: string }) {
 /** Type the servd price from the side panel (the phone's way in). */
 function SetPrice({ master, onSaved }: { master: MasterRow; onSaved: (saved: MasterRow) => void }) {
   const qc = useQueryClient()
-  const unit = master.price?.displayUnit ?? 'kg'
+  const pack = packOf(master)
+  const unit = pack ? packLabel(master, pack) : (master.price?.displayUnit ?? 'kg')
   const [v, setV] = useState('')
   const save = useMutation({
-    mutationFn: () => api.put<MasterRow>(`/ingredient-master/${master.id}/price`, { priceCents: Math.round(Number(v) * 100) }),
+    mutationFn: () => api.put<MasterRow>(`/ingredient-master/${master.id}/price`, { priceCents: priceCentsOf(master, Number(v)) }),
     onSuccess: (saved) => { setV(''); onSaved(saved); void qc.invalidateQueries({ queryKey: ['ingredient-master'] }) },
   })
   const ok = Number(v) > 0
@@ -437,10 +458,15 @@ function InlineSelect({ value, onSave, label, disabled, options }: {
   )
 }
 
-function InlinePrice({ cents, unit, onSave, label, disabled }: {
-  cents: number | null; unit: string; onSave: (v: string) => Promise<unknown>; label: string; disabled?: boolean
+function InlinePrice({ master, onSave, label, disabled }: {
+  master: MasterRow; onSave: (v: string) => Promise<unknown>; label: string; disabled?: boolean
 }) {
-  const shown = cents != null ? (cents / 100).toFixed(2) : ''
+  // Bought in a pack: the cell is the PACK price (what is paid); the price per kg / litre / pcs is shown under it.
+  const pack = packOf(master)
+  const cents = master.price?.latestCents ?? null
+  const unit = pack ? pack.unit : (master.price?.displayUnit ?? 'kg')
+  const shownCents = cents == null ? null : pack ? packCents(cents, pack) : cents
+  const shown = shownCents != null ? (shownCents / 100).toFixed(2) : ''
   const c = useCell(shown, onSave)
   return (
     <label className="flex items-center justify-end gap-1 font-mono text-xs whitespace-nowrap">
@@ -456,6 +482,20 @@ function InlinePrice({ cents, unit, onSave, label, disabled }: {
       <span className="text-s-muted">/ {unit}</span>
     </label>
   )
+}
+
+/** A typed price (PKR) → what PUT /ingredient-master/:id/price takes: paisa per kg / litre / pcs. */
+function priceCentsOf(m: MasterRow, pkr: number): number {
+  const pack = packOf(m)
+  const cents = pkr * 100
+  return Math.round(pack ? displayCentsFromPack(cents, pack) : cents)
+}
+
+/** Under a pack price: what one kg / litre / pcs comes to. */
+function PerUnitNote({ master }: { master: MasterRow }) {
+  const pack = packOf(master)
+  if (!pack || master.price?.latestCents == null) return null
+  return <p className="px-1 text-[11px] text-s-muted whitespace-nowrap">{packLabel(master, pack)} · {priceText(master.price.latestCents, master.price)}</p>
 }
 
 /**
