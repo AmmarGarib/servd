@@ -170,14 +170,28 @@ const blankRow = (section: LineSection = 'ingredients'): IngredientRow => ({
 function fmtPkrPerG(cents: number): string { return `PKR ${(cents / 100).toFixed(3)}` }
 function fmtPct(pct: number): string { return `${pct.toFixed(1)}%` }
 
-// Raw inventory cost normalised to cost-per-gram (paisa/g). Items priced per
-// kg/litre divide by 1000; per g/ml are already per-gram; count units (pcs)
-// return 0 here and are costed per-unit by the caller instead.
-function invCostPerGramCents(inv: InventoryItem): number {
-  const u = inv.unit.toLowerCase()
-  if (u === 'kg' || u === 'litres' || u === 'l') return (inv.unitCostCents ?? 0) / 1000
-  if (u === 'g'  || u === 'ml')                  return (inv.unitCostCents ?? 0)
-  return 0
+// The measure a recipe line is written in, from its stock item's unit — the server's rule
+// (backend lib/recipeCost.ts measuresPerPurchaseUnit): items bought by count (pcs, each, dozen…)
+// are written in PIECES, by volume (ml, litres) in ml, everything else in grams.
+type Measure = 'g' | 'ml' | 'pcs'
+const BULK_UNITS  = new Set(['kg', 'kgs', 'kilo', 'kilos', 'kilogram', 'kilograms', 'l', 'lt', 'ltr', 'ltrs', 'litre', 'litres', 'liter', 'liters'])
+const DOZEN_UNITS = new Set(['dozen', 'doz', 'dz'])
+const COUNT_UNITS = new Set(['pcs', 'pc', 'piece', 'pieces', 'unit', 'units', 'each', 'ea', 'no', 'nos', ...DOZEN_UNITS])
+const VOLUME_UNITS = new Set(['ml', 'millilitre', 'millilitres', 'milliliter', 'milliliters', 'l', 'lt', 'ltr', 'ltrs', 'litre', 'litres', 'liter', 'liters'])
+function measureOfUnit(unit: string | null | undefined): Measure {
+  const u = (unit ?? '').trim().toLowerCase()
+  if (COUNT_UNITS.has(u)) return 'pcs'
+  if (VOLUME_UNITS.has(u)) return 'ml'
+  return 'g'
+}
+const MEASURE_LABEL: Record<Measure, string> = { g: 'g', ml: 'ml', pcs: 'pcs' }
+
+// Raw inventory cost per recipe measure (paisa per g / ml / piece): items priced per kg / litre
+// divide by 1000, per dozen by 12, everything else is already per measure.
+function invCostPerMeasureCents(inv: InventoryItem): number {
+  const u = inv.unit.trim().toLowerCase()
+  const per = BULK_UNITS.has(u) ? 1000 : DOZEN_UNITS.has(u) ? 12 : 1
+  return (inv.unitCostCents ?? 0) / per
 }
 
 interface RecipeFormProps {
@@ -399,7 +413,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
         const cpgCents  = prep?.costPerGramCents ?? 0
         const costCents = Math.round(cpgCents * qty)
         return {
-          ...row, inv: null, name: prep?.name ?? '— component —', isCount: false,
+          ...row, inv: null, name: prep?.name ?? '— component —', isCount: false, measure: 'g' as Measure,
           cpgCents, yieldPctApplied: 100, rawUsedG: qty,
           costCents, portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
           allergens: [] as string[],
@@ -407,11 +421,11 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
       }
       const inv = invById.get(row.inventoryItemId)
       if (!inv) {
-        return { ...row, inv: null, name: '—', isCount: false, cpgCents: 0,
+        return { ...row, inv: null, name: '—', isCount: false, measure: 'g' as Measure, cpgCents: 0,
                  yieldPctApplied: 100, rawUsedG: 0, costCents: 0, portionCostCents: 0, allergens: [] as string[] }
       }
-      const u = inv.unit.toLowerCase()
-      const isCount = (u === 'pcs' || u === 'unit' || u === 'each')
+      const measure = measureOfUnit(inv.unit)
+      const isCount = measure === 'pcs'
       // Yield (0–100) raises cost: to get `quantity` usable you buy quantity ÷ yield.
       // Packaging is used whole (saved at yield 1).
       const yieldPct    = row.section === 'packaging' ? 100 : ((row.yieldPctOverride ?? inv.yieldPct) || 100)
@@ -420,10 +434,10 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
       // The server's price for the item (servd's ingredient price) once the preview has answered; the item's own
       // cost until then.
       const served      = serverCpm?.[inv.id]
-      const cpgCents    = served != null ? served : isCount ? (inv.unitCostCents ?? 0) : invCostPerGramCents(inv)
+      const cpgCents    = served != null ? served : invCostPerMeasureCents(inv)
       const costCents   = Math.round((qty * cpgCents) / yieldFactor)
       return {
-        ...row, inv, name: inv.name, isCount, cpgCents, yieldPctApplied: yieldPct,
+        ...row, inv, name: inv.name, isCount, measure, cpgCents, yieldPctApplied: yieldPct,
         rawUsedG: qty / yieldFactor, costCents,
         portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
         allergens: inv.allergens,
@@ -564,9 +578,9 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
               <th className="text-left  px-2 py-2 font-bold">{isPack ? 'Packaging item' : 'Ingredient'}</th>
               {kind === 'modifier' && <th className="text-left px-2 py-2 font-bold">Adds / removes</th>}
               {!isPack && <th className="text-right px-2 py-2 font-bold">Yield %</th>}
-              <th className="text-right px-2 py-2 font-bold">{isPack ? 'Cost / unit' : 'Cost / g'}</th>
-              <th className="text-right px-2 py-2 font-bold">{isPack ? 'Qty' : 'Recipe qty (g)'}</th>
-              {!isPack && <th className="text-right px-2 py-2 font-bold">Raw used (g)</th>}
+              <th className="text-right px-2 py-2 font-bold">Cost / unit</th>
+              <th className="text-right px-2 py-2 font-bold">{isPack ? 'Qty' : 'Recipe qty'}</th>
+              {!isPack && <th className="text-right px-2 py-2 font-bold">Raw used</th>}
               <th className="text-right px-2 py-2 font-bold">Recipe cost</th>
               <th className="text-right px-2 py-2 font-bold">Portion cost</th>
               <th className="w-8"></th>
@@ -648,16 +662,20 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                     </td>
                   )}
                   <td className="px-2 py-1.5 text-right font-mono text-s-muted">
-                    {cr.isCount ? `${fmtPkrWhole(cr.cpgCents)}/u` : fmtPkrPerG(cr.cpgCents)}
+                    {cr.isCount ? `${fmtPkrWhole(cr.cpgCents)}/pcs` : `${fmtPkrPerG(cr.cpgCents)}/${MEASURE_LABEL[cr.measure]}`}
                   </td>
                   <td className="px-2 py-1.5 text-right">
-                    <NumInput value={row.quantity} placeholder="0"
-                      onChange={(v) => updateRow(row.key, { quantity: v })}
-                      className={inputCls + ' w-20 text-right'}/>
+                    {/* The quantity is in the line's own measure: grams, ml, or pieces (1 slice of cheese = 1). */}
+                    <div className="flex items-center justify-end gap-1">
+                      <NumInput value={row.quantity} placeholder="0"
+                        onChange={(v) => updateRow(row.key, { quantity: v })}
+                        className={inputCls + ' w-20 text-right'}/>
+                      <span className="w-6 text-left text-s-muted">{MEASURE_LABEL[cr.measure]}</span>
+                    </div>
                   </td>
                   {!isPack && (
-                    <td className="px-2 py-1.5 text-right font-mono text-s-dim">
-                      {cr.rawUsedG ? cr.rawUsedG.toLocaleString('en', { maximumFractionDigits: 0 }) : '—'}
+                    <td className="px-2 py-1.5 text-right font-mono text-s-dim whitespace-nowrap">
+                      {cr.rawUsedG ? `${cr.rawUsedG.toLocaleString('en', { maximumFractionDigits: cr.isCount ? 2 : 0 })} ${MEASURE_LABEL[cr.measure]}` : '—'}
                     </td>
                   )}
                   <td className="px-2 py-1.5 text-right font-mono font-bold">{fmtPkrWhole(cr.costCents)}</td>
@@ -872,7 +890,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
           {/* Section 2 — Ingredients + costing */}
           <Section title="2 · Ingredients & costing" subtitle={kind === 'modifier'
             ? 'What ONE of this add-on adds to the dish — or takes off it (pick "Removes", e.g. "No onion"). Costed per add-on.'
-            : 'Raw items pull cost from the latest PO; components (sub-recipes) pull their cost-per-gram. Yield raises cost — to get the recipe qty you buy qty ÷ yield.'}>
+            : 'Raw items pull cost from the latest PO; components (sub-recipes) pull their cost-per-gram. Write each quantity in its own unit — grams, ml, or pieces (1 slice = 1). Yield raises cost — to get the recipe qty you buy qty ÷ yield.'}>
             {lineTable('ingredients')}
             <LinkButton type="button" onClick={() => setIngs([...ings, blankRow()])}
               className="mt-2">+ Add ingredient</LinkButton>
