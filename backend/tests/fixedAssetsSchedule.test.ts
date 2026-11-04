@@ -63,13 +63,17 @@ describe('the plan', () => {
     expect(plan[0]!.period).toBe('2025-01')
     expect(plan[35]!.period).toBe('2027-12')
     expect(sumOf(plan)).toBe(100_000)
-    // remaining ÷ remaining months, floored: 2777 or 2778 a month — never drifts, the last month closes it exactly
-    expect(plan[0]!.amountCents).toBe(2777)
-    expect(plan.every((p) => p.amountCents === 2777 || p.amountCents === 2778)).toBe(true)
+    // remaining ÷ remaining months, floored to WHOLE RUPEES (owner, 2026-11-04): PKR 27 or 28 a month — never
+    // drifts, the last month closes it exactly
+    expect(plan[0]!.amountCents).toBe(2700)
+    expect(plan.slice(0, 35).every((p) => p.amountCents === 2700 || p.amountCents === 2800)).toBe(true)
     expect(plan[35]!.amountCents).toBe(100_000 - sumOf(plan.slice(0, 35)))
 
-    const small = planCharges(asset({ costCents: 100, salvageCents: 0, usefulLifeMonths: 3 }), new Map(), [], '2030-01')
-    expect(small.map((p) => p.amountCents)).toEqual([33, 33, 34])
+    const small = planCharges(asset({ costCents: 10_000, salvageCents: 0, usefulLifeMonths: 3 }), new Map(), [], '2030-01')
+    expect(small.map((p) => p.amountCents)).toEqual([3300, 3300, 3400])
+    // Paisa in the cost land in the last month only.
+    const paisa = planCharges(asset({ costCents: 10_050, salvageCents: 0, usefulLifeMonths: 3 }), new Map(), [], '2030-01')
+    expect(paisa.map((p) => p.amountCents)).toEqual([3300, 3300, 3450])
   })
 
   it('full-month convention: the in-service month is charged, the disposal month is not', () => {
@@ -123,13 +127,13 @@ describe('the plan', () => {
   })
 
   it('an impairment acts prospectively', () => {
-    const a = asset({ inServiceAt: pkt('2025-01-10T12:00:00'), costCents: 1200, salvageCents: 0, usefulLifeMonths: 12 })
-    const charged = new Map([['2025-01', 100], ['2025-02', 100], ['2025-03', 100]])
-    const adj: ScheduleAdjustment[] = [{ period: '2025-04', kind: 'impairment', cents: 300 }]
+    const a = asset({ inServiceAt: pkt('2025-01-10T12:00:00'), costCents: 120_000, salvageCents: 0, usefulLifeMonths: 12 })
+    const charged = new Map([['2025-01', 10_000], ['2025-02', 10_000], ['2025-03', 10_000]])
+    const adj: ScheduleAdjustment[] = [{ period: '2025-04', kind: 'impairment', cents: 30_000 }]
     const plan = planCharges(a, charged, adj, '2026-12')
     expect(plan).toHaveLength(9)
-    expect(plan[0]!.amountCents).toBe(66) // 600 left over 9 months
-    expect(sumOf(plan) + 300 + 300).toBe(1200)
+    expect(plan[0]!.amountCents).toBe(6_600) // PKR 600 left over 9 months, whole rupees
+    expect(sumOf(plan) + 30_000 + 30_000).toBe(120_000)
   })
 
   it('a change of estimate acts prospectively (the row carries the new life and salvage)', () => {
@@ -142,22 +146,22 @@ describe('the plan', () => {
 
   it('a partial out (half a pool layer written off) re-spreads what remains', () => {
     // 10 units, 1000, 10 months; 2 months charged (200); 5 units out: cost 500 and accumulated 100 leave.
-    const layer = asset({ inServiceAt: pkt('2025-01-10T12:00:00'), costCents: 500, salvageCents: 0, usefulLifeMonths: 10 })
-    const charged = new Map([['2025-01', 100], ['2025-02', 100]])
-    const adj: ScheduleAdjustment[] = [{ period: '2025-03', kind: 'accum_out', cents: 100 }]
+    const layer = asset({ inServiceAt: pkt('2025-01-10T12:00:00'), costCents: 50_000, salvageCents: 0, usefulLifeMonths: 10 })
+    const charged = new Map([['2025-01', 10_000], ['2025-02', 10_000]])
+    const adj: ScheduleAdjustment[] = [{ period: '2025-03', kind: 'accum_out', cents: 10_000 }]
     const plan = planCharges(layer, charged, adj, '2026-12')
     expect(plan).toHaveLength(8)
-    expect(plan.every((p) => p.amountCents === 50)).toBe(true)
+    expect(plan.every((p) => p.amountCents === 5_000)).toBe(true)
   })
 
   it('a layer split off by a unit transfer charges only from its own month, to the source\'s life end', () => {
     const split = asset({
-      inServiceAt: pkt('2025-01-10T12:00:00'), costCents: 400, salvageCents: 0, usefulLifeMonths: 10,
-      carriedAccumulatedCents: 120, chargeFrom: pkt('2025-04-02T09:00:00'),
+      inServiceAt: pkt('2025-01-10T12:00:00'), costCents: 40_000, salvageCents: 0, usefulLifeMonths: 10,
+      carriedAccumulatedCents: 12_000, chargeFrom: pkt('2025-04-02T09:00:00'),
     })
     const plan = planCharges(split, new Map(), [], '2026-12')
     expect(plan.map((p) => p.period)).toEqual(['2025-04', '2025-05', '2025-06', '2025-07', '2025-08', '2025-09', '2025-10'])
-    expect(sumOf(plan)).toBe(280)
+    expect(sumOf(plan)).toBe(28_000)
   })
 
   it('forecast and next monthly charge', () => {

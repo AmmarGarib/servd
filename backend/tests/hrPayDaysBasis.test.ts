@@ -286,7 +286,7 @@ describe('two companies', () => {
 })
 
 // Gate (2026-10-16): the arithmetic edges, on the pure engine.
-import { computePayslip, mergeSettings, EMPTY_INPUTS, finalSettlement } from '../src/modules/hr/logic.js'
+import { computePayslip, mergeSettings, EMPTY_INPUTS, finalSettlement, toRupee } from '../src/modules/hr/logic.js'
 
 describe('pay basis edges (pure)', () => {
   const s = mergeSettings({ latesPerDeductionDay: 3 })
@@ -295,7 +295,7 @@ describe('pay basis edges (pure)', () => {
   it('a leap February divides by 29; a half day takes half a day, rounded once', () => {
     expect(computePayslip(emp(RS(29000)), '2028-02', EMPTY_INPUTS, s).basis).toMatchObject({ daysInMonth: 29, paidDays: 29, dailyRateCents: RS(1000) })
     const r = computePayslip(emp(1234567), '2026-10', { ...EMPTY_INPUTS, absentDays: 0.5 }, s)
-    expect(r.grossCents).toBe(Math.round(1234567 * 30.5 / 31))
+    expect(r.grossCents).toBe(toRupee(1234567 * 30.5 / 31)) // whole rupees (owner, 2026-11-04)
   })
 
   it('a joiner who leaves the same month is paid only those days, docked at most what they were employed', () => {

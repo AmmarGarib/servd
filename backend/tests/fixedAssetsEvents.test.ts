@@ -309,10 +309,10 @@ describe('smallwares pools', () => {
   it('a unit transfer splits a layer, carrying its accumulated; a brand change nets to zero', async () => {
     const co = await mkCo('pooltransfer')
     const pool = await mkPool(co)
-    const layer = await mkLayer(co, pool, { units: 10, costCents: 20_000, inServiceAt: mid(m(-4)) })
+    const layer = await mkLayer(co, pool, { units: 10, costCents: 2_000_000, inServiceAt: mid(m(-4)) })
     await chargeThrough(co.tenantId, m(-1), { postedBy: 'system' })
     const accumBefore = -(await balance(co.tenantId, '1599'))
-    expect(accumBefore).toBe(3_332)
+    expect(accumBefore).toBe(333_200) // whole rupees a month (owner, 2026-11-04)
 
     const other = await mkCo('pooltransfer-b')
     await expect(createRequest({ kind: 'pool_transfer', poolId: pool.id, reason: 'Moving to the other company', payload: { units: 2, toLocationId: other.locationId } }, co.fin))
@@ -325,22 +325,22 @@ describe('smallwares pools', () => {
     expect(r.applied).toBe(true)
     const split = await prisma.fixedAsset.findFirstOrThrow({ where: { splitFromAssetId: layer.id } })
     expect([split.quantity, Number(split.costCents), Number(split.carriedAccumulatedCents), split.conceptId, split.locationId, split.kind])
-      .toEqual([4, 8_000, 1_333, co.concept2, co.location2, 'pool_layer'])
+      .toEqual([4, 800_000, 133_280, co.concept2, co.location2, 'pool_layer'])
     expect(split.poolId).not.toBe(pool.id)
     const src = await prisma.fixedAsset.findUniqueOrThrow({ where: { id: layer.id } })
-    expect([src.quantity, Number(src.costCents), src.status]).toEqual([6, 12_000, 'active'])
+    expect([src.quantity, Number(src.costCents), src.status]).toEqual([6, 1_200_000, 'active'])
 
     // Zero net per account; per brand the units moved with their accumulated.
-    expect(await balance(co.tenantId, '1560')).toBe(20_000)
-    expect(await balance(co.tenantId, '1599')).toBe(-3_332)
-    expect(await balance(co.tenantId, '1560', co.concept2)).toBe(8_000)
-    expect(await balance(co.tenantId, '1599', co.concept2)).toBe(-1_333)
+    expect(await balance(co.tenantId, '1560')).toBe(2_000_000)
+    expect(await balance(co.tenantId, '1599')).toBe(-333_200)
+    expect(await balance(co.tenantId, '1560', co.concept2)).toBe(800_000)
+    expect(await balance(co.tenantId, '1599', co.concept2)).toBe(-133_280)
 
     // The new layer is charged from this month to the original life end; the source keeps its own months.
     const s = await loadAssetState(prisma, split.id)
     const plan = forecast(s.schedule, s.charged, s.adjustments)
     expect(plan[0]!.period).toBe(cur)
-    expect(plan.reduce((t, p) => t + p.amountCents, 0)).toBe(8_000 - 1_333)
+    expect(plan.reduce((t, p) => t + p.amountCents, 0)).toBe(800_000 - 133_280)
     expect(plan[plan.length - 1]!.period).toBe(m(19))
     expect(await trialBalance(co.tenantId)).toBe(0)
   })

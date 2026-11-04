@@ -59,9 +59,9 @@ describe('gratuityFor', () => {
   it('pays 30 days of the last gross a year: round(gross ÷ 30 × days)', () => {
     const odd = gratuityFor(perm('2020-03-15'), D('2026-03-14'), 5_200_001, DEFAULT_GRATUITY)
     expect(odd.countedYears).toBe(6)
-    expect(odd.amountCents).toBe(5_200_001 * 6)
+    expect(odd.amountCents).toBe(5_200_000 * 6) // a year's gratuity in whole rupees (owner, 2026-11-04)
     const g = gratuityFor(perm('2020-03-15'), D('2026-03-14'), 5_200_001, { ...DEFAULT_GRATUITY, daysPerYear: 15 })
-    expect(g.amountCents).toBe(Math.round(5_200_001 / 30 * 15) * 6)
+    expect(g.amountCents).toBe(Math.round(5_200_001 / 30 * 15 / 100) * 100 * 6)
   })
 
   it('pays nothing to probation staff, when switched off, or with no joining date — and says why', () => {

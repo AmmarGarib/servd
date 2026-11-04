@@ -22,8 +22,7 @@ import {
   loanInstallmentCents, canActOnStep, employedFraction, otMultiplierFor,
   leaveQuantity, leaveDaysWithin, carriedForwardDays, attendanceInputs,
   salaryInForce, allocateLoanCents, finalSettlement, accruedLeaveDays, sessiEmployerCents, EOBI_NOT_CALCULATED,
-  pktToday, leaveYear, employedOn, onBooksAt, exitDay, daysInPeriod, periodOf,
-} from '../src/modules/hr/logic.js'
+  pktToday, leaveYear, employedOn, onBooksAt, exitDay, daysInPeriod, periodOf, toRupee } from '../src/modules/hr/logic.js'
 import { applyDueEffects, leaveBalancesFor, salaryForPeriod } from '../src/modules/hr/service.js'
 import { sectionByKey, validateAgainst, checkFormat, HR_SECTIONS, EMPLOYEE_MASTER_FIELDS, type HrField } from '../src/modules/hr/forms.js'
 import { renderLetter, sanitizeLetterHtml, DEFAULT_LETTERS } from '../src/modules/hr/letters.js'
@@ -123,8 +122,8 @@ describe('payslip', () => {
     const sep = computePayslip({ ...none, grossSalaryCents: g }, '2026-09', { ...EMPTY_INPUTS, unpaidLeaveDays: 2 }, s)
     const oct = computePayslip({ ...none, grossSalaryCents: g }, '2026-10', { ...EMPTY_INPUTS, unpaidLeaveDays: 2 }, s)
     expect([feb.basis.daysInMonth, sep.basis.daysInMonth, oct.basis.daysInMonth]).toEqual([28, 30, 31])
-    expect(feb.grossCents).toBe(Math.round(g * 26 / 28))
-    expect(sep.grossCents).toBe(Math.round(g * 28 / 30))
+    expect(feb.grossCents).toBe(toRupee(g * 26 / 28)) // whole rupees (owner, 2026-11-04)
+    expect(sep.grossCents).toBe(toRupee(g * 28 / 30))
     expect(oct.grossCents).toBe(RS(58000)) // 62,000 / 31 = 2,000 × 29
     expect(oct.basis).toMatchObject({ paidDays: 29, dailyRateCents: RS(2000), unpaidLeaveDays: 2 })
     expect(salaryOf(oct).label).toMatch(/29 of 31 days .*2 unpaid leave/)
@@ -259,7 +258,7 @@ describe('full & final', () => {
   it('pays salary only for the days after the last payroll, across months', () => {
     // Paid through July; leaves 10 Sep: all of August + 10 of 30 September days.
     const r = finalSettlement(emp, D('2026-09-10'), { ...inp, salaryFrom: D('2026-08-01') }, S26)
-    expect(r.salaryPayable).toBe(RS(62000) + Math.round(RS(62000) * 10 / 30))
+    expect(r.salaryPayable).toBe(RS(62000) + toRupee(RS(62000) * 10 / 30))
     // Paid through September already: nothing.
     expect(finalSettlement(emp, D('2026-09-10'), { ...inp, salaryFrom: D('2026-10-01') }, S26).salaryPayable).toBe(0)
     expect(finalSettlement(emp, D('2026-09-10'), inp, S26).salaryPayable).toBe(0)
@@ -1097,8 +1096,8 @@ describe('HR through the API', () => {
     // HR-1: 52,000 ÷ 28 days × (28 − 1 absent − 3.5 unpaid = 23.5 paid days).
     expect(daysInPeriod('2027-02')).toBe(28)
     expect(slip.inputs.payBasis).toMatchObject({ daysInMonth: 28, employedDays: 28, absentDays: 1, unpaidLeaveDays: 3.5, paidDays: 23.5, dailyRateCents: Math.round(RS(52000) / 28) })
-    expect(slip.lines.find((l: { code: string }) => l.code === 'salary').amountCents).toBe(Math.round(RS(52000) * 23.5 / 28))
-    expect(slip.grossCents).toBe(Math.round(RS(52000) * 23.5 / 28))
+    expect(slip.lines.find((l: { code: string }) => l.code === 'salary').amountCents).toBe(toRupee(RS(52000) * 23.5 / 28))
+    expect(slip.grossCents).toBe(toRupee(RS(52000) * 23.5 / 28))
     expect(slip.lines.map((l: { code: string }) => l.code)).not.toContain('absence')
     expect(slip.lines.map((l: { code: string }) => l.code)).not.toContain('unpaid_leave')
     expect(slip.lines.map((l: { code: string }) => l.code)).not.toContain('late')
@@ -1297,7 +1296,7 @@ describe('HR through the API', () => {
 
     const ff = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: zed, lastWorkingDay: '2027-08-10' })).json()
     expect(ff.paidThrough).toBe('2027-07')
-    expect(ff.salaryPayable).toBe(Math.round(RS(70000) * 10 / 31)) // August only, at the revised salary
+    expect(ff.salaryPayable).toBe(toRupee(RS(70000) * 10 / 31)) // August only, at the revised salary
     expect(ff.otPayable).toBe(0)                                    // OT is opt-in: none until HR adds it
     expect(ff.otAvailable.map((o: { recordId: string }) => o.recordId)).toEqual([augOt.id]) // July's OT went on July's payroll
     const ffOt = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: zed, lastWorkingDay: '2027-08-10', otRecordIds: [augOt.id] })).json()
@@ -1323,7 +1322,7 @@ describe('HR through the API', () => {
     const fullYear = paid.reduce((a, b) => a + b.entitlement, 0)
     // One month of the year's entitlement, not the year's.
     expect(ff.leaveBalanceDays).toBeCloseTo(fullYear / 12, 1)
-    expect(ff.leaveEncashment).toBe(Math.round(ff.leaveBalanceDays * (RS(52000) / daysInPeriod(periodOf(new Date('2026-09-30'))))))
+    expect(ff.leaveEncashment).toBe(toRupee(ff.leaveBalanceDays * (RS(52000) / daysInPeriod(periodOf(new Date('2026-09-30'))))))
   })
 
   // ── formats, references, lookups, letters ─────────────────────────────────

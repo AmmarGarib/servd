@@ -161,8 +161,8 @@ export function remainingDepreciable(asset: ScheduleAsset, charged: ChargedMap, 
  * The charges still owed, month by month in order, for every uncharged month
  * from the in-service month through `throughPeriod` (and never past the end
  * of the life or into the disposal month). Months already charged are
- * skipped; a month whose share rounds to 0 is left out (the remainder lands
- * in the last month of the life).
+ * skipped; each month is whole rupees, and a month whose share rounds to 0 is
+ * left out (the remainder — any paisa included — lands in the last month of the life).
  */
 export function planCharges(
   asset: ScheduleAsset,
@@ -191,7 +191,9 @@ export function planCharges(
     const period = periodFromIndex(i)
     if (charged.has(period)) continue
     if (remaining <= 0) break
-    const amount = unchargedLeft <= 1 ? remaining : Math.floor(remaining / unchargedLeft)
+    // Whole rupees each month (owner, 2026-11-04: "make payroll and depreciation book whole rupees"); the last month
+    // of the life takes what is left, so the asset still depreciates to exactly its salvage value.
+    const amount = unchargedLeft <= 1 ? remaining : Math.floor(remaining / unchargedLeft / 100) * 100
     if (amount > 0) {
       out.push({ period, amountCents: amount })
       remaining -= amount

@@ -269,7 +269,7 @@ export function otMultiplierFor(recordValue: unknown, s: HrSettings): number {
 
 export function overtimeCents(hours: number, grossCents: number, s: HrSettings, multiplier?: number | null, period?: string | null): number {
   if (!(hours > 0)) return 0
-  return Math.round(hours * hourlyRateCents(grossCents, s, period) * (multiplier ?? s.otMultiplier))
+  return toRupee(hours * hourlyRateCents(grossCents, s, period) * (multiplier ?? s.otMultiplier))
 }
 
 export interface EobiResult { employeeCents: number; employerCents: number; problem?: string }
@@ -287,15 +287,15 @@ export function eobiContribution(grossCents: number, s: HrSettings): EobiResult 
     return { employeeCents: 0, employerCents: 0, problem: EOBI_NOT_CALCULATED }
   }
   return {
-    employeeCents: Math.round(base * s.eobi.employeePct / 100),
-    employerCents: Math.round(base * s.eobi.employerPct / 100),
+    employeeCents: toRupee(base * s.eobi.employeePct / 100),
+    employerCents: toRupee(base * s.eobi.employerPct / 100),
   }
 }
 
 export function sessiEmployerCents(grossCents: number, s: HrSettings): number {
   if (!(s.sessi.employerPct > 0)) return 0
   const base = s.sessi.wageCeilingCents != null ? Math.min(grossCents, s.sessi.wageCeilingCents) : grossCents
-  return Math.round(base * s.sessi.employerPct / 100)
+  return toRupee(base * s.sessi.employerPct / 100)
 }
 
 // ─── Periods & days ─────────────────────────────────────────────────────────
@@ -686,6 +686,10 @@ const fmtRs = (cents: number) => `Rs ${(cents / 100).toLocaleString('en-PK', { m
  * out (attendanceDays.ts; before that date a day with no record is paid).
  * Lates (every N lates = one day at the same daily rate) stay a deduction line.
  */
+/** Payroll books whole rupees (owner, 2026-11-04): every amount the engine works out is rounded to the rupee.
+ *  Amounts people type (adjustments, loan installments, typed deductions, the tax figure) are kept as typed. */
+export const toRupee = (cents: number): number => Math.round(cents / 100) * 100
+
 export function computePayslip(
   emp: { grossSalaryCents: number; monthlyTaxCents: number; joiningDate: Date | null; lastWorkingDay: Date | null },
   period: string,
@@ -702,7 +706,7 @@ export function computePayslip(
   const absentDays = days2(s.deductAbsences ? Math.min(Math.max(0, inputs.absentDays || 0), employedDays) : 0)
   const unpaidDays = days2(Math.min(Math.max(0, inputs.unpaidLeaveDays || 0), Math.max(0, employedDays - absentDays)))
   const paidDays = days2(Math.max(0, employedDays - absentDays - unpaidDays))
-  const gross = Math.round((monthly * paidDays) / daysInMonth)
+  const gross = toRupee((monthly * paidDays) / daysInMonth)
   // What the days employed would pay with nobody absent: the base for EOBI on
   // gross and SESSI, unchanged by HR-1 (absences never lowered it).
   const employedCents = Math.round((monthly * employedDays) / daysInMonth)
@@ -711,7 +715,7 @@ export function computePayslip(
     dailyRateCents: Math.round(daily), monthlyGrossCents: monthly,
   }
   let docked = 0
-  const dock = (cents: number) => { const c = Math.min(Math.round(cents), Math.max(0, gross - docked)); docked += c; return c }
+  const dock = (cents: number) => { const c = Math.min(toRupee(cents), Math.max(0, gross - docked)); docked += c; return c }
 
   const out: string[] = []
   if (employedDays < daysInMonth) out.push(`${daysInMonth - employedDays} not employed`)
@@ -722,7 +726,7 @@ export function computePayslip(
     label: `Salary — ${fmtDays(paidDays)} of ${daysInMonth} days × ${fmtRs(Math.round(daily))}/day${out.length ? ` (${out.join(', ')})` : ''}`,
     amountCents: gross,
   })
-  if (inputs.otCents > 0) lines.push({ kind: 'earning', code: 'overtime', label: `Overtime (${inputs.otHours} h)`, amountCents: inputs.otCents })
+  if (inputs.otCents > 0) lines.push({ kind: 'earning', code: 'overtime', label: `Overtime (${inputs.otHours} h)`, amountCents: toRupee(inputs.otCents) })
   if (inputs.earningAdjustmentsCents > 0) lines.push({ kind: 'earning', code: 'adjustments', label: 'Bonuses, incentives & allowances', amountCents: inputs.earningAdjustmentsCents })
 
   if (s.latesPerDeductionDay > 0 && inputs.lateCount >= s.latesPerDeductionDay) {
@@ -848,7 +852,7 @@ export function finalSettlement(
   }
   const total = (k: keyof Omit<SettlementMonth, 'period' | 'basis'>) => months.reduce((a, m) => a + m[k], 0)
   const leaveEncashment = s.encashLeaveOnExit && inp.leaveBalanceDays > 0
-    ? Math.round(inp.leaveBalanceDays * dailyRateCents(emp.grossSalaryCents, s, periodOf(lastWorkingDay)))
+    ? toRupee(inp.leaveBalanceDays * dailyRateCents(emp.grossSalaryCents, s, periodOf(lastWorkingDay)))
     : 0
   const parts: SettlementParts = {
     salaryPayable: total('salaryCents'), otPayable: inp.otPayableCents, leaveEncashment,
@@ -933,7 +937,7 @@ export function gratuityFor(
   const over = service.months > s.partYearOverMonths || (service.months === s.partYearOverMonths && service.days > 0)
   const countedYears = service.years + (over ? 1 : 0)
   if (countedYears <= 0 || !(lastGrossCents > 0)) return none(lastGrossCents > 0 ? 'No counted year of service' : 'No gross salary on the employee record')
-  const perYear = Math.round((lastGrossCents / 30) * s.daysPerYear)
+  const perYear = toRupee((lastGrossCents / 30) * s.daysPerYear)
   return { eligible: true, reason: null, ...service, countedYears, amountCents: perYear * countedYears }
 }
 

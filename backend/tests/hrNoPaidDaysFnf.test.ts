@@ -22,7 +22,7 @@ import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { hrRoutes } from '../src/modules/hr/routes.js'
 import {
-  DEFAULT_HR_SETTINGS, computePayslip, finalSettlement, mergeSettings, EMPTY_INPUTS, NO_TAX_NO_PAID_DAYS, NO_EOBI_NO_PAID_DAYS,
+  DEFAULT_HR_SETTINGS, computePayslip, finalSettlement, mergeSettings, EMPTY_INPUTS, NO_TAX_NO_PAID_DAYS, NO_EOBI_NO_PAID_DAYS, toRupee,
 } from '../src/modules/hr/logic.js'
 import { settlementAttendance, getSettings } from '../src/modules/hr/service.js'
 
@@ -221,7 +221,7 @@ describe('full & final applies the final month\'s attendance', () => {
     expect(c.months).toHaveLength(1)
     // 20 employed − 1 absent − 0.5 half day − 2 unpaid = 16.5 of 31 days.
     expect(c.months[0].basis).toMatchObject({ daysInMonth: 31, employedDays: 20, absentDays: 1.5, unpaidLeaveDays: 2, paidDays: 16.5 })
-    expect(c.salaryPayable).toBe(Math.round(RS(52000) * 16.5 / 31))
+    expect(c.salaryPayable).toBe(toRupee(RS(52000) * 16.5 / 31))
     expect(c.salaryPayable).toBeLessThan(Math.round(RS(52000) * 20 / 31))
     expect(c.incomeTax).toBe(RS(1000))
     calc = c
@@ -271,7 +271,7 @@ describe('full & final over several months: window edges and a month with no pai
     expect(c.months[1].basis).toMatchObject({ employedDays: 31, absentDays: 0, unpaidLeaveDays: 31, paidDays: 0 })
     expect(c.months[1]).toMatchObject({ salaryCents: 0, taxCents: 0, eobiEmployeeCents: 0, eobiEmployerCents: 0, sessiEmployerCents: 0 })
     expect(c.months[2].basis).toMatchObject({ employedDays: 20, absentDays: 0.5, paidDays: 19.5 })
-    expect(c.salaryPayable).toBe(Math.round(RS(52000) * 29 / 30) + Math.round(RS(52000) * 19.5 / 31))
+    expect(c.salaryPayable).toBe(toRupee(RS(52000) * 29 / 30) + toRupee(RS(52000) * 19.5 / 31))
     expect(c.incomeTax).toBe(RS(2000))
     expect(c.eobiEmployee).toBe(RS(800))
     expect(c.eobiEmployer).toBe(RS(4000))
@@ -310,7 +310,7 @@ describe('two companies', () => {
     expect(r.statusCode, r.body).toBe(200)
     const c = r.json()
     expect(c.months[0].basis).toMatchObject({ employedDays: 20, absentDays: 0, unpaidLeaveDays: 0, paidDays: 20 })
-    expect(c.salaryPayable).toBe(Math.round(RS(52000) * 20 / 31))
+    expect(c.salaryPayable).toBe(toRupee(RS(52000) * 20 / 31))
     // A's calculate never reaches B's employee either.
     expect((await call('hr', 'POST', '/final-settlement/calculate', { employeeId: emps['Leaver B'], lastWorkingDay: '2026-08-20' })).statusCode).toBe(404)
   })

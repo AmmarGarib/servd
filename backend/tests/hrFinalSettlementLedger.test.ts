@@ -29,7 +29,7 @@ import { postJournalEntry } from '../src/modules/accounting/journal.js'
 import { hrRoutes } from '../src/modules/hr/routes.js'
 import { getSettings, saveSettings } from '../src/modules/hr/service.js'
 import {
-  finalSettlement, computePayslip, settlementNet, settledFromPeriod, mergeSettings, EMPTY_INPUTS, DEFAULT_HR_SETTINGS, pktToday,
+  finalSettlement, computePayslip, settlementNet, settledFromPeriod, mergeSettings, EMPTY_INPUTS, DEFAULT_HR_SETTINGS, pktToday, toRupee,
 } from '../src/modules/hr/logic.js'
 
 const RS = (r: number) => r * 100
@@ -52,11 +52,11 @@ describe('full & final figures', () => {
     const oct = computePayslip({ ...emp, lastWorkingDay: D('2026-10-10') }, '2026-10', EMPTY_INPUTS, s)
     expect(r.months.map((m) => m.period)).toEqual(['2026-09', '2026-10'])
     expect(r.salaryPayable).toBe(sep.grossCents + oct.grossCents)
-    expect(r.salaryPayable).toBe(RS(52000) + Math.round(RS(52000) * 10 / 31))
+    expect(r.salaryPayable).toBe(RS(52000) + toRupee(RS(52000) * 10 / 31))
     expect(r.incomeTax).toBe(RS(2000))
     expect(r.eobiEmployee).toBe(RS(800))
     expect(r.eobiEmployer).toBe(RS(4000))
-    expect(r.sessiEmployer).toBe(Math.round(RS(52000) * 0.06) + Math.round(Math.round(RS(52000) * 10 / 31) * 0.06))
+    expect(r.sessiEmployer).toBe(toRupee(RS(52000) * 0.06) + toRupee(Math.round(RS(52000) * 10 / 31) * 0.06))
     // The net takes off what is withheld from the employee, never the employer's cost.
     expect(r.netAmount).toBe(r.salaryPayable + RS(1500) - RS(5000) - RS(2000) - RS(800))
     expect(settlementNet(r)).toBe(r.netAmount)
@@ -64,13 +64,13 @@ describe('full & final figures', () => {
 
   it('pays each month at its own salary, and nothing when payroll already paid through the last day', () => {
     const r = finalSettlement(emp, D('2026-10-10'), { ...inp, salaryByPeriod: { '2026-09': RS(50000), '2026-10': RS(62000) } }, s)
-    expect(r.salaryPayable).toBe(RS(50000) + Math.round(RS(62000) * 10 / 31))
+    expect(r.salaryPayable).toBe(RS(50000) + toRupee(RS(62000) * 10 / 31))
     const none = finalSettlement(emp, D('2026-10-10'), { ...inp, salaryFrom: D('2026-11-01') }, s)
     expect(none.salaryPayable).toBe(0)
     expect(none.incomeTax + none.eobiEmployee + none.eobiEmployer + none.sessiEmployer).toBe(0)
     // Defaults (EOBI off, no tax) leave the old figures as they were.
     expect(finalSettlement({ grossSalaryCents: RS(62000), joiningDate: D('2025-01-01') }, D('2026-09-10'), { ...inp, salaryFrom: D('2026-08-01'), otPayableCents: 0, loanOutstandingCents: 0 }, DEFAULT_HR_SETTINGS).netAmount)
-      .toBe(RS(62000) + Math.round(RS(62000) * 10 / 30))
+      .toBe(RS(62000) + toRupee(RS(62000) * 10 / 30))
   })
 
   it('settles from the first unpaid month, else from the last working day\'s month', () => {
@@ -310,13 +310,13 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     expect(calc['paidThrough']).toBe('2026-09')
     expect(calc['paidThroughStatus']).toBe('draft')
     expect(calc['salaryFrom']).toBe('2026-10-01T00:00:00.000Z')
-    expect(calc['salaryPayable']).toBe(Math.round(RS(52000) * 10 / 31))
+    expect(calc['salaryPayable']).toBe(toRupee(RS(52000) * 10 / 31))
     // 10,000 over 4: August (locked) and September (draft) each took 2,500.
     expect(calc['loanRecovery']).toBe(RS(5000))
     expect(calc['incomeTax']).toBe(RS(1000))
     expect(calc['eobiEmployee']).toBe(RS(400))
     expect(calc['eobiEmployer']).toBe(RS(2000))
-    expect(calc['sessiEmployer']).toBe(Math.round(Math.round(RS(52000) * 10 / 31) * 0.06))
+    expect(calc['sessiEmployer']).toBe(toRupee(Math.round(RS(52000) * 10 / 31) * 0.06))
 
     const keys = ['salaryPayable', 'otPayable', 'leaveEncashment', 'loanRecovery', 'incomeTax', 'eobiEmployee', 'eobiEmployer', 'sessiEmployer']
     const saved = await call('hr', 'PATCH', `/records/final_settlement/${fnf}`, { data: { ...Object.fromEntries(keys.map((k) => [k, calc[k]])), deductions: 0, otherAdjustments: 0 } })
@@ -424,7 +424,7 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     const id = (await raise('final_settlement', { employee: emps['Cash Cook'], lastWorkingDay: '2026-10-20' })).id
     const c2 = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: emps['Cash Cook'], lastWorkingDay: '2026-10-20', recordId: id })).json()
     expect(c2.salaryFrom).toBe('2026-10-01T00:00:00.000Z')
-    expect(c2.salaryPayable).toBe(Math.round(RS(52000) * 20 / 31))
+    expect(c2.salaryPayable).toBe(toRupee(RS(52000) * 20 / 31))
     await call('hr', 'PATCH', `/records/final_settlement/${id}`, { data: { salaryPayable: c2.salaryPayable, incomeTax: c2.incomeTax, eobiEmployee: c2.eobiEmployee, eobiEmployer: c2.eobiEmployer, sessiEmployer: c2.sessiEmployer } })
     expect((await decide('mgmt', 'final_settlement', id)).json().status).toBe('approved')
     const booked = await entry(tenantA, `hr.final_settlement.accrual:${id}`)
