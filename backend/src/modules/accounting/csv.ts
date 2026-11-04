@@ -53,9 +53,10 @@ export interface FmtPkrOptions {
  */
 export function fmtPkr(cents: number, opts: FmtPkrOptions = {}): string {
   const { symbol = false, decimals = 2, group = true } = opts
-  const sign = cents < 0 ? '-' : ''
   const abs = Math.abs(Math.round(cents))
   const rupees = decimals === 0 ? Math.round(abs / 100) : Math.floor(abs / 100)
+  // Never "-0": a few negative paisa rounded to whole rupees is 0.
+  const sign = cents < 0 && (rupees > 0 || (decimals !== 0 && abs > 0)) ? '-' : ''
   const whole = group ? rupees.toLocaleString('en-PK') : String(rupees)
   const frac = decimals === 0 ? '' : `.${String(abs % 100).padStart(2, '0')}`
   return `${symbol ? 'PKR ' : ''}${sign}${whole}${frac}`

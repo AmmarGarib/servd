@@ -4,7 +4,7 @@
 
 import zlib from 'node:zlib'
 
-export type XlsxStyle = 'normal' | 'bold' | 'title' | 'currency' | 'boldCurrency' | 'wrap' | 'header' | 'amount' | 'boldAmount' | 'percent'
+export type XlsxStyle = 'normal' | 'bold' | 'title' | 'currency' | 'boldCurrency' | 'wrap' | 'header' | 'amount' | 'boldAmount' | 'percent' | 'amountWhole' | 'boldAmountWhole'
 export type XlsxCell = string | number | { v: string | number; s?: XlsxStyle } | null
 
 export interface XlsxSheet {
@@ -18,7 +18,7 @@ export interface XlsxSheet {
   freezeRows?: number
 }
 
-const STYLE_INDEX: Record<XlsxStyle, number> = { normal: 0, bold: 1, title: 2, currency: 3, boldCurrency: 4, wrap: 5, header: 6, amount: 7, boldAmount: 8, percent: 9 }
+const STYLE_INDEX: Record<XlsxStyle, number> = { normal: 0, bold: 1, title: 2, currency: 3, boldCurrency: 4, wrap: 5, header: 6, amount: 7, boldAmount: 8, percent: 9, amountWhole: 10, boldAmountWhole: 11 }
 
 export function xmlEscape(s: string): string {
   // Drop characters XML 1.0 forbids, then escape the five specials.
@@ -119,7 +119,7 @@ const STYLES_XML = `${XML_HEAD}<styleSheet xmlns="http://schemas.openxmlformats.
 <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE5E7EB"/><bgColor indexed="64"/></patternFill></fill></fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="10">
+<cellXfs count="12">
 <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
 <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
 <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
@@ -130,6 +130,8 @@ const STYLES_XML = `${XML_HEAD}<styleSheet xmlns="http://schemas.openxmlformats.
 <xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
 <xf numFmtId="4" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>
 <xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="3" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>
+<xf numFmtId="3" fontId="1" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1"/>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`

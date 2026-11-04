@@ -91,6 +91,8 @@ export interface ReportTable {
   /** Excel / PDF: which rows are totals (bold). Default: a text cell in CAPITALS such as "TOTAL ASSETS". */
   isTotal?: (row: ReportRow) => boolean
   notes?: string[]
+  /** Money in whole rupees (financial statements, owner 2026-11-04): Excel shows #,##0, never paisa. */
+  wholeRupees?: boolean
   /** The CSV body when the route wrote its CSV another way (kept byte-identical). */
   csv?: string
   /** CSV of no rows: 'bom' (toCsv's default) or 'header' (BOM + the header line). */
@@ -247,7 +249,7 @@ export function reportXlsx(t: ReportTable): Buffer {
           const n = numberOf(v, type)
           if (n !== null) {
             widths[i] = Math.max(widths[i]!, 14)
-            if (isMoney(type)) return { v: n, s: bold ? 'boldAmount' : 'amount' }
+            if (isMoney(type)) return t.wholeRupees ? { v: Math.round(n), s: bold ? 'boldAmountWhole' : 'amountWhole' } : { v: n, s: bold ? 'boldAmount' : 'amount' }
             if (type === 'percent') return { v: n / 100, s: 'percent' }
             return bold ? { v: n, s: 'bold' } : n
           }

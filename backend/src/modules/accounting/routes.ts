@@ -51,6 +51,11 @@ const TAX_PAYERS = [...TAX_PAYER_ROLES] as UserRole[]
  *  the CEO and finance with the accounting module (owner, 2026-10-16) — defined in manualJournal.ts. */
 export const JOURNAL_POSTERS = [...MANUAL_JOURNAL_POSTERS] as UserRole[]
 
+// Financial statements show whole rupees (owner, 2026-11-04: "Balance should reflect nearest round figure, no amount
+// in pennies" — balance sheet, P&L, brand P&L, trial balance, cash flow). Display only: the books stay to the paisa,
+// and each figure (totals included) is its exact amount rounded, so the statements still balance.
+const fmtWhole = (cents: number): string => fmtPkr(cents, { decimals: 0 })
+
 export async function accountingRoutes(fastify: FastifyInstance) {
   // ─── Ledger / journal entry feed ─────────────────────────────────────────
 
@@ -497,20 +502,20 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         const rows: Array<Record<string, string | number>> = report.rows.map((r) => ({
           ...(multi && { company: r.companyName ?? '' }),
           code: r.code, account: r.virtual ? `${r.name} (computed)` : r.name, type: r.type,
-          debit: fmtPkr(r.debitCents), credit: fmtPkr(r.creditCents),
+          debit: fmtWhole(r.debitCents), credit: fmtWhole(r.creditCents),
         }))
         rows.push({
           ...(multi && { company: '' }),
           code: '', account: 'TOTAL', type: '',
-          debit: fmtPkr(report.totals.debitCents), credit: fmtPkr(report.totals.creditCents),
+          debit: fmtWhole(report.totals.debitCents), credit: fmtWhole(report.totals.creditCents),
         })
         if (multi) {
           for (const c of report.companyTotals) {
-            rows.push({ company: c.name, code: '', account: 'COMPANY TOTAL', type: '', debit: fmtPkr(c.debitCents), credit: fmtPkr(c.creditCents) })
+            rows.push({ company: c.name, code: '', account: 'COMPANY TOTAL', type: '', debit: fmtWhole(c.debitCents), credit: fmtWhole(c.creditCents) })
           }
         }
         return sendReportFor(req, reply, format, { base: 'trial-balance', suffix: `${report.basis === 'year' ? 'year-' : ''}${report.asOf}` }, {
-          title: 'Trial balance', companies: report.companies.map((c) => c.name),
+          wholeRupees: true, title: 'Trial balance', companies: report.companies.map((c) => c.name),
           period: `As at ${report.asOf}${report.basis === 'year' ? ' · profit and loss accounts from the start of the fiscal year' : ''}`,
           rows, types: { debit: 'pkr', credit: 'pkr' },
         })
@@ -536,29 +541,29 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         const flat: Array<Record<string, string | number>> = []
         // Non-current, then current (owner, 2026-10-31), each with its subtotal.
         for (const [term, label, total] of [['non_current', 'Non-current assets', report.totals.nonCurrentAssetsCents], ['current', 'Current assets', report.totals.currentAssetsCents]] as const) {
-          for (const a of report.assets.filter((x) => x.term === term)) flat.push({ section: label, ...co(a.companyName), code: a.code, name: a.name, balance: fmtPkr(a.balanceCents) })
-          flat.push({ section: label, ...co(''), code: '', name: `TOTAL ${label.toUpperCase()}`, balance: fmtPkr(total) })
+          for (const a of report.assets.filter((x) => x.term === term)) flat.push({ section: label, ...co(a.companyName), code: a.code, name: a.name, balance: fmtWhole(a.balanceCents) })
+          flat.push({ section: label, ...co(''), code: '', name: `TOTAL ${label.toUpperCase()}`, balance: fmtWhole(total) })
         }
-        flat.push({ section: 'Current assets', ...co(''), code: '', name: 'TOTAL ASSETS', balance: fmtPkr(report.totals.assetsCents) })
+        flat.push({ section: 'Current assets', ...co(''), code: '', name: 'TOTAL ASSETS', balance: fmtWhole(report.totals.assetsCents) })
         for (const [term, label, total] of [['current', 'Current liabilities', report.totals.currentLiabilitiesCents], ['non_current', 'Non-current liabilities', report.totals.nonCurrentLiabilitiesCents]] as const) {
-          for (const l of report.liabilities.filter((x) => x.term === term)) flat.push({ section: label, ...co(l.companyName), code: l.code, name: l.name, balance: fmtPkr(l.balanceCents) })
-          flat.push({ section: label, ...co(''), code: '', name: `TOTAL ${label.toUpperCase()}`, balance: fmtPkr(total) })
+          for (const l of report.liabilities.filter((x) => x.term === term)) flat.push({ section: label, ...co(l.companyName), code: l.code, name: l.name, balance: fmtWhole(l.balanceCents) })
+          flat.push({ section: label, ...co(''), code: '', name: `TOTAL ${label.toUpperCase()}`, balance: fmtWhole(total) })
         }
-        flat.push({ section: 'Non-current liabilities', ...co(''), code: '', name: 'TOTAL LIABILITIES', balance: fmtPkr(report.totals.liabilitiesCents) })
-        for (const e of report.equity)      flat.push({ section: 'Equity',      ...co(e.companyName), code: e.code, name: e.name, balance: fmtPkr(e.balanceCents) })
+        flat.push({ section: 'Non-current liabilities', ...co(''), code: '', name: 'TOTAL LIABILITIES', balance: fmtWhole(report.totals.liabilitiesCents) })
+        for (const e of report.equity)      flat.push({ section: 'Equity',      ...co(e.companyName), code: e.code, name: e.name, balance: fmtWhole(e.balanceCents) })
         // Virtual roll-forward (H29): each company's own fiscal year.
         for (const e of report.earningsByCompany) {
-          flat.push({ section: 'Equity', ...co(e.companyName), code: '', name: `Retained earnings b/f (before ${e.fiscalYear.start})`, balance: fmtPkr(e.retainedEarningsBroughtForwardCents) })
-          flat.push({ section: 'Equity', ...co(e.companyName), code: '', name: `Profit for the year to date (${e.fiscalYear.label})`, balance: fmtPkr(e.currentYearEarningsCents) })
+          flat.push({ section: 'Equity', ...co(e.companyName), code: '', name: `Retained earnings b/f (before ${e.fiscalYear.start})`, balance: fmtWhole(e.retainedEarningsBroughtForwardCents) })
+          flat.push({ section: 'Equity', ...co(e.companyName), code: '', name: `Profit for the year to date (${e.fiscalYear.label})`, balance: fmtWhole(e.currentYearEarningsCents) })
         }
         const unowned = report.totals.currentYearEarningsCents - report.earningsByCompany.reduce((s, e) => s + e.currentYearEarningsCents, 0)
-        if (unowned !== 0) flat.push({ section: 'Equity', ...co(''), code: '', name: 'Profit on accounts with no company', balance: fmtPkr(unowned) })
-        flat.push({ section: 'Equity',      ...co(''), code: '', name: 'TOTAL EQUITY', balance: fmtPkr(report.totals.equityCents + report.totals.currentEarningsCents) })
+        if (unowned !== 0) flat.push({ section: 'Equity', ...co(''), code: '', name: 'Profit on accounts with no company', balance: fmtWhole(unowned) })
+        flat.push({ section: 'Equity',      ...co(''), code: '', name: 'TOTAL EQUITY', balance: fmtWhole(report.totals.equityCents + report.totals.currentEarningsCents) })
         for (const p of report.ppe) {
-          flat.push({ section: 'Fixed assets by class', ...co(p.companyName), code: [p.costCode, p.accumCode].filter(Boolean).join(' / '), name: `${p.label}: cost ${fmtPkr(p.costCents)}, accumulated ${fmtPkr(p.accumulatedCents)}`, balance: fmtPkr(p.netCents) })
+          flat.push({ section: 'Fixed assets by class', ...co(p.companyName), code: [p.costCode, p.accumCode].filter(Boolean).join(' / '), name: `${p.label}: cost ${fmtWhole(p.costCents)}, accumulated ${fmtWhole(p.accumulatedCents)}`, balance: fmtWhole(p.netCents) })
         }
         return sendReportFor(req, reply, format, { base: 'balance-sheet', suffix: report.asOf }, {
-          title: 'Balance sheet', companies: report.companies.map((c) => c.name), period: `As at ${report.asOf}`,
+          wholeRupees: true, title: 'Balance sheet', companies: report.companies.map((c) => c.name), period: `As at ${report.asOf}`,
           rows: flat, sectionKey: 'section', types: { balance: 'pkr' },
         })
       }
@@ -578,23 +583,23 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       const format = exportFormatOf(req.query.format)
       if (format) {
         const flat: Array<Record<string, string | number>> = []
-        for (const r of report.revenue)       flat.push({ section: 'Revenue', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
-        flat.push({ section: 'Revenue', code: '', name: 'TOTAL REVENUE', amount: fmtPkr(report.totals.revenueCents) })
-        for (const r of report.contraRevenue) flat.push({ section: 'Discounts/Refunds', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
-        for (const r of report.cogs)          flat.push({ section: 'COGS', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
-        flat.push({ section: 'COGS', code: '', name: 'TOTAL COGS', amount: fmtPkr(report.totals.cogsCents) })
-        flat.push({ section: 'Margin', code: '', name: 'GROSS PROFIT', amount: fmtPkr(report.totals.grossProfitCents) })
+        for (const r of report.revenue)       flat.push({ section: 'Revenue', code: r.code, name: r.name, amount: fmtWhole(r.amountCents) })
+        flat.push({ section: 'Revenue', code: '', name: 'TOTAL REVENUE', amount: fmtWhole(report.totals.revenueCents) })
+        for (const r of report.contraRevenue) flat.push({ section: 'Discounts/Refunds', code: r.code, name: r.name, amount: fmtWhole(r.amountCents) })
+        for (const r of report.cogs)          flat.push({ section: 'COGS', code: r.code, name: r.name, amount: fmtWhole(r.amountCents) })
+        flat.push({ section: 'COGS', code: '', name: 'TOTAL COGS', amount: fmtWhole(report.totals.cogsCents) })
+        flat.push({ section: 'Margin', code: '', name: 'GROSS PROFIT', amount: fmtWhole(report.totals.grossProfitCents) })
         flat.push({ section: 'Margin', code: '', name: 'GROSS MARGIN %', amount: report.totals.grossMarginPct })
-        for (const r of report.opex)          flat.push({ section: 'OpEx', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
-        flat.push({ section: 'OpEx', code: '', name: 'TOTAL OPEX', amount: fmtPkr(report.totals.opexCents) })
-        if (report.totals.depreciationCents !== 0) flat.push({ section: 'OpEx', code: '', name: 'of which depreciation', amount: fmtPkr(report.totals.depreciationCents) })
-        if (report.totals.impairmentCents !== 0)   flat.push({ section: 'OpEx', code: '', name: 'of which impairment',   amount: fmtPkr(report.totals.impairmentCents) })
-        flat.push({ section: 'Result', code: '', name: 'OPERATING PROFIT', amount: fmtPkr(report.totals.operatingProfitCents) })
-        for (const r of report.otherIncome)   flat.push({ section: 'Other income', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
-        flat.push({ section: 'Other income', code: '', name: 'TOTAL OTHER INCOME', amount: fmtPkr(report.totals.otherIncomeCents) })
-        flat.push({ section: 'Result', code: '', name: 'NET PROFIT', amount: fmtPkr(report.totals.netProfitCents) })
+        for (const r of report.opex)          flat.push({ section: 'OpEx', code: r.code, name: r.name, amount: fmtWhole(r.amountCents) })
+        flat.push({ section: 'OpEx', code: '', name: 'TOTAL OPEX', amount: fmtWhole(report.totals.opexCents) })
+        if (report.totals.depreciationCents !== 0) flat.push({ section: 'OpEx', code: '', name: 'of which depreciation', amount: fmtWhole(report.totals.depreciationCents) })
+        if (report.totals.impairmentCents !== 0)   flat.push({ section: 'OpEx', code: '', name: 'of which impairment',   amount: fmtWhole(report.totals.impairmentCents) })
+        flat.push({ section: 'Result', code: '', name: 'OPERATING PROFIT', amount: fmtWhole(report.totals.operatingProfitCents) })
+        for (const r of report.otherIncome)   flat.push({ section: 'Other income', code: r.code, name: r.name, amount: fmtWhole(r.amountCents) })
+        flat.push({ section: 'Other income', code: '', name: 'TOTAL OTHER INCOME', amount: fmtWhole(report.totals.otherIncomeCents) })
+        flat.push({ section: 'Result', code: '', name: 'NET PROFIT', amount: fmtWhole(report.totals.netProfitCents) })
         return sendReportFor(req, reply, format, { base: 'pl', suffix: `${report.dateFrom}-${report.dateTo}` }, {
-          title: 'Profit and loss', period: `${report.dateFrom} to ${report.dateTo}`,
+          wholeRupees: true, title: 'Profit and loss', period: `${report.dateFrom} to ${report.dateTo}`,
           rows: flat, sectionKey: 'section', types: { amount: 'pkr' },
         })
       }
@@ -664,18 +669,18 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       if (format) {
         const flat = [...all, { ...totals, name: 'TOTAL', grossMarginPct: '' }].map((r) => ({
           brand: r.name,
-          revenue: fmtPkr(r.revenueCents),
-          discountsRefunds: fmtPkr(r.contraRevenueCents),
-          netRevenue: fmtPkr(r.netRevenueCents),
-          cogs: fmtPkr(r.cogsCents),
-          grossProfit: fmtPkr(r.grossProfitCents),
-          opex: fmtPkr(r.opexCents),
-          otherIncome: fmtPkr(r.otherIncomeCents),
-          netProfit: fmtPkr(r.netProfitCents),
+          revenue: fmtWhole(r.revenueCents),
+          discountsRefunds: fmtWhole(r.contraRevenueCents),
+          netRevenue: fmtWhole(r.netRevenueCents),
+          cogs: fmtWhole(r.cogsCents),
+          grossProfit: fmtWhole(r.grossProfitCents),
+          opex: fmtWhole(r.opexCents),
+          otherIncome: fmtWhole(r.otherIncomeCents),
+          netProfit: fmtWhole(r.netProfitCents),
         }))
         const money = ['revenue', 'discountsRefunds', 'netRevenue', 'cogs', 'grossProfit', 'opex', 'otherIncome', 'netProfit'] as const
         return sendReportFor(req, reply, format, { base: 'pl-by-brand', suffix: `${report.dateFrom}-${report.dateTo}` }, {
-          title: 'Profit and loss by brand', period: `${report.dateFrom} to ${report.dateTo}`,
+          wholeRupees: true, title: 'Profit and loss by brand', period: `${report.dateFrom} to ${report.dateTo}`,
           rows: flat, types: Object.fromEntries(money.map((k) => [k, 'pkr' as const])), labels: { cogs: 'COGS', opex: 'OpEx', discountsRefunds: 'Discounts / refunds' },
         })
       }
@@ -699,11 +704,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         const multi = report.companies.length > 1
         const co = (name: string | null): Record<string, string> => (multi ? { company: name ?? '' } : {})
         const flat: Array<Record<string, string | number>> = []
-        for (const a of report.byCashAccount) flat.push({ section: 'By account', ...co(a.companyName), code: a.code, name: a.name, inflow: fmtPkr(a.inflowCents), outflow: fmtPkr(a.outflowCents), transferIn: fmtPkr(a.transferInCents), transferOut: fmtPkr(a.transferOutCents), net: fmtPkr(a.netCents) })
-        for (const c of report.byCategory)    flat.push({ section: 'By category', ...co(''), code: '', name: c.category, inflow: fmtPkr(c.inflowCents), outflow: fmtPkr(c.outflowCents), transferIn: '', transferOut: '', net: fmtPkr(c.netCents) })
-        flat.push({ section: 'Total', ...co(''), code: '', name: 'NET CHANGE IN CASH', inflow: fmtPkr(report.totals.inflowCents), outflow: fmtPkr(report.totals.outflowCents), transferIn: fmtPkr(report.totals.transfersCents), transferOut: fmtPkr(report.totals.transfersCents), net: fmtPkr(report.totals.netCents) })
+        for (const a of report.byCashAccount) flat.push({ section: 'By account', ...co(a.companyName), code: a.code, name: a.name, inflow: fmtWhole(a.inflowCents), outflow: fmtWhole(a.outflowCents), transferIn: fmtWhole(a.transferInCents), transferOut: fmtWhole(a.transferOutCents), net: fmtWhole(a.netCents) })
+        for (const c of report.byCategory)    flat.push({ section: 'By category', ...co(''), code: '', name: c.category, inflow: fmtWhole(c.inflowCents), outflow: fmtWhole(c.outflowCents), transferIn: '', transferOut: '', net: fmtWhole(c.netCents) })
+        flat.push({ section: 'Total', ...co(''), code: '', name: 'NET CHANGE IN CASH', inflow: fmtWhole(report.totals.inflowCents), outflow: fmtWhole(report.totals.outflowCents), transferIn: fmtWhole(report.totals.transfersCents), transferOut: fmtWhole(report.totals.transfersCents), net: fmtWhole(report.totals.netCents) })
         return sendReportFor(req, reply, format, { base: 'cash-flow', suffix: `${report.dateFrom}-${report.dateTo}` }, {
-          title: 'Cash flow', companies: report.companies.map((c) => c.name), period: `${report.dateFrom} to ${report.dateTo}`,
+          wholeRupees: true, title: 'Cash flow', companies: report.companies.map((c) => c.name), period: `${report.dateFrom} to ${report.dateTo}`,
           rows: flat, sectionKey: 'section',
           types: { inflow: 'pkr', outflow: 'pkr', transferIn: 'pkr', transferOut: 'pkr', net: 'pkr' },
         })

@@ -168,10 +168,14 @@ describe('lib/reportExport.ts', () => {
   })
 })
 
+const fmtPkrPaisa = fmtPkr
+
 // ─── Legacy CSV builders (the code the routes ran before 2026-10-20) ─────────
 
 type Tb = { companies: Array<{ name: string }>; rows: Array<{ companyName: string | null; code: string; name: string; virtual?: boolean; type: string; debitCents: number; creditCents: number }>; totals: { debitCents: number; creditCents: number }; companyTotals: Array<{ name: string; debitCents: number; creditCents: number }> }
 function legacyTb(report: Tb): string {
+  // Financial statements print whole rupees (owner, 2026-11-04).
+  const fmtPkr = (c: number) => fmtPkrPaisa(c, { decimals: 0 })
   const multi = report.companies.length > 1
   const rows: Array<Record<string, string | number>> = report.rows.map((r) => ({
     ...(multi && { company: r.companyName ?? '' }),
@@ -189,6 +193,8 @@ type Bs = {
   totals: { assetsCents: number; liabilitiesCents: number; equityCents: number; currentEarningsCents: number; currentYearEarningsCents: number }
 }
 function legacyBs(report: Bs): string {
+  // Financial statements print whole rupees (owner, 2026-11-04).
+  const fmtPkr = (c: number) => fmtPkrPaisa(c, { decimals: 0 })
   const multi = report.companies.length > 1
   const co = (name: string | null): Record<string, string> => (multi ? { company: name ?? '' } : {})
   const flat: Array<Record<string, string | number>> = []
@@ -212,6 +218,8 @@ function legacyBs(report: Bs): string {
 type Line = { code: string; name: string; amountCents: number }
 type Pl = { revenue: Line[]; contraRevenue: Line[]; cogs: Line[]; opex: Line[]; otherIncome: Line[]; totals: Record<string, number> }
 function legacyPl(report: Pl): string {
+  // Financial statements print whole rupees (owner, 2026-11-04).
+  const fmtPkr = (c: number) => fmtPkrPaisa(c, { decimals: 0 })
   const t = report.totals
   const flat: Array<Record<string, string | number>> = []
   for (const r of report.revenue) flat.push({ section: 'Revenue', code: r.code, name: r.name, amount: fmtPkr(r.amountCents) })
@@ -288,8 +296,9 @@ describe('balance sheet, P&L, trial balance: CSV unchanged, Excel and PDF added'
     expect(csv.body.slice(csv.body.indexOf('\r\nEquity'))).toBe(legacyBs(json.json() as Bs).slice(legacyBs(json.json() as Bs).indexOf('\r\nEquity')))
     for (const t of ['TOTAL NON-CURRENT ASSETS', 'TOTAL CURRENT ASSETS', 'TOTAL ASSETS', 'TOTAL CURRENT LIABILITIES', 'TOTAL NON-CURRENT LIABILITIES', 'TOTAL LIABILITIES']) expect(csv.body).toContain(t)
     const { xlsx } = await expectFiles(`/accounting/balance-sheet?asOf=${today}`)
-    // Cash 1010 = 1,000,000 + 250,050 − 80,000 paisa = PKR 11,700.50, as a number.
-    expect(xlsx.toString('utf8')).toMatch(/<v>11700\.5<\/v>/)
+    // Cash 1010 = 1,000,000 + 250,050 − 80,000 paisa = PKR 11,700.50 → whole rupees on a statement (owner, 2026-11-04).
+    expect(xlsx.toString('utf8')).toMatch(/<v>11701<\/v>/)
+    expect(xlsx.toString('utf8')).not.toMatch(/<v>11700\.5<\/v>/)
     const pdf = await get('finA', `/accounting/balance-sheet?asOf=${today}&format=pdf`)
     expect(String(pdf.headers['content-disposition'])).toContain(`balance-sheet-export-a-${RUN}-${today}.pdf`)
   })
@@ -364,7 +373,7 @@ describe('company scope and access are the route\'s own', () => {
   it('company B exports only its own books', async () => {
     const csv = await get('finB', `/accounting/trial-balance?asOf=${today}&format=csv`)
     expect(csv.statusCode).toBe(200)
-    expect(csv.body).toContain('"7,777.00"')
+    expect(csv.body).toContain('"7,777"')
     expect(csv.body).not.toContain('"10,000.00"')
     const x = await get('finB', `/accounting/balance-sheet?asOf=${today}&format=xlsx`)
     expect(x.rawPayload.toString('utf8')).toContain(`Export B ${RUN}`)

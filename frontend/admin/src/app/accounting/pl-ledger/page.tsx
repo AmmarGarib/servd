@@ -11,7 +11,7 @@ import { Input } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
-import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
+import { fmtPkrWhole, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
 import Link from 'next/link'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 
@@ -73,7 +73,7 @@ function Section({ title, rows, total, neg }: { title: string; rows: PL['revenue
               <td className="px-4 py-1.5 font-mono text-xs text-s-muted w-20">{r.code}</td>
               <td className="px-4 py-1.5 text-s-text">{r.name}</td>
               <td className={`px-4 py-1.5 text-right font-mono text-xs ${neg ? 'text-s-red' : 'text-s-text'}`}>
-                {neg ? '(' + fmtPkr(r.amountCents) + ')' : fmtPkr(r.amountCents)}
+                {neg ? '(' + fmtPkrWhole(r.amountCents) + ')' : fmtPkrWhole(r.amountCents)}
               </td>
             </tr>
           ))}
@@ -85,7 +85,7 @@ function Section({ title, rows, total, neg }: { title: string; rows: PL['revenue
       </div>
       <div className="px-4 py-1.5 bg-s-bg-soft border border-s-border border-t-0 text-sm font-semibold text-s-text rounded-b flex justify-between">
         <span>Total {title}</span>
-        <span className={`font-mono ${neg ? 'text-s-red' : ''}`}>{neg ? '(' + fmtPkr(total) + ')' : fmtPkr(total)}</span>
+        <span className={`font-mono ${neg ? 'text-s-red' : ''}`}>{neg ? '(' + fmtPkrWhole(total) + ')' : fmtPkrWhole(total)}</span>
       </div>
     </div>
   )
@@ -101,7 +101,7 @@ function Statement({ data }: { data: PL }) {
       <div className="s-card p-4 mb-4">
         <div className="flex justify-between text-base font-bold">
           <span className="text-s-text">Gross Profit</span>
-          <span className="text-success">{fmtPkr(data.totals.grossProfitCents)} ({data.totals.grossMarginPct}%)</span>
+          <span className="text-success">{fmtPkrWhole(data.totals.grossProfitCents)} ({data.totals.grossMarginPct}%)</span>
         </div>
       </div>
 
@@ -109,10 +109,10 @@ function Statement({ data }: { data: PL }) {
       {((data.totals.depreciationCents ?? 0) !== 0 || (data.totals.impairmentCents ?? 0) !== 0) && (
         <div className="px-4 -mt-2 mb-3 text-xs text-s-muted space-y-0.5">
           {(data.totals.depreciationCents ?? 0) !== 0 && (
-            <div className="flex justify-between"><span>of which depreciation</span><span className="font-mono">({fmtPkr(data.totals.depreciationCents ?? 0)})</span></div>
+            <div className="flex justify-between"><span>of which depreciation</span><span className="font-mono">({fmtPkrWhole(data.totals.depreciationCents ?? 0)})</span></div>
           )}
           {(data.totals.impairmentCents ?? 0) !== 0 && (
-            <div className="flex justify-between"><span>of which impairment</span><span className="font-mono">({fmtPkr(data.totals.impairmentCents ?? 0)})</span></div>
+            <div className="flex justify-between"><span>of which impairment</span><span className="font-mono">({fmtPkrWhole(data.totals.impairmentCents ?? 0)})</span></div>
           )}
         </div>
       )}
@@ -121,7 +121,7 @@ function Statement({ data }: { data: PL }) {
         <div className="s-card p-4 mb-4">
           <div className="flex justify-between text-base font-bold">
             <span className="text-s-text">Operating Profit</span>
-            <span className={data.totals.operatingProfitCents >= 0 ? 'text-success' : 'text-s-red'}>{fmtPkr(data.totals.operatingProfitCents)}</span>
+            <span className={data.totals.operatingProfitCents >= 0 ? 'text-success' : 'text-s-red'}>{fmtPkrWhole(data.totals.operatingProfitCents)}</span>
           </div>
         </div>
       )}
@@ -134,7 +134,7 @@ function Statement({ data }: { data: PL }) {
         <div className="flex justify-between text-lg font-bold">
           <span className="text-s-text">Net Profit</span>
           <span className={data.totals.netProfitCents >= 0 ? 'text-success' : 'text-s-red'}>
-            {fmtPkr(data.totals.netProfitCents)}
+            {fmtPkrWhole(data.totals.netProfitCents)}
           </span>
         </div>
       </div>
@@ -146,7 +146,7 @@ function BrandTable({ data }: { data: ByBrand }) {
   const rows = [...data.brands, ...(data.shared ? [data.shared] : [])]
   const cell = (c: number, neg?: boolean) => (
     <td className={`px-3 py-2 text-right font-mono text-xs ${neg ? 'text-s-red' : c < 0 ? 'text-s-red' : 'text-s-text'}`}>
-      {c === 0 ? '—' : neg ? `(${fmtPkr(c)})` : fmtPkr(c)}
+      {c === 0 ? '—' : neg ? `(${fmtPkrWhole(c)})` : fmtPkrWhole(c)}
     </td>
   )
   return (

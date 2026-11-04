@@ -15,8 +15,9 @@ export function fmtPkr(cents: number): string {
 
 export function fmtPkrWhole(cents: number | null | undefined): string {
   if (cents == null || Number.isNaN(cents)) return '—'
-  const sign = cents < 0 ? '-' : ''
-  return `${sign}PKR ${Math.round(Math.abs(cents) / 100).toLocaleString('en-PK')}`
+  const rupees = Math.round(Math.abs(cents) / 100)
+  const sign = cents < 0 && rupees > 0 ? '-' : '' // never "-PKR 0"
+  return `${sign}PKR ${rupees.toLocaleString('en-PK')}`
 }
 
 export function fmtPkrShort(cents: number | null | undefined): string {

@@ -360,7 +360,7 @@ describe('(2) a PKR 25m manual journal entry', () => {
     const after = await tb('ceoA', tenantA)
     expect(after.debit1020 - tbBefore.debit1020).toBe(AMT)
     expect(after.debitCents).toBe(after.creditCents)
-    expect((await call('ceoA', 'GET', '/accounting/trial-balance?format=csv')).body).toContain('25,000,000.00')
+    expect((await call('ceoA', 'GET', '/accounting/trial-balance?format=csv')).body).toContain('25,000,000') // whole rupees (owner, 2026-11-04)
     const today = pktToday()
     const ledgerCsv = await call('ceoA', 'GET', `/accounting/ledger?format=csv&dateFrom=${today}&dateTo=${today}`)
     expect(ledgerCsv.statusCode).toBe(200)

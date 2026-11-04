@@ -9,7 +9,7 @@ import { Input } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
-import { fmtPkr, todayPktIso } from '../../../lib/money'
+import { fmtPkrWhole, todayPktIso } from '../../../lib/money'
 import Link from 'next/link'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 
@@ -75,7 +75,7 @@ function Section({ title, rows, total, multi }: { title: string; rows: Row[]; to
               {multi && <td className="px-4 py-2 text-xs text-s-muted whitespace-nowrap">{r.companyName ?? ''}</td>}
               <td className="px-4 py-2 font-mono text-xs text-s-muted w-20">{r.code}</td>
               <td className="px-4 py-2 text-s-text">{r.name}</td>
-              <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(r.balanceCents)}</td>
+              <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkrWhole(r.balanceCents)}</td>
             </tr>
           ))}
           {rows.length === 0 && (
@@ -85,7 +85,7 @@ function Section({ title, rows, total, multi }: { title: string; rows: Row[]; to
         <tfoot className="bg-s-bg-soft border-t border-s-border font-semibold">
           <tr>
             <td colSpan={multi ? 3 : 2} className="px-4 py-2 text-s-text">Total {title}</td>
-            <td className="px-4 py-2 text-right font-mono text-s-text">{fmtPkr(total)}</td>
+            <td className="px-4 py-2 text-right font-mono text-s-text">{fmtPkrWhole(total)}</td>
           </tr>
         </tfoot>
       </table>
@@ -132,10 +132,10 @@ export default function BalanceSheetPage() {
               <>
                 <Section title="Non-current assets" rows={data.assets.filter((r) => r.term === 'non_current')} total={data.totals.nonCurrentAssetsCents ?? 0} multi={multi} />
                 <Section title="Current assets" rows={data.assets.filter((r) => r.term !== 'non_current')} total={data.totals.currentAssetsCents} multi={multi} />
-                <p className="flex justify-between px-4 -mt-2 mb-4 text-sm font-bold text-s-text"><span>Total assets</span><span className="font-mono">{fmtPkr(data.totals.assetsCents)}</span></p>
+                <p className="flex justify-between px-4 -mt-2 mb-4 text-sm font-bold text-s-text"><span>Total assets</span><span className="font-mono">{fmtPkrWhole(data.totals.assetsCents)}</span></p>
                 <Section title="Current liabilities" rows={data.liabilities.filter((r) => r.term !== 'non_current')} total={data.totals.currentLiabilitiesCents ?? 0} multi={multi} />
                 <Section title="Non-current liabilities" rows={data.liabilities.filter((r) => r.term === 'non_current')} total={data.totals.nonCurrentLiabilitiesCents ?? 0} multi={multi} />
-                <p className="flex justify-between px-4 -mt-2 mb-4 text-sm font-bold text-s-text"><span>Total liabilities</span><span className="font-mono">{fmtPkr(data.totals.liabilitiesCents)}</span></p>
+                <p className="flex justify-between px-4 -mt-2 mb-4 text-sm font-bold text-s-text"><span>Total liabilities</span><span className="font-mono">{fmtPkrWhole(data.totals.liabilitiesCents)}</span></p>
               </>
             )}
             <Section
@@ -175,9 +175,9 @@ export default function BalanceSheetPage() {
                         <tr key={`${p.tenantId ?? ''}:${p.classKey}`} className="border-t border-s-border">
                           {multi && <td className="px-4 py-2 text-xs text-s-muted whitespace-nowrap">{p.companyName ?? ''}</td>}
                           <td className="px-4 py-2 text-s-text">{p.label}</td>
-                          <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(p.costCents)}</td>
-                          <td className="px-4 py-2 text-right font-mono text-xs text-s-muted">{fmtPkr(p.accumulatedCents)}</td>
-                          <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(p.netCents)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkrWhole(p.costCents)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-xs text-s-muted">{fmtPkrWhole(p.accumulatedCents)}</td>
+                          <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkrWhole(p.netCents)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -190,12 +190,12 @@ export default function BalanceSheetPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-xs text-s-muted">Assets</p>
-                  <p className="text-lg font-bold text-s-text">{fmtPkr(data.totals.assetsCents)}</p>
+                  <p className="text-lg font-bold text-s-text">{fmtPkrWhole(data.totals.assetsCents)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-s-muted">Liabilities + equity + earnings</p>
                   <p className="text-lg font-bold text-s-text">
-                    {fmtPkr(data.totals.liabilitiesCents + data.totals.equityCents + data.totals.currentEarningsCents)}
+                    {fmtPkrWhole(data.totals.liabilitiesCents + data.totals.equityCents + data.totals.currentEarningsCents)}
                   </p>
                 </div>
               </div>
@@ -203,7 +203,7 @@ export default function BalanceSheetPage() {
                 <p className={`text-sm ${data.totals.differenceCents === 0 ? 'text-success' : 'text-s-red'}`}>
                   {data.totals.differenceCents === 0
                     ? 'Balance sheet balances'
-                    : `Off by ${fmtPkr(data.totals.differenceCents)} — investigate`}
+                    : `Off by ${fmtPkrWhole(data.totals.differenceCents)} — investigate`}
                 </p>
               </div>
             </div>

@@ -8,7 +8,7 @@ import { CheckLabel, Input } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
-import { fmtPkr, todayPktIso } from '../../../lib/money'
+import { fmtPkrWhole, todayPktIso } from '../../../lib/money'
 import Link from 'next/link'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 
@@ -74,16 +74,16 @@ export default function TrialBalancePage() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <p className="text-xs text-s-muted">Total Debits</p>
-                  <p className="text-lg font-bold text-s-text">{fmtPkr(data.totals.debitCents)}</p>
+                  <p className="text-lg font-bold text-s-text">{fmtPkrWhole(data.totals.debitCents)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-s-muted">Total Credits</p>
-                  <p className="text-lg font-bold text-s-text">{fmtPkr(data.totals.creditCents)}</p>
+                  <p className="text-lg font-bold text-s-text">{fmtPkrWhole(data.totals.creditCents)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-s-muted">Difference</p>
                   <p className={`text-lg font-bold ${data.totals.differenceCents === 0 ? 'text-success' : 'text-s-red'}`}>
-                    {fmtPkr(data.totals.differenceCents)}
+                    {fmtPkrWhole(data.totals.differenceCents)}
                     {data.totals.differenceCents !== 0 && <span className="ml-2 text-xs">books unbalanced</span>}
                   </p>
                 </div>
@@ -94,9 +94,9 @@ export default function TrialBalancePage() {
                     <p key={c.tenantId} className="text-xs text-s-muted flex flex-wrap justify-between gap-2">
                       <span className="text-s-text">{c.name}</span>
                       <span className="font-mono">
-                        Dr {fmtPkr(c.debitCents)} · Cr {fmtPkr(c.creditCents)} ·{' '}
+                        Dr {fmtPkrWhole(c.debitCents)} · Cr {fmtPkrWhole(c.creditCents)} ·{' '}
                         <span className={c.differenceCents === 0 ? 'text-success' : 'text-s-red'}>
-                          {c.differenceCents === 0 ? 'balanced' : `off by ${fmtPkr(c.differenceCents)}`}
+                          {c.differenceCents === 0 ? 'balanced' : `off by ${fmtPkrWhole(c.differenceCents)}`}
                         </span>
                       </span>
                     </p>
@@ -128,8 +128,8 @@ export default function TrialBalancePage() {
                         <td className="px-4 py-2 font-mono text-xs text-s-muted">{row.code}</td>
                         <td className={`px-4 py-2 ${ink}`}>{row.name}{row.virtual && <span className="ml-1 text-xs not-italic">(computed)</span>}</td>
                         <td className="px-4 py-2 text-xs text-s-muted">{row.type}</td>
-                        <td className={`px-4 py-2 text-right font-mono text-xs ${ink}`}>{row.debitCents > 0 ? fmtPkr(row.debitCents) : ''}</td>
-                        <td className={`px-4 py-2 text-right font-mono text-xs ${ink}`}>{row.creditCents > 0 ? fmtPkr(row.creditCents) : ''}</td>
+                        <td className={`px-4 py-2 text-right font-mono text-xs ${ink}`}>{row.debitCents > 0 ? fmtPkrWhole(row.debitCents) : ''}</td>
+                        <td className={`px-4 py-2 text-right font-mono text-xs ${ink}`}>{row.creditCents > 0 ? fmtPkrWhole(row.creditCents) : ''}</td>
                       </tr>
                     )
                   })}
@@ -137,8 +137,8 @@ export default function TrialBalancePage() {
                 <tfoot className="bg-s-bg-soft border-t border-s-border font-semibold">
                   <tr>
                     <td colSpan={multi ? 4 : 3} className="px-4 py-2 text-s-text">Totals{multi && ' (all companies)'}</td>
-                    <td className="px-4 py-2 text-right font-mono text-s-text">{fmtPkr(data.totals.debitCents)}</td>
-                    <td className="px-4 py-2 text-right font-mono text-s-text">{fmtPkr(data.totals.creditCents)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-s-text">{fmtPkrWhole(data.totals.debitCents)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-s-text">{fmtPkrWhole(data.totals.creditCents)}</td>
                   </tr>
                 </tfoot>
               </table>

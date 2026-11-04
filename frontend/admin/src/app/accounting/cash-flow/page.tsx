@@ -3,7 +3,7 @@ import { Input } from '@/components/finance/ui'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
-import { fmtPkr, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
+import { fmtPkrWhole, todayPktIso, startOfMonthPktIso } from '../../../lib/money'
 import Link from 'next/link'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 
@@ -72,12 +72,12 @@ export default function CashFlowPage() {
                         <span className="font-mono text-xs text-s-muted mr-2">{r.code}</span>{r.name}
                         {multi && r.companyName && <span className="block text-xs text-s-muted">{r.companyName}</span>}
                       </td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-success">{fmtPkr(r.inflowCents)}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-s-red">{fmtPkr(r.outflowCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-success">{fmtPkrWhole(r.inflowCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-s-red">{fmtPkrWhole(r.outflowCents)}</td>
                       <td className="px-4 py-2 text-right font-mono text-xs text-s-muted">
-                        {r.transferInCents === 0 && r.transferOutCents === 0 ? '—' : fmtPkr(r.transferInCents - r.transferOutCents)}
+                        {r.transferInCents === 0 && r.transferOutCents === 0 ? '—' : fmtPkrWhole(r.transferInCents - r.transferOutCents)}
                       </td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(r.netCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkrWhole(r.netCents)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -93,9 +93,9 @@ export default function CashFlowPage() {
                   {data.byCategory.map((r) => (
                     <tr key={r.category} className="border-t border-s-border first:border-0">
                       <td className="px-4 py-2 text-s-text capitalize">{r.category}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-success">{fmtPkr(r.inflowCents)}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-s-red">{fmtPkr(r.outflowCents)}</td>
-                      <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkr(r.netCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-success">{fmtPkrWhole(r.inflowCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-s-red">{fmtPkrWhole(r.outflowCents)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-xs text-s-text">{fmtPkrWhole(r.netCents)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -106,18 +106,18 @@ export default function CashFlowPage() {
             <div className="s-card p-4 space-y-2">
               <div className="flex flex-wrap justify-between gap-2 text-sm">
                 <span className="text-s-muted">Cash in</span>
-                <span className="font-mono text-success">{fmtPkr(data.totals.inflowCents)}</span>
+                <span className="font-mono text-success">{fmtPkrWhole(data.totals.inflowCents)}</span>
               </div>
               <div className="flex flex-wrap justify-between gap-2 text-sm">
                 <span className="text-s-muted">Cash out</span>
-                <span className="font-mono text-s-red">{fmtPkr(data.totals.outflowCents)}</span>
+                <span className="font-mono text-s-red">{fmtPkrWhole(data.totals.outflowCents)}</span>
               </div>
               <div className="flex flex-wrap justify-between gap-2 font-bold pt-2 border-t border-s-border">
                 <span className="text-s-text">Net Change in Cash</span>
-                <span className={data.totals.netCents >= 0 ? 'text-success' : 'text-s-red'}>{fmtPkr(data.totals.netCents)}</span>
+                <span className={data.totals.netCents >= 0 ? 'text-success' : 'text-s-red'}>{fmtPkrWhole(data.totals.netCents)}</span>
               </div>
               <p className="text-xs text-s-muted">
-                {fmtPkr(data.totals.transfersCents)} moved between the company&apos;s own cash accounts (safe drops, pay-ins, bank deposits).
+                {fmtPkrWhole(data.totals.transfersCents)} moved between the company&apos;s own cash accounts (safe drops, pay-ins, bank deposits).
                 Transfers change which account holds the cash, not how much there is, so they are not counted as cash in or out.
               </p>
             </div>
