@@ -244,7 +244,7 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
           )}
 
           {e.sourceType === 'manual' || e.reference?.startsWith('manual') ? (
-            <RecordFiles ownerType="journal_entry" ownerId={e.id} tenantId={e.tenantId ?? undefined} canUpload={!!canAttach} compact lazy
+            <RecordFiles ownerType="journal_entry" ownerId={e.id} tenantId={e.tenantId ?? undefined} canUpload={!!canAttach}
               emptyText="No supporting documents yet." />
           ) : null}
 
@@ -277,7 +277,7 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
               </ul>
             </section>
           )}
-          <LinkButton tone="muted" type="button" onClick={onClose}>Close</LinkButton>
+          <div className="pt-2"><LinkButton tone="muted" type="button" onClick={onClose}>Close</LinkButton></div>
         </div>
       )}
     </SidePanel>
