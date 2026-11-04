@@ -32,8 +32,11 @@ function editLines(before: unknown, after: unknown): string[] {
   return keys.map((k) => `${k}: ${brief(b[k])} → ${brief(a[k])}`)
 }
 
-export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplicate }: {
+export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplicate, canAttach }: {
   entryId: string
+  /** Finance / the CEO add supporting documents to a POSTED entry at once — no edit, no CEO approval, closed months
+   *  too (owner, 2026-11-04); the server's own rule (record-files provider journal_entry) decides. */
+  canAttach?: boolean
   tenantId?: string | null
   onClose: () => void
   /** Opens the posting form pre-filled in amend mode. */
@@ -241,7 +244,7 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
           )}
 
           {e.sourceType === 'manual' || e.reference?.startsWith('manual') ? (
-            <RecordFiles ownerType="journal_entry" ownerId={e.id} tenantId={e.tenantId ?? undefined} canUpload={e.canTextEdit} compact lazy
+            <RecordFiles ownerType="journal_entry" ownerId={e.id} tenantId={e.tenantId ?? undefined} canUpload={!!canAttach} compact lazy
               emptyText="No supporting documents yet." />
           ) : null}
 

@@ -325,6 +325,21 @@ describe('record files: journal_entry keeps the manual-journal rule (2026-10-20)
     })
     expect((await call('finA', 'POST', `/record-files/journal_entry/${sys.entryId}`, { files: [pdf] })).statusCode).toBe(404)
   })
+
+  it('finance attaches documents to a POSTED entry in closed books at once — the entry is untouched, no approval (owner, 2026-11-04)', async () => {
+    const id = A.ids[RECORD_OWNER.journal_entry]!
+    const before = await prisma.journalEntry.findUniqueOrThrow({ where: { id }, include: { lines: true } })
+    const lock = await prisma.periodLock.create({ data: { tenantId: A.tenantId, lockedThrough: new Date(Date.now() + 86400_000), lockedBy: 'test' } })
+    try {
+      const up = await call('finA', 'POST', `/record-files/journal_entry/${id}`, { files: [png(21)] })
+      expect(up.statusCode, up.body).toBe(201)
+      const after = await prisma.journalEntry.findUniqueOrThrow({ where: { id }, include: { lines: true } })
+      expect(after).toEqual(before)
+      expect(await prisma.journalRequest.count({ where: { reverseEntryId: id } })).toBe(0)
+    } finally {
+      await prisma.periodLock.delete({ where: { id: lock.id } })
+    }
+  })
 })
 
 describe('record files: capex_quote keeps the CapEx rule', () => {

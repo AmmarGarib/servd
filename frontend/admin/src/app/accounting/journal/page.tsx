@@ -588,8 +588,11 @@ function JournalsPage() {
             {canPost && !editing && (
               <div className="space-y-2">
                 {amending && (
-                  <RecordFiles ownerType="journal_entry" ownerId={amending.id} tenantId={amending.tenantId ?? undefined} canUpload={false} compact
+                  <RecordFiles ownerType="journal_entry" ownerId={amending.id} tenantId={amending.tenantId ?? undefined} canUpload compact
                     title="Documents on the original entry" emptyText="No documents on the original entry." />
+                )}
+                {amending && (
+                  <p className="text-xs text-s-muted">Only adding documents? Attach them above — they go on the posted entry at once, with no change to it and no CEO approval.</p>
                 )}
                 {paysOut ? (
                   <div>
@@ -645,7 +648,7 @@ function JournalsPage() {
         )}
 
         {panel && (
-          <EntryPanel entryId={panel.id} tenantId={panel.tenantId} onClose={() => setPanel(null)} onEditAmounts={editEntry} onDuplicate={canPrepare ? duplicateEntry : undefined} />
+          <EntryPanel entryId={panel.id} tenantId={panel.tenantId} onClose={() => setPanel(null)} onEditAmounts={editEntry} onDuplicate={canPrepare ? duplicateEntry : undefined} canAttach={canPost} />
         )}
       </div>
     </div>
