@@ -301,6 +301,15 @@ module id must be placed in a workspace in the same change.
   board, punch log, tip pools, reports; shown as "Kiosk (old)"). HR's list to finish before 1 Nov (no punch =
   absent): `GET /hr/staff-without-login` (HR_BACK_OFFICE, companies in view) → HR → Attendance → "Staff without a
   login". Tests: `tests/staffWithoutLogin.test.ts`.
+- **HR edits their own employee record — through ONE approval (owner, 2026-11-04: "give him access to put details
+  of all employee including himself, final approval remains with CEO/HR's HOD (CEO is also HOD of HR so keep only
+  one approval for CEO in such cases)").** `PATCH /hr/employees/:id` on the record linked to the caller's own login
+  (anyone but the CEO / co-owner) applies NOTHING at once: 202 `{ pendingApproval, request }` — the non-pay changes
+  become an HR request of section `profile_update` (`hr/routes.ts ownRecordChange`; one step: the HOD = their
+  manager's login, or the CEO once when the manager is the CEO or there is no manager login — `service.ts workflowOf`
+  `_ceoOnly`), applied on approval (`service.ts effectUpdate`, never pay / company / login columns); a pay change goes
+  the wage-change way (CEO final). One open at a time (409 `PROFILE_CHANGE_PENDING`). Nobody approves their own.
+  Tests: `tests/hrOwnRecordChange.test.ts`.
 - **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
   also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
   (same scope as offboard; never `admin` / `owner` — 403 `REISSUE_CEO_ONLY`,

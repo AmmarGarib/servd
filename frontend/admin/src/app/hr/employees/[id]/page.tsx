@@ -155,11 +155,11 @@ function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void 
   const [ok, setOk] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const formRef = useRef<HTMLFormElement>(null)
-  const [sentForApproval, setSentForApproval] = useState(false)
+  const [sentForApproval, setSentForApproval] = useState<false | 'own' | 'pay'>(false)
   const save = useMutation({
     // A pay change by anyone but the CEO comes back 202 { pendingApproval } — the rest of the save applied.
-    mutationFn: () => api.patch<{ pendingApproval?: boolean }>(`/hr/employees/${p.employee.id}`, { data: value }),
-    onSuccess: (r) => { setOk(true); setSentForApproval(!!r?.pendingApproval); setErr(''); setValue(null); void qc.invalidateQueries() },
+    mutationFn: () => api.patch<{ pendingApproval?: boolean; request?: { section?: string } }>(`/hr/employees/${p.employee.id}`, { data: value }),
+    onSuccess: (r) => { setOk(true); setSentForApproval(r?.pendingApproval ? (r.request?.section === 'profile_update' ? 'own' : 'pay') : false); setErr(''); setValue(null); void qc.invalidateQueries() },
     onError: (e: Error) => { setErr(e.message); setOk(false) },
   })
   const withdraw = useMutation({
@@ -204,7 +204,7 @@ function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void 
         {value && <span className="text-xs text-white/50">Unsaved changes</span>}
       </div>
       {err && <p className="text-xs text-s-red mt-3" role="alert">{err}</p>}
-      <p className="text-xs text-primary-ink mt-3" role="status" aria-live="polite">{ok ? (sentForApproval ? 'Saved. The pay change was sent for approval — the CEO gives the final approval.' : 'Saved.') : ''}</p>
+      <p className="text-xs text-primary-ink mt-3" role="status" aria-live="polite">{ok ? (sentForApproval === 'own' ? 'Sent for approval. Changes to your own record apply once your HOD (or the CEO) approves them.' : sentForApproval ? 'Saved. The pay change was sent for approval — the CEO gives the final approval.' : 'Saved.') : ''}</p>
       <p className="text-xs text-white/50 mt-3">A change of salary here goes for approval (management, then the CEO) before it applies; the CEO&apos;s own change applies at once. Promotions and transfers go through their own sections.</p>
     </form>
   )

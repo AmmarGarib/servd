@@ -320,7 +320,10 @@ export async function teamUserIdsUnder(tenantId: string, managerUserId: string, 
 // (appliedAt), and not before its effective date: a salary revision approved
 // today for next month must not change this month's payroll.
 
-const EFFECT_SECTIONS = ['promotion', 'transfer', 'salary_revision', 'probation_review', 'resignation', 'termination']
+const EFFECT_SECTIONS = ['promotion', 'transfer', 'salary_revision', 'probation_review', 'resignation', 'termination', 'profile_update']
+
+/** Columns an own-record change never writes (pay goes the wage-change way; company / login / id never move here). */
+export const PROFILE_UPDATE_NEVER = new Set(['id', 'tenantId', 'userId', 'basicSalaryCents', 'grossSalaryCents', 'createdById', 'createdAt', 'updatedAt'])
 
 /** What an approved record writes to the employee master. */
 function effectUpdate(rec: HrRecord, emp: HrEmployee): Record<string, unknown> {
@@ -358,6 +361,20 @@ function effectUpdate(rec: HrRecord, emp: HrEmployee): Record<string, unknown> {
       upd['status'] = 'terminated'
       if (rec.endDate) upd['lastWorkingDay'] = rec.endDate
       break
+    case 'profile_update': {
+      // HR's own record change (owner, 2026-11-04): the columns the save asked for (dates kept as ISO strings in the
+      // JSON, listed in _dateKeys) and the format's unbound fields (_extra), merged onto the record's data. Never a
+      // salary column (that is a wage change) and never the record's company or login.
+      const cols = (d['_columns'] ?? {}) as Record<string, unknown>
+      const dateKeys = new Set(Array.isArray(d['_dateKeys']) ? d['_dateKeys'] as string[] : [])
+      for (const [k, val] of Object.entries(cols)) {
+        if (PROFILE_UPDATE_NEVER.has(k)) continue
+        upd[k] = dateKeys.has(k) && typeof val === 'string' ? new Date(val) : val
+      }
+      const extra = d['_extra'] as Record<string, unknown> | undefined
+      if (extra && Object.keys(extra).length) upd['data'] = { ...((emp.data ?? {}) as Record<string, unknown>), ...extra }
+      break
+    }
   }
   return upd
 }
@@ -401,7 +418,7 @@ async function applyEffect(tx: Tx, rec: HrRecord, emp: HrEmployee): Promise<void
  *  employee from now, not from the day it arrives. Everything else at its
  *  effective date. */
 export function effectDue(rec: Pick<HrRecord, 'section' | 'category' | 'effectiveDate'>, now: Date): boolean {
-  if (rec.section === 'resignation' || rec.section === 'termination') return true
+  if (rec.section === 'resignation' || rec.section === 'termination' || rec.section === 'profile_update') return true
   if (rec.section === 'probation_review' && rec.category === 'extend') return true
   // effectiveDate is UTC midnight of its Karachi day; compare with Karachi
   // today in the same form (pktToday), so today's effects apply from 00:00 PKT.
@@ -729,6 +746,8 @@ export const OUT_OF_AREA_WORKFLOW: WorkflowStep[] = [{ key: 'hod_location', labe
  *  reader of a record's steps (decide, the waiting list, the bell, approvalRights) goes through this. */
 export function workflowOf(rec: { section: string; data: unknown; amountCents?: number | null }, fmt: { workflow: WorkflowStep[] }): WorkflowStep[] {
   if (isOutOfAreaHold(rec)) return OUT_OF_AREA_WORKFLOW
+  // HR's own record change with no manager login to sign it: the CEO, once (owner, 2026-11-04).
+  if (rec.section === 'profile_update' && ((rec.data ?? {}) as Record<string, unknown>)['_ceoOnly'] === true) return [CEO_STEP]
   // A wage change ends with the CEO (owner, 2026-10-27).
   return isWageChange(rec) ? withCeoLast(fmt.workflow) : fmt.workflow
 }

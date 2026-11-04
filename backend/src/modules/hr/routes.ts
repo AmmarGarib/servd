@@ -37,7 +37,7 @@ import {
   calculateRun, recalcPayslip, dashboard, dueList, letterContext, payableEmployees, managerUserIdOfEmployee, teamUnder, companyCeo, managerLabelOf,
   salaryForPeriod, availableOvertime, firstPayrollStart, runBlocker, settlementAttendance, STANDING_ATTENDANCE, ALL_RUN_STATUSES, type TeamMember,
   otSelection, settlementOtIds, setPayslipOvertime, addAllOvertime, setPayslipTax, taxOverrideOf, ATTENDANCE_DAY_TAKEN, workflowOf, isOutOfAreaHold,
-  isWageChange, wageAtCeoStep, WAGE_SECTIONS, payslipLoanLines,
+  isWageChange, wageAtCeoStep, WAGE_SECTIONS, payslipLoanLines, PROFILE_UPDATE_NEVER,
 } from './service.js'
 import {
   mergeSettings, dedTypeLabel, decideRight, mayReachForDecision, finalSettlement, gratuityFor, accruedLeaveDays, nextEmployeeCode, periodOf, periodStart, periodEnd, pktToday,
@@ -1489,7 +1489,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // account and status would otherwise skip every approval. The CEO and
     // co-owner may (a one-person office), and it is recorded.
     const selfEdit = !!target?.userId && target.userId === req.staffUser!.id
-    if (selfEdit && !SELF_EDITORS.includes(req.staffUser!.role)) throw new ForbiddenError('You cannot edit your own employee record — ask another HR user')
+    // Anyone else editing their own record (HR, owner 2026-11-04: "give him access to put details of all employee
+    // including himself, final approval remains with CEO/HR's HOD"): the change waits for approval (ownRecordChange).
+    const ownChangeNeedsApproval = selfEdit && !SELF_EDITORS.includes(req.staffUser!.role)
     const fmt = await getFormat(tenantId, 'employees')
     const body = z.object({ data: z.record(z.unknown()) }).parse(req.body)
     // Reporting line "CEO" (forms.ts REPORTS_TO_CEO): the CEO login's HR record
@@ -1552,6 +1554,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
         await prisma.hrEmployee.findFirst({ where: { tenantId, employeeCode: String(cols['employeeCode']), NOT: { id } } })) {
       throw new AppError('DUPLICATE_CODE', `Employee ID ${cols['employeeCode']} is already used`, 409)
     }
+    if (ownChangeNeedsApproval) return ownRecordChange(req, tenantId, cur, cols, extra, fmt.fields)
     // A wage change by anyone but the CEO waits for the CEO (owner, 2026-10-27): the salary columns are taken
     // out of this save and raised as a salary revision through the HR request engine (the format's steps — the
     // manager channel — then the CEO last; hr/service.ts workflowOf). Everything else in the save applies now.
@@ -1584,6 +1587,52 @@ export async function hrRoutes(fastify: FastifyInstance) {
     if (!wageAsk) return emp
     const request = await raiseWageChange(req, tenantId, emp, wageAsk)
     return { pendingApproval: true as const, request, employee: emp }
+  }
+
+  /**
+   * HR saving their OWN employee record (owner, 2026-11-04). Nothing changes now: the non-pay changes are raised as a
+   * `profile_update` request with ONE step — HR's own HOD (their manager's login; the CEO when the CEO is that
+   * manager), or the CEO when there is no manager login — and written on approval (service.ts effectUpdate). A pay
+   * change goes the usual wage-change way (CEO final). One open request at a time (409 PROFILE_CHANGE_PENDING).
+   */
+  async function ownRecordChange(
+    req: FastifyRequest, tenantId: string, cur: HrEmployee, cols: Record<string, unknown>, extra: Record<string, unknown>,
+    fields: Array<{ key: string; label: string; bind?: string }>,
+  ) {
+    const wageAsk = wageChangeAsked(cols, cur)
+    const same = (a: unknown, b: unknown) => JSON.stringify(a instanceof Date ? a.toISOString() : a ?? null) === JSON.stringify(b instanceof Date ? b.toISOString() : b ?? null)
+    const changedCols: Record<string, unknown> = {}
+    const dateKeys: string[] = []
+    for (const [k, val] of Object.entries(cols)) {
+      if (PROFILE_UPDATE_NEVER.has(k)) continue
+      if (same(val, (cur as unknown as Record<string, unknown>)[k])) continue
+      if (val instanceof Date) { dateKeys.push(k); changedCols[k] = val.toISOString() } else changedCols[k] = val
+    }
+    const curData = (cur.data ?? {}) as Record<string, unknown>
+    const changedExtra = Object.fromEntries(Object.entries(extra).filter(([k, val]) => !same(val, curData[k])))
+    const labelOf = (k: string) => fields.find((f) => f.bind === `employee.${k}` || f.bind === k || f.key === k)?.label ?? k
+    const changed = [...Object.keys(changedCols), ...Object.keys(changedExtra)]
+    let request = null
+    if (changed.length) {
+      const open = await prisma.hrRecord.findFirst({ where: { tenantId, employeeId: cur.id, section: 'profile_update', status: { in: ['draft', 'submitted'] } }, select: { id: true } })
+      if (open) throw new AppError('PROFILE_CHANGE_PENDING', 'A change to your own record is already waiting for approval — wait for the decision, or withdraw it first.', 409)
+      // Who signs: the manager's login (the HOD step); none → the CEO once.
+      const mgr = cur.managerId ? await prisma.hrEmployee.findFirst({ where: { id: cur.managerId, tenantId }, select: { userId: true } }) : null
+      const ceoOnly = !mgr?.userId || ((cur.data as Record<string, unknown> | null)?.['reportsToCeo'] === true && !cur.managerId)
+      const summary = changed.map(labelOf).join(', ')
+      request = await createRecord(req, tenantId, 'profile_update', { employee: cur.id }, {
+        submit: true, viaHeadOfficeId: await viaFor(req, tenantId),
+        extraData: { summary, _columns: changedCols, _dateKeys: dateKeys, _extra: changedExtra, _ceoOnly: ceoOnly },
+      })
+      await audit({
+        category: 'identity', action: 'hr.employee.own_change_requested', entity: 'HrRecord', entityId: request.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId,
+        after: { employeeId: cur.id, fields: changed, approver: ceoOnly ? 'ceo' : 'hod', actorRole: req.staffUser!.role },
+      })
+    }
+    const wageRequest = wageAsk ? await raiseWageChange(req, tenantId, cur, wageAsk) : null
+    if (!request && !wageRequest) return cur
+    return { pendingApproval: true as const, request: request ?? wageRequest, ...(request && wageRequest ? { wageRequest } : {}), employee: cur }
   }
 
   /** The pay a non-CEO save asks for, or null when the salary columns do not change. */

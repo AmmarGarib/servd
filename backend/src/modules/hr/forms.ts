@@ -558,6 +558,19 @@ export const HR_SECTIONS: HrSection[] = [
       f('reason', 'Reason', 'textarea'),
     ] },
 
+  // HR editing their OWN employee record (owner, 2026-11-04: "give him access to put details of all employee including
+  // himself, final approval remains with CEO/HR's HOD (CEO is also HOD of HR so keep only one approval for CEO in such
+  // cases)"). Raised by the employee save (routes.ts saveEmployee), never by hand: ONE step — HR's own HOD, or the CEO
+  // when HR has no manager with a login (service.ts workflowOf). The changes ride in data._columns / _extra and are
+  // written to the record on approval (service.ts effectUpdate). Salary is not here: it goes the wage-change way.
+  { key: 'profile_update', specNo: 31, title: 'Own record changes (HR)', group: 'People', kind: 'record',
+    workflow: [HOD], requires: ['employeeId'],
+    effect: 'On approval the changes are written to the employee record.',
+    fields: [
+      emp(),
+      f('summary', 'Changes', 'textarea', { readOnly: true, system: true }),
+    ] },
+
   { key: 'transfer', specNo: 21, title: 'Transfers', group: 'Movement', kind: 'record',
     workflow: [HOD, HR], requires: ['employeeId', 'effectiveDate'],
     effect: 'On final approval the employee\'s branch, department and manager change.',

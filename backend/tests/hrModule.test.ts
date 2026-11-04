@@ -944,12 +944,15 @@ describe('HR through the API', () => {
     }
   })
 
-  it('stops HR editing their own master record or moving their own login link', async () => {
+  it('HR\'s own master record waits for approval (never applied at once); HR never moves their own login link', async () => {
     const mine = (await call('ceo', 'POST', '/employees', { data: { fullName: 'HR Officer', grossSalaryCents: RS(80000), employmentType: 'permanent' } })).json()
     expect((await call('ceo', 'POST', `/employees/${mine.id}/link-user`, { userId: users['hr']!.id })).statusCode).toBe(200)
 
+    // Owner, 2026-11-04: HR may edit their own record, but nothing applies until it is approved — a pay change goes
+    // the wage-change way (CEO final); tests/hrOwnRecordChange.test.ts covers the rest.
     const raise = await call('hr', 'PATCH', `/employees/${mine.id}`, { data: { grossSalaryCents: RS(800000) } })
-    expect(raise.statusCode).toBe(403)
+    expect(raise.statusCode).toBe(202)
+    expect(raise.json().request.section).toBe('salary_revision')
     expect((await prisma.hrEmployee.findUniqueOrThrow({ where: { id: mine.id } })).grossSalaryCents).toBe(RS(80000))
     expect((await call('ceo', 'PATCH', `/employees/${mine.id}`, { data: { phone: '03001234567' } })).statusCode).toBe(200)
 
