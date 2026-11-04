@@ -91,6 +91,15 @@ export async function ensureEmployeeSubAccountTx(
 ): Promise<string> {
   const found = await tx.subAccount.findUnique({ where: { accountId_employeeId: { accountId, employeeId: employee.id } }, select: { id: true } })
   if (found) return found.id
+  // A sub-account finance opened by hand in the person's name (owner, 2026-11-04: "Wages Expense › Anusha Siddiqui")
+  // is THEIRS — linked to the employee, never a second one beside it.
+  const norm = (v: string) => v.trim().replace(/\s+/g, ' ').toLowerCase()
+  const byName = (await tx.subAccount.findMany({ where: { tenantId, accountId, employeeId: null, isActive: true }, select: { id: true, name: true } }))
+    .filter((sa) => norm(sa.name) === norm(employee.fullName))
+  if (byName.length === 1) {
+    await tx.subAccount.update({ where: { id: byName[0]!.id }, data: { employeeId: employee.id } })
+    return byName[0]!.id
+  }
   const base = employee.employeeCode ? `${employee.fullName} (${employee.employeeCode})` : employee.fullName
   const clash = await tx.subAccount.findFirst({ where: { tenantId, accountId, name: base }, select: { id: true } })
   const name = clash ? `${base} #${employee.id.slice(0, 6)}` : base

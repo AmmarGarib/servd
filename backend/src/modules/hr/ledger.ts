@@ -73,13 +73,30 @@ export const isPayReducing = (l: Line) => l.kind === 'deduction' && (PAY_REDUCIN
 /** Recovered from the employee's loans / advances: credits Staff loans 1350 — the installment and typed `recovery` lines. */
 export const isLoanRecovery = (l: Line) => l.kind === 'deduction' && (l.code === 'loan' || (isTyped(l) && l.posting === 'recovery'))
 
-/** Which wages account a department's pay lands on. Unknown → front of house. */
-export function wageAccountFor(department: string | null | undefined): string {
+/**
+ * Which wages account a department's pay lands on. Unknown → front of house. `officeCode` = the company's own
+ * "Wages Expense" account (companyWagesExpenseCode): office / management pay goes there instead of 6032 (owner,
+ * 2026-11-04: "2343 Wages Expense — Yes", so payroll lands where finance keeps each employee's sub-account).
+ */
+export function wageAccountFor(department: string | null | undefined, officeCode?: string | null): string {
   const d = (department ?? '').toLowerCase()
   if (/kitchen|boh|back of house|cook|chef|culinary|bakery|pastry/.test(d)) return ACCT.WAGES_KITCHEN
   if (/rider|deliver|dispatch|driver/.test(d)) return ACCT.WAGES_RIDERS
-  if (/manage|admin|finance|account|hr|human|office|marketing|procure|executive/.test(d)) return ACCT.WAGES_MANAGEMENT
+  if (/manage|admin|finance|account|hr|human|office|marketing|procure|executive/.test(d)) return officeCode ?? ACCT.WAGES_MANAGEMENT
   return ACCT.WAGES_FOH
+}
+
+/** "Wages Expense" / "Wage Expenses (HO)" — the one name rule (the 20261023130000 sub-account migration's). */
+export const WAGES_EXPENSE_NAME = /^\s*wages?\s+expenses?(\s*\(?ho\)?)?\s*$/i
+
+/**
+ * The company's own "Wages Expense" account code, when it has exactly ONE live expense account by that name (not
+ * 6032 itself); else null and payroll keeps 6032. Read live — renaming / switching it off moves payroll back.
+ */
+export async function companyWagesExpenseCode(db: Tx | typeof prisma, tenantId: string): Promise<string | null> {
+  const rows = await db.account.findMany({ where: { tenantId, type: 'expense', isActive: true }, select: { code: true, name: true } })
+  const hits = rows.filter((a) => WAGES_EXPENSE_NAME.test(a.name) && a.code !== ACCT.WAGES_MANAGEMENT)
+  return hits.length === 1 ? hits[0]!.code : null
 }
 
 /** Signed amounts per account (debit +, credit −) into balanced journal lines. */
@@ -131,7 +148,55 @@ export async function reversePayrollAccrual(tx: Tx, runId: string, postedBy: str
   const live = await liveRunAccrual(tx, run.tenantId, runId)
   if (!live) return null
   const orig = await tx.journalEntry.findUniqueOrThrow({ where: { id: live.entryId }, select: { entryDate: true } })
-  return reverseJournalEntry(run.tenantId, RUN_ACCRUAL, live.sourceId, reason, { tx, postedBy, entryDate: orig.entryDate })
+  const out = await reverseJournalEntry(run.tenantId, RUN_ACCRUAL, live.sourceId, reason, { tx, postedBy, entryDate: orig.entryDate })
+  // The accrual's office wages moved to the Wages Expense account (reclassRunOfficeWagesTx) go back with it.
+  const moved = await tx.journalEntry.findFirst({ where: { tenantId: run.tenantId, reference: `${WAGES_RECLASS}:${runId}` }, select: { id: true, entryDate: true } })
+  const undone = moved && await tx.journalEntry.findFirst({ where: { tenantId: run.tenantId, reference: `${WAGES_RECLASS}.reversal:${runId}` }, select: { id: true } })
+  if (moved && !undone) await reverseJournalEntry(run.tenantId, WAGES_RECLASS, runId, reason, { tx, postedBy, entryDate: moved.entryDate })
+  return out
+}
+
+// ─── Office wages already on 6032 → the company's Wages Expense account (owner, 2026-11-04) ──────────────────
+// A run approved before payroll booked office pay to the company's own "Wages Expense" account (October 2026) keeps
+// its accrual; ONE entry `hr.payroll.wages_reclass:<runId>` moves exactly the office employees' 6032 share to that
+// account (Dr Wages Expense / Cr 6032, dated as the accrual, else today when that month is closed), tagged per
+// employee on the Wages Expense line. Once per run (the reference); reopening the run reverses it with the accrual.
+export const WAGES_RECLASS = 'hr.payroll.wages_reclass'
+
+export async function reclassRunOfficeWagesTx(tx: Tx, runId: string, postedBy: string): Promise<{ posted: boolean; reason?: string }> {
+  const run = await tx.hrPayrollRun.findUnique({ where: { id: runId }, select: { tenantId: true, period: true } })
+  if (!run) return { posted: false, reason: 'no run' }
+  const officeCode = await companyWagesExpenseCode(tx, run.tenantId)
+  if (!officeCode) return { posted: false, reason: 'no Wages Expense account' }
+  if (await tx.journalEntry.findFirst({ where: { tenantId: run.tenantId, reference: `${WAGES_RECLASS}:${runId}` }, select: { id: true } })) return { posted: false, reason: 'already moved' }
+  const live = await liveRunAccrual(tx, run.tenantId, runId)
+  if (!live) return { posted: false, reason: 'no live accrual' }
+  const entry = await tx.journalEntry.findUniqueOrThrow({ where: { id: live.entryId }, select: { entryDate: true, lines: { select: { type: true, amountCents: true, account: { select: { code: true } } } } } })
+  const on6032 = entry.lines.filter((l) => l.account.code === ACCT.WAGES_MANAGEMENT && l.type === 'debit').reduce((a, l) => a + toCents(l.amountCents), 0)
+  if (on6032 <= 0) return { posted: false, reason: 'nothing on 6032' }
+  // Who is in it: the office employees' share as that accrual booked it (the 6032 mapping).
+  const old = (await payrollRunShares(tx, runId, { officeCode: null })).accrual.get(ACCT.WAGES_MANAGEMENT)
+  const byEmployee = old?.byEmployee ?? new Map<string, number>()
+  const total = [...byEmployee.values()].reduce((a, v) => a + v, 0)
+  if (total !== on6032) return { posted: false, reason: `6032 holds ${on6032}, the payslips say ${total} — move it by hand` }
+  const memo = `Payroll ${run.period} office wages → Wages Expense`
+  const lines: JournalLineInput[] = [
+    { accountCode: officeCode, type: 'debit', amountCents: on6032, memo },
+    { accountCode: ACCT.WAGES_MANAGEMENT, type: 'credit', amountCents: on6032, memo },
+  ]
+  const post = (entryDate: Date) => postJournalEntry({
+    tenantId: run.tenantId, sourceType: WAGES_RECLASS, sourceId: runId,
+    description: `Payroll ${run.period}: office wages moved from 6032 to ${officeCode} Wages Expense`,
+    entryDate, postedBy, lines,
+  }, { tx })
+  try { await post(entry.entryDate) } catch (err) {
+    if ((err as { code?: string }).code !== 'PERIOD_LOCKED') throw err
+    await post(new Date())
+  }
+  const e = await tx.journalEntry.findFirst({ where: { tenantId: run.tenantId, reference: `${WAGES_RECLASS}:${runId}` }, select: { id: true } })
+  if (!e) return { posted: false, reason: 'not posted' }
+  await tagEntryByEmployeeTx(tx, run.tenantId, e.id, new Map([[officeCode, { type: 'debit' as const, byEmployee }]]))
+  return { posted: true }
 }
 
 export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string) {
@@ -147,13 +212,14 @@ export async function postPayrollAccrual(tx: Tx, runId: string, postedBy: string
   const deptIds = Array.from(new Set(slips.map((s) => s.employee.departmentId).filter(Boolean) as string[]))
   const depts = await tx.department.findMany({ where: { id: { in: deptIds } }, select: { id: true, name: true } })
   const deptName = new Map(depts.map((d) => [d.id, d.name]))
+  const officeCode = await companyWagesExpenseCode(tx, run.tenantId)
 
   const signed = new Map<string, number>()
   const add = (code: string, v: number) => signed.set(code, (signed.get(code) ?? 0) + v)
   for (const s of slips) {
     const lines = s.lines as unknown as Line[]
     const sum = (f: (l: Line) => boolean) => lines.filter(f).reduce((a, l) => a + l.amountCents, 0)
-    const wages = wageAccountFor(s.employee.departmentId ? deptName.get(s.employee.departmentId) : null)
+    const wages = wageAccountFor(s.employee.departmentId ? deptName.get(s.employee.departmentId) : null, officeCode)
     const earned = sum((l) => l.kind === 'earning') - sum(isPayReducing)
     const employer = sum((l) => l.kind === 'employer')
     const eobiEmployer = sum((l) => l.kind === 'employer' && l.code === 'eobi_employer')
@@ -211,8 +277,10 @@ function share(m: Shares, code: string, type: 'debit' | 'credit', emp: string, c
 }
 
 /** What each employee is in a payroll run's accrual and payment, per account code. */
-export async function payrollRunShares(tx: Tx, runId: string): Promise<{ accrual: Shares; payment: Shares }> {
+export async function payrollRunShares(tx: Tx, runId: string, opts: { officeCode?: string | null } = {}): Promise<{ accrual: Shares; payment: Shares }> {
   const slips = await tx.hrPayslip.findMany({ where: { runId }, include: { employee: { select: { departmentId: true } } } })
+  const officeCode = opts.officeCode !== undefined ? opts.officeCode
+    : await tx.hrPayrollRun.findUnique({ where: { id: runId }, select: { tenantId: true } }).then((r) => (r ? companyWagesExpenseCode(tx, r.tenantId) : null))
   const deptIds = Array.from(new Set(slips.map((s) => s.employee.departmentId).filter(Boolean) as string[]))
   const depts = deptIds.length ? await tx.department.findMany({ where: { id: { in: deptIds } }, select: { id: true, name: true } }) : []
   const deptName = new Map(depts.map((d) => [d.id, d.name]))
@@ -221,7 +289,7 @@ export async function payrollRunShares(tx: Tx, runId: string): Promise<{ accrual
   for (const s of slips) {
     const lines = s.lines as unknown as Line[]
     const sum = (f: (l: Line) => boolean) => lines.filter(f).reduce((a, l) => a + l.amountCents, 0)
-    const wages = wageAccountFor(s.employee.departmentId ? deptName.get(s.employee.departmentId) : null)
+    const wages = wageAccountFor(s.employee.departmentId ? deptName.get(s.employee.departmentId) : null, officeCode)
     const earned = sum((l) => l.kind === 'earning') - sum(isPayReducing)
     share(accrual, wages, 'debit', s.employeeId, earned + sum((l) => l.kind === 'employer'))
     share(accrual, ACCT.WAGES_PAYABLE, 'credit', s.employeeId, s.netCents)
@@ -235,8 +303,14 @@ export async function payrollRunShares(tx: Tx, runId: string): Promise<{ accrual
 export async function tagPayrollRunTx(tx: Tx, runId: string): Promise<{ mismatched: string[] }> {
   const run = await tx.hrPayrollRun.findUnique({ where: { id: runId }, select: { tenantId: true } })
   if (!run) return { mismatched: [] }
-  const { accrual, payment } = await payrollRunShares(tx, runId)
   const live = await liveRunAccrual(tx, run.tenantId, runId)
+  // Tag by the mapping the accrual really booked: a run accrued before office pay went to the Wages Expense account
+  // keeps its office wages on 6032 (their move, reclassRunOfficeWagesTx, carries its own tags).
+  const officeCode = await companyWagesExpenseCode(tx, run.tenantId)
+  const bookedOffice = officeCode && live
+    ? await tx.journalLine.count({ where: { journalEntryId: live.entryId, account: { code: officeCode } } }).then((n) => (n > 0 ? officeCode : null))
+    : officeCode
+  const { accrual, payment } = await payrollRunShares(tx, runId, { officeCode: bookedOffice })
   return tagSourceEntriesTx(tx, run.tenantId, [[live?.reference ?? `${RUN_ACCRUAL}:${runId}`, accrual], [`hr.payroll.payment:${runId}`, payment]])
 }
 
@@ -247,11 +321,13 @@ export async function tagSettlementTx(tx: Tx, recId: string): Promise<{ mismatch
   const rec = await tx.hrRecord.findUnique({ where: { id: recId }, select: { tenantId: true, employeeId: true } })
   if (!rec?.employeeId) return { mismatched: [] }
   const entries: Array<[string, Shares]> = []
+  const officeCode = await companyWagesExpenseCode(tx, rec.tenantId)
+  const codes = officeCode ? [...SETTLEMENT_TAG_CODES, officeCode] : SETTLEMENT_TAG_CODES
   for (const ref of [`${FNF_ACCRUAL}:${recId}`, `${FNF_PAYMENT}:${recId}`]) {
     const e = await tx.journalEntry.findFirst({ where: { tenantId: rec.tenantId, reference: ref }, select: { lines: { select: { type: true, amountCents: true, account: { select: { code: true } } } } } })
     if (!e) continue
     const m: Shares = new Map()
-    for (const l of e.lines) if (SETTLEMENT_TAG_CODES.includes(l.account.code)) share(m, l.account.code, l.type, rec.employeeId, toCents(l.amountCents))
+    for (const l of e.lines) if (codes.includes(l.account.code)) share(m, l.account.code, l.type, rec.employeeId, toCents(l.amountCents))
     entries.push([ref, m])
   }
   return tagSourceEntriesTx(tx, rec.tenantId, entries)
@@ -540,7 +616,7 @@ export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy
   const dept = emp.departmentId ? await tx.department.findUnique({ where: { id: emp.departmentId }, select: { name: true } }) : null
   const signed = new Map<string, number>()
   const add = (code: string, v: number) => signed.set(code, (signed.get(code) ?? 0) + v)
-  add(wageAccountFor(dept?.name), p.salaryPayable + p.otPayable + p.leaveEncashment + p.otherAdjustments - p.deductions + p.eobiEmployer + p.sessiEmployer)
+  add(wageAccountFor(dept?.name, await companyWagesExpenseCode(tx, rec.tenantId)), p.salaryPayable + p.otPayable + p.leaveEncashment + p.otherAdjustments - p.deductions + p.eobiEmployer + p.sessiEmployer)
   add(ACCT.GRATUITY, p.gratuity)
   add(EOBI_PAYABLE, -(p.eobiEmployee + p.eobiEmployer))
   add(SOCIAL_SECURITY_PAYABLE, -p.sessiEmployer)

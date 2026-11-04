@@ -1303,6 +1303,15 @@ async function build() {
     fastify.log.warn(`[subAccounts] payroll sub-ledger backfill skipped: ${(err as Error).message}`)
   }
 
+  // Office wages that payroll booked to 6032 before it booked them to the company's own Wages Expense account
+  // (owner, 2026-11-04: October 2026) → moved there, tagged per employee. Once per run (its own reference).
+  try {
+    const { moveOfficeWagesToWagesExpense } = await import('./modules/hr/payrollSubLedgerBackfill.js')
+    for (const r of await moveOfficeWagesToWagesExpense()) fastify.log.info(`[payroll] office wages of run ${r.runId}: ${r.posted ? 'moved to Wages Expense' : `not moved (${r.reason})`}`)
+  } catch (err) {
+    fastify.log.warn(`[payroll] office wages move skipped: ${(err as Error).message}`)
+  }
+
   // Shift corrections whose apply died mid-way (left 'approved' with no
   // progress for 5 minutes) → 'failed', so the CEO's Retry finishes them.
   try {

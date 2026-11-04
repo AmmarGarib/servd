@@ -992,6 +992,8 @@ export async function costOfSalesSplit(db: Db, tenantId: string, a: { from: Date
 // definition), not total revenue. 42xx other income is apart from revenue.
 
 export const WAGE_CODES = ['6030', '6031', '6032', '6035'] as const
+/** The company's own "Wages Expense" account (hr/ledger.ts WAGES_EXPENSE_NAME — kept in step). */
+export const WAGES_EXPENSE_NAME = /^\s*wages?\s+expenses?(\s*\(?ho\)?)?\s*$/i
 // D1 (spec §1): renamed so it never collides with a real head office (a Tenant
 // of kind 'head_office'). The row is still the company's untagged cost; the
 // response key stays `headOffice`. reports/foodCost.ts imports this constant.
@@ -1093,7 +1095,7 @@ export async function brandPnl(
   ])
   const accounts = await prisma.account.findMany({
     where: { id: { in: Array.from(new Set(grouped.map((g) => g.accountId))) } },
-    select: { id: true, code: true, type: true },
+    select: { id: true, code: true, type: true, name: true },
   })
   const accMap = new Map(accounts.map((a) => [a.id, a]))
   const known = new Map(brands.map((b) => [b.id, b.name]))
@@ -1117,7 +1119,8 @@ export async function brandPnl(
       else if (acc.code.startsWith(CONTRA_REVENUE_PREFIX)) bucket.contra += signed
       else {
         bucket.opex += signed
-        if ((WAGE_CODES as readonly string[]).includes(acc.code)) bucket.labour += signed
+        // The company's own Wages Expense account is wages too (payroll books office pay there, owner 2026-11-04).
+        if ((WAGE_CODES as readonly string[]).includes(acc.code) || WAGES_EXPENSE_NAME.test(acc.name)) bucket.labour += signed
       }
     }
   }

@@ -11,7 +11,7 @@
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { ACCT } from '../accounting/journal.js'
 import { ensureEmployeeSubAccountTx } from '../../lib/subAccounts.js'
-import { tagPayrollRunTx, tagSettlementTx, wageAccountFor, FNF_ACCRUAL } from './ledger.js'
+import { tagPayrollRunTx, tagSettlementTx, wageAccountFor, companyWagesExpenseCode, reclassRunOfficeWagesTx, FNF_ACCRUAL, WAGES_RECLASS } from './ledger.js'
 
 export const payrollBackfillKey = (tenantId: string) => `subAccounts.payrollBackfilledAt:${tenantId}`
 
@@ -30,8 +30,9 @@ export async function backfillPayrollSubLedger(opts: { tenantIds?: string[]; for
     const emps = await prisma.hrEmployee.findMany({ where: { tenantId }, select: { id: true, fullName: true, employeeCode: true, departmentId: true } })
     const depts = await prisma.department.findMany({ where: { id: { in: [...new Set(emps.map((e) => e.departmentId).filter((d): d is string => !!d))] } }, select: { id: true, name: true } })
     const deptName = new Map(depts.map((d) => [d.id, d.name]))
+    const officeCode = await companyWagesExpenseCode(prisma, tenantId)
     for (const e of emps) {
-      for (const code of [wageAccountFor(e.departmentId ? deptName.get(e.departmentId) : null), ACCT.WAGES_PAYABLE]) {
+      for (const code of [wageAccountFor(e.departmentId ? deptName.get(e.departmentId) : null, officeCode), ACCT.WAGES_PAYABLE]) {
         const accountId = accountOf.get(code)
         if (accountId) await ensureEmployeeSubAccountTx(prisma, tenantId, accountId, e)
       }
@@ -68,6 +69,31 @@ export async function backfillPayrollSubLedger(opts: { tenantIds?: string[]; for
     const now = new Date().toISOString()
     await prisma.setting.upsert({ where: { key: payrollBackfillKey(tenantId) }, create: { key: payrollBackfillKey(tenantId), value: now }, update: { value: now } })
     out.push(res)
+  }
+  return out
+}
+
+/**
+ * Owner, 2026-11-04 ("2343 Wages Expense — Yes"): every payroll run whose LIVE accrual still has office wages on 6032
+ * in a company that now has its own Wages Expense account gets ONE move entry (ledger.ts reclassRunOfficeWagesTx).
+ * Idempotent: a run already moved, with nothing on 6032, or whose 6032 line does not match its payslips is skipped
+ * (the last is reported, never guessed).
+ */
+export async function moveOfficeWagesToWagesExpense(opts: { tenantIds?: string[] } = {}): Promise<Array<{ runId: string; posted: boolean; reason?: string }>> {
+  const out: Array<{ runId: string; posted: boolean; reason?: string }> = []
+  const tenants = await prisma.tenant.findMany({ where: opts.tenantIds ? { id: { in: opts.tenantIds } } : {}, select: { id: true } })
+  for (const { id: tenantId } of tenants) {
+    if (!(await companyWagesExpenseCode(prisma, tenantId))) continue
+    const accruals = await prisma.journalEntry.findMany({
+      where: { tenantId, reference: { startsWith: 'hr.payroll.accrual:' }, lines: { some: { account: { code: ACCT.WAGES_MANAGEMENT } } } },
+      select: { reference: true },
+    })
+    const runIds = [...new Set(accruals.map((a) => a.reference!.slice('hr.payroll.accrual:'.length).split('@')[0]!))]
+    for (const runId of runIds) {
+      if (await prisma.journalEntry.findFirst({ where: { tenantId, reference: `${WAGES_RECLASS}:${runId}` }, select: { id: true } })) continue
+      const r = await prisma.$transaction((tx) => reclassRunOfficeWagesTx(tx, runId, 'system'), { timeout: 60_000 })
+      out.push({ runId, ...r })
+    }
   }
   return out
 }
