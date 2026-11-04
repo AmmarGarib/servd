@@ -23,6 +23,7 @@ import { TestCompanyBanner } from './TestCompanyBanner'
 import { LensBanner } from './LensBanner'
 import { SandboxBanner } from '../SandboxBanner'
 import { NotificationBell } from './NotificationBell'
+import { TaskBell, showsTaskBar } from './TaskBell'
 import { NavIcon } from './NavIcon'
 import { QuickJump } from './QuickJump'
 import { checkInOncePerDay } from '../../lib/checkInOnSignIn'
@@ -899,6 +900,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
           <ServdLogo size={30} />
           <span className="flex-1" />
+          <TaskBell role={user?.role} />
           <NotificationBell variant="mobile" />
           <button onClick={() => setMobileOpen(false)} aria-label="Close menu" aria-expanded={mobileOpen} aria-controls="mobile-drawer"
             className="flex h-11 w-11 items-center justify-center text-white/50 hover:text-white/80 transition-colors rounded">
@@ -938,6 +940,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" />
               </svg>
             </button>
+            {showsTaskBar(user?.role) && <span className={`${FAB} !p-0`}><TaskBell role={user?.role} /></span>}
             <span className={`${FAB} !p-0`}><NotificationBell variant="mobile" /></span>
           </div>
         </>

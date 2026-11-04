@@ -216,6 +216,29 @@ export async function myTasksRoutes(fastify: FastifyInstance) {
     }
   })
 
+  // GET /my-tasks/count — the badge on the top-bar My tasks button (owner, 2026-11-04): open tasks, plus tasks
+  // waiting on the caller's approval. Cheap counts only.
+  fastify.get('/count', anyone, async (req) => {
+    const me = req.staffUser!.id
+    const base = await myTaskWhere(req)
+    const su = req.staffUser!
+    const lead = su.role === 'admin' || (su.role !== INTERN_ROLE && await isLead(req))
+    const [open, awaiting, toApprove] = await Promise.all([
+      prisma.contentEvent.count({ where: { ...base, leadApprovedAt: null, taskDoneAt: null } }),
+      prisma.contentEvent.count({ where: { ...base, leadApprovedAt: null, taskDoneAt: { not: null } } }),
+      su.role === INTERN_ROLE ? 0 : prisma.contentEvent.count({ where: {
+        ...(await scopeTenantWhere(req, 'write')), taskDoneAt: { not: null }, leadApprovedAt: null,
+        AND: [
+          { OR: [{ boardId: null }, { board: { archivedAt: null } }] },
+          // Not your own (a NULL owner must not hide the row — SQL NOT over NULL).
+          ...(su.role === 'admin' ? [] : [{ OR: [{ assigneeId: null }, { assigneeId: { not: me } }] }, { resources: { none: { userId: me } } }]),
+        ],
+        ...(lead ? {} : { boardId: null, createdById: me }),
+      } }),
+    ])
+    return { open, awaitingApproval: awaiting, toApprove, badge: open + toApprove }
+  })
+
   // POST /my-tasks/:id/done {done} — someone on the task, or leadership. Undone only until approved (409 TASK_APPROVED).
   fastify.post<{ Params: { id: string } }>('/:id/done', anyone, async (req) => {
     const { done } = z.object({ done: z.boolean() }).strict().parse(req.body)

@@ -14,6 +14,7 @@ import { useAuthStore } from '../../store/auth'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { relativeTime, useInbox, useMarkRead, useUnreadCount } from '../../lib/notificationsData'
 import { AnchoredMenu } from './AnchoredMenu'
+import { TaskBell } from './TaskBell'
 import { CompactEmptyState } from './CompactEmptyState'
 
 const LINKS = [
@@ -95,6 +96,7 @@ export function InternShell({ pathname, children }: { pathname: string; children
           <span className="text-sm font-bold truncate" style={{ color: 'rgb(var(--fg-rgb) / 0.9)' }}>Marketing</span>
           <span className="flex-1" />
           <span className="hidden sm:inline text-xs truncate max-w-[12rem]" style={{ color: 'rgb(var(--fg-rgb) / 0.6)' }}>{user?.name ?? ''}</span>
+          <TaskBell role="marketing_intern" size="h-10 w-10" bordered />
           <InternBell />
           <Link href="/account/password" className="hidden sm:inline rounded-lg px-2.5 py-1.5 text-xs font-semibold" style={pill}>Password</Link>
           <button type="button" onClick={() => void signOut()} disabled={signingOut} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold disabled:opacity-50" style={pill}>
