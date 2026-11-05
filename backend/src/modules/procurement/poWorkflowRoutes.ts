@@ -28,7 +28,8 @@ import { audit } from '../../lib/audit.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { APPROVAL_RIGHTS, approvalInputOf, approvalSubject, assertCanApprove, auditApproval, type ApprovalGrant } from '../../lib/approvalRights.js'
 import { requireModule } from '../notifications/requireModule.js'
-import { toCents } from '../../lib/money.js'
+import { toCents, zMoneyCents } from '../../lib/money.js'
+import { TAX_AUTHORITY_KEYS } from '../accounting/taxAuthorities.js'
 import { lineDisplay, lineValueCents } from './poUnits.js'
 import { scopeTenantIds } from './scope.js'
 import { AP_READERS } from './routes.js'
@@ -79,6 +80,8 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     const body = z.object({
       invoiceNumber: z.string().max(100),
       invoiceDate: zYmd,
+      taxCents: zMoneyCents('The sales tax').nullable().optional(),
+      taxAuthority: z.enum(TAX_AUTHORITY_KEYS).nullable().optional(),
       lines: z.array(zRate).max(200).optional(),
       note: z.string().max(500).nullable().optional(),
     }).parse(req.body ?? {})
@@ -86,7 +89,7 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     await audit({
       category: 'accounting', action: 'po.completed', entity: 'PurchaseOrder', entityId: po.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: r.tenantId,
-      metadata: { invoiceNumber: r.invoiceNumber, invoiceDate: body.invoiceDate, rateChanges: r.rateChanges },
+      metadata: { invoiceNumber: r.invoiceNumber, invoiceDate: body.invoiceDate, taxCents: body.taxCents ?? null, taxAuthority: body.taxAuthority ?? null, rateChanges: r.rateChanges },
     })
     return { id: r.id, status: r.status, invoiceNumber: r.invoiceNumber, rateChanges: r.rateChanges }
   })
@@ -196,6 +199,7 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
         approvedById: g.approvedById, approvedAt: g.approvedAt, supplierBillId: g.supplierBillId,
         bill: bill ? { ...bill, totalCents: toCents(bill.totalCents) } : null,
         valueCents, invoicedCents, own,
+        invoiceTaxCents: g.invoiceTaxCents == null ? null : toCents(g.invoiceTaxCents), invoiceTaxAuthority: g.invoiceTaxAuthority,
         supplier: sups.find((s) => s.id === g.supplierId) ?? null,
         po: po ? { id: po.id, reference: po.reference, createdBy: po.createdBy, buyerUserId: po.buyerUserId, completedById: po.completedById, payByCash: po.payByCash, status: po.status } : null,
         names: { createdBy: nameOf(po?.createdBy), buyer: nameOf(po?.buyerUserId), receivedBy: nameOf(g.receivedById), financeChecked: nameOf(g.financeCheckedById), approvedBy: nameOf(g.approvedById) },
@@ -289,6 +293,8 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     const body = z.object({
       invoiceNumber: z.string().max(100).optional(),
       invoiceDate: zYmd.optional(),
+      taxCents: zMoneyCents('The sales tax').nullable().optional(),
+      taxAuthority: z.enum(TAX_AUTHORITY_KEYS).nullable().optional(),
       lines: z.array(zRate).max(200).optional(),
       note: z.string().max(500).nullable().optional(),
     }).parse(req.body ?? {})
@@ -296,7 +302,7 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     await audit({
       category: 'accounting', action: 'grn.resubmitted', entity: 'GoodsReceipt', entityId: head.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: head.tenantId,
-      metadata: { invoiceNumber: body.invoiceNumber ?? null, invoiceDate: body.invoiceDate ?? null, rateChanges: r.rateChanges },
+      metadata: { invoiceNumber: body.invoiceNumber ?? null, invoiceDate: body.invoiceDate ?? null, taxCents: body.taxCents, taxAuthority: body.taxAuthority, rateChanges: r.rateChanges },
     })
     return { id: r.id, grnStatus: r.grnStatus }
   })

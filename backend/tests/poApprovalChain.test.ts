@@ -333,6 +333,31 @@ describe('the requester sends it back; a partial delivery makes a second GRN', (
     expect(grns.map((g) => g.invoiceNumber)).toEqual([`${P}-P1`, `${P}-P2`])
     expect(new Set(grns.map((g) => g.grnNumber)).size).toBe(2)
   })
+
+  it("the invoice's sales tax: entered by the buyer, carried onto the GRN, billed as input tax of that authority", async () => {
+    const po = await chefPo()
+    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+    await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`, { payByCash: false })
+    await upload('buyerA', po.id)
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-TX`, invoiceDate: today(), taxCents: -1 })).statusCode).toBe(400)
+    const c = await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-TX`, invoiceDate: today(), taxCents: 1_700, taxAuthority: 'srb' })
+    expect(c.statusCode, c.body).toBe(200)
+    const cf = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: po.lines.map((l) => ({ poLineId: l.id, quantityReceived: l.quantityOrdered })) })
+    expect(cf.statusCode, cf.body).toBe(201)
+    const grnId2 = cf.json().grn.id as string
+    expect(await prisma.goodsReceipt.findUniqueOrThrow({ where: { id: grnId2 } })).toMatchObject({ invoiceTaxCents: 1_700, invoiceTaxAuthority: 'srb' })
+    // Finance sends it back; the buyer corrects the tax.
+    await call('finA', 'POST', `/procurement/grns/${grnId2}/return`, { note: 'Tax on the invoice is PKR 18, not 17' })
+    expect((await call('buyerA', 'POST', `/procurement/grns/${grnId2}/resubmit`, { taxCents: 1_800 })).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `/procurement/grns/${grnId2}/finance-pass`)).statusCode).toBe(200)
+    const ap = await call('ceoA', 'POST', `/procurement/grns/${grnId2}/approve`)
+    expect(ap.statusCode, ap.body).toBe(200)
+    const bill = await prisma.supplierBill.findUniqueOrThrow({ where: { id: ap.json().supplierBillId } })
+    expect([Number(bill.taxCents), bill.taxAuthority]).toEqual([1_800, 'srb'])
+    expect(Number(bill.totalCents)).toBe(Number(bill.subtotalCents) + 1_800)
+    const je = await prisma.journalEntry.findFirstOrThrow({ where: { tenantId: T.A, reference: `supplier.bill:${bill.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(je.lines.filter((l) => l.account.code === '1322' && l.type === 'debit').reduce((s, l) => s + Number(l.amountCents), 0)).toBe(1_800)
+  })
 })
 
 describe("the CEO's return / reject at approval, and editing a draft", () => {

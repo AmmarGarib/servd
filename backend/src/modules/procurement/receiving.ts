@@ -470,7 +470,7 @@ export interface ReceiveGoodsRequest {
    * confirms receipt"), no dock photo is asked (the supplier's invoice attached to the PO is the evidence), and the
    * receipt becomes a GRN (grnNumber GRN-00001 per company, grnStatus 'finance_review', the invoice it was bought on).
    */
-  confirmation?: { invoiceNumber: string; invoiceDate: Date }
+  confirmation?: { invoiceNumber: string; invoiceDate: Date; invoiceTaxCents?: number | null; invoiceTaxAuthority?: string | null }
 }
 
 export interface ReceiveGoodsResult {
@@ -702,7 +702,10 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
       const grnNumber = `GRN-${String((Number(last[0]?.n ?? 0) || 0) + 1).padStart(5, '0')}`
       await tx.goodsReceipt.update({
         where: { id: done.receiptId },
-        data: { grnNumber, grnStatus: 'finance_review', invoiceNumber: confirmation.invoiceNumber, invoiceDate: confirmation.invoiceDate },
+        data: {
+          grnNumber, grnStatus: 'finance_review', invoiceNumber: confirmation.invoiceNumber, invoiceDate: confirmation.invoiceDate,
+          invoiceTaxCents: confirmation.invoiceTaxCents ?? null, invoiceTaxAuthority: confirmation.invoiceTaxAuthority ?? null,
+        },
       })
       grn = { grnNumber }
     }

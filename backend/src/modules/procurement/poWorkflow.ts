@@ -42,6 +42,7 @@ import { queueStaffNotify, notifyStaffMany, type NotifyInput } from '../../lib/s
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { fmtPktDate } from '../accounting/dates.js'
 import { lineValueCents } from './poUnits.js'
+import { isAuthorityKey, type AuthorityKey } from '../accounting/taxAuthorities.js'
 import { CASH_PURCHASE_SUPPLIER_KIND, receiveGoods } from './receiving.js'
 import { prepareBill, insertBillTx, afterBillCreated, supplierNotChosenError } from './service.js'
 
@@ -76,6 +77,14 @@ function invoiceDateOf(s: string): Date {
   if (s > fmtPktDate(new Date())) throw new AppError('INVOICE_DATE_IN_FUTURE', 'The invoice date cannot be after today', 422)
   return d
 }
+/** The invoice's sales tax: whole paisa, zero or more (null = none entered). */
+function invoiceTaxOf(v: number | null | undefined): number | null {
+  if (v == null) return null
+  if (!Number.isInteger(v) || v < 0) throw new AppError('INVALID_AMOUNT', 'The sales tax must be whole paisa, zero or more', 400)
+  assertMoneyFits(v, "The invoice's sales tax")
+  return v
+}
+
 function invoiceNumberOf(s: string): string {
   const n = s.trim()
   if (!n) throw new AppError('INVOICE_NUMBER_REQUIRED', "Enter the supplier's invoice number", 422)
@@ -170,7 +179,9 @@ async function invoiceFilesSince(poId: string, tenantId: string, since: Date | n
   })
 }
 
-export interface CompleteInput { invoiceNumber: string; invoiceDate: string; lines?: LineRate[]; note?: string | null }
+/** taxCents = the sales tax on the supplier's invoice (owner, 2026-11-05), taxAuthority = who charged it (null = the
+ *  supplier's usual one); both go onto the GRN and the bill. */
+export interface CompleteInput { invoiceNumber: string; invoiceDate: string; taxCents?: number | null; taxAuthority?: AuthorityKey | null; lines?: LineRate[]; note?: string | null }
 
 /**
  * The buyer bought it (owner: "Buyer buys, uploads the supplier's invoice/bill, marks the PO Completed"): approved |
@@ -181,6 +192,7 @@ export interface CompleteInput { invoiceNumber: string; invoiceDate: string; lin
 export async function completePo(poId: string, actor: Actor, input: CompleteInput) {
   const invoiceNumber = invoiceNumberOf(input.invoiceNumber)
   const invoiceDate = invoiceDateOf(input.invoiceDate)
+  const taxCents = invoiceTaxOf(input.taxCents)
   const head = await prisma.purchaseOrder.findUnique({
     where: { id: poId },
     select: { status: true, grnWorkflow: true, buyerUserId: true, supplier: { select: { tenantId: true, systemKind: true } } },
@@ -206,12 +218,12 @@ export async function completePo(poId: string, actor: Actor, input: CompleteInpu
     const changes = await applyLineRatesTx(tx, po, input.lines)
     await tx.purchaseOrder.update({
       where: { id: poId },
-      data: { status: 'completed', invoiceNumber, invoiceDate, completedById: actor.id, completedAt: now, receiptReturnNote: null },
+      data: { status: 'completed', invoiceNumber, invoiceDate, invoiceTaxCents: taxCents, invoiceTaxAuthority: input.taxAuthority ?? null, completedById: actor.id, completedAt: now, receiptReturnNote: null },
     })
     await tx.poActivityLog.create({
       data: {
         purchaseOrderId: poId, userId: actor.id, action: 'completed',
-        details: { from: po.status, to: 'completed', invoiceNumber, invoiceDate: input.invoiceDate, ...(changes.length ? { rateChanges: changes } : {}), ...(input.note?.trim() ? { note: input.note.trim().slice(0, 500) } : {}) } as Prisma.InputJsonValue,
+        details: { from: po.status, to: 'completed', invoiceNumber, invoiceDate: input.invoiceDate, taxCents, taxAuthority: input.taxAuthority ?? null, ...(changes.length ? { rateChanges: changes } : {}), ...(input.note?.trim() ? { note: input.note.trim().slice(0, 500) } : {}) } as Prisma.InputJsonValue,
       },
     })
     return { id: poId, status: 'completed', from: po.status, invoiceNumber, rateChanges: changes, tenantId }
@@ -237,7 +249,7 @@ export interface ConfirmInput {
 export async function confirmReceipt(poId: string, actor: Actor, input: ConfirmInput) {
   const po = await prisma.purchaseOrder.findUnique({
     where: { id: poId },
-    select: { status: true, grnWorkflow: true, createdBy: true, invoiceNumber: true, invoiceDate: true },
+    select: { status: true, grnWorkflow: true, createdBy: true, invoiceNumber: true, invoiceDate: true, invoiceTaxCents: true, invoiceTaxAuthority: true },
   })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
   if (!po.grnWorkflow) throw new AppError('INVALID_STATE', 'This PO was approved before the purchase workflow — receive it at the dock', 409)
@@ -248,7 +260,7 @@ export async function confirmReceipt(poId: string, actor: Actor, input: ConfirmI
   const result = await receiveGoods({
     actor, poId, locationId: input.locationId ?? null, notes: input.notes ?? null,
     lines: input.lines.map((l) => ({ poLineId: l.poLineId, quantityReceived: l.quantityReceived, useBy: l.useBy ?? null, notes: l.notes ?? null })),
-    confirmation: { invoiceNumber: po.invoiceNumber, invoiceDate: po.invoiceDate },
+    confirmation: { invoiceNumber: po.invoiceNumber, invoiceDate: po.invoiceDate, invoiceTaxCents: po.invoiceTaxCents == null ? null : toCents(po.invoiceTaxCents), invoiceTaxAuthority: po.invoiceTaxAuthority },
   })
   const grn = await prisma.goodsReceipt.findUniqueOrThrow({ where: { id: result.receipt.id }, select: { id: true, grnNumber: true, grnStatus: true, tenantId: true } })
   const { approvalWaiting } = await import('../approvals/notify.js')
@@ -329,12 +341,13 @@ export async function grnReturn(grnId: string, actor: Actor, noteIn: string, exp
   return r
 }
 
-export interface ResubmitInput { invoiceNumber?: string; invoiceDate?: string; lines?: LineRate[]; note?: string | null }
+export interface ResubmitInput { invoiceNumber?: string; invoiceDate?: string; taxCents?: number | null; taxAuthority?: AuthorityKey | null; lines?: LineRate[]; note?: string | null }
 
 /** The buyer corrected the GRN's invoice: buyer_fix → finance_review. Only the PO's buyer (or the CEO). */
 export async function grnResubmit(grnId: string, actor: Actor, input: ResubmitInput) {
   const invoiceNumber = input.invoiceNumber != null ? invoiceNumberOf(input.invoiceNumber) : null
   const invoiceDate = input.invoiceDate != null ? invoiceDateOf(input.invoiceDate) : null
+  const taxCents = input.taxCents !== undefined ? invoiceTaxOf(input.taxCents) : undefined
   const now = new Date()
   const r = await prisma.$transaction(async (tx) => {
     const g = await lockGrnTx(tx, grnId)
@@ -347,12 +360,17 @@ export async function grnResubmit(grnId: string, actor: Actor, input: ResubmitIn
     const changes = await applyLineRatesTx(tx, po, input.lines)
     await tx.goodsReceipt.update({
       where: { id: grnId },
-      data: { grnStatus: 'finance_review', ...(invoiceNumber ? { invoiceNumber } : {}), ...(invoiceDate ? { invoiceDate } : {}) },
+      data: {
+        grnStatus: 'finance_review', ...(invoiceNumber ? { invoiceNumber } : {}), ...(invoiceDate ? { invoiceDate } : {}),
+        ...(taxCents !== undefined ? { invoiceTaxCents: taxCents } : {}), ...(input.taxAuthority !== undefined ? { invoiceTaxAuthority: input.taxAuthority } : {}),
+      },
     })
     await logGrnTx(tx, g.poId, actor.id, 'grn_resubmitted', {
       grnId, grnNumber: g.grnNumber, from: 'buyer_fix', to: 'finance_review',
       ...(invoiceNumber && invoiceNumber !== g.invoiceNumber ? { invoiceNumber: { from: g.invoiceNumber, to: invoiceNumber } } : {}),
       ...(invoiceDate && input.invoiceDate !== (g.invoiceDate ? g.invoiceDate.toISOString().slice(0, 10) : null) ? { invoiceDate: { from: g.invoiceDate?.toISOString().slice(0, 10) ?? null, to: input.invoiceDate } } : {}),
+      ...(taxCents !== undefined && taxCents !== (g.invoiceTaxCents == null ? null : toCents(g.invoiceTaxCents)) ? { taxCents: { from: g.invoiceTaxCents == null ? null : toCents(g.invoiceTaxCents), to: taxCents } } : {}),
+      ...(input.taxAuthority !== undefined && input.taxAuthority !== g.invoiceTaxAuthority ? { taxAuthority: { from: g.invoiceTaxAuthority, to: input.taxAuthority } } : {}),
       ...(changes.length ? { rateChanges: changes } : {}),
       ...(input.note?.trim() ? { note: input.note.trim().slice(0, 500) } : {}),
     })
@@ -392,6 +410,9 @@ export async function approveGrn(grnId: string, actor: Actor) {
   const prepared = await prepareBill({
     supplierId: g.supplierId, poId: g.poId, billNumber: g.invoiceNumber, billDate: g.invoiceDate.toISOString().slice(0, 10),
     notes: `${g.grnNumber} of ${po.reference ?? 'PO'}`, lines, createdBy: actor.id, actorRole: actor.role, viaGrn: true,
+    // The invoice's sales tax (input tax, booked by authority by the bill engine); no authority = the supplier's usual one.
+    taxCents: g.invoiceTaxCents == null ? 0 : toCents(g.invoiceTaxCents),
+    taxAuthority: isAuthorityKey(g.invoiceTaxAuthority) ? g.invoiceTaxAuthority : null,
   })
   await ensureFifoReady(prepared.tenantId)
   const now = new Date()

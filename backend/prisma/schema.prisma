@@ -3092,6 +3092,8 @@ model PurchaseOrder {
   buyerAssignedAt     DateTime?
   invoiceNumber       String?
   invoiceDate         DateTime? @db.Date
+  invoiceTaxCents      BigInt? // sales tax on the supplier's invoice (owner, 2026-11-05), paisa; null = none entered
+  invoiceTaxAuthority  String? // 'fbr' | 'srb' — who charged it; null = the supplier's usual authority
   completedById       String?
   completedAt         DateTime?
   receiptReturnNote   String?
@@ -6597,6 +6599,8 @@ model GoodsReceipt {
   grnStatus          String?
   invoiceNumber      String?
   invoiceDate        DateTime? @db.Date
+  invoiceTaxCents      BigInt? // sales tax on the supplier's invoice (owner, 2026-11-05), paisa; null = none entered
+  invoiceTaxAuthority  String? // 'fbr' | 'srb' — who charged it; null = the supplier's usual authority
   financeCheckedById String?
   financeCheckedAt   DateTime?
   approvedById       String?

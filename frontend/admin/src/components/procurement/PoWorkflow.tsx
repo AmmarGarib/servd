@@ -35,12 +35,13 @@ export interface WfPo {
 interface WfGrnRow {
   id: string; grnNumber: string; grnStatus: string; invoiceNumber: string | null; invoiceDate: string | null; tenantId: string | null
   receivedAt: string; returnNote: string | null; returnCount: number; valueCents: number; invoicedCents: number
+  invoiceTaxCents?: number | null; invoiceTaxAuthority?: string | null
   supplierBillId: string | null; bill: { id: string; billNumber: string; status: string; totalCents: number } | null
   supplier: { id: string; name: string } | null
   po: { id: string; reference: string | null; payByCash: boolean; status: string } | null
   names: { createdBy: string | null; buyer: string | null; receivedBy: string | null; financeChecked: string | null; approvedBy: string | null }
 }
-interface WfFix { id: string; grnNumber: string; invoiceNumber: string | null; invoiceDate: string | null; returnNote: string | null; lines: Array<{ poLineId: string | null; receivedQty: number }>; po: WfPo }
+interface WfFix { id: string; grnNumber: string; invoiceNumber: string | null; invoiceDate: string | null; invoiceTaxCents?: number | null; invoiceTaxAuthority?: string | null; returnNote: string | null; lines: Array<{ poLineId: string | null; receivedQty: number }>; po: WfPo }
 export interface MyTasks { toBuy: WfPo[]; toConfirm: WfPo[]; toFix: WfFix[] }
 
 export const MY_TASKS_KEY = ['procurement', 'my-tasks'] as const
@@ -142,15 +143,35 @@ function RateFields({ lines, rates, setRates }: { lines: WfLine[]; rates: Record
 const changedRates = (lines: WfLine[], rates: Record<string, number>) =>
   lines.filter((l) => rates[l.id] != null && rates[l.id] !== shown(l).rate).map((l) => ({ poLineId: l.id, rateCents: rates[l.id]! }))
 
+/** The sales tax on the supplier's invoice (owner, 2026-11-05) — booked as input tax on the bill at the CEO's GRN approval. */
+const TAX_BY: Record<string, string> = { fbr: 'FBR (federal)', srb: 'SRB (Sindh)' }
+function TaxFields({ cents, setCents, authority, setAuthority }: { cents: number; setCents: (c: number) => void; authority: string; setAuthority: (a: string) => void }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <Field label="Sales tax on the invoice (PKR)" hint="0 if the invoice carries none">
+        <MoneyInput value={cents} onChange={setCents} ariaLabel="Sales tax on the invoice in rupees" className="s-input w-full" />
+      </Field>
+      <Field label="Charged by">
+        <Select value={authority} onChange={(e) => setAuthority(e.target.value)} className="s-input w-full" aria-label="Sales tax charged by">
+          <option value="">The supplier's usual</option>
+          {Object.entries(TAX_BY).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </Select>
+      </Field>
+    </div>
+  )
+}
+
 function BuyCard({ po }: { po: WfPo }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [invoiceDate, setInvoiceDate] = useState(todayPktIso())
   const [rates, setRates] = useState<Record<string, number>>({})
+  const [taxCents, setTaxCents] = useState(0)
+  const [taxBy, setTaxBy] = useState('')
   const [tried, setTried] = useState(false)
   const done = useMutation({
-    mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, lines: changedRates(po.lines, rates) }),
+    mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedRates(po.lines, rates) }),
     onSuccess: () => { setOpen(false); invalidateAll(qc, po.id) },
   })
   const noSupplier = !!po.supplier?.systemKind
@@ -175,6 +196,7 @@ function BuyCard({ po }: { po: WfPo }) {
               <Input type="date" value={invoiceDate} max={todayPktIso()} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full" />
             </Field>
             <RateFields lines={po.lines} rates={rates} setRates={setRates} />
+            <TaxFields cents={taxCents} setCents={setTaxCents} authority={taxBy} setAuthority={setTaxBy} />
             {done.error && <p role="alert" className="text-xs text-s-red">{errOf(done.error)}</p>}
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={done.isPending}>Mark completed</Button>
@@ -258,10 +280,12 @@ function FixCard({ g }: { g: WfFix }) {
   const [invoiceNumber, setInvoiceNumber] = useState(g.invoiceNumber ?? '')
   const [invoiceDate, setInvoiceDate] = useState(g.invoiceDate ? g.invoiceDate.slice(0, 10) : todayPktIso())
   const [rates, setRates] = useState<Record<string, number>>({})
+  const [taxCents, setTaxCents] = useState(g.invoiceTaxCents ?? 0)
+  const [taxBy, setTaxBy] = useState(g.invoiceTaxAuthority ?? '')
   const onGrn = new Set(g.lines.map((l) => l.poLineId))
   const lines = g.po.lines.filter((l) => onGrn.has(l.id))
   const re = useMutation({
-    mutationFn: () => api.post(`/procurement/grns/${g.id}/resubmit`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, lines: changedRates(lines, rates) }),
+    mutationFn: () => api.post(`/procurement/grns/${g.id}/resubmit`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedRates(lines, rates) }),
     onSuccess: () => invalidateAll(qc, g.po.id),
   })
   return (
@@ -273,6 +297,7 @@ function FixCard({ g }: { g: WfFix }) {
         <Field label="Invoice date" required><Input type="date" value={invoiceDate} max={todayPktIso()} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full" /></Field>
       </div>
       <RateFields lines={lines} rates={rates} setRates={setRates} />
+      <TaxFields cents={taxCents} setCents={setTaxCents} authority={taxBy} setAuthority={setTaxBy} />
       {re.error && <p role="alert" className="text-xs text-s-red">{errOf(re.error)}</p>}
       <Button size="sm" disabled={!invoiceNumber.trim() || re.isPending} onClick={() => re.mutate()}>Resubmit to finance</Button>
     </Card>
@@ -328,7 +353,7 @@ export function GrnsTab({ initialId }: { initialId?: string | null }) {
                           <td className="px-3 py-2.5 text-s-text whitespace-nowrap">{g.po?.reference ?? '—'}</td>
                           <td className="px-3 py-2.5 text-s-text">{g.supplier?.name ?? '—'}</td>
                           <td className="px-3 py-2.5 text-s-muted hidden md:table-cell">{g.invoiceNumber ?? '—'}</td>
-                          <td className="px-3 py-2.5 text-right font-semibold text-s-text">{fmtPkrWhole(g.invoicedCents)}</td>
+                          <td className="px-3 py-2.5 text-right font-semibold text-s-text">{fmtPkrWhole(g.invoicedCents + (g.invoiceTaxCents ?? 0))}</td>
                           <td className="px-3 py-2.5"><GrnBadge status={g.grnStatus} /></td>
                           <td className="px-3 py-2.5 text-s-muted hidden md:table-cell">{g.bill?.billNumber ?? '—'}</td>
                         </tr>
@@ -399,7 +424,7 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-s-muted">Booked at receipt {fmtPkrWhole(g.valueCents)} · invoice value {fmtPkrWhole(g.invoicedCents)} · paid {g.po?.payByCash ? "in cash from the buyer's box" : "on the supplier's credit"}</p>
+      <p className="text-xs text-s-muted">Booked at receipt {fmtPkrWhole(g.valueCents)} · invoice value {fmtPkrWhole(g.invoicedCents)}{g.invoiceTaxCents ? <> + sales tax {fmtPkrWhole(g.invoiceTaxCents)}{g.invoiceTaxAuthority ? ` (${TAX_BY[g.invoiceTaxAuthority] ?? g.invoiceTaxAuthority})` : ''} = {fmtPkrWhole(g.invoicedCents + g.invoiceTaxCents)}</> : ' · no sales tax'} · paid {g.po?.payByCash ? "in cash from the buyer's box" : "on the supplier's credit"}</p>
       {g.po && <RecordFiles ownerType="purchase_order" ownerId={g.po.id} canUpload={false} title="Supplier's invoice / bill" tenantId={g.tenantId ?? undefined} />}
       <ol className="flex flex-wrap gap-2" aria-label="GRN steps">
         {[
