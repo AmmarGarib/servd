@@ -107,6 +107,7 @@ type Tool =
   | { kind: 'ignore'; item: BankItem }
   | { kind: 'flag'; item: BookItem }
   | { kind: 'cleared'; item: BookItem }
+  | { kind: 'matchBank'; item: BookItem; deposit: boolean }
   | { kind: 'addAdj' }
   | { kind: 'removeAdj'; adj: AdjItem }
   | { kind: 'cancel' } | { kind: 'return' } | { kind: 'reopen' }
@@ -361,14 +362,14 @@ export default function BankReconciliationWorkspace() {
           open={!!open.B} onToggle={() => toggle('B')}>
           <BookTable items={st.deposits} kind="deposit" st={st} editable={editable} busy={review.isPending}
             onFlag={(i) => setTool({ kind: 'flag', item: i })} onUnflag={(i) => review.mutate({ journalLineId: i.journalLineId, underReview: false })}
-            onCleared={(i) => setTool({ kind: 'cleared', item: i })} />
+            onCleared={(i) => setTool({ kind: 'cleared', item: i })} onMatchBank={(i) => setTool({ kind: 'matchBank', item: i, deposit: true })} />
         </Section>
 
         <Section letter="C" title="Cheques issued but not presented" total={t.chequesCents} count={st.cheques.length}
           open={!!open.C} onToggle={() => toggle('C')}>
           <BookTable items={st.cheques} kind="cheque" st={st} editable={editable} busy={review.isPending}
             onFlag={(i) => setTool({ kind: 'flag', item: i })} onUnflag={(i) => review.mutate({ journalLineId: i.journalLineId, underReview: false })}
-            onCleared={(i) => setTool({ kind: 'cleared', item: i })} />
+            onCleared={(i) => setTool({ kind: 'cleared', item: i })} onMatchBank={(i) => setTool({ kind: 'matchBank', item: i, deposit: false })} />
         </Section>
 
         <Section letter="D" title="Amounts credited by the bank, not in the books" total={t.bankCreditsCents} count={st.bankCredits.length}
@@ -438,6 +439,9 @@ export default function BankReconciliationWorkspace() {
       </div>
 
       {/* Tools */}
+      {tool?.kind === 'matchBank' && (
+        <MatchToBankLine recId={id} item={tool.item} deposit={tool.deposit} periodTo={st.periodTo} onDone={() => { close(); refresh() }} onClose={close} />
+      )}
       {tool?.kind === 'book' && (
         <Dialog title="Book an entry from this bank line" onClose={close}>
           <p className="text-xs text-s-muted px-4 pt-2 break-words">{fmtDay(tool.item.date)} · {tool.item.description}{tool.item.reference ? ` · ${tool.item.reference}` : ''}</p>
@@ -485,9 +489,9 @@ export default function BankReconciliationWorkspace() {
 
 // ── tables ───────────────────────────────────────────────────────────────────
 
-function BookTable({ items, kind, st, editable, busy, onFlag, onUnflag, onCleared }: {
+function BookTable({ items, kind, st, editable, busy, onFlag, onUnflag, onCleared, onMatchBank }: {
   items: BookItem[]; kind: 'deposit' | 'cheque'; st: BrsDetail['statement']; editable: boolean; busy: boolean
-  onFlag: (i: BookItem) => void; onUnflag: (i: BookItem) => void; onCleared: (i: BookItem) => void
+  onFlag: (i: BookItem) => void; onUnflag: (i: BookItem) => void; onCleared: (i: BookItem) => void; onMatchBank: (i: BookItem) => void
 }) {
   if (items.length === 0) return <CompactEmptyState message={kind === 'deposit' ? 'No uncredited deposits.' : 'No unpresented cheques.'} />
   const dep = kind === 'deposit'
@@ -510,13 +514,14 @@ function BookTable({ items, kind, st, editable, busy, onFlag, onUnflag, onCleare
               <tr key={i.journalLineId} className="border-b border-s-border">
                 <td className={`${TD} whitespace-nowrap`}>{fmtDay(i.date)}</td>
                 <td className={`${TD} font-mono whitespace-nowrap`}>{i.voucherNo ?? '—'}</td>
-                <td className={`${TD} break-words`}>{i.chequeRef ?? i.reference ?? '—'}</td>
+                <td className={`${TD} break-words`}>{i.chequeRef ?? '—'}</td>
                 <td className={`${TD} break-words`}>{i.party ?? '—'}</td>
                 <td className={`${TD} min-w-[12rem] break-words`}>{i.description}<Chips underReview={i.underReview} note={i.reviewNote} clearedOn={i.clearedOn} /></td>
                 <td className={AMT}>{fmtPkr(i.amountCents)}</td>
                 <td className={`${TD} text-right`}>
                   {editable && !i.raast && (
                     <span className="inline-flex flex-wrap justify-end gap-x-3 gap-y-1">
+                      <LinkButton size="md" onClick={() => onMatchBank(i)} title="The bank has it — pair it with its line on the imported statement">Match to bank line</LinkButton>
                       {i.underReview
                         ? <LinkButton tone="muted" size="md" disabled={busy} onClick={() => onUnflag(i)}>Clear review</LinkButton>
                         : <LinkButton tone="muted" size="md" onClick={() => onFlag(i)}>Under review</LinkButton>}
@@ -820,5 +825,51 @@ function ImportPanel({ rec, bankName, periodTo, bankClosing, onDone }: { rec: Br
         </div>
       )}
     </section>
+  )
+}
+
+// ── book side: "Match to bank line" (owner, 2026-11-05: "Give finance option to settle these type of issues") ──────
+// A deposit / cheque the bank has already credited / paid stays outstanding until it is paired with its line on the
+// imported statement. Lists this bank's unmatched lines of the same amount; matching uses the existing engine.
+interface BankCandidate { statementLineId: string; date: string; description: string; reference: string | null; amountCents: number; inPeriod: boolean; gapDays: number }
+function MatchToBankLine({ recId, item, deposit, periodTo, onDone, onClose }: { recId: string; item: BookItem; deposit: boolean; periodTo: string; onDone: () => void; onClose: () => void }) {
+  const q = useQuery<BankCandidate[]>({ queryKey: ['brs-bank-lines', recId, item.journalLineId], queryFn: () => api.get(`${BRS}/${recId}/bank-lines?journalLineId=${encodeURIComponent(item.journalLineId)}`) })
+  const m = useMutation({
+    mutationFn: (statementLineId: string) => api.post<{ matched: number; refused: Array<{ message: string }> }>(`${BRS}/${recId}/auto-match`, { pairs: [{ statementLineId, journalLineId: item.journalLineId }] }),
+    onSuccess: (r) => { if (r.matched > 0) onDone() },
+  })
+  const refused = m.data && m.data.matched === 0 ? m.data.refused[0]?.message ?? 'The match was refused.' : null
+  return (
+    <Dialog title="Match to bank line" onClose={onClose} wide>
+      <div className="p-4 space-y-3">
+        <p className="text-xs text-s-muted break-words">{fmtDay(item.date)} · {item.voucherNo ?? '—'} · {item.description} · <strong className="text-s-text">{fmtPkr(item.amountCents)}</strong></p>
+        {q.isLoading ? <p className="text-sm text-s-muted">Loading…</p>
+          : q.error ? <ErrorBanner message={(q.error as Error).message} />
+          : (q.data ?? []).length === 0 ? (
+            <CompactEmptyState message={`No unmatched ${deposit ? 'credit' : 'debit'} of ${fmtPkr(item.amountCents)} on this bank's imported statements. Import the statement that shows it (Import statement), then match it here.`} />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="text-xs text-s-muted border-b border-s-border">
+                  <th className={TH}>Bank date</th><th className={TH}>Bank ref</th><th className={TH}>Description</th><th className={`${TH} text-right`}>Amount</th><th className="px-3 py-2" />
+                </tr></thead>
+                <tbody>
+                  {q.data!.map((c) => (
+                    <tr key={c.statementLineId} className="border-b border-s-border">
+                      <td className={`${TD} whitespace-nowrap`}>{fmtDay(c.date)}{!c.inPeriod && <span className="block text-[11px] text-s-muted">after {fmtDay(periodTo)} — clears next period</span>}</td>
+                      <td className={`${TD} break-words`}>{c.reference ?? '—'}</td>
+                      <td className={`${TD} min-w-[10rem] break-words`}>{c.description}</td>
+                      <td className={AMT}>{fmtPkr(c.amountCents)}</td>
+                      <td className={`${TD} text-right`}><Button size="sm" disabled={m.isPending} onClick={() => m.mutate(c.statementLineId)}>Match</Button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        {refused && <ErrorBanner message={refused} />}
+        {m.error && <ErrorBanner message={(m.error as Error).message} />}
+      </div>
+    </Dialog>
   )
 }

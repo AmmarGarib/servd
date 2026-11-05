@@ -375,6 +375,36 @@ export async function brsRoutes(fastify: FastifyInstance) {
     return suggestMatches(prisma, bank, isoDay(r.periodTo), Math.min(Math.max(Number(req.query.days) || 7, 1), 60))
   })
 
+  // GET /:id/bank-lines?journalLineId= — the book side's own "Match to bank line" (owner, 2026-11-05: "Give finance
+  // option to settle these type of issues" — a deposit shown as not credited although the bank has it). Unmatched,
+  // non-Raast statement lines of THIS bank with the same signed amount as the book line (a receipt = a bank credit),
+  // nearest date first; `inPeriod` says whether a match clears it in this reconciliation (statement day ≤ period end).
+  // The match itself goes through POST /:id/auto-match {pairs} — the manual-match engine, its locks and audit.
+  fastify.get<{ Params: { id: string }; Querystring: { journalLineId?: string } }>('/:id/bank-lines', { preHandler: requireAuth(...RECONCILERS) }, async (req) => {
+    const jlId = z.string().min(1).max(64).parse(req.query.journalLineId)
+    const r = await loadRec(req, req.params.id, 'read')
+    const bank = await loadBank(prisma, r.bankAccountId, [r.tenantId])
+    const jl = await prisma.journalLine.findFirst({
+      where: { id: jlId, account: { tenantId: r.tenantId, code: bank.accountCode }, journalEntry: { tenantId: r.tenantId } },
+      select: { type: true, amountCents: true, journalEntry: { select: { entryDate: true } } },
+    })
+    if (!jl) throw new NotFoundError('JournalLine', jlId)
+    const signed = (jl.type === 'debit' ? 1 : -1) * toCents(jl.amountCents)
+    const lines = await prisma.bankStatementLine.findMany({
+      where: {
+        import: { tenantId: r.tenantId, OR: [{ bankAccountId: bank.id }, { bankAccountId: null, accountCode: bank.accountCode }] },
+        matchStatus: 'unmatched', raastReceipt: null, amountCents: signed,
+      },
+      select: { id: true, postedDate: true, description: true, reference: true, amountCents: true, underReview: true },
+      take: 200,
+    })
+    const periodEnd = isoDay(r.periodTo)
+    const at = jl.journalEntry.entryDate.getTime()
+    return lines
+      .map((l) => ({ statementLineId: l.id, date: isoDay(l.postedDate), description: l.description, reference: l.reference, amountCents: toCents(l.amountCents), underReview: l.underReview, inPeriod: isoDay(l.postedDate) <= periodEnd, gapDays: Math.round(Math.abs(l.postedDate.getTime() - at) / 86_400_000) }))
+      .sort((a, b) => a.gapDays - b.gapDays)
+  })
+
   fastify.post<{ Params: { id: string } }>('/:id/auto-match', { preHandler: BANK_BOOKERS }, async (req) => {
     const body = z.object({
       pairs: z.array(z.object({ statementLineId: z.string().min(1).max(64), journalLineId: z.string().min(1).max(64) })).max(500).optional(),

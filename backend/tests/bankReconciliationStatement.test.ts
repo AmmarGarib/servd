@@ -311,3 +311,31 @@ describe('imports', () => {
     ])
   })
 })
+
+// Owner, 2026-11-05: "This transaction is cleared and received in bank, why it's showing in uncredited amounts? …
+// Give finance option to settle these type of issues" — the book side's own "Match to bank line".
+describe('match a deposit to its bank line from the book side', () => {
+  it('lists the same-amount unmatched lines of this bank and matches through the existing engine', async () => {
+    await bankEntry(T.A, '1020', R(460_000), '2026-11-03', 'Cash deposited in UBL')
+    const c = await call('finA', 'POST', '/reconciliation/brs', { bankAccountId: bank.A!.id, periodFrom: '2026-11-01', periodTo: '2026-11-30', periodKind: 'month' })
+    expect(c.statusCode, c.body).toBe(201)
+    const id = c.json().id as string
+    const dep = (await getRec('finA', id)).statement.deposits.find((d) => d.amountCents === R(460_000))!
+    expect(dep).toBeTruthy()
+    // Nothing on the statement yet.
+    expect((await call('finA', 'GET', `/reconciliation/brs/${id}/bank-lines?journalLineId=${dep.journalLineId}`)).json()).toEqual([])
+    // The bank credited it 9 days later (too far for the importer's own pairing).
+    const imp = await importCsv('finA', bank.A!.id, '2026-11-15', ['12/11/2026,CASH DEP UBL,TRX991,460000', '12/11/2026,Other credit,,1234'])
+    expect(imp.statusCode, imp.body).toBe(201)
+    const cands = await call('finA', 'GET', `/reconciliation/brs/${id}/bank-lines?journalLineId=${dep.journalLineId}`)
+    expect(cands.statusCode, cands.body).toBe(200)
+    expect(cands.json().map((x: { amountCents: number; inPeriod: boolean; reference: string }) => [x.amountCents, x.inPeriod, x.reference])).toEqual([[R(460_000), true, 'TRX991']])
+    // Company B cannot read A's.
+    expect((await call('finB', 'GET', `/reconciliation/brs/${id}/bank-lines?journalLineId=${dep.journalLineId}`)).statusCode).toBe(404)
+    const m = await call('finA', 'POST', `/reconciliation/brs/${id}/auto-match`, { pairs: [{ statementLineId: cands.json()[0].statementLineId, journalLineId: dep.journalLineId }] })
+    expect(m.json()).toMatchObject({ matched: 1, refused: [] })
+    const s = (await getRec('finA', id)).statement
+    expect(s.deposits.some((d) => d.journalLineId === dep.journalLineId)).toBe(false)
+    expect(s.bankCredits.some((d) => d.amountCents === R(460_000))).toBe(false)
+  })
+})
