@@ -18,6 +18,7 @@
 // Supplier credit notes / returns live in ./creditNotes.ts (the same AP
 // subledger: SupplierBill rows of kind 'credit_note').
 
+import { storedLine, lineValueCents, lineDisplay, type TypedLine, type StoredLine } from './poUnits.js'
 import { isBelowPar } from '../../lib/recipeCost.js'
 import { classifyByReferenceTx, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import { prisma } from '../../lib/prisma.js'
@@ -62,7 +63,9 @@ export interface CreatePoInput {
   notes?: string | null
   /** The brand that orders (owner B13 (a)): a brand of the supplier's company (422 BRAND_NOT_IN_COMPANY). */
   conceptId?: string | null
-  lines: Array<{ inventoryItemId: string; quantityOrdered: number; unitCostCents: number; notes?: string | null }>
+  /** Stock units (quantityOrdered / unitCostCents), or the unit it is ordered in (orderUnit / orderQuantity /
+   *  orderUnitCostCents = the rate per that unit) — procurement/poUnits.ts. */
+  lines: TypedLine[]
   createdBy: string
 }
 
@@ -71,7 +74,7 @@ export interface CreatePoInput {
  * system supplier, of a company; every item and the brand of THAT company; unit costs INT4, line and PO totals BIGINT
  * (422 AMOUNT_TOO_LARGE). Returns the supplier's company and the total.
  */
-async function checkPoContent(input: Pick<CreatePoInput, 'supplierId' | 'conceptId' | 'lines'>): Promise<{ tenantId: string; totalCents: number }> {
+async function checkPoContent(input: Pick<CreatePoInput, 'supplierId' | 'conceptId' | 'lines'>): Promise<{ tenantId: string; totalCents: number; lines: StoredLine[] }> {
   if (input.lines.length === 0) {
     throw new AppError('NO_LINES', 'A PO needs at least one line', 400)
   }
@@ -95,17 +98,25 @@ async function checkPoContent(input: Pick<CreatePoInput, 'supplierId' | 'concept
 
   // A PO line's unit cost is INT4 (it becomes the item's stock cost); the
   // line total and the PO total are BIGINT (422, not a 500 at insert).
-  input.lines.forEach((l, i) => {
-    assertInt4Fits(l.unitCostCents, `Line ${i + 1}'s unit cost`)
-    assertMoneyFits(Math.round(l.unitCostCents * l.quantityOrdered), `Line ${i + 1} (quantity × unit cost)`)
+  // Each line in the unit it is ordered in (poUnits.ts): the server's own factor, stored in stock units beside it.
+  const items = await prisma.inventoryItem.findMany({
+    where: { id: { in: [...new Set(input.lines.map((l) => l.inventoryItemId))] } },
+    select: { id: true, name: true, unit: true, purchaseUnit: true, purchaseUnitFactor: true },
   })
-  const totalCents = input.lines.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityOrdered), 0)
+  const itemById = new Map(items.map((it) => [it.id, it]))
+  const lines = input.lines.map((l, i) => storedLine(itemById.get(l.inventoryItemId)!, l, i))
+  lines.forEach((l, i) => {
+    assertInt4Fits(l.unitCostCents, `Line ${i + 1}'s unit cost`)
+    if (l.orderUnitCostCents != null) assertInt4Fits(l.orderUnitCostCents, `Line ${i + 1}'s rate`)
+    assertMoneyFits(lineValueCents(l), `Line ${i + 1} (quantity × rate)`)
+  })
+  const totalCents = lines.reduce((s, l) => s + lineValueCents(l), 0)
   assertMoneyFits(totalCents, 'This purchase order\'s total')
-  return { tenantId: supplier.tenantId, totalCents }
+  return { tenantId: supplier.tenantId, totalCents, lines }
 }
 
 export async function createPo(input: CreatePoInput) {
-  const { tenantId, totalCents } = await checkPoContent(input)
+  const { tenantId, totalCents, lines } = await checkPoContent(input)
 
   // PO numbers are servd's (owner, 2026-11-03: "remove reference from PO. it should auto generate"): PO-00001,
   // PO-00002… per company (the supplier's), taken under a per-company advisory lock so two buyers never share one.
@@ -127,11 +138,14 @@ export async function createPo(input: CreatePoInput) {
       createdBy:    input.createdBy,
       status:       'draft',
       lines: {
-        create: input.lines.map((l) => ({
-          inventoryItemId: l.inventoryItemId,
-          quantityOrdered: l.quantityOrdered,
-          unitCostCents:   l.unitCostCents,
-          notes:           l.notes ?? null,
+        create: lines.map((l) => ({
+          inventoryItemId:    l.inventoryItemId,
+          quantityOrdered:    l.quantityOrdered,
+          unitCostCents:      l.unitCostCents,
+          orderUnit:          l.orderUnit,
+          orderUnitFactor:    l.orderUnitFactor,
+          orderUnitCostCents: l.orderUnitCostCents,
+          notes:              l.notes,
         })),
       },
       activityLog: {
@@ -159,7 +173,7 @@ export async function updatePoDraft(poId: string, actorId: string, input: Update
   const cur = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { status: true, totalCents: true, supplier: { select: { tenantId: true } } } })
   if (!cur) throw new NotFoundError('PurchaseOrder', poId)
   if (cur.status !== 'draft') throw new AppError('PO_NOT_DRAFT', `This PO is ${cur.status.replace(/_/g, ' ')} — only a draft (or one returned for correction) is edited`, 409)
-  const { tenantId, totalCents } = await checkPoContent(input)
+  const { tenantId, totalCents, lines } = await checkPoContent(input)
   if (tenantId !== cur.supplier.tenantId) {
     throw new AppError('SUPPLIER_NOT_IN_COMPANY', 'Pick a supplier of this PO\'s own company — raise a new PO for another company', 422)
   }
@@ -184,8 +198,9 @@ export async function updatePoDraft(poId: string, actorId: string, input: Update
         conceptId: input.conceptId ?? null,
         totalCents,
         lines: {
-          create: input.lines.map((l) => ({
-            inventoryItemId: l.inventoryItemId, quantityOrdered: l.quantityOrdered, unitCostCents: l.unitCostCents, notes: l.notes ?? null,
+          create: lines.map((l) => ({
+            inventoryItemId: l.inventoryItemId, quantityOrdered: l.quantityOrdered, unitCostCents: l.unitCostCents,
+            orderUnit: l.orderUnit, orderUnitFactor: l.orderUnitFactor, orderUnitCostCents: l.orderUnitCostCents, notes: l.notes,
           })),
         },
       },
@@ -536,13 +551,14 @@ export async function sendPoToSupplier(poId: string, userId: string) {
   const fmt = (c: number) => `PKR ${(c / 100).toLocaleString()}`
   const ref = po.reference ? `#${po.reference}` : `#${po.id.slice(0, 8).toUpperCase()}`
   const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
+  const shown = (l: (typeof po.lines)[number]) => lineDisplay(l, l.inventoryItem.unit)
   const specOf = (l: (typeof po.lines)[number]) => l.inventoryItem.masterIngredient?.spec?.trim() || null
   const linesHtml = po.lines.map((l) => `
     <tr>
       <td style="padding:6px;border-bottom:1px solid #eee;">${esc(l.inventoryItem.name)}${specOf(l) ? `<div style="color:#666;font-size:12px;">Spec: ${esc(specOf(l)!)}</div>` : ''}</td>
-      <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${l.quantityOrdered} ${l.inventoryItem.unit}</td>
-      <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${fmt(l.unitCostCents)}</td>
-      <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${fmt(l.unitCostCents * l.quantityOrdered)}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${shown(l).quantity} ${esc(shown(l).unit)}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${fmt(shown(l).rateCents)} / ${esc(shown(l).unit)}</td>
+      <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${fmt(lineValueCents(l))}</td>
     </tr>`).join('')
 
   const html = `
@@ -555,7 +571,7 @@ export async function sendPoToSupplier(poId: string, userId: string) {
           <tr style="background:#f5f5f5;">
             <th style="padding:8px;text-align:left;">Item</th>
             <th style="padding:8px;text-align:right;">Qty</th>
-            <th style="padding:8px;text-align:right;">Unit Cost</th>
+            <th style="padding:8px;text-align:right;">Rate</th>
             <th style="padding:8px;text-align:right;">Total</th>
           </tr>
         </thead>
@@ -574,7 +590,7 @@ export async function sendPoToSupplier(poId: string, userId: string) {
     `Purchase Order ${ref}`,
     `Hi ${po.supplier.name}, please supply:`,
     '',
-    ...po.lines.map((l) => `- ${l.inventoryItem.name}: ${l.quantityOrdered} ${l.inventoryItem.unit} @ ${fmt(l.unitCostCents)}${specOf(l) ? ` (spec: ${specOf(l)})` : ''}`),
+    ...po.lines.map((l) => `- ${l.inventoryItem.name}: ${shown(l).quantity} ${shown(l).unit} @ ${fmt(shown(l).rateCents)}/${shown(l).unit}${specOf(l) ? ` (spec: ${specOf(l)})` : ''}`),
     '',
     `Total: ${fmt(toCents(po.totalCents))}`,
     ...(po.expectedDate ? [`Expected delivery: ${po.expectedDate.toDateString()}`] : []),

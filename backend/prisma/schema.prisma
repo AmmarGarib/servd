@@ -3081,6 +3081,13 @@ model PurchaseOrderLine {
   quantityReceived Float   @default(0)
   unitCostCents    Int // agreed cost per unit (paisa)
   notes            String?
+  // The unit the line was ORDERED in (owner, 2026-11-05: "give options to choose in Grams, KGs, MLs or other required
+  // UOM … and Rate per mentioned UOM"): quantityOrdered / unitCostCents stay in the item's stock unit; these keep what
+  // was typed — orderUnit, stock units per order unit, and the rate per order unit — so the line is valued exactly
+  // (procurement/poUnits.ts). Null = ordered in the stock unit.
+  orderUnit          String?
+  orderUnitFactor    Float   @default(1)
+  orderUnitCostCents Int?
 
   purchaseOrder       PurchaseOrder          @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   inventoryItem       InventoryItem          @relation(fields: [inventoryItemId], references: [id])

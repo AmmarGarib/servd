@@ -248,7 +248,7 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
   const poLineIds = input.lines.map((l) => l.poLineId).filter((x): x is string => !!x)
   const poLines = poLineIds.length === 0 ? [] : await tx.purchaseOrderLine.findMany({
     where: { id: { in: poLineIds } },
-    select: { id: true, purchaseOrderId: true, inventoryItemId: true, unitCostCents: true },
+    select: { id: true, purchaseOrderId: true, inventoryItemId: true, unitCostCents: true, orderUnitFactor: true, orderUnitCostCents: true },
   })
   const poLineById = new Map(poLines.map((p) => [p.id, p]))
 
@@ -270,7 +270,10 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
     let exactValue: number | null = null
     let unitCost: number | null = poLine ? poLine.unitCostCents : (l.unitCostCents ?? null)
     const norm = (u: string | null | undefined) => (u ?? '').trim().toLowerCase()
-    if (!poLine && l.unit && item.purchaseUnit && norm(l.unit) === norm(item.purchaseUnit) && norm(l.unit) !== norm(item.unit)) {
+    if (poLine && poLine.orderUnitCostCents != null && poLine.orderUnitFactor > 0 && l.valueCents == null) {
+      // A PO line ordered in another unit (poUnits.ts): the lot is worth exactly the agreed rate per that unit.
+      exactValue = Math.round((l.receivedQty / poLine.orderUnitFactor) * poLine.orderUnitCostCents)
+    } else if (!poLine && l.unit && item.purchaseUnit && norm(l.unit) === norm(item.purchaseUnit) && norm(l.unit) !== norm(item.unit)) {
       // Typed in the item's PURCHASE unit (owner 2026-10-24: "units"): qty × factor stock units, cost ÷ factor.
       const f = item.purchaseUnitFactor > 0 ? item.purchaseUnitFactor : 1
       qty = l.receivedQty * f

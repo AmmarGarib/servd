@@ -66,6 +66,8 @@ interface Supplier {
 interface PoLine {
   id: string; inventoryItemId: string; quantityOrdered: number; quantityReceived: number
   unitCostCents: number; notes?: string | null
+  /** The unit it was ordered in and the rate per that unit (null = the stock unit; backend procurement/poUnits.ts). */
+  orderUnit?: string | null; orderUnitFactor?: number | null; orderUnitCostCents?: number | null
   inventoryItem?: { name: string; unit: string; masterIngredient?: { name: string; spec?: string | null } | null } | null
 }
 
@@ -166,7 +168,8 @@ interface ReorderGroup {
 
 interface PoDraft {
   supplierId: string
-  lines: Array<{ inventoryItemId: string; quantityOrdered: string; unitCostCents: string; notes: string }>
+  /** quantityOrdered / unitCostCents are in `unit` (the unit it is ordered in; empty = the item's stock unit). */
+  lines: Array<{ inventoryItemId: string; quantityOrdered: string; unitCostCents: string; notes: string; unit?: string }>
   /** Editing a draft (owner, 2026-11-03): its other fields, kept as they are unless changed. */
   expectedDate?: string
   notes?: string
@@ -178,7 +181,27 @@ const rupeesToPaisa = (v: string) => Math.round(Number(v) * 100)
 /** A stored instant (the end of a PKT day) as the PKT calendar date YYYY-MM-DD. */
 const pktDate = (iso: string) => new Date(new Date(iso).getTime() + 5 * 3_600_000).toISOString().slice(0, 10)
 
-interface InventoryItem { id: string; name: string; unit: string; supplierId?: string | null; unitCostCents?: number | null; latestCostCents?: number | null }
+interface InventoryItem { id: string; name: string; unit: string; supplierId?: string | null; unitCostCents?: number | null; latestCostCents?: number | null; purchaseUnit?: string | null; purchaseUnitFactor?: number | null }
+
+/** The units a PO line may be ordered in — the same rule as backend procurement/poUnits.ts (the server's factor wins). */
+const UNIT_FAMILY: Record<string, Array<[string, number]>> = { g: [['kg', 1000]], kg: [['g', 0.001]], ml: [['l', 1000]], l: [['ml', 0.001]], pcs: [['dozen', 12]] }
+function orderUnitsOf(item: InventoryItem): Array<{ unit: string; factor: number }> {
+  const out = [{ unit: item.unit, factor: 1 }]
+  for (const [u, f] of UNIT_FAMILY[item.unit.trim().toLowerCase()] ?? []) out.push({ unit: u, factor: f })
+  const pu = item.purchaseUnit?.trim()
+  if (pu && (item.purchaseUnitFactor ?? 0) > 0 && !out.some((o) => o.unit.toLowerCase() === pu.toLowerCase())) out.push({ unit: pu, factor: item.purchaseUnitFactor! })
+  return out
+}
+const factorOf = (item: InventoryItem | undefined, unit: string | undefined) =>
+  !item || !unit ? 1 : orderUnitsOf(item).find((o) => o.unit.toLowerCase() === unit.toLowerCase())?.factor ?? 1
+/** A new line is ordered in kg / litres when the item is kept in g / ml (owner, 2026-11-05). */
+const defaultOrderUnit = (item: InventoryItem) => ({ g: 'kg', ml: 'l' } as Record<string, string>)[item.unit.trim().toLowerCase()] ?? item.unit
+/** A PO line's value as stored: the typed quantity × rate in its order unit, else stock quantity × unit cost. */
+const poLineValue = (l: PoLine) => l.orderUnit && l.orderUnitCostCents != null && (l.orderUnitFactor ?? 0) > 0
+  ? Math.round((l.quantityOrdered / l.orderUnitFactor!) * l.orderUnitCostCents) : Math.round(l.quantityOrdered * l.unitCostCents)
+const poLineShown = (l: PoLine) => l.orderUnit && l.orderUnitCostCents != null && (l.orderUnitFactor ?? 0) > 0
+  ? { qty: Math.round((l.quantityOrdered / l.orderUnitFactor!) * 1e6) / 1e6, unit: l.orderUnit, rate: l.orderUnitCostCents }
+  : { qty: l.quantityOrdered, unit: l.inventoryItem?.unit ?? '', rate: l.unitCostCents }
 interface PriceHistoryRow {
   id: string; inventoryItemId: string; supplierId?: string | null
   oldCostCents?: number | null; newCostCents: number; source: string
@@ -473,10 +496,10 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
             expectedDate: editPo.expectedDate ? editPo.expectedDate.slice(0, 10) : '',
             notes: editPo.notes ?? '',
             conceptId: editPo.conceptId ?? null,
-            lines: (editPo.lines ?? []).map((l) => ({
-              inventoryItemId: l.inventoryItemId, quantityOrdered: String(l.quantityOrdered),
-              unitCostCents: String(l.unitCostCents / 100), notes: l.notes ?? '',
-            })),
+            lines: (editPo.lines ?? []).map((l) => {
+              const v = poLineShown(l)
+              return { inventoryItemId: l.inventoryItemId, quantityOrdered: String(v.qty), unitCostCents: String(v.rate / 100), notes: l.notes ?? '', unit: v.unit }
+            }),
           }}
           onClose={() => setEditId(null)} />
       )}
@@ -559,7 +582,7 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
                   <th className="text-left py-1.5 text-s-muted">Item</th>
                   <th className="text-right py-1.5 text-s-muted">Ordered</th>
                   <th className="text-right py-1.5 text-s-muted">Received</th>
-                  <th className="text-right py-1.5 text-s-muted">Unit Cost</th>
+                  <th className="text-right py-1.5 text-s-muted">Rate</th>
                   <th className="text-right py-1.5 text-s-muted">Line Total</th>
                 </tr>
               </thead>
@@ -572,10 +595,10 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
                         <span className="block text-[11px] font-normal text-s-muted">Spec: {l.inventoryItem.masterIngredient.spec.trim()}</span>
                       )}
                     </td>
-                    <td className="py-1.5 text-right text-s-text">{l.quantityOrdered} {l.inventoryItem?.unit}</td>
-                    <td className="py-1.5 text-right text-s-muted">{l.quantityReceived}</td>
-                    <td className="py-1.5 text-right text-s-muted">{fmtPkrWhole(l.unitCostCents)}</td>
-                    <td className="py-1.5 text-right text-s-text font-semibold">{fmtPkrWhole(l.quantityOrdered * l.unitCostCents)}</td>
+                    <td className="py-1.5 text-right text-s-text">{poLineShown(l).qty} {poLineShown(l).unit}</td>
+                    <td className="py-1.5 text-right text-s-muted">{l.quantityReceived} {l.inventoryItem?.unit}</td>
+                    <td className="py-1.5 text-right text-s-muted">{fmtPkrWhole(poLineShown(l).rate)} / {poLineShown(l).unit}</td>
+                    <td className="py-1.5 text-right text-s-text font-semibold">{fmtPkrWhole(poLineValue(l))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -855,10 +878,12 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
       supplierId: supplierId || null, expectedDate: expectedDate || null,
       notes: notes || null,
       ...(editId ? { conceptId: initial?.conceptId ?? null } : {}),
+      // Quantity and rate in the unit picked on the line; the server converts to stock units (poUnits.ts).
       lines: lines.map((l) => ({
         inventoryItemId: l.inventoryItemId,
-        quantityOrdered: Number(l.quantityOrdered),
-        unitCostCents: Math.round(Number(l.unitCostCents) * 100),
+        orderUnit: l.unit || invItems.find((x) => x.id === l.inventoryItemId)?.unit || null,
+        orderQuantity: Number(l.quantityOrdered),
+        orderUnitCostCents: Math.round(Number(l.unitCostCents) * 100),
         notes: l.notes || null,
       })),
     }),
@@ -875,6 +900,21 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   function removeLine(i: number) { setLines(lines.filter((_, idx) => idx !== i)) }
   function updateLine(i: number, field: string, val: string) {
     setLines((prev) => prev.map((l, idx) => idx === i ? { ...l, [field]: val } : l))
+  }
+  /** Another unit on a line: the quantity and the rate are converted, so the line's value stays the same. */
+  function changeUnit(i: number, unit: string) {
+    setLines((prev) => prev.map((l, idx) => {
+      if (idx !== i) return l
+      const item = invItems.find((x) => x.id === l.inventoryItemId)
+      const ratio = factorOf(item, unit) / factorOf(item, l.unit || item?.unit)
+      const q = numOf(l.quantityOrdered)
+      const r = numOf(l.unitCostCents)
+      return {
+        ...l, unit,
+        quantityOrdered: q == null ? l.quantityOrdered : String(Math.round((q / ratio) * 1000) / 1000),
+        unitCostCents: r == null ? l.unitCostCents : String(Math.round(r * ratio * 100) / 100),
+      }
+    }))
   }
 
   const totalCents = lines.reduce((s, l) => s + (Number(l.quantityOrdered) || 0) * Math.round((Number(l.unitCostCents) || 0) * 100), 0)
@@ -935,6 +975,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
         <p className="text-xs font-bold text-s-muted uppercase tracking-widest">Line items</p>
         {lines.map((line, i) => {
           const item = invItems.find((x) => x.id === line.inventoryItemId)
+          const unitOf = line.unit || item?.unit || ''
           return (
           <div key={i} className="grid grid-cols-12 gap-2 items-end">
             <div className="col-span-12 sm:col-span-5">
@@ -950,32 +991,42 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
                   // servd's latest price converted to the stock unit, else the company item's own latest cost.
                   const known = invItems.find((x) => x.id === picked.id)
                   const cents = costPerStockUnit(price ?? null, picked.unit) ?? known?.latestCostCents ?? known?.unitCostCents ?? null
+                  // Ordered in kg / litres for an item kept in g / ml; the rate follows the unit.
+                  const asItem: InventoryItem = known ?? { id: picked.id, name: picked.name, unit: picked.unit }
+                  const unit = defaultOrderUnit(asItem)
+                  const rate = cents != null && cents > 0 ? Math.round(cents * factorOf(asItem, unit)) : null
                   setLines((prev) => prev.map((l, idx) => idx === i
-                    ? { ...l, inventoryItemId: picked.id, unitCostCents: cents != null && cents > 0 ? String(Math.round(cents) / 100) : l.unitCostCents }
+                    ? { ...l, inventoryItemId: picked.id, unit, unitCostCents: rate != null ? String(rate / 100) : l.unitCostCents }
                     : l))
                 }} />
             </div>
+            <div className="col-span-3 sm:col-span-1">
+              <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Quantity</span>
+              <NumberField decimals={3} min={0} enterKeyHint="next" placeholder="Qty" aria-label={`Line ${i + 1} quantity${unitOf ? ` in ${unitOf}` : ''}`}
+                value={numOf(line.quantityOrdered)} onValueChange={(v) => updateLine(i, 'quantityOrdered', textOf(v))} className={fi} />
+            </div>
+            <div className="col-span-4 sm:col-span-1">
+              <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Unit</span>
+              <Select value={unitOf} disabled={!item} aria-label={`Line ${i + 1} unit`} onChange={(e) => changeUnit(i, e.target.value)} className={fi}>
+                {item ? orderUnitsOf(item).map((o) => <option key={o.unit} value={o.unit}>{o.unit}</option>) : <option value="">—</option>}
+              </Select>
+            </div>
             <div className="col-span-5 sm:col-span-2">
-              <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Quantity{item ? ` (${item.unit})` : ''}</span>
-              <div className="relative">
-                <NumberField decimals={3} min={0} enterKeyHint="next" placeholder="Qty" aria-label={`Line ${i + 1} quantity${item ? ` in ${item.unit}` : ''}`}
-                  value={numOf(line.quantityOrdered)} onValueChange={(v) => updateLine(i, 'quantityOrdered', textOf(v))} className={`${fi} ${item ? 'pr-10' : ''}`} />
-                {item && <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-s-muted">{item.unit}</span>}
-              </div>
-            </div>
-            <div className="col-span-6 sm:col-span-2">
-              <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Cost per {item?.unit ?? 'unit'} (PKR)</span>
-              <MoneyInput placeholder={item ? `PKR per ${item.unit}` : 'Unit cost (PKR)'} ariaLabel={`Line ${i + 1} cost in rupees per ${item?.unit ?? 'unit'}`}
+              <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Rate per {unitOf || 'unit'} (PKR)</span>
+              <MoneyInput placeholder={unitOf ? `PKR per ${unitOf}` : 'Rate (PKR)'} ariaLabel={`Line ${i + 1} rate in rupees per ${unitOf || 'unit'}`}
                 value={centsOf(line.unitCostCents)} onChange={(c) => updateLine(i, 'unitCostCents', pkrOf(c))} className={fi} />
+              {item && unitOf && (
+                <span className="mt-0.5 block text-[11px] text-s-muted">
+                  <span className="hidden sm:inline">PKR per {unitOf}</span>
+                  {unitOf.toLowerCase() !== item.unit.toLowerCase() && <><span className="hidden sm:inline"> · </span>1 {unitOf} = {factorOf(item, unitOf).toLocaleString()} {item.unit}</>}
+                </span>
+              )}
             </div>
-            <div className="col-span-1 sm:hidden">
-              <Button variant="danger" type="button" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`} className="w-full"><FIcon name="x" size={14} /></Button>
-            </div>
-            <div className="col-span-12 sm:col-span-2">
+            <div className="col-span-10 sm:col-span-2">
               <Input placeholder="Notes" aria-label={`Line ${i + 1} notes`} enterKeyHint="next" value={line.notes}
                 onChange={(e) => updateLine(i, 'notes', e.target.value)} className={fi} />
             </div>
-            <div className="hidden sm:col-span-1 sm:block">
+            <div className="col-span-2 sm:col-span-1">
               <Button variant="danger" type="button" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`} className="w-full"><FIcon name="x" size={14} /></Button>
             </div>
           </div>

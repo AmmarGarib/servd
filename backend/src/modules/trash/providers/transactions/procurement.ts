@@ -98,7 +98,7 @@ const purchaseOrder: TrashProvider = {
       select: {
         supplierId: true, reference: true, notes: true,
         supplier: { select: { deletedAt: true, name: true } },
-        lines: { select: { inventoryItemId: true, quantityOrdered: true, unitCostCents: true, notes: true, inventoryItem: { select: { unitCostCents: true, deletedAt: true } } } },
+        lines: { select: { inventoryItemId: true, quantityOrdered: true, unitCostCents: true, orderUnit: true, orderUnitFactor: true, orderUnitCostCents: true, notes: true, inventoryItem: { select: { unitCostCents: true, deletedAt: true } } } },
       },
     })
     if (!po) throw new NotFoundError('Trash item', id)
@@ -106,13 +106,20 @@ const purchaseOrder: TrashProvider = {
     // Prices are re-read: today's cost of the item, else the price agreed then.
     const lines = po.lines
       .filter((l) => !l.inventoryItem.deletedAt)
-      .map((l) => ({
+      .map((l) => l.orderUnit && l.orderUnitCostCents != null && l.orderUnitFactor > 0 ? {
+        // Ordered in another unit: the same unit and agreed rate (the server re-reads the factor).
+        inventoryItemId: l.inventoryItemId,
+        orderUnit: l.orderUnit,
+        orderQuantity: Math.round((l.quantityOrdered / l.orderUnitFactor) * 1e6) / 1e6,
+        orderUnitCostCents: l.orderUnitCostCents,
+        notes: l.notes,
+      } : {
         inventoryItemId: l.inventoryItemId,
         quantityOrdered: l.quantityOrdered,
         // A null or zero "today's cost" (never costed yet) falls back to the agreed price.
         unitCostCents: l.inventoryItem.unitCostCents && l.inventoryItem.unitCostCents > 0 ? l.inventoryItem.unitCostCents : l.unitCostCents,
         notes: l.notes,
-      }))
+      })
     if (!lines.length) throw new AppError('NOTHING_TO_COPY', 'Every item on this PO was deleted — raise a new PO', 422)
     // Never: approval, sent / received state, the old reference's sent email.
     const newId = await injectCreate(ctx, '/procurement/purchase-orders', {

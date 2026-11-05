@@ -163,11 +163,19 @@ async function syncOpening(req: FastifyRequest, supplierId: string) {
 // Computed totals (quantity × unit cost, bill and PO totals) and a stock bill
 // line's unit cost are checked in service.ts.
 
+// A line is typed in stock units (quantityOrdered + unitCostCents), or in the unit it is ordered in (owner,
+// 2026-11-05: "Grams, KGs, MLs or other required UOM … Rate per mentioned UOM"): orderUnit + orderQuantity +
+// orderUnitCostCents (the rate per that unit). The server converts (poUnits.ts); 422 UNIT_MISMATCH otherwise.
 const poLineSchema = z.object({
-  inventoryItemId: z.string().uuid(),
-  quantityOrdered: z.number().positive().finite(),
-  unitCostCents:   zInt4Cents('A unit cost'),
-  notes:           z.string().optional().nullable(),
+  inventoryItemId:    z.string().uuid(),
+  quantityOrdered:    z.number().positive().finite().optional(),
+  unitCostCents:      zInt4Cents('A unit cost').optional(),
+  orderUnit:          z.string().trim().min(1).max(20).optional().nullable(),
+  orderQuantity:      z.number().positive().finite().optional(),
+  orderUnitCostCents: zInt4Cents('A rate').optional(),
+  notes:              z.string().optional().nullable(),
+}).refine((l) => (l.quantityOrdered != null && l.unitCostCents != null) || (l.orderQuantity != null && l.orderUnitCostCents != null), {
+  message: 'Each line needs a quantity and a rate',
 })
 
 const poCreateSchema = z.object({

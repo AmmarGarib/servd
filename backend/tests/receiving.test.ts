@@ -329,3 +329,42 @@ describe('supplier balance: one figure, the ledger\'s', () => {
     expect((await agingReport([tenantB])).total.total).toBe(await ledgerAp(tenantB))
   })
 })
+
+// PO lines in any unit (owner, 2026-11-05: "options to choose in Grams, KGs, MLs or other required UOM … And Rate per
+// mentioned UOM"): the line keeps the typed unit and rate; stock, receipts and the lot value are exact.
+describe('PO lines ordered in another unit', () => {
+  it('a gram item ordered in kg at a rate per kg: stored in grams, valued and received exactly', async () => {
+    const cheese = (await prisma.inventoryItem.create({ data: { name: 'Cheese', unit: 'g', tenantId: tenantA, currentStock: 0 } })).id
+    const create = await call('ceo', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, lines: [{ inventoryItemId: cheese, orderUnit: 'kg', orderQuantity: 2.5, orderUnitCostCents: 123_457 }],
+    })
+    expect(create.statusCode).toBe(201)
+    const po = create.json() as { id: string; totalCents: number }
+    expect(po.totalCents).toBe(308_643) // 2.5 kg × PKR 1,234.57 — not 2,500 g × the rounded per-gram cost
+    const line = await prisma.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: po.id } })
+    expect([line.quantityOrdered, line.unitCostCents, line.orderUnit, line.orderUnitFactor, line.orderUnitCostCents]).toEqual([2500, 123, 'kg', 1000, 123_457])
+
+    const r = await approvePoChain(po.id, users['ceo']!.id)
+    expect(r.status).toBe('approved')
+    await markPoSent(po.id, users['ceo']!.id, { channel: 'phone' })
+    const rcv = await call('ceo', 'POST', `/procurement/purchase-orders/${po.id}/receive`, { photoUrl: PHOTO, lines: [{ poLineId: line.id, quantityReceived: 2500 }] })
+    expect(rcv.statusCode).toBe(201)
+    expect((await item(cheese)).currentStock).toBe(2500)
+    const lots = await prisma.stockLot.findMany({ where: { inventoryItemId: cheese } })
+    expect(lots.reduce((s, l) => s + Number(l.remainingValueCents ?? 0), 0)).toBe(308_643)
+  })
+
+  it('a unit that cannot be converted is refused; the stock-unit shape still works', async () => {
+    const bad = await call('ceo', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, lines: [{ inventoryItemId: flour, orderUnit: 'dozen', orderQuantity: 1, orderUnitCostCents: 100 }],
+    })
+    expect(bad.statusCode).toBe(422)
+    expect(bad.json().error.code).toBe('UNIT_MISMATCH')
+    const ok = await call('ceo', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, lines: [{ inventoryItemId: flour, orderUnit: 'g', orderQuantity: 500, orderUnitCostCents: 25 }],
+    })
+    expect(ok.statusCode).toBe(201)
+    const l = await prisma.purchaseOrderLine.findFirstOrThrow({ where: { purchaseOrderId: ok.json().id } })
+    expect([l.quantityOrdered, l.unitCostCents, ok.json().totalCents]).toEqual([0.5, 25_000, 12_500])
+  })
+})
