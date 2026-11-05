@@ -34,7 +34,7 @@ import { scopeTenantWhere, resolveTenantScope, assertConceptOwned, activeTenantI
 import { audit } from '../../lib/audit.js'
 import { toCents, zMoneyCents } from '../../lib/money.js'
 import { invalidateSetupCache } from '../../lib/setup-config.js'
-import { exportFormatOf, sendReportFor } from '../../lib/reportExport.js'
+import { exportFormatOf, sendReportFor, type ReportRow } from '../../lib/reportExport.js'
 import { taxYearOf } from '../accounting/fiscalYear.js'
 import { assertSupplierOfCompany } from '../financePlanning/companyRefs.js'
 import { getAssetClasses, getFixedAssetPolicy, SMALLWARE_TYPES, SMALLWARE_TYPE_LABELS } from './classes.js'
@@ -245,10 +245,50 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
     if (q.uncharged === '1') assets = assets.filter((a) => a.unchargedMonths > 0)
     const exportAs = exportFormatOf(q.format)
     if (exportAs) {
-      const rows = assets.map((r) => ({ ...r, initialAllowanceEligible: String(r.initialAllowanceEligible) }))
+      // CSV: every field, as before (the raw data). Excel / PDF: the register as an accountant reads it (owner,
+      // 2026-11-05: "Asset register is unreadable, fix it in required format") — by class, with class subtotals and
+      // a grand total; one column set that fits a landscape page.
+      const raw = assets.map((r) => ({ ...r, initialAllowanceEligible: String(r.initialAllowanceEligible) }))
+      const rawTable = {
+        title: 'Fixed asset register', period: `As at ${pktDay(asOf)}`, rows: raw,
+        hide: raw[0] ? Object.keys(raw[0]).filter((k) => k === 'tenantId' || /Id$/.test(k) || k === 'id' || k === 'notes') : [],
+      }
+      if (exportAs === 'csv') return sendReportFor(req, reply, exportAs, `fixed-assets-${pktDay(asOf)}`, rawTable)
+      const manyCompanies = new Set(assets.map((a) => a.tenantId)).size > 1
+      const STATUS: Record<string, string> = { active: 'In use', disposed: 'Disposed', voided: 'Voided', transferred_out: 'Transferred out' }
+      const sectionOf = (a: typeof assets[number]) => `${manyCompanies ? `${a.companyName} · ` : ''}${a.classLabel}`
+      const sorted = [...assets].sort((x, y) => sectionOf(x).localeCompare(sectionOf(y)) || (x.assetTag ?? '').localeCompare(y.assetTag ?? '') || x.name.localeCompare(y.name))
+      const rows: ReportRow[] = []
+      const total = (section: string, label: string, list: typeof assets) => ({
+        section, kind: 'total', tag: '', name: label, where: '', inService: '', life: null,
+        cost: list.reduce((t, a) => t + a.costCents, 0), accumulated: list.reduce((t, a) => t + a.accumulatedCents, 0),
+        nbv: list.reduce((t, a) => t + a.nbvCents, 0), status: '',
+      })
+      for (const section of [...new Set(sorted.map(sectionOf))]) {
+        const list = sorted.filter((a) => sectionOf(a) === section)
+        for (const a of list) {
+          rows.push({
+            section, kind: 'asset', tag: a.assetTag ?? '', name: a.quantity > 1 ? `${a.name} (×${a.quantity})` : a.name,
+            where: [a.locationName, a.conceptName].filter(Boolean).join(' · ') || 'Shared',
+            inService: a.inServiceAt, life: a.usefulLifeMonths, cost: a.costCents, accumulated: a.accumulatedCents, nbv: a.nbvCents,
+            status: STATUS[a.status] ?? a.status,
+          })
+        }
+        rows.push(total(section, `Total — ${section}`, list))
+      }
+      if (assets.length) rows.push(total('Grand total', 'GRAND TOTAL', assets))
       return sendReportFor(req, reply, exportAs, `fixed-assets-${pktDay(asOf)}`, {
-        title: 'Fixed asset register', period: `As at ${pktDay(asOf)}`, rows,
-        hide: rows[0] ? Object.keys(rows[0]).filter((k) => k === 'tenantId' || /Id$/.test(k) || k === 'id' || k === 'notes') : [],
+        title: 'Fixed Asset Register', period: `As at ${pktDay(asOf)}`, rows, sectionKey: 'section',
+        columns: [
+          { key: 'section' }, { key: 'kind' },
+          { key: 'tag', label: 'Asset tag' }, { key: 'name', label: 'Asset' }, { key: 'where', label: 'Location / brand' },
+          { key: 'inService', label: 'In service' }, { key: 'life', label: 'Life (months)', type: 'number' },
+          { key: 'cost', label: 'Cost', type: 'cents' }, { key: 'accumulated', label: 'Accumulated depreciation', type: 'cents' },
+          { key: 'nbv', label: 'Net book value', type: 'cents' }, { key: 'status', label: 'Status' },
+        ],
+        hide: ['kind'], wrapKeys: ['name', 'where'], narrowKeys: ['tag', 'inService', 'status'],
+        isTotal: (r) => r.kind === 'total',
+        notes: ['Values as at the date shown: cost less accumulated depreciation = net book value. Disposed and voided assets carry no value.'],
       })
     }
 

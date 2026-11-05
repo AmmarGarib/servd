@@ -353,6 +353,24 @@ describe('the schedule, CSV and scope', () => {
     }
   })
 
+  it('the register exports as a register: by class with subtotals and a grand total (owner, 2026-11-05)', async () => {
+    const json = (await call('finA', 'GET', '/?status=all')).json() as { assets: Array<{ costCents: number; nbvCents: number }> }
+    for (const f of ['pdf', 'xlsx']) {
+      const r = await call('finA', 'GET', `/?status=all&format=${f}`)
+      expect(r.statusCode, f).toBe(200)
+      if (f === 'pdf') {
+        expect(r.headers['content-type']).toMatch(/pdf/)
+        if (process.env.FA_PDF_OUT) (await import('node:fs')).writeFileSync(process.env.FA_PDF_OUT, r.rawPayload)
+      }
+    }
+    const x = await call('finA', 'GET', '/?status=all&format=xlsx')
+    const { readZip } = await import('../src/lib/docx.js')
+    const sheet = readZip(x.rawPayload).find((e) => e.name.includes('worksheets/sheet1'))!.data.toString('utf8')
+    expect(sheet).toContain('GRAND TOTAL')
+    expect(sheet).not.toContain('pendingRequestCount')
+    expect(json.assets.length).toBeGreaterThan(0)
+  })
+
   it('company B\'s scope never shows company A', async () => {
     for (const url of ['/reports/nbv', '/reports/roll-forward', `/reports/schedule?from=${APRIL}&to=${m(1)}`]) {
       const rows = (await call('finB', 'GET', url)).json().rows as Array<{ tenantId: string }>
