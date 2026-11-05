@@ -3517,6 +3517,12 @@ model BankStatementLine {
   matchStatus          String   @default("unmatched") // unmatched | matched | adjusted | ignored
   matchedJournalLineId String?
   notes                String?
+  // Bank reconciliation (owner, 2026-11-05): finance parks an unexplained bank line "under review" (still unmatched,
+  // still counted on its side of the statement — a status, never a hiding place).
+  underReview          Boolean  @default(false)
+  // A duplicate of a line already imported for the same bank (same date, amount, reference, description) is skipped at
+  // import; this hash is the key (sha256 of bank + those fields).
+  dedupeKey            String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -4686,16 +4692,16 @@ model ContentEvent {
   // ── Marketing board card (owner, 2026-11-03; modules/marketingBoard). A card is a ContentEvent with a boardId
   // and a stage; startDate is its DEADLINE (so the calendar shows it on its deadline), assigneeId its OWNER and
   // description its BRIEF. Plain calendar entries leave all of these null / empty.
-  boardId        String?
-  stage          MarketingStage?
-  priority       MarketingPriority?
-  referenceLinks String[]           @default([])
-  publishedAt    DateTime? // first move to Published; on time = publishedAt <= startDate
-  revisionCount  Int                @default(0) // moves back from In review / Approved to In progress
+  boardId          String?
+  stage            MarketingStage?
+  priority         MarketingPriority?
+  referenceLinks   String[]           @default([])
+  publishedAt      DateTime? // first move to Published; on time = publishedAt <= startDate
+  revisionCount    Int                @default(0) // moves back from In review / Approved to In progress
   // Optional link to ONE of a dish, a promo code or a CRM campaign of the card's own company.
-  menuItemId     String?
-  promoCodeId    String?
-  campaignId     String?
+  menuItemId       String?
+  promoCodeId      String?
+  campaignId       String?
   // Task lists (owner, 2026-11-04): a card or calendar entry is a task of its owner / resources / assignee. It leaves
   // their list only once someone on it marked it done AND leadership ticked "Approved by leadership"
   // (modules/marketingBoard/tasks.ts). Plain ids, no FKs.
@@ -5119,6 +5125,87 @@ model BankAccount {
 
   @@index([tenantId])
   @@map("bank_accounts")
+}
+
+// ─── Bank Reconciliation Statements (owner, 2026-11-05) ──────────────────────────────────────────────────────────────
+// modules/reconciliation/brs.ts is the contract. ONE reconciliation per bank account per period (no overlap, checked under
+// a per-bank advisory lock); the statement is COMPUTED from the ledger and the statement lines, never stored as money —
+// `snapshot` freezes what was submitted / approved. Finance prepares and submits, the CEO approves (approval type
+// bank_reconciliation); finance or the CEO reopens (audited). Nothing here posts to the ledger.
+model BankReconciliation {
+  id               String    @id @default(uuid())
+  tenantId         String
+  bankAccountId    String
+  accountCode      String // the bank's chart code when created
+  periodFrom       DateTime  @db.Date
+  periodTo         DateTime  @db.Date
+  periodKind       String    @default("month") // month | quarter | custom
+  bankClosingCents BigInt? // closing balance as per the bank statement (typed, or from the statement import)
+  status           String    @default("draft") // draft | submitted | approved
+  snapshot         Json? // the statement as submitted / approved
+  preparedById     String
+  preparedAt       DateTime  @default(now())
+  submittedById    String?
+  submittedAt      DateTime?
+  approvedById     String?
+  approvedAt       DateTime?
+  returnedById     String?
+  returnedAt       DateTime?
+  returnNote       String?
+  reopenedById     String?
+  reopenedAt       DateTime?
+  reopenReason     String?
+  reopenCount      Int       @default(0)
+  cancelledAt      DateTime?
+  cancelledById    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([bankAccountId, periodTo])
+  @@map("bank_reconciliations")
+}
+
+// Section F: an error or other reconciling item — narration + supporting reference required, approved with the
+// reconciliation. side 'bank' moves the bank statement's balance, 'book' the books' (to be corrected by a voucher).
+// Removed, never deleted (removedAt + reason, audited).
+model BankReconciliationAdjustment {
+  id               String    @id @default(uuid())
+  tenantId         String
+  reconciliationId String
+  side             String // bank | book
+  kind             String // bank_error | book_error | duplicate | wrong_amount | other
+  amountCents      BigInt // signed: added to that side's balance
+  narration        String
+  reference        String
+  statementLineId  String?
+  journalLineId    String?
+  createdById      String
+  createdAt        DateTime  @default(now())
+  removedAt        DateTime?
+  removedById      String?
+  removeReason     String?
+
+  @@index([reconciliationId])
+  @@index([tenantId])
+  @@map("bank_reconciliation_adjustments")
+}
+
+// A mark finance puts on a BOOK line of a bank account: 'under_review' (still outstanding, flagged), or 'cleared_prior'
+// (cleared by the bank before the bank's FIRST reconciliation — the opening balance; only lines dated before it).
+model BankReconBookMark {
+  id            String   @id @default(uuid())
+  tenantId      String
+  bankAccountId String
+  journalLineId String   @unique
+  status        String // under_review | cleared_prior
+  note          String
+  reference     String?
+  createdById   String
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, bankAccountId])
+  @@map("bank_recon_book_marks")
 }
 
 // KDS device registry — physical screens distinct from logical Stations

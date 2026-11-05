@@ -52,6 +52,7 @@
 // its own sourceId (`<receiptId>:2`, …) — a posting is idempotent per
 // reference. A void posts NOTHING: nothing ever debited the bank for it.
 
+import { assertStatementLineEditable } from './brs.js'
 import type { Prisma, RaastReceipt, RaastReceiptStatus } from '@prisma/client'
 import { prisma as defaultPrisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
@@ -449,6 +450,7 @@ export async function matchReceiptToLine(input: { receiptId: string; statementLi
       throw new AppError('RAAST_LINE_NOT_ON_ACCOUNT', 'That statement line is not on this receipt\'s receiving bank account', 422)
     }
     if (line.matchStatus !== 'unmatched') throw new AppError('LINE_NOT_UNMATCHED', `That statement line is already ${line.matchStatus}`, 409)
+    await assertStatementLineEditable(tx, line.id)
     const amount = toCents(line.amountCents)
     if (amount !== r.amountCents) {
       throw new AppError('RAAST_AMOUNT_MISMATCH', `The statement line is ${pkr(amount)}; the receipt is ${pkr(r.amountCents)}. Only an equal amount can be matched.`, 422, { lineAmountCents: amount, receiptAmountCents: r.amountCents })
@@ -469,6 +471,7 @@ export async function unmatchReceipt(input: { receiptId: string; actorId: string
     const r = await tx.raastReceipt.findUniqueOrThrow({ where: { id: input.receiptId } })
     if (r.status !== 'matched' || !r.statementLineId) throw new AppError('RAAST_NOT_MATCHED', 'This Raast receipt is not matched to a statement line', 409)
     const lineId = r.statementLineId
+    await assertStatementLineEditable(tx, lineId)
     await tx.raastReceipt.update({ where: { id: r.id }, data: { status: 'provisional', statementLineId: null, matchedAt: null, matchedById: null } })
     // 'ignored' too (RV-FIN-3 safety net): a line ignored by hand while it was
     // this receipt's match is freed with it, never stranded.

@@ -1541,6 +1541,31 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `reverses:`): neither the reversed original nor its reversal is a bank
   movement — use `deadEntryIds` (`reconciliation/service.ts`) wherever bank
   lines are paired or counted.
+- **Bank Reconciliation Statements (owner, 2026-11-05: "reconcile the bank balance appearing in the company's books
+  with the actual closing balance appearing in the bank statement … integrated with the existing accounting system";
+  answers: EXTEND the existing bank reconciliation; finance submits, the CEO approves; finance or the CEO reopens; a bank
+  charge / credit voucher posts when finance confirms it).** Contract: header of `modules/reconciliation/brs.ts`;
+  routes `/reconciliation/brs/*` (`brsRoutes.ts`); admin Finance → Bank reconciliation (`/finance/bank-reconciliation`).
+  ONE engine on the existing data: the books = the ledger of the bank's chart code as at the period end (the Bank Book /
+  trial balance figure), the bank = `bank_statement_lines` of the bank's imports, the pairing = the existing matches
+  (`matchedJournalLineId`, now also set by an adjustment; older adjusted lines pair by `reconciliation.adjustment:<lineId>`)
+  and Raast receipt by receipt. Outstanding items are COMPUTED as at the period end, so they carry forward until a
+  statement line clears them; a reversal pair that nets to zero is left out. Adjusted bank = bank closing + uncredited
+  deposits − unpresented cheques ± bank-side F; adjusted books = book closing + bank credits − bank debits ± book-side F;
+  the difference must be 0 to submit (422 `UNRECONCILED_DIFFERENCE`, never a balancing figure); section F
+  (`BankReconciliationAdjustment`) needs narration ≥10 + a reference, removed with a reason. Nothing here posts, reverses
+  or re-dates an entry — missing bank items are booked through the existing adjust route. `BankReconciliation`
+  (tenantId = the bank's company, RLS, merge repoint): draft → submitted → approved (approval type `bank_reconciliation`,
+  CEO only, never delegable; approve refuses 409 `STATEMENT_CHANGED` if the figures moved since submit, 409
+  `EARLIER_NOT_APPROVED`) → reopened (finance with `accounting` or the CEO, reason ≥10; the CEO is told; 409
+  `LATER_APPROVED`). Periods of one bank never overlap (409 `PERIOD_OVERLAPS`). An APPROVED period locks its bank's
+  statement lines — match / unmatch / ignore / adjust / Raast / card-payout changes and imports dated in it answer 409
+  `RECONCILIATION_LOCKED`. Imports skip a line already imported for the bank (`dedupeKey`, `skippedDuplicates`), read
+  Excel (`xlsxBase64`, `lib/xlsxRead.ts`), Debit / Credit columns and day-first dates (`parseStatementDate`).
+  `BankReconBookMark`: 'under_review' (a flag only) or 'cleared_prior' (first reconciliation only, entries dated before
+  it). Reports: the BRS (prepared / reviewed / approved by — `ReportTable.signatures`), outstanding cheques, uncredited
+  deposits, unmatched bank lines, bank charges & taxes, monthly summary, bank-wise status. Tests:
+  `tests/bankReconciliationStatement.test.ts`.
 - **Exceptions and backfill (owner, 2026-10-16):** acknowledge / resolve need
   the `exceptions` module, an open or acknowledged flag (409 `FLAG_NOT_OPEN`)
   and a note ≥10; dismiss stays CEO-only. Flags about the books

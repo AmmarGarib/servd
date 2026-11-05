@@ -91,6 +91,8 @@ export interface ReportTable {
   /** Excel / PDF: which rows are totals (bold). Default: a text cell in CAPITALS such as "TOTAL ASSETS". */
   isTotal?: (row: ReportRow) => boolean
   notes?: string[]
+  /** Excel / PDF: a sign-off block at the end — "Prepared by / Reviewed by / Approved by" with names and dates. */
+  signatures?: Array<{ label: string; name: string | null; at: string | null }>
   /** Money in whole rupees (financial statements, owner 2026-11-04): Excel shows #,##0, never paisa. */
   wholeRupees?: boolean
   /** The CSV body when the route wrote its CSV another way (kept byte-identical). */
@@ -264,6 +266,12 @@ export function reportXlsx(t: ReportTable): Buffer {
   if (t.notes?.length) {
     rows.push([])
     for (const n of t.notes) rows.push([n])
+  }
+  if (t.signatures?.length) {
+    rows.push([])
+    rows.push(t.signatures.map((g) => ({ v: g.label, s: 'bold' as const })))
+    rows.push(t.signatures.map((g) => g.name ?? '________________'))
+    rows.push(t.signatures.map((g) => g.at ?? ''))
   }
   return buildXlsx({ name: t.title, widths, rows, freezeRows })
 }
@@ -464,6 +472,19 @@ export async function reportPdf(t: ReportTable): Promise<Buffer> {
       y -= rowH
     }
   }
+  if (t.signatures?.length) {
+    ensure(80)
+    y -= 36
+    const w = usable / t.signatures.length
+    t.signatures.forEach((g, i) => {
+      const x = MARGIN + i * w
+      page.drawLine({ start: { x, y: y + size + 4 }, end: { x: x + w - 18, y: y + size + 4 }, thickness: 0.6, color: MUTED })
+      page.drawText(safe(g.label), { x, y, size, font: bold, color: INK })
+      page.drawText(fit(font, size, safe(g.name ?? ''), w - 18), { x, y: y - size - 3, size, font, color: INK })
+      page.drawText(safe(g.at ?? ''), { x, y: y - 2 * (size + 3), size: size - 1, font, color: MUTED })
+    })
+    y -= 3 * (size + 3)
+  }
 
   const footer = safe(`Generated ${fmtPktStamp(at)} by servd`)
   pages.forEach((p, i) => {
@@ -559,6 +580,19 @@ async function groupedPdf(t: ReportTable, bySection: Record<string, ReportColumn
         y -= size + 3
       }
     }
+  }
+  if (t.signatures?.length) {
+    if (y - 70 < MARGIN + 20) newPage(false)
+    y -= 36
+    const w = usable / t.signatures.length
+    t.signatures.forEach((g, i) => {
+      const x = MARGIN + i * w
+      page.drawLine({ start: { x, y: y + size + 4 }, end: { x: x + w - 18, y: y + size + 4 }, thickness: 0.6, color: MUTED })
+      page.drawText(safe(g.label), { x, y, size, font: bold, color: INK })
+      page.drawText(safe(fit(font, size, g.name ?? '', w - 18)), { x, y: y - size - 3, size, font, color: INK })
+      page.drawText(safe(g.at ?? ''), { x, y: y - 2 * (size + 3), size: size - 1, font, color: MUTED })
+    })
+    y -= 3 * (size + 3)
   }
   const footer = safe(`Generated ${fmtPktStamp(at)} by servd`)
   pages.forEach((p, i) => {

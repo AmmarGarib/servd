@@ -13,6 +13,7 @@ import { audit } from '../../lib/audit.js'
 import { flagException } from '../../lib/exceptions.js'
 import { RAAST_RECEIPTS_MEMO } from '../accounting/orderPosting.js'
 import { matchRaastLinesTx, raastSkipLinesTx, flagUnmatchedReceipts } from './raast.js'
+import { assertDaysOpen, isoDay, statementDedupeKey } from './brs.js'
 import {
   cardSettlementSettings, findCardPayoutFits, postCardFits, claimManualCardDaysTx, isPayoutBank, type CardFit,
 } from './cardPayouts.js'
@@ -35,7 +36,10 @@ const HEADER_ALIASES: Record<string, string[]> = {
   date:        ['date', 'transaction date', 'posted date', 'value date'],
   description: ['description', 'narration', 'particulars', 'details'],
   amount:      ['amount', 'amount (pkr)', 'transaction amount', 'value'],
-  reference:   ['reference', 'ref', 'ref no', 'transaction id', 'txn id'],
+  reference:   ['reference', 'ref', 'ref no', 'transaction id', 'txn id', 'cheque no', 'cheque number', 'chq no', 'instrument no', 'instrument number'],
+  // A statement with separate Debit / Credit columns instead of one signed amount (most Pakistani bank exports).
+  debit:       ['debit', 'withdrawal', 'withdrawals', 'debit amount', 'dr'],
+  credit:      ['credit', 'deposit', 'deposits', 'credit amount', 'cr'],
 }
 
 function findColumn(headers: string[], aliases: string[]): number {
@@ -69,6 +73,26 @@ function splitCsvLine(line: string): string[] {
 // single bank transaction can carry at most MAX_MONEY_CENTS (PKR 900bn), the
 // ledger's own per-line ceiling. Above it, a clear 422 rather than a 500.
 
+// Statement dates: ISO (2026-10-31), Excel serial numbers (46326), or Pakistani day-first forms (31/10/2026,
+// 31-10-2026, 31-Oct-2026, 31 Oct 2026) — day first, as every Pakistani bank prints them. A line is dated at UTC
+// midnight of its day. Anything else falls back to the platform's own parser.
+const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 }
+export function parseStatementDate(raw: string): Date {
+  const v = raw.trim()
+  const utc = (y: number, m: number, d: number) => {
+    const dt = new Date(Date.UTC(y < 100 ? 2000 + y : y, m - 1, d))
+    return dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? dt : new Date(NaN)
+  }
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(v)
+  if (m) return utc(+m[1]!, +m[2]!, +m[3]!)
+  if (/^\d{5}(\.\d+)?$/.test(v)) return new Date(Math.round((parseFloat(v) - 25569) * 86400_000 / 86400_000) * 86400_000)
+  m = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/.exec(v)
+  if (m) return utc(+m[3]!, +m[2]!, +m[1]!)
+  m = /^(\d{1,2})[\s/-]([A-Za-z]{3,4})[A-Za-z]*[\s/,-]+(\d{2,4})$/.exec(v)
+  if (m && MONTHS[m[2]!.toLowerCase()]) return utc(+m[3]!, MONTHS[m[2]!.toLowerCase()]!, +m[1]!)
+  return new Date(v)
+}
+
 export function parseStatementCsv(csv: string): ParsedStatementLine[] {
   const lines = csv.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim().length > 0)
   if (lines.length < 2) throw new AppError('CSV_EMPTY', 'CSV must contain a header row and at least one data row', 400)
@@ -78,9 +102,12 @@ export function parseStatementCsv(csv: string): ParsedStatementLine[] {
   const descIdx = findColumn(headers, HEADER_ALIASES['description']!)
   const amtIdx  = findColumn(headers, HEADER_ALIASES['amount']!)
   const refIdx  = findColumn(headers, HEADER_ALIASES['reference']!)
+  const drIdx   = findColumn(headers, HEADER_ALIASES['debit']!)
+  const crIdx   = findColumn(headers, HEADER_ALIASES['credit']!)
+  const split   = amtIdx < 0 && drIdx >= 0 && crIdx >= 0
 
-  if (dateIdx < 0 || descIdx < 0 || amtIdx < 0) {
-    throw new AppError('CSV_HEADERS_MISSING', `CSV must include date, description, and amount columns. Got: ${headers.join(', ')}`, 400)
+  if (dateIdx < 0 || descIdx < 0 || (amtIdx < 0 && !split)) {
+    throw new AppError('CSV_HEADERS_MISSING', `CSV must include date, description, and amount (or debit and credit) columns. Got: ${headers.join(', ')}`, 400)
   }
 
   const out: ParsedStatementLine[] = []
@@ -88,15 +115,23 @@ export function parseStatementCsv(csv: string): ParsedStatementLine[] {
     const cols = splitCsvLine(lines[i]!)
     const dateRaw = cols[dateIdx]?.trim()
     const desc    = cols[descIdx]?.trim() ?? ''
-    const amtRaw  = cols[amtIdx]?.trim() ?? ''
+    const money = (v: string | undefined) => (v ?? '').trim().replace(/[, ]/g, '').replace(/^PKR/i, '').replace(/^\((.*)\)$/, '-$1')
+    let amtRaw  = cols[amtIdx]?.trim() ?? ''
+    if (split) {
+      const dr = money(cols[drIdx]), cr = money(cols[crIdx])
+      if (!dr && !cr) continue
+      const drN = dr ? parseFloat(dr) : 0, crN = cr ? parseFloat(cr) : 0
+      if (isNaN(drN) || isNaN(crN)) throw new AppError('CSV_BAD_AMOUNT', `Cannot parse the debit / credit on row ${i + 1}`, 400)
+      amtRaw = String(Math.round((crN - Math.abs(drN)) * 100) / 100)
+    }
     if (!dateRaw || !amtRaw) continue
 
-    const parsed = new Date(dateRaw)
+    const parsed = parseStatementDate(dateRaw)
     if (isNaN(parsed.getTime())) {
       throw new AppError('CSV_BAD_DATE', `Cannot parse date "${dateRaw}" on row ${i + 1}`, 400)
     }
 
-    const cleaned = amtRaw.replace(/[, ]/g, '').replace(/^PKR/i, '')
+    const cleaned = amtRaw.replace(/[, ]/g, '').replace(/^PKR/i, '').replace(/^\((.*)\)$/, '-$1')
     const amount = parseFloat(cleaned)
     if (isNaN(amount)) {
       throw new AppError('CSV_BAD_AMOUNT', `Cannot parse amount "${amtRaw}" on row ${i + 1}`, 400)
@@ -169,7 +204,19 @@ export async function importBankStatement(input: {
   const account = await prisma.account.findFirst({ where: { tenantId: input.tenantId, code: input.accountCode } })
   if (!account) throw new NotFoundError('Account', input.accountCode)
 
-  const parsed = parseStatementCsv(input.csv)
+  const allParsed = parseStatementCsv(input.csv)
+  // A line already imported for this bank (same day, amount, reference, description) is skipped — the same bank
+  // transaction is never reconciled twice (owner, 2026-11-05). Repeats INSIDE one file stay (two equal charges).
+  const bankKey = input.bankAccountId ?? `${input.tenantId}:${input.accountCode}`
+  const keyed = allParsed.map((l) => ({ ...l, dedupeKey: statementDedupeKey(bankKey, l) }))
+  const seen = new Set((await prisma.bankStatementLine.findMany({
+    where: { dedupeKey: { in: [...new Set(keyed.map((l) => l.dedupeKey))] }, import: { tenantId: input.tenantId } },
+    select: { dedupeKey: true },
+  })).map((l) => l.dedupeKey))
+  const parsed = keyed.filter((l) => !seen.has(l.dedupeKey))
+  const skippedDuplicates = keyed.length - parsed.length
+  // A statement day inside an APPROVED bank reconciliation of this bank is locked (reopen it first).
+  await assertDaysOpen(prisma, input.bankAccountId, parsed.map((l) => isoDay(l.postedDate)))
 
   const result = await prisma.$transaction(async (tx) => {
     // No Raast lock here: inserting this import's own (new, uncommitted) rows
@@ -203,6 +250,7 @@ export async function importBankStatement(input: {
           reference: line.reference,
           amountCents: line.amountCents,
           matchStatus: 'unmatched',
+          dedupeKey: line.dedupeKey,
         },
         select: { id: true },
       })
@@ -322,7 +370,8 @@ export async function importBankStatement(input: {
 
   // The card payouts the pass found, each in its own transaction (a refusal
   // leaves its line unmatched with the reason — the import itself stands).
-  const { cardFits, ...counts } = result
+  const { cardFits, ...rest } = result
+  const counts = { ...rest, skippedDuplicates }
   if (cardFits.length > 0) {
     const card = await postCardFits(input.tenantId, cardFits)
     counts.cardPayoutMatchedCount = card.posted
@@ -623,9 +672,11 @@ export async function adjustStatementLine(input: {
         tenantId, line, bankLeg, other, sourceType: ADJUSTMENT_SOURCE, sourceId, description, postedBy: input.postedById, controlledOverride,
       })
     }
+    // The line points at its entry's bank leg (2026-11-05: the bank reconciliation reads the pair; older adjusted
+    // lines are paired by the entry's reference, brs.ts).
     const claimed = await tx.bankStatementLine.updateMany({
       where: { id: line.id, matchStatus: 'unmatched' },
-      data: { matchStatus: 'adjusted', notes: input.memo },
+      data: { matchStatus: 'adjusted', notes: input.memo, matchedJournalLineId: res.bankLineId },
     })
     if (claimed.count === 0) throw new AppError('LINE_NOT_UNMATCHED', 'Line was already cleared', 409)
     if (settlementId) await tx.cardSettlement.update({ where: { id: settlementId }, data: { journalEntryId: res.entryId } })

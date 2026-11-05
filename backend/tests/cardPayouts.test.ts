@@ -216,12 +216,11 @@ describe('the import pass', () => {
     expect(toCents(st.feeTaxCents)).toBe(32_000) // 16% inside the 232,000 fee
     expect(st.days.map((x) => [x.day, toCents(x.grossCents)])).toEqual([[d(-2), 10_000_000]])
 
-    // A re-import of the same statement never books the day twice.
+    // A re-import of the same statement never books the day twice: the line is skipped as already imported
+    // (owner, 2026-11-05: the same bank transaction is never reconciled twice).
     const again = await importCsv(s.finance, s.bank.id, [{ day: d(0), description: 'KEENU SETTLEMENT', amount: PKR(net) }])
     expect(again.statusCode, again.body).toBe(201)
-    expect(again.json()).toMatchObject({ cardPayoutMatchedCount: 0, matchedCount: 0 })
-    const dup = await lineOf(again.json().importId)
-    expect(dup.matchStatus).toBe('unmatched')
+    expect(again.json()).toMatchObject({ cardPayoutMatchedCount: 0, matchedCount: 0, skippedDuplicates: 1, totalRows: 0 })
     expect(await prisma.journalEntry.count({ where: { tenantId: s.co.tenantId, reference: { startsWith: 'card.settlement:' } } })).toBe(1)
 
     // The generic unmatch is refused — a payout is undone on the Card payouts tab.
@@ -243,13 +242,9 @@ describe('the import pass', () => {
     expect((await prisma.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })).matchStatus).toBe('unmatched')
     expect(await prisma.auditLog.count({ where: { action: 'card_payouts.undo', tenantId: s.co.tenantId } })).toBe(1)
 
-    // Two unmatched lines now fit the same day → re-run matches neither (never a guess)…
-    const rm = await call(s.finance, 'POST', '/reconciliation/card-payouts/rematch', {})
-    expect(rm.statusCode, rm.body).toBe(200)
-    expect(rm.json()).toMatchObject({ matched: 0, candidates: 2 })
-    // …ignore the duplicate, and the original re-matches as '@2'.
-    expect((await call(s.finance, 'POST', `/reconciliation/bank/lines/${dup.id}/ignore`, { reason: 'Duplicate statement row, already reconciled' })).statusCode).toBe(200)
+    // No duplicate row was imported, so the original re-matches as '@2' on the next run.
     const rm2 = await call(s.finance, 'POST', '/reconciliation/card-payouts/rematch', {})
+    expect(rm2.statusCode, rm2.body).toBe(200)
     expect(rm2.json()).toMatchObject({ matched: 1 })
     expect(await entry(s.co.tenantId, `card.settlement:${line.id}@2`)).not.toBeNull()
     expect((await prisma.bankStatementLine.findUniqueOrThrow({ where: { id: line.id } })).matchStatus).toBe('matched')

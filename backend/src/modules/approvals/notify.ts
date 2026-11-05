@@ -165,6 +165,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
     async extraRecipients(id) { return hrEmployeeLogin(id) },
   }),
   customer_export: spec(() => '/crm?exports=1'),
+  bank_reconciliation: spec((id) => `/finance/bank-reconciliation/${encodeURIComponent(id)}`),
   // tasks.ts rings its own bells (done → approvers, approved / reopened → the people).
   marketing_task: spec(() => '/me/tasks', { eventless: true }),
 }
@@ -245,6 +246,12 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
     case 'stock_transfer': {
       const t = await db.stockTransfer.findUnique({ where: { id }, select: { quantity: true, unit: true, inventoryItem: { select: { name: true } } } })
       return t && { ref: `Stock transfer ${t.quantity} ${t.unit} ${t.inventoryItem?.name ?? ''}`.trim() }
+    }
+    case 'bank_reconciliation': {
+      const r = await db.bankReconciliation.findUnique({ where: { id }, select: { periodFrom: true, periodTo: true, bankAccountId: true } })
+      if (!r) return null
+      const b = await db.bankAccount.findUnique({ where: { id: r.bankAccountId }, select: { name: true } })
+      return { ref: `Bank reconciliation ${b?.name ?? ''} ${r.periodFrom.toISOString().slice(0, 10)} to ${r.periodTo.toISOString().slice(0, 10)}`.replace(/\s+/g, ' ') }
     }
     case 'stock_brand_move': {
       const t = await db.stockTransfer.findUnique({ where: { id }, select: { quantity: true, unit: true, fromConceptId: true, toConceptId: true, inventoryItem: { select: { name: true } } } })

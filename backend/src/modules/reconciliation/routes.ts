@@ -11,6 +11,9 @@ import {
   manualMatchCandidates,
 } from './service.js'
 import { requireModule } from '../notifications/requireModule.js'
+import { assertStatementLineEditable } from './brs.js'
+import { xlsxFirstSheetCsv } from '../../lib/xlsxRead.js'
+import { brsRoutes } from './brsRoutes.js'
 import { raastReconciliationRoutes, raastPaidCents } from './raastRoutes.js'
 import cardPayoutRoutes from './cardPayoutRoutes.js'
 import { cardSettlementChips } from './cardPayouts.js'
@@ -61,8 +64,10 @@ const importBankSchema = z.object({
   closingBalanceCents: balanceCents,
   filename: z.string().min(1, 'Statement file name is required — upload the bank statement before reconciling'),
   fileUrl:  z.string().url('Statement file URL required — uploaded statement must be reachable for audit'),
-  csv: z.string().min(1, 'Bank statement contents required — paste or upload the CSV'),
-})
+  csv: z.string().min(1).optional(),
+  // An Excel statement (.xlsx, base64): its first sheet is read as the CSV would be (lib/xlsxRead.ts).
+  xlsxBase64: z.string().min(1).max(14_000_000).optional(),
+}).refine((b) => !!b.csv || !!b.xlsxBase64, { message: 'Bank statement contents required — upload the CSV or Excel file', path: ['csv'] })
 
 // The other side of an unmatched statement line: one contra account for the
 // whole amount, or a balanced split (BOOKS-11 — a card settlement net of its
@@ -166,7 +171,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
       closingBalanceCents: body.closingBalanceCents,
       filename: body.filename,
       importedById: req.staffUser!.id,
-      csv: body.csv,
+      csv: body.csv ?? xlsxFirstSheetCsv(Buffer.from(body.xlsxBase64!, 'base64')),
     })
     // Night audit (sales days): an audited day whose bank side is now matched closes.
     import('../nightAudit/service.js').then((m) => m.nudgeNightAudit(tenantId)).catch(() => undefined)
@@ -183,6 +188,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         select: { id: true, amountCents: true, import: { select: { tenantId: true } } },
       })
       if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      await assertStatementLineEditable(prisma, line.id)
       // Register-account overrides stay the CEO's (as on manual journals).
       if (body.registerOverride && req.staffUser!.role !== 'admin') {
         throw new AppError('REGISTER_OVERRIDE_CEO_ONLY', 'Only the CEO can post to the fixed-asset register accounts by hand.', 403)
@@ -244,6 +250,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         select: { id: true },
       })
       if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      await assertStatementLineEditable(prisma, line.id)
       const res = await manualMatchStatementLine(line.id, body.journalLineId)
       await audit({
         category: 'accounting', action: 'reconciliation.line.match', entity: 'BankStatementLine', entityId: line.id,
@@ -268,6 +275,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         select: { id: true, matchStatus: true, notes: true, amountCents: true, raastReceipt: { select: { id: true } }, import: { select: { tenantId: true } } },
       })
       if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      await assertStatementLineEditable(prisma, line.id)
       // RV-FIN-3: only an UNMATCHED line can be ignored. A line matched to a
       // Raast receipt is undone on the Raast tab (Unmatch) — ignoring it would
       // strand the receipt; a generic match is undone with /unmatch first.
@@ -306,6 +314,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         select: { id: true, matchStatus: true, notes: true, import: { select: { tenantId: true } } },
       })
       if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      await assertStatementLineEditable(prisma, line.id)
       const claimed = await prisma.bankStatementLine.updateMany({
         where: { id: line.id, matchStatus: 'ignored' },
         data: { matchStatus: 'unmatched', notes: null },
@@ -336,6 +345,7 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
         select: { id: true, import: { select: { tenantId: true } } },
       })
       if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      await assertStatementLineEditable(prisma, line.id)
       const { before } = await unmatchStatementLine(line.id)
       await audit({
         category: 'accounting',
@@ -352,6 +362,9 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
       return { ok: true }
     },
   )
+
+  // ─── Bank Reconciliation Statements (owner, 2026-11-05) — /reconciliation/brs/* ─
+  await fastify.register(brsRoutes, { prefix: '/brs' })
 
   // ─── Raast QR (spec §7.2) — /reconciliation/raast/* ─────────────────────
   await fastify.register(raastReconciliationRoutes, { prefix: '/raast' })

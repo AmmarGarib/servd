@@ -109,6 +109,7 @@ export const APPROVAL_TYPES = [
   // Wage changes and guest-list downloads (owner, 2026-10-27).
   'wage_change',           // an HR salary revision / promotion with a new gross, at its last (CEO) step
   'customer_export',       // a download of the guest list with phones / emails a non-CEO asked for
+  'bank_reconciliation',   // a bank reconciliation statement finance submitted, waiting for the CEO (owner, 2026-11-05)
   'marketing_task',        // a board card / calendar task marked done, waiting for "Approved by leadership" (owner, 2026-11-04)
   // Work locations as map pins (owner, 2026-10-27).
   'work_pin',              // an employee's own work map pin (new or moved) waiting for the CEO
@@ -339,6 +340,12 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // the CEO, a marketing_lead holder (per person), or a calendar entry's creator — never one of its own people
     // (the CEO excepted). Never handed over. The route's own guard decides; the inbox only lists GET /my-tasks.
     label: 'Marketing tasks', section: 'marketing', queueModule: 'marketing_board', roles: ['admin', 'marketing', 'brand_manager'], perItem: true,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  bank_reconciliation: {
+    // A BankReconciliation 'submitted' (modules/reconciliation/brs.ts): POST /reconciliation/brs/:id/approve | return.
+    // Owner, 2026-11-05: "Finance will submit BRS to CEO for approval". The CEO only, never handed over.
+    label: 'Bank reconciliations', section: 'ceo', queueModule: 'reconciliation', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   customer_export: {
@@ -1184,6 +1191,10 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const status = t.leadApprovedAt ? 'approved' : t.taskDoneAt ? 'pending' : 'open'
       return subject({ companyIds: [t.tenantId], ownerTenantId: t.tenantId, submitterIds: [t.taskDoneById], viaHeadOfficeId: null, status, submittedAt: t.taskDoneAt })
     }
+    case 'bank_reconciliation': {
+      const r = await db.bankReconciliation.findUnique({ where: { id }, select: { tenantId: true, status: true, preparedById: true, submittedById: true, submittedAt: true } })
+      return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.preparedById, r.submittedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.submittedAt })
+    }
     case 'customer_export': {
       const r = await db.customerExportRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, requestedAt: true, kind: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.requestedAt, kind: r.kind })
@@ -1294,6 +1305,7 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   payroll_finance_review: ['finance_review'],
   stock_transfer: ['requested'],
   stock_brand_move: ['requested'],
+  bank_reconciliation: ['submitted'],
   cash_request_finance: ['submitted', 'draft'],
   cash_voucher: ['finance_approved', 'hod_signed'],
   fixed_asset_request: ['pending'],

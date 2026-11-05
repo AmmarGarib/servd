@@ -791,6 +791,56 @@ const stockTransfers: ApprovalProvider = {
   },
 }
 
+// ── Bank reconciliations (owner, 2026-11-05) ──────────────────────────────
+// A BankReconciliation 'submitted' (reconciliation/brs.ts): GET /reconciliation/brs?status=submitted;
+// POST /reconciliation/brs/:id/approve | return. The CEO only, never handed over.
+const bankReconciliations: ApprovalProvider = {
+  type: 'bank_reconciliation',
+  label: APPROVAL_RIGHTS.bank_reconciliation.label,
+  module: APPROVAL_RIGHTS.bank_reconciliation.queueModule,
+  link: '/finance/bank-reconciliation',
+  ...rightsOf('bank_reconciliation'),
+  async load(ctx) {
+    type Row = {
+      id: string; tenantId: string; periodFrom: string; periodTo: string; submittedAt: string | null; submittedBy: string | null
+      preparedById: string; submittedById: string | null
+      preparedBy: string | null; bankClosingCents: number | null; bank: { name: string; bankName: string | null; accountNumber: string | null } | null
+      totals: { depositsCents: number; chequesCents: number; bankCreditsCents: number; bankDebitsCents: number; differenceCents: number | null } | null
+      bookClosingCents: number | null
+    }
+    const rows = await ctx.read<Row[]>('/reconciliation/brs?status=submitted&limit=200')
+    if (rows === null) return null
+    const pkr = (c: number | null | undefined) => (c == null ? null : `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+    return rows.map((r): ApprovalItem => ({
+      type: 'bank_reconciliation',
+      id: r.id,
+      tenantId: r.tenantId,
+      section: APPROVAL_RIGHTS.bank_reconciliation.section,
+      submittedByIds: idList(r.preparedById, r.submittedById),
+      title: `${r.bank?.name ?? 'Bank'} — ${r.periodFrom} to ${r.periodTo}`,
+      subtitle: `Prepared by ${r.preparedBy ?? 'finance'}${r.submittedBy ? `, submitted by ${r.submittedBy}` : ''}`,
+      facts: facts([
+        ['Account', [r.bank?.bankName, r.bank?.accountNumber].filter(Boolean).join(' · ') || null],
+        ['Balance as per books', pkr(r.bookClosingCents)],
+        ['Balance as per bank', pkr(r.bankClosingCents)],
+        ['Uncredited deposits', pkr(r.totals?.depositsCents)],
+        ['Unpresented cheques', pkr(r.totals?.chequesCents)],
+        ['Bank credits not in books', pkr(r.totals?.bankCreditsCents)],
+        ['Bank debits not in books', pkr(r.totals?.bankDebitsCents)],
+        ['Difference', pkr(r.totals?.differenceCents)],
+      ]),
+      waitingSince: iso(r.submittedAt),
+      link: `/finance/bank-reconciliation/${r.id}`,
+      actions: [
+        { kind: 'approve', label: 'Approve & lock', method: 'POST', path: `/reconciliation/brs/${r.id}/approve`, body: {},
+          confirm: 'Approve this bank reconciliation? Its period is locked once approved.' },
+        { kind: 'return', label: 'Return to finance', method: 'POST', path: `/reconciliation/brs/${r.id}/return`, body: {},
+          input: { field: 'note', label: 'What to fix (at least 10 characters)', required: true } },
+      ],
+    }))
+  },
+}
+
 // ── Stock moves between brands (owner, 2026-10-27) ─────────────────────────
 // A StockTransfer with brandMove true waiting in 'requested' (stockTransfers/brandMoveApproval.ts):
 // GET /stock-transfers?status=requested&brandMove=true; POST /stock-transfers/:id/brand-move/approve | reject.
@@ -1531,6 +1581,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   tipPools,
   stockTransfers,
   stockBrandMoves,
+  bankReconciliations,
   cashRequestsFinance,
   cashVouchers,
   fixedAssetRequests,

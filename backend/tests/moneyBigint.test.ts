@@ -139,6 +139,8 @@ const EXPECTED_BIGINT_FIELDS = [
   'JournalLineSubAccount.amountCents', // sub-ledger tags (2026-10-23)
   'BankStatementImport.openingBalanceCents', 'BankStatementImport.closingBalanceCents',
   'BankStatementLine.amountCents',
+  // Bank reconciliation statements (owner, 2026-11-05).
+  'BankReconciliation.bankClosingCents', 'BankReconciliationAdjustment.amountCents',
   // A bank SMS credit is a bank-statement-class amount (Raast QR, 2026-10-12);
   // the till-side RaastReceipt amounts stay INT4 like every per-ticket figure.
   'BankSmsAlert.amountCents',
@@ -211,10 +213,10 @@ describe('(1) the money boundary', () => {
     expect(() => JSON.stringify({ a: 2n ** 60n })).toThrow(expect.objectContaining({ code: 'AMOUNT_OUT_OF_RANGE' }))
   })
 
-  it('DMMF canary: the BIGINT fields are exactly the 102 money fields', () => {
+  it('DMMF canary: the BIGINT fields are exactly the 104 money fields', () => {
     const got = Prisma.dmmf.datamodel.models.flatMap((m) => m.fields.filter((f) => f.type === 'BigInt').map((f) => `${m.name}.${f.name}`)).sort()
     expect(got).toEqual(EXPECTED_BIGINT_FIELDS)
-    expect(got).toHaveLength(102)
+    expect(got).toHaveLength(104)
   })
 
   describe('a PKR 25m entry reads back as an exact JS number through every shape, on both clients', () => {

@@ -190,6 +190,9 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Kitchen flow (2026-10-26): par targets and the recipe portion CHECKs (RLS out).
   for (const statement of migrationSection('20261026120200_par_targets',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
+  // Bank reconciliation statements (2026-11-05): status / period / side / kind / text CHECKs + the dedupe index (RLS out).
+  for (const statement of migrationSection('20261105100000_bank_reconciliations',
+    '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
   // Sub-accounts (2026-10-23): the kind / employee and positive-amount CHECKs (RLS out).
   for (const statement of migrationSection('20261023110000_sub_accounts',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)

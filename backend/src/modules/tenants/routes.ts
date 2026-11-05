@@ -761,6 +761,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.salesTaxPayment,
     // Payments, references and the bank's own records.
     tx.raastReceipt, tx.terminalCharge, tx.bankSmsDevice, tx.bankSmsAlert, tx.depositDrop, tx.depositDropShift, tx.bankStatementImport,
+    // Bank reconciliation statements (owner, 2026-11-05): follow the bank's company (the bank moves too).
+    tx.bankReconciliation, tx.bankReconciliationAdjustment, tx.bankReconBookMark,
     tx.supplierCreditApplication,
     // Internal payment classification (2026-10-20): a label on the entry, follows the entry's company.
     tx.paymentClassification,

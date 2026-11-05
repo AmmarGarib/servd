@@ -45,6 +45,7 @@
 // Money: day gross and payouts are company-level sums in JS numbers (BIGINT
 // columns on CardSettlement come back as numbers through lib/money.ts).
 
+import { assertStatementLineEditable } from './brs.js'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma as defaultPrisma } from '../../lib/prisma.js'
@@ -554,6 +555,7 @@ export async function postCardSettlementTx(tx: Tx, input: SettleInput): Promise<
   })
   if (!line) throw new NotFoundError('BankStatementLine', input.lineId)
   if (line.matchStatus !== 'unmatched') throw new AppError('LINE_NOT_UNMATCHED', `This statement line is already ${line.matchStatus}`, 409)
+  await assertStatementLineEditable(tx, line.id)
   const net = toCents(line.amountCents)
   if (net <= 0) throw new AppError('LINE_NOT_A_CREDIT', 'A card payout is money IN — this line is not a credit', 422)
   if (line.import.bankAccountId !== s.payoutBankAccountId) {
@@ -788,6 +790,7 @@ export async function undoCardSettlement(input: { settlementId: string; tenantId
       meta: { statementLineId: st.statementLineId, reversalEntryId, status: st.status },
       snapshot: takeSnapshot('CardSettlement', settlement, { CardSettlementDay: days }),
     })
+    if (st.statementLineId) await assertStatementLineEditable(tx, st.statementLineId)
     await tx.cardSettlement.delete({ where: { id: st.id } })
     await tx.bankStatementLine.updateMany({
       where: { id: st.statementLineId, matchStatus: { in: ['matched', 'adjusted'] } },

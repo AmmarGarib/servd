@@ -211,7 +211,10 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   ],
   accounting_audit: [{ label: 'Accounting audit', href: '/accounting/audit-log', hint: 'Who moved the books — CEO and management only' }],
   gift_cards:     [{ label: 'Gift cards', href: '/gift-cards', icon: 'gift' }],
-  reconciliation: [{ label: 'Reconciliation', href: '/reconciliation', icon: 'scale', hint: 'Shift closes, bank statements, card payouts and Raast QR receipts (provisional until the statement matches)' }],
+  reconciliation: [
+    { label: 'Reconciliation', href: '/reconciliation', icon: 'scale', hint: 'Shift closes, bank statements, card payouts and Raast QR receipts (provisional until the statement matches)' },
+    { label: 'Bank reconciliation', href: '/finance/bank-reconciliation', sub: true, hint: 'Reconcile each bank account to its statement by period — finance prepares, the CEO approves and locks' },
+  ],
   voided_prebills: [{ label: 'Voided pre bills', href: '/finance/voided-pre-bills', hint: 'Every pre-bill printed — flagged when it never became a full & final bill or the final bill came out lower' }],
   exceptions:     [{ label: 'Exceptions', href: '/exceptions', icon: 'alert' }],
   capital:        [

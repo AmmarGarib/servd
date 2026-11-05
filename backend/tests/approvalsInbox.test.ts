@@ -255,7 +255,7 @@ describe('two companies', () => {
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
-      'bad_debt', 'cash_request_finance', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
+      'bad_debt', 'bank_reconciliation', 'cash_request_finance', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
       'purchase_order', 'purchase_order_buyer', 'purchase_order_finance', 'raast_void', 'recipe', 'staff_login', 'stock_brand_move', 'stock_transfer', 'storefront_publish', 'tip_pool',
       // Wage changes at the CEO's step (owner, 2026-10-27) read the same /hr/approvals queue: listed, none waiting.
       'wage_change',
