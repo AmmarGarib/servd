@@ -157,6 +157,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   social_connection: spec(() => '/calendar/social'),
   station_change: spec(() => '/kds/config'),
   staff_offboard: spec(() => '/hr/employees'),
+  employee_delete: spec(() => '/hr/employees'),
   reservation_overbook: spec(() => '/reservations'),
   stock_brand_move: spec(() => '/inventory/transfers'),
   // Owner, 2026-10-27: the CEO's final step on a wage change; the employee hears the outcome, as for HR requests.
@@ -335,6 +336,11 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       if (!r) return null
       const u = await db.user.findUnique({ where: { id: r.userId }, select: { name: true, role: true } })
       return { ref: `Offboard login — ${u?.name ?? 'a login'}${u?.role ? ` (${human(String(u.role))})` : ''}` }
+    }
+    case 'employee_delete': {
+      const r = await db.employeeDeleteRequest.findUnique({ where: { id }, select: { employeeCode: true, fullName: true } })
+      if (!r) return null
+      return { ref: `Delete employee — ${r.fullName} (${r.employeeCode})` }
     }
     case 'reservation_overbook': {
       const r = await db.reservationOverbookRequest.findUnique({ where: { id }, select: { kind: true, conceptId: true, reservationId: true } })

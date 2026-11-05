@@ -325,6 +325,25 @@ module id must be placed in a workspace in the same change.
   `_ceoOnly`), applied on approval (`service.ts effectUpdate`, never pay / company / login columns); a pay change goes
   the wage-change way (CEO final). One open at a time (409 `PROFILE_CHANGE_PENDING`). Nobody approves their own.
   Tests: `tests/hrOwnRecordChange.test.ts`.
+- **HR deletes an employee — with the CEO's approval (owner, 2026-11-05: "Give option to HR to delete employee
+  from list with CEO's approval").** `hr/employeeDelete.ts` (contract in its header). `POST /hr/employees/:id/delete-request
+  {reason ≥10}` (HR with `staff_hr`, or the CEO; the employee's company, else 404): HR → 202 `{ pendingApproval, request }`,
+  nothing changes (one pending per employee, 409 `DELETE_PENDING`); the CEO → deleted at once (closes a pending request).
+  `EmployeeDeleteRequest` (tenantId = the employee's company, plain `employeeId` + code / name snapshot, RLS, merge
+  repoint; migration `20261105190000`). Approval type `employee_delete` (section ceo, never delegable; provider
+  `hr/employeeDeleteApprovalProvider.ts`): `GET /hr/employee-delete-requests?status=&employeeId=`, `POST …/:id/approve`
+  (ADMIN_ONLY), `/reject {note ≥10}` (ADMIN_ONLY), `/withdraw` (requester or CEO); claims 409 `REQUEST_NOT_PENDING`.
+  **Only an entry with no history**, checked at the ask AND inside the delete's transaction (employee row FOR UPDATE):
+  409 `EMPLOYEE_HAS_LOGIN` (a linked login or a pending invite naming them — offboard / unlink first); 409
+  `EMPLOYEE_HAS_HISTORY` (`details.history`): any payslip, an APPROVED record of a pay / movement / separation section
+  (`HISTORY_SECTIONS`) or any applied record, tip-pool membership, till tickets waited, journal lines tagged to their
+  sub-account, the marketing tracker, people reporting to them, moved to a head office. Deleted WITH it (Trash
+  snapshot, same ids): documents (files stay until the CEO empties the Trash), work locations, every other HR record
+  (attendance, rota, leave, draft / pending / rejected requests). An untagged employee sub-account is left alone.
+  Trash type `hr_employee` (CEO only; restore refused while the code is taken — 409 `EMPLOYEE_CODE_TAKEN`). Audit
+  `hr.employee.delete_request(.approve|.reject|.withdraw)`, `hr.employee.deleted`. Admin: "Request deletion (CEO
+  approves)" / "Delete employee" on the employee page and on list rows without a login (`components/hr/
+  DeleteEmployeeButton.tsx`). Tests: `tests/employeeDeleteApproval.test.ts`.
 - **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
   also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
   (same scope as offboard; never `admin` / `owner` — 403 `REISSUE_CEO_ONLY`,

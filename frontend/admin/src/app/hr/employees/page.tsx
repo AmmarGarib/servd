@@ -11,6 +11,7 @@ import { HrShell, Modal, useHrForm, useHrLookups, useHrOrg } from '../../../comp
 import { FormRenderer, validate, focusFirstInvalid } from '../../../components/hr/FormRenderer'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { NavIcon } from '../../../components/ui/NavIcon'
+import { DeleteEmployeeButton, useCanDeleteEmployees } from '../../../components/hr/DeleteEmployeeButton'
 
 interface Row {
   id: string; employeeCode: string; fullName: string; phone: string | null; status: string; employmentType: string
@@ -39,6 +40,9 @@ function Employees() {
   const [q, setQ] = useState(urlQ)
   const [adding, setAdding] = useState(false)
   const [csvErr, setCsvErr] = useState('')
+  // HR asks / the CEO deletes a wrong or duplicate entry (owner, 2026-11-05) — rows with no servd login only.
+  const canDelete = useCanDeleteEmployees()
+  const cols = canDelete ? 10 : 9
   const writeUrl = (next: { q?: string; status?: string }) => {
     const p = new URLSearchParams(sp.toString())
     const nq = next.q ?? q
@@ -95,6 +99,7 @@ function Employees() {
         <table className="w-full text-sm">
           <thead><tr className="text-left text-xs uppercase tracking-wider text-white/55">
             {['ID', 'Name', 'Designation', 'Department', 'Branch', 'Type', 'Joined', 'Gross', 'Status'].map((h) => <th key={h} className="px-4 py-3 font-bold">{h}</th>)}
+            {canDelete && <th className="px-4 py-3 font-bold"><span className="sr-only">Actions</span></th>}
           </tr></thead>
           <tbody>
             {rows.map((e) => (
@@ -118,11 +123,16 @@ function Employees() {
                 <td className="px-4 py-3 text-white/65">{day(e.joiningDate)}</td>
                 <td className="px-4 py-3 text-white/80">{rs(e.grossSalaryCents)}</td>
                 <td className="px-4 py-3"><span className={STATUS_BADGE[e.status] ?? 's-badge-muted'}>{human(e.status)}</span></td>
+                {canDelete && (
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {!e.userId && <DeleteEmployeeButton compact employee={{ id: e.id, fullName: e.fullName, employeeCode: e.employeeCode }} />}
+                  </td>
+                )}
               </tr>
             ))}
-            {isLoading && <tr><td colSpan={9} className="px-4 py-10 text-center text-white/40">Loading employees…</td></tr>}
+            {isLoading && <tr><td colSpan={cols} className="px-4 py-10 text-center text-white/40">Loading employees…</td></tr>}
             {!isLoading && !error && rows.length === 0 && (
-              <tr><td colSpan={9} className="px-4 py-10 text-center text-white/40">
+              <tr><td colSpan={cols} className="px-4 py-10 text-center text-white/40">
                 {urlQ || status !== 'current'
                   ? <>No employees match. <button type="button" className="underline font-bold" onClick={() => { setQ(''); router.replace(path ?? '/hr/employees', { scroll: false }) }}>Clear filters</button></>
                   : <>No employees yet. <button type="button" className="underline font-bold" onClick={() => setAdding(true)}>Add the first one</button></>}

@@ -255,7 +255,10 @@ describe('two companies', () => {
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
-      'bad_debt', 'bank_reconciliation', 'cash_request_finance', 'cash_voucher', 'fixed_asset_request', 'grn', 'grn_finance', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
+      'bad_debt', 'bank_reconciliation', 'cash_request_finance', 'cash_voucher',
+      // HR's employee deletes (owner, 2026-11-05) read /hr/employee-delete-requests (HR routes): listed, none waiting.
+      'employee_delete',
+      'fixed_asset_request', 'grn', 'grn_finance', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
       'purchase_order', 'raast_void', 'recipe', 'staff_login',
       // HR's login offboards (owner, 2026-11-05) read /auth/staff/offboard-requests: listed, none waiting.
       'staff_offboard',
@@ -268,6 +271,7 @@ describe('two companies', () => {
     expect(countOf(body, 'wage_change')).toBe(0)
     expect(countOf(body, 'work_pin')).toBe(0)
     expect(countOf(body, 'staff_offboard')).toBe(0)
+    expect(countOf(body, 'employee_delete')).toBe(0)
     // Owner, 2026-10-30: only what is at the CEO's step. Finance's payroll review and a manager's stock
     // transfer are listed (the CEO may be their stranded approver) but none is waiting on the CEO: company A
     // has a finance login and managers.

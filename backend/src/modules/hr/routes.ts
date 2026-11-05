@@ -75,6 +75,7 @@ import { headOfficeSetupApplied } from '../headOffices/books.js'
 import { workLocationRoutes, syncPrimaryWorkLocation } from './workLocations.js'
 import { attendanceTrackingRoutes } from './attendanceTracking.js'
 import { buildAttendanceRegister, registerTable } from './attendanceRegister.js'
+import { employeeDeleteRoutes } from './employeeDelete.js'
 
 export const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
 /** The HR back office under /hr/records (audit PPL-R2-01). lib/moduleAccess.ts
@@ -982,6 +983,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
   // (/attendance-tracking/*) — owner, 2026-10-15.
   await workLocationRoutes(fastify)
   await attendanceTrackingRoutes(fastify)
+  // HR deletes an employee with the CEO's approval (owner, 2026-11-05): /employees/:id/delete-request and
+  // /employee-delete-requests/* (employeeDelete.ts).
+  await employeeDeleteRoutes(fastify)
 
   // ── Sections & formats ────────────────────────────────────────────────────
   fastify.get('/sections', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {

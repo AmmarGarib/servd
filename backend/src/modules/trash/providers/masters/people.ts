@@ -12,6 +12,10 @@
 //   position             Position             status    "delete" is an archive; Restore puts the previous status back.
 //   tenant_contribution  TenantContribution   status    "delete" is an end; Restore re-opens it (needs BOTH companies).
 //   projection           Projection           snapshot  WITH its brand inputs.
+//   hr_employee          HrEmployee           snapshot  an employee with NO history, deleted with the CEO's approval
+//                                                       (hr/employeeDelete.ts), WITH their documents, work locations
+//                                                       and HR records. CEO only; clash on the employee code
+//                                                       (409 EMPLOYEE_CODE_TAKEN). Erasable (the documents' files too).
 //
 // Positions and contributions are never erasable (history). Roles are the
 // module routes' own guards, imported — never retyped. The route files
@@ -20,7 +24,7 @@
 
 import type { TrashEntry, UserRole } from '@prisma/client'
 import { AppError, ForbiddenError } from '../../../../lib/errors.js'
-import { MANAGERS, HR_TEAM, FINANCE_TEAM } from '../../../auth/middleware.js'
+import { MANAGERS, HR_TEAM, FINANCE_TEAM, ADMIN_ONLY } from '../../../auth/middleware.js'
 import { assertBothSidesOwned } from '../../../../lib/companyPairs.js'
 import { headOfficeSetupApplied } from '../../../headOffices/books.js'
 import { HR_ADMIN } from '../../../hr/routes.js'
@@ -39,6 +43,7 @@ export const TRASH_PEOPLE = {
   position: 'position',
   tenant_contribution: 'tenant_contribution',
   projection: 'projection',
+  hr_employee: 'hr_employee',
 } as const
 
 const metaOf = (e: TrashEntry) => (e.meta ?? {}) as Record<string, unknown>
@@ -51,6 +56,7 @@ const ROTA_ROLES = ROTA_PLANNERS as readonly UserRole[]
 const MANAGER_ROLES = MANAGERS as readonly UserRole[]
 const HR_TEAM_ROLES = HR_TEAM as readonly UserRole[]
 const FINANCE_ROLES = FINANCE_TEAM as readonly UserRole[]
+const ADMIN_ROLES = ADMIN_ONLY as readonly UserRole[]
 
 /** Restore the snapshot, refusing when a person it names is gone (FK would 500). */
 async function assertEmployeesExist(tx: Tx, tenantId: string | null, ids: string[]): Promise<void> {
@@ -288,6 +294,50 @@ const projection: TrashProvider = {
   erasable: () => true,
 }
 
+// ── Employee (owner, 2026-11-05: HR deletes with the CEO's approval) ─────────
+
+const hrEmployee: TrashProvider = {
+  key: TRASH_PEOPLE.hr_employee,
+  label: 'Employee',
+  moduleId: 'staff_hr',
+  roles: { list: ADMIN_ROLES, restore: ADMIN_ROLES },
+  ceoOnly: true,
+  kind: 'master',
+  strategy: 'snapshot',
+  auditCategory: 'identity',
+  model: 'HrEmployee',
+  linkOf: (id) => `/hr/employees/${id}`,
+  async clashOf(tx, entry) {
+    const code = String(rowOf(entry).employeeCode ?? metaOf(entry).employeeCode ?? '')
+    if (!code || !entry.tenantId) return null
+    const live = await tx.hrEmployee.findFirst({ where: { tenantId: entry.tenantId, employeeCode: code }, select: { id: true } })
+    return live
+      ? { field: 'employeeCode', value: code, renamable: false, code: 'EMPLOYEE_CODE_TAKEN',
+          message: `Another employee of this company now has the code ${code} — this one cannot be restored` }
+      : null
+  },
+  async restore(tx, _ctx, entry) {
+    const snap = snapOf(entry)
+    if (!snap) throw new AppError('PURGED', 'This item was deleted forever', 409)
+    // A work location whose company Location has since been deleted is left out (its FK would refuse the restore).
+    const wl = snap.children?.HrWorkLocation ?? []
+    const locIds = [...new Set(wl.map((w) => w.locationId).filter((x): x is string => typeof x === 'string'))]
+    const live = locIds.length ? new Set((await tx.location.findMany({ where: { id: { in: locIds } }, select: { id: true } })).map((l) => l.id)) : new Set<string>()
+    const children = { ...snap.children, HrWorkLocation: wl.filter((w) => typeof w.locationId !== 'string' || live.has(w.locationId)) }
+    // The login link is never brought back (there was none when it was deleted).
+    const id = await restoreSnapshot(tx, { ...snap, row: { ...snap.row, userId: null }, children }, { tenantId: entry.tenantId })
+    return { id, link: `/hr/employees/${id}` }
+  },
+  erasable: () => true,
+  // Its documents' uploaded files (record files, owner 'hr_document') stay with the trashed
+  // documents so a restore brings them back; "Delete forever" erases them.
+  async purge(tx, entry) {
+    for (const d of snapOf(entry)?.children?.HrDocument ?? []) {
+      await purgeRecordFilesTx(tx, { ownerType: 'hr_document', ownerId: String(d.id), tenantId: entry.tenantId })
+    }
+  },
+}
+
 export const PEOPLE_TRASH_PROVIDERS: TrashProvider[] = [
-  hrDocument, hrPayrollRun, hrLetter, scheduledShift, conceptBlockout, position, tenantContribution, projection,
+  hrDocument, hrPayrollRun, hrLetter, scheduledShift, conceptBlockout, position, tenantContribution, projection, hrEmployee,
 ]

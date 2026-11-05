@@ -15,6 +15,7 @@ import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { usePermissions } from '../../../../hooks/useCan'
 import { OffboardButtons, FLOOR_LOGIN_ROLES } from '../../../../components/hr/OffboardButtons'
+import { DeleteEmployeeButton } from '../../../../components/hr/DeleteEmployeeButton'
 import { roleLabel } from '../../../../lib/appRoles'
 import { RecordFiles } from '@/components/files/RecordFiles'
 import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
@@ -101,7 +102,11 @@ function EmployeeProfile() {
   }
   return (
     <HrShell title={e ? e.fullName : 'Employee'} subtitle={e ? `${e.employeeCode} · ${p?.labels.designation ?? 'No designation'} · ${p?.labels.department ?? 'No department'} · ${p?.labels.branch ?? 'No branch'}` : undefined}
-      actions={e && <span className={`${STATUS_BADGE[e.status] ?? 's-badge-muted'} self-center`}>{human(e.status)}</span>}>
+      actions={e && <>
+        <span className={`${STATUS_BADGE[e.status] ?? 's-badge-muted'} self-center`}>{human(e.status)}</span>
+        {/* HR asks, the CEO approves (owner, 2026-11-05); only a wrong / duplicate entry with no history. */}
+        <DeleteEmployeeButton employee={{ id: e.id, fullName: e.fullName, employeeCode: e.employeeCode }} onDeleted={() => router.push('/hr/employees')} />
+      </>}>
       {error && <p className="text-sm text-s-red" role="alert">{(error as Error).message}</p>}
       {isLoading && <p className="text-sm text-white/40">Loading employee…</p>}
       {p && (

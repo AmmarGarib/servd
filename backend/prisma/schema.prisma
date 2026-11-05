@@ -484,6 +484,31 @@ model LoginOffboardRequest {
   @@map("login_offboard_requests")
 }
 
+// HR deletes an employee — with the CEO's approval (owner, 2026-11-05: "Give option to HR to delete employee from
+// list with CEO's approval"). POST /hr/employees/:id/delete-request by anyone but the CEO raises one; approval type
+// employee_delete (CEO only, never delegable; modules/hr/employeeDelete.ts). tenantId = the EMPLOYEE's company.
+// employeeId is a plain id (no FK) so the request outlives the deleted row; code + name are a snapshot. SQL-only:
+// one pending per employee, status / reason CHECKs, RLS (migration 20261105190000_employee_delete_requests).
+model EmployeeDeleteRequest {
+  id            String    @id @default(uuid())
+  tenantId      String
+  employeeId    String
+  employeeCode  String
+  fullName      String
+  reason        String
+  status        String    @default("pending") // pending | approved | rejected | withdrawn
+  requestedById String
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("employee_delete_requests")
+}
+
 // A guest-list download (phones / emails) a non-CEO asked for (owner, 2026-10-27: customer exports go to the CEO).
 // modules/crm/customerExports.ts is the contract. tenantId = the requester's ACTIVE company (whose guests are
 // exported; a 'waitlist' export is the servd-wide new-brand list, filed in that company). Approved = ONE download

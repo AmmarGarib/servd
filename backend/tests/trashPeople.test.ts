@@ -101,7 +101,7 @@ beforeAll(async () => {
 afterAll(async () => { await app?.close() })
 
 describe('registry', () => {
-  it('the eight people types are registered and the route files use the same keys', () => {
+  it('the people types are registered and the route files use the same keys', () => {
     const keys = Object.values(TRASH_PEOPLE)
     const registered = new Set(trashProviders().map((p) => p.key))
     for (const k of keys) expect(registered.has(k), k).toBe(true)
@@ -110,6 +110,7 @@ describe('registry', () => {
       hr_document: 'hr/routes.ts', hr_payroll_run: 'hr/routes.ts', hr_letter: 'hr/routes.ts',
       scheduled_shift: 'scheduling/routes.ts', concept_blockout: 'reservations/routes.ts',
       position: 'positions/routes.ts', tenant_contribution: 'positions/contributions.ts', projection: 'projections/routes.ts',
+      hr_employee: 'hr/employeeDelete.ts',
     }
     for (const k of keys) expect(src(where[k]!), k).toContain(`type: '${k}'`)
   })
