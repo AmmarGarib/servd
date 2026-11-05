@@ -774,6 +774,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.socialConnection,
     // Kitchen station changes waiting for the CEO (owner C3, 2026-10-26): follow the brand's company.
     tx.stationChangeRequest,
+    // HR's login offboards waiting for the CEO (owner, 2026-11-05): follow the login's company.
+    tx.loginOffboardRequest,
     // Cook timers on the station screen (owner B12, 2026-10-26): follow the order's company.
     tx.kitchenTimer,
     // Sales sessions (2026-10-22): per brand, follow the brand's company.

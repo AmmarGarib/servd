@@ -113,6 +113,8 @@ export const APPROVAL_TYPES = [
   'marketing_task',        // a board card / calendar task marked done, waiting for "Approved by leadership" (owner, 2026-11-04)
   // Work locations as map pins (owner, 2026-10-27).
   'work_pin',              // an employee's own work map pin (new or moved) waiting for the CEO
+  // HR offboards (owner, 2026-11-05).
+  'staff_offboard',        // HR asked to switch a login off (offboard), waiting for the CEO
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 
@@ -315,6 +317,13 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // 2026-10-26: "F&B manager and kitchen managers may add or change kitchen stations, with CEO approval";
     // "Approval stays with me").
     label: 'Kitchen station changes', section: 'ceo', queueModule: 'kds_config', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  staff_offboard: {
+    // POST /auth/staff/offboard-requests/:id/approve | reject (modules/auth/offboardRequests.ts): the CEO only,
+    // never handed over (owner, 2026-11-05: "Give option to HR for off boarding a user/employee with final
+    // approval of CEO"). The requester (HR) never decides; the CEO's own offboard applies at once.
+    label: 'Offboard login', section: 'ceo', queueModule: 'staff_hr', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   stock_brand_move: {
@@ -1178,6 +1187,10 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const r = await db.stationChangeRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, requestedAt: true, kind: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.requestedAt, kind: r.kind })
     }
+    case 'staff_offboard': {
+      const r = await db.loginOffboardRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, createdAt: true } })
+      return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.createdAt })
+    }
     case 'wage_change': {
       const r = await db.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, status: true, amountCents: true, currentStep: true, formVersion: true, data: true, createdById: true, updatedAt: true } })
       if (!r) return null
@@ -1323,6 +1336,7 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   work_pin: ['pending'],
   social_connection: ['pending'],
   station_change: ['pending'],
+  staff_offboard: ['pending'],
   reservation_overbook: ['pending'],
   wage_change: ['pending'],
   customer_export: ['pending'],

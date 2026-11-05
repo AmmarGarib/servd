@@ -461,6 +461,29 @@ model StationChangeRequest {
   @@map("station_change_requests")
 }
 
+// HR's offboard of a login waits for the CEO (owner, 2026-11-05: "Give option to HR for off boarding a
+// user/employee with final approval of CEO"). POST /auth/staff/:id/offboard by anyone but the CEO raises one;
+// approval type staff_offboard (CEO only, never delegable; modules/auth/offboardRequests.ts). tenantId = the
+// TARGET login's company (auditCompanyOf). SQL-only: one pending per login, status / reason CHECKs, RLS
+// (migration 20261105160000_login_offboard_requests).
+model LoginOffboardRequest {
+  id            String    @id @default(uuid())
+  tenantId      String
+  userId        String
+  reason        String
+  status        String    @default("pending") // pending | approved | rejected | withdrawn
+  requestedById String
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([userId])
+  @@map("login_offboard_requests")
+}
+
 // A guest-list download (phones / emails) a non-CEO asked for (owner, 2026-10-27: customer exports go to the CEO).
 // modules/crm/customerExports.ts is the contract. tenantId = the requester's ACTIVE company (whose guests are
 // exported; a 'waitlist' export is the servd-wide new-brand list, filed in that company). Approved = ONE download

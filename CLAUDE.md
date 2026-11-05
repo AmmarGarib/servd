@@ -223,14 +223,29 @@ module id must be placed in a workspace in the same change.
   with the same side effects as an approval (`auth/offboarding.ts`
   `activeAtOnce` / `activationSideEffects`: employee linked, password link);
   every other role waits for the CEO (`staff_login`). Managers' invites stay
-  pending. `POST /auth/staff/:id/offboard {reason}` / `/reinstate`: HR and the
+  pending. `POST /auth/staff/:id/offboard {reason ≥10}` / `/reinstate`: HR and the
   CEO only, own companies (404), never an admin login (403
   `CANNOT_OFFBOARD_CEO`), never a co-owner — by anyone, the CEO included, nor
   through the staff editor or the HR leaver sweep (403 `CANNOT_OFFBOARD_OWNER`;
   owner, 2026-10-16), never your own (403 `CANNOT_OFFBOARD_SELF`; the
   staff editor refuses the CEO switching themselves off too). Offboard =
   `switchOffLogin` (suspend + revoke every session), the ONE switch-off the
-  HR leaver sweep (`hr/separations.ts`) uses too. HR's reinstate of a manager
+  HR leaver sweep (`hr/separations.ts`) uses too. **HR's offboard waits for the
+  CEO (owner, 2026-11-05: "Give option to HR for off boarding a user/employee
+  with final approval of CEO").** Anyone but the CEO gets 202 `{ pendingApproval,
+  request }` and NOTHING changes on the login: a `LoginOffboardRequest`
+  (`login_offboard_requests`, tenantId = the login's company, RLS, merge repoint;
+  one pending per login, 409 `OFFBOARD_PENDING`; already off 409
+  `ALREADY_OFFBOARDED`; `auth/offboardRequests.ts`). Approval type
+  `staff_offboard` (section ceo, never delegable): `GET
+  /auth/staff/offboard-requests?status=pending` (HR + CEO, companies in view),
+  `POST /auth/staff/offboard-requests/:id/approve` (CEO; re-checks the target,
+  then switchOffLogin with the request claimed in its transaction — 409
+  `REQUEST_NOT_PENDING`; the same `staff.offboard` audit + approvedBy /
+  requestedBy) | `/reject {note ≥10}` (CEO) | `/withdraw` (the requester or the
+  CEO). The CEO's own offboard applies at once and closes a pending request as
+  approved. The HR leaver sweep is unchanged. Tests:
+  `tests/staffOffboardApproval.test.ts`. HR's reinstate of a manager
   / office login goes back to `pending` for the CEO. UI: the HR employee
   Login tab (Create login, Offboard / Reinstate) and Workforce.
 - **A request HR raised skips its own HR step (owner, 2026-10-21: "Request

@@ -213,21 +213,27 @@ describe('offboarding', () => {
     expect((await row(U['ownerA']!.id)).accountStatus).toBe('active')
   })
 
-  it('other roles cannot offboard; a reason is required', async () => {
+  it('other roles cannot offboard; a reason of at least 10 characters is required', async () => {
     expect((await offboard('mgmtA', U['cashier']!.id)).statusCode).toBe(403)
     expect((await offboard('ownerA', U['cashier']!.id)).statusCode).toBe(403)
     expect((await offboard('hrA', U['cashier']!.id, 'x')).statusCode).toBe(400)
+    expect((await offboard('hrA', U['cashier']!.id, 'too short')).statusCode).toBe(400)
   })
 
-  it('HR offboards a cashier: suspended, every session revoked, audited; reinstated active at once', async () => {
+  // Owner, 2026-11-05: HR's offboard waits for the CEO (tests/staffOffboardApproval.test.ts).
+  it('HR offboards a cashier with the CEO: suspended, every session revoked, audited; reinstated active at once', async () => {
     const id = U['cashier']!.id
     vi.mocked(revokeAllForSubject).mockClear()
-    const r = await offboard('hrA', id, 'Resigned, last day today')
+    const asked = await offboard('hrA', id, 'Resigned, last day today')
+    expect(asked.statusCode).toBe(202)
+    expect((await row(id)).accountStatus).toBe('active')
+    const r = await app.inject({ method: 'POST', url: `/api/v1/auth/staff/offboard-requests/${asked.json().request.id}/approve`, headers: auth('ceoA'), payload: {} })
     expect(r.statusCode).toBe(200)
     expect(await row(id)).toMatchObject({ accountStatus: 'suspended', isActive: false })
     expect(vi.mocked(revokeAllForSubject)).toHaveBeenCalledWith(id)
     const a = await prisma.auditLog.findFirst({ where: { entityId: id, action: 'staff.offboard' } })
-    expect(a).toMatchObject({ category: 'identity', tenantId: T.A, userId: U['hrA']!.id })
+    expect(a).toMatchObject({ category: 'identity', tenantId: T.A, userId: U['ceoA']!.id })
+    expect(a?.metadata).toMatchObject({ approvedBy: U['ceoA']!.id, requestedBy: U['hrA']!.id })
     expect(a?.after).toMatchObject({ reason: 'Resigned, last day today' })
     // The old token no longer works.
     const me = await app.inject({ method: 'GET', url: '/api/v1/auth/staff/invites', headers: auth('cashier') })
@@ -242,7 +248,7 @@ describe('offboarding', () => {
 
   it("HR's reinstate of an office login waits for the CEO; the CEO's is immediate", async () => {
     const fin = await mkUser('fin2', 'finance', [T.A])
-    expect((await offboard('hrA', fin.id)).statusCode).toBe(200)
+    expect((await offboard('ceoA', fin.id)).statusCode).toBe(200)
     const r = await reinstate('hrA', fin.id)
     expect(r.json()).toMatchObject({ status: 'pending', waitsForCeo: true })
     expect((await row(fin.id)).accountStatus).toBe('pending')

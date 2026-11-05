@@ -29,8 +29,9 @@ import { childRolesFor } from '../../lib/workspaces.js'
 import { approvalInputOf, approvalQueueTenantIds, auditApproval, canApprove } from '../../lib/approvalRights.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
-import { withoutCeoOnlyModules, effectiveModulesForUser } from '../../lib/moduleAccess.js'
-import { activeAtOnce, activationSideEffects, switchOffLogin, OFFBOARDERS } from './offboarding.js'
+import { withoutCeoOnlyModules } from '../../lib/moduleAccess.js'
+import { activeAtOnce, activationSideEffects, switchOffLogin, OFFBOARDERS, assertHrBackOffice } from './offboarding.js'
+import { raiseOffboardRequest, closePendingOffboardTx, offboardRequestRoutes, assertOffboardable, OFFBOARD_REASON } from './offboardRequests.js'
 import { AppError, UnauthorizedError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { isStaffEmail, normaliseStaffEmail, STAFF_EMAIL_MESSAGE } from '../../lib/staffEmail.js'
@@ -169,16 +170,6 @@ async function loginInTrash(req: FastifyRequest, holderId: string): Promise<AppE
   return inTrashConflict(TRASH_COMPANY.login, h.id, visible, 'A login with that email')
 }
 
-/** HR's onboarding / offboarding runs from the HR back office: an HR login
- *  needs the staff_hr module (the CEO's untick closes it). Other roles pass. */
-async function assertHrBackOffice(req: FastifyRequest): Promise<void> {
-  if (req.staffUser?.role !== 'hr') return
-  const me = await prisma.user.findUnique({ where: { id: req.staffUser.id }, select: { moduleAllow: true, moduleDeny: true } })
-  const mods = await effectiveModulesForUser({ role: 'hr', moduleAllow: me?.moduleAllow ?? [], moduleDeny: me?.moduleDeny ?? [] })
-  if (!mods.has('staff_hr')) {
-    throw new AppError('FORBIDDEN', 'Your account does not have access to this module (staff_hr). Ask the CEO to enable it in Module Access.', 403)
-  }
-}
 
 export async function authRoutes(fastify: FastifyInstance) {
   // POST /auth/login — staff email+password login (brute-force protected)
@@ -1164,27 +1155,32 @@ export async function authRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /auth/staff/:id/offboard — HR or the CEO switches a login off, same
-  // as someone leaving in real life (owner, 2026-10-15). The login must be in
-  // the caller's companies (404 / 403 LOGIN_IN_OTHER_COMPANY, findManagedStaff).
-  // Never the CEO's login (403 CANNOT_OFFBOARD_CEO) and never your own (403
-  // CANNOT_OFFBOARD_SELF): "the only person HR can't fire is me and the only
-  // person I can't fire is me". Suspends (accountStatus.ts) and revokes every
-  // session through the one switch-off (offboarding.ts), shared with the HR
-  // leaver sweep. Pay is HR's separation, not this.
+  // POST /auth/staff/:id/offboard — switch a login off, same as someone leaving
+  // in real life (owner, 2026-10-15). The login must be in the caller's
+  // companies (404 / 403 LOGIN_IN_OTHER_COMPANY, findManagedStaff). Never the
+  // CEO's login (403 CANNOT_OFFBOARD_CEO), never a co-owner (403
+  // CANNOT_OFFBOARD_OWNER) and never your own (403 CANNOT_OFFBOARD_SELF).
+  // The CEO's offboard applies at once: suspends (accountStatus.ts) and revokes
+  // every session through the one switch-off (offboarding.ts), shared with the
+  // HR leaver sweep. HR's waits for the CEO (owner, 2026-11-05: "Give option to
+  // HR for off boarding a user/employee with final approval of CEO"): 202
+  // { pendingApproval, request }, nothing changes on the login until the CEO
+  // approves (offboardRequests.ts, approval type staff_offboard). Pay is HR's
+  // separation, not this.
   fastify.post<{ Params: { id: string } }>(
     '/staff/:id/offboard',
     { preHandler: requireAuth(...OFFBOARDERS) },
-    async (req) => {
+    async (req, reply) => {
       await assertHrBackOffice(req)
-      const body = z.object({ reason: z.string().trim().min(3).max(500) }).parse(req.body ?? {})
+      const body = z.object({ reason: OFFBOARD_REASON }).parse(req.body ?? {})
       const target = await findManagedStaff(req, req.params.id, { id: true, name: true, email: true, role: true, accountStatus: true, isActive: true })
-      if (target.id === req.staffUser!.id) throw new AppError('CANNOT_OFFBOARD_SELF', 'You cannot offboard your own login.', 403)
-      if (target.role === 'admin') throw new AppError('CANNOT_OFFBOARD_CEO', "The CEO's login cannot be offboarded.", 403)
-      // Owner (2026-10-16): "Co owner cannot be fired" — by HR or the CEO.
-      if (target.role === 'owner') throw new AppError('CANNOT_OFFBOARD_OWNER', "A co-owner's login cannot be offboarded.", 403)
+      assertOffboardable(req, target)
+      if (req.staffUser!.role !== 'admin') {
+        const request = await raiseOffboardRequest(req, target, body.reason)
+        return reply.status(202).send({ pendingApproval: true, request })
+      }
       const before = accountStateOf(target)
-      const changed = await switchOffLogin(target.id)
+      const changed = await switchOffLogin(target.id, closePendingOffboardTx(target.id, req.staffUser!.id))
       if (changed) {
         await audit({
           category: 'identity',
@@ -1199,9 +1195,12 @@ export async function authRoutes(fastify: FastifyInstance) {
           metadata: { actorTenantId: req.staffUser!.tenantId ?? null, actorRole: req.staffUser!.role },
         })
       }
-      return { id: target.id, name: target.name, status: 'suspended' as const, alreadyOffboarded: !changed }
+      return reply.status(200).send({ id: target.id, name: target.name, status: 'suspended' as const, alreadyOffboarded: !changed })
     },
   )
+
+  // GET /auth/staff/offboard-requests + /:id/approve | reject | withdraw (owner, 2026-11-05).
+  await offboardRequestRoutes(fastify)
 
   // POST /auth/staff/:id/send-password-link — HR or the CEO sends someone a
   // password reset link (owner, 2026-10-16: "give hr a way to issue password

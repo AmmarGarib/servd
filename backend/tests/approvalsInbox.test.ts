@@ -256,7 +256,10 @@ describe('two companies', () => {
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
       'bad_debt', 'bank_reconciliation', 'cash_request_finance', 'cash_voucher', 'fixed_asset_request', 'grn', 'grn_finance', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
-      'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_brand_move', 'stock_transfer', 'storefront_publish', 'tip_pool',
+      'purchase_order', 'raast_void', 'recipe', 'staff_login',
+      // HR's login offboards (owner, 2026-11-05) read /auth/staff/offboard-requests: listed, none waiting.
+      'staff_offboard',
+      'stock_brand_move', 'stock_transfer', 'storefront_publish', 'tip_pool',
       // Wage changes at the CEO's step (owner, 2026-10-27) read the same /hr/approvals queue: listed, none waiting.
       'wage_change',
       // Employee work map pins (owner, 2026-10-27) read /hr/work-pins (registered with the HR routes): listed, none waiting.
@@ -264,6 +267,7 @@ describe('two companies', () => {
     ])
     expect(countOf(body, 'wage_change')).toBe(0)
     expect(countOf(body, 'work_pin')).toBe(0)
+    expect(countOf(body, 'staff_offboard')).toBe(0)
     // Owner, 2026-10-30: only what is at the CEO's step. Finance's payroll review and a manager's stock
     // transfer are listed (the CEO may be their stranded approver) but none is waiting on the CEO: company A
     // has a finance login and managers.

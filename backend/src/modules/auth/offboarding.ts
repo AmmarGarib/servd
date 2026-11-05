@@ -14,17 +14,35 @@
 //   • Switching a login off is ONE write (switchOffLogin): suspended through
 //     accountStatus.ts and every session revoked. The HR leaver sweep
 //     (hr/separations.ts) and POST /auth/staff/:id/offboard both use it.
+//   • Since 2026-11-05 (owner: "Give option to HR for off boarding a
+//     user/employee with final approval of CEO") HR's offboard is a REQUEST the
+//     CEO approves (offboardRequests.ts, approval type staff_offboard); the
+//     CEO's own offboard applies at once. The HR leaver sweep is unchanged (a
+//     separation is already an approved HR request).
 import type { FastifyRequest } from 'fastify'
-import type { UserRole } from '@prisma/client'
+import type { Prisma, UserRole } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { revokeAllForSubject } from '../../lib/tokenRevocation.js'
 import { disconnectUser } from '../../lib/ws.js'
 import { suspendData } from './accountStatus.js'
 import { isFloorRole } from './middleware.js'
 import { requestPasswordReset, deliveryConfigured } from './passwordReset.js'
+import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
+import { AppError } from '../../lib/errors.js'
 
 /** Who onboards and offboards logins: HR and the CEO. */
 export const OFFBOARDERS = ['admin', 'hr'] as UserRole[]
+
+/** HR's onboarding / offboarding runs from the HR back office: an HR login
+ *  needs the staff_hr module (the CEO's untick closes it). Other roles pass. */
+export async function assertHrBackOffice(req: FastifyRequest): Promise<void> {
+  if (req.staffUser?.role !== 'hr') return
+  const me = await prisma.user.findUnique({ where: { id: req.staffUser.id }, select: { moduleAllow: true, moduleDeny: true } })
+  const mods = await effectiveModulesForUser({ role: 'hr', moduleAllow: me?.moduleAllow ?? [], moduleDeny: me?.moduleDeny ?? [] })
+  if (!mods.has('staff_hr')) {
+    throw new AppError('FORBIDDEN', 'Your account does not have access to this module (staff_hr). Ask the CEO to enable it in Module Access.', 403)
+  }
+}
 
 /** Is a login of `role`, added by `inviterRole`, active at once (no CEO approval)? */
 export function activeAtOnce(inviterRole: UserRole | string, role: UserRole | string): boolean {
@@ -76,13 +94,21 @@ export async function activationSideEffects(
  * suspended (sessions are revoked either way). Callers decide WHO may do it
  * (never the CEO's login through HR, never one's own) and audit it.
  */
-export async function switchOffLogin(userId: string): Promise<boolean> {
-  const n = await prisma.user.updateMany({
-    where: { id: userId, deletedAt: null, OR: [{ isActive: true }, { accountStatus: { not: 'suspended' } }] },
-    data: suspendData(),
+export async function switchOffLogin(
+  userId: string,
+  /** Runs in the same transaction as the suspend (offboard requests: claim / close the CEO's request). */
+  inTx?: (tx: Prisma.TransactionClient) => Promise<void>,
+): Promise<boolean> {
+  const count = await prisma.$transaction(async (tx) => {
+    const n = await tx.user.updateMany({
+      where: { id: userId, deletedAt: null, OR: [{ isActive: true }, { accountStatus: { not: 'suspended' } }] },
+      data: suspendData(),
+    })
+    if (inTx) await inTx(tx)
+    return n.count
   })
   await revokeAllForSubject(userId)
   // The bell's per-user socket room: an offboarded login's open tab stops receiving pings.
   disconnectUser(userId)
-  return n.count > 0
+  return count > 0
 }

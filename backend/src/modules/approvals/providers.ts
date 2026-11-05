@@ -27,6 +27,7 @@ import { locationPins } from '../locations/approvalProvider.js'
 import { workPins } from '../hr/workPinApprovalProvider.js'
 import { socialConnections } from '../socialConnections/approvalProvider.js'
 import { stationChanges } from '../stations/approvalProvider.js'
+import { staffOffboards } from '../auth/offboardApprovalProvider.js'
 import { reservationOverbooks } from '../reservations/overbookProvider.js'
 import { marketingTasks } from '../marketingBoard/approvalProvider.js'
 import { karachiDay } from '../../connectors/util.js'
@@ -1601,6 +1602,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   workPins,
   socialConnections,
   stationChanges,
+  staffOffboards,
   reservationOverbooks,
   wageChanges,
   customerExports,
