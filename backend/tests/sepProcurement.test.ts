@@ -19,7 +19,7 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
-import { createPo, submitPo, passPoStep } from '../src/modules/procurement/service.js'
+import { createPo, submitPo } from '../src/modules/procurement/service.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
 import { supplierChatRoutes } from '../src/modules/procurement/chat.js'
 
@@ -218,13 +218,11 @@ describe('an operator with no company sees nothing', () => {
 })
 
 describe('every PO goes through the chain', () => {
-  it('the threshold no longer skips anything: every PO goes to the buyer, then finance, then the CEO (owner, 2026-11-03)', async () => {
+  it('the threshold no longer skips anything: every PO goes to the CEO (owner, 2026-11-05)', async () => {
     const a = await createPo({ supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: 50_000 }], createdBy: users['ceoA']!.id })
-    expect((await submitPo(a.id, users['ceoA']!.id)).status).toBe('buyer_check')
+    expect((await submitPo(a.id, users['ceoA']!.id)).status).toBe('pending_approval')
     const b = await createPo({ supplierId: supB, lines: [{ inventoryItemId: itemB, quantityOrdered: 1, unitCostCents: 50_000 }], createdBy: users['ceoB']!.id })
-    expect((await submitPo(b.id, users['ceoB']!.id)).status).toBe('buyer_check')
-    await passPoStep(b.id, users['ceoB']!.id, 'buyer_check')
-    await passPoStep(b.id, users['ceoB']!.id, 'finance_check')
+    expect((await submitPo(b.id, users['ceoB']!.id)).status).toBe('pending_approval')
 
     const approvalsA = (await call('ceoA', 'GET', '/procurement/approvals')).json() as Array<{ id: string }>
     expect(approvalsA.map((p) => p.id)).not.toContain(b.id)

@@ -132,7 +132,8 @@ export async function crosschecksRoutes(fastify: FastifyInstance) {
   // POs waiting at the dock: approved and sent, or part-received.
   fastify.get('/receiving/open-pos', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req) => {
     return prisma.purchaseOrder.findMany({
-      where: { supplierId: { in: await receivingSupplierIds(req) }, status: { in: ['sent', 'partial'] } },
+      // A PO of the PO → GRN workflow (owner, 2026-11-05) is received by its requester's confirmation, never at the dock.
+      where: { supplierId: { in: await receivingSupplierIds(req) }, status: { in: ['sent', 'partial'] }, grnWorkflow: false },
       include: {
         supplier: { select: { id: true, name: true } },
         // perishable / shelfLifeDays: the dock asks for a use-by on a perishable line (owner B6, 2026-10-26).

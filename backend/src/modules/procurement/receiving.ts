@@ -463,6 +463,14 @@ export interface ReceiveGoodsRequest {
   photoFiles?: DecodedRecordFile[]
   notes?:      string | null
   lines:       ReceiveGoodsLine[]
+  /**
+   * The PO → GRN workflow (owner, 2026-11-05; poWorkflow.ts confirmReceipt): the REQUESTER confirms what arrived of a
+   * PO the buyer completed. Then — and only then — a `grnWorkflow` PO is received: the PO must be 'completed', the
+   * raiser rule and the manager-only rule do not apply (the requester IS the raiser; owner: "YES the requester
+   * confirms receipt"), no dock photo is asked (the supplier's invoice attached to the PO is the evidence), and the
+   * receipt becomes a GRN (grnNumber GRN-00001 per company, grnStatus 'finance_review', the invoice it was bought on).
+   */
+  confirmation?: { invoiceNumber: string; invoiceDate: Date }
 }
 
 export interface ReceiveGoodsResult {
@@ -490,7 +498,8 @@ interface PreparedLine {
 }
 
 export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveGoodsResult> {
-  if (!(MANAGERS as string[]).includes(input.actor.role)) {
+  const confirmation = input.confirmation ?? null
+  if (!confirmation && !(MANAGERS as string[]).includes(input.actor.role)) {
     throw new ForbiddenError('Only managers can receive goods.')
   }
   if (input.lines.length === 0) throw new AppError('NO_LINES', 'Nothing to receive', 400)
@@ -531,7 +540,16 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
   }
   const tenantId = supplier.tenantId
 
-  if (po) {
+  if (po && po.grnWorkflow && !confirmation) {
+    // A PO of the PO → GRN workflow (owner, 2026-11-05) is received only by its requester's confirmation.
+    throw new AppError('USE_RECEIPT_CONFIRMATION', 'This PO is received by its requester confirming the buyer\'s purchase (Procurement → My tasks), not at the dock', 409)
+  }
+  if (confirmation && (!po || !po.grnWorkflow)) {
+    throw new AppError('INVALID_STATE', 'Only a PO of the purchase workflow is confirmed by its requester', 409)
+  }
+  if (po && confirmation) {
+    assertConfirmable(po.status)
+  } else if (po) {
     assertReceivable(po.status)
     // Decision 27, re-confirmed by the owner 2026-11-03 ("raiser cannot mark recvd"): whoever raised the PO never
     // receives it — the CEO exempt.
@@ -610,7 +628,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
   const photoThreshold = ops?.photoRequiredAboveCents ?? 50_000
   const totalValue = prepared.reduce((s, l) => s + Math.round(l.unitCostCents * l.quantityReceived), 0)
   // An uploaded photo satisfies the rule; a legacy photoUrl still does too.
-  if (totalValue >= photoThreshold && !input.photoUrl && !(input.photoFiles?.length)) {
+  if (!confirmation && totalValue >= photoThreshold && !input.photoUrl && !(input.photoFiles?.length)) {
     throw new AppError(
       'PHOTO_REQUIRED',
       `Deliveries above PKR ${(photoThreshold / 100).toFixed(0)} require a dock-door photo. Snap the goods before submitting.`,
@@ -633,7 +651,11 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
       // "outstanding" quantity.
       await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${po.id} FOR UPDATE`
       const fresh = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } })
-      assertReceivable(fresh.status)
+      if (fresh.grnWorkflow && !confirmation) {
+        throw new AppError('USE_RECEIPT_CONFIRMATION', 'This PO is received by its requester confirming the buyer\'s purchase, not at the dock', 409)
+      }
+      if (confirmation) assertConfirmable(fresh.status)
+      else assertReceivable(fresh.status)
       for (const l of prepared) {
         const fl = fresh.lines.find((x) => x.id === l.poLineId)!
         if (fl.quantityReceived !== l.alreadyReceived) {
@@ -670,6 +692,21 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
 
     // The dock-door photos, stamped with the RECEIPT's company (record files,
     // owner 'goods_receipt' — modules/recordFiles/providers.ts).
+    // The GRN (PO → GRN workflow): numbered per company under its own advisory lock, waiting for finance.
+    let grn: { grnNumber: string } | null = null
+    if (confirmation) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'grn.number:' + tenantId}))`
+      const last = await tx.$queryRaw<Array<{ n: number | null }>>`
+        SELECT MAX(CAST(SUBSTRING("grnNumber" FROM 5) AS INTEGER)) AS n
+        FROM goods_receipts WHERE "tenantId" = ${tenantId} AND "grnNumber" ~ '^GRN-[0-9]{1,9}$'`
+      const grnNumber = `GRN-${String((Number(last[0]?.n ?? 0) || 0) + 1).padStart(5, '0')}`
+      await tx.goodsReceipt.update({
+        where: { id: done.receiptId },
+        data: { grnNumber, grnStatus: 'finance_review', invoiceNumber: confirmation.invoiceNumber, invoiceDate: confirmation.invoiceDate },
+      })
+      grn = { grnNumber }
+    }
+
     const photos = await writeRecordFilesTx(tx, {
       ownerType: 'goods_receipt', ownerId: done.receiptId, tenantId, uploadedById: input.actor.id,
       files: input.photoFiles ?? [], label: 'goods receipt',
@@ -696,6 +733,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
       const lines = await tx.purchaseOrderLine.findMany({ where: { purchaseOrderId: po.id } })
       const allReceived = lines.every((l) => l.quantityReceived >= l.quantityOrdered)
       poStatus = allReceived ? 'received' : 'partial'
+      const fresh0Status = po.status
       await tx.purchaseOrder.update({
         where: { id: po.id },
         data:  { status: poStatus, receivedDate: new Date() },
@@ -705,7 +743,10 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
           purchaseOrderId: po.id,
           userId:          input.actor.id,
           action:          allReceived ? 'received' : 'received_partial',
-          details:         { goodsReceiptId: done.receiptId, lineCount: prepared.length, photo: !!input.photoUrl || photos.length > 0 },
+          details:         {
+            goodsReceiptId: done.receiptId, lineCount: prepared.length, photo: !!input.photoUrl || photos.length > 0,
+            ...(grn ? { grnId: done.receiptId, grnNumber: grn.grnNumber, from: fresh0Status, to: poStatus, confirmedByRequester: true } : {}),
+          },
         },
       })
     }
@@ -739,6 +780,13 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
   }
 
   return { receipt, poStatus, flagged: flagged.length, files: photos }
+}
+
+/** The requester confirms only what the buyer marked completed (PO → GRN workflow). */
+function assertConfirmable(status: string) {
+  if (status !== 'completed') {
+    throw new AppError('PO_NOT_COMPLETED', `This PO is ${status.replace(/_/g, ' ')} — the buyer has not marked it completed`, 409)
+  }
 }
 
 function assertReceivable(status: string) {

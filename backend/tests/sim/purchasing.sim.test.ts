@@ -68,9 +68,18 @@ const dockPhoto = (n = 1) => ({ fileName: `dock-${n}.png`, mime: 'image/png', da
  * approves WITHOUT the cash voucher.
  */
 async function approveChain(co: SimCompany, buyer: SimUser, poId: string) {
-  expect(ok(await sim.as(buyer, co).post(`/procurement/purchase-orders/${poId}/submit`, {}), 200).status).toBe('finance_check')
-  expect(ok(await sim.as(co.finance, co).post(`/procurement/po-steps/${poId}/pass`, {}), 200).status).toBe('pending_approval')
+  expect(ok(await sim.as(buyer, co).post(`/procurement/purchase-orders/${poId}/submit`, {}), 200).status).toBe('pending_approval')
   ok(await sim.as(sim.ceo, co).post(`/procurement/purchase-orders/${poId}/approve`, { payByCash: false }), 200)
+  await asLegacyPo(poId)
+}
+
+/**
+ * This simulation is dated October 2026 — before the PO → GRN workflow (owner, 2026-11-05) — and exercises the dock
+ * receiving and the bill engine by hand. Its POs are marked as approved under the old rules (grnWorkflow false), which
+ * keep the dock receive route; poApprovalChain.test.ts covers the workflow itself.
+ */
+async function asLegacyPo(poId: string) {
+  await sim.prisma.purchaseOrder.update({ where: { id: poId }, data: { grnWorkflow: false } })
 }
 
 type CoKey = 'A' | 'B'
@@ -194,12 +203,11 @@ describe('the simulated month — purchasing and stock', () => {
         ],
       }), 201)
       expect(Number(po1.totalCents)).toBe(5_400_000)
-      expect(ok(await mgr.post(`/procurement/purchase-orders/${po1.id}/submit`, {}), 200).status).toBe('finance_check')
-      // the buyer cannot pass finance's step nor approve; finance passes, the CEO approves
-      expect((await mgr.post(`/procurement/po-steps/${po1.id}/pass`, {})).statusCode).toBe(403)
-      ok(await sim.as(co.finance, co).post(`/procurement/po-steps/${po1.id}/pass`, {}), 200)
+      expect(ok(await mgr.post(`/procurement/purchase-orders/${po1.id}/submit`, {}), 200).status).toBe('pending_approval')
+      // the buyer cannot approve; the CEO approves
       expect((await mgr.post(`/procurement/purchase-orders/${po1.id}/approve`, {})).statusCode).toBe(403)
       ok(await sim.as(sim.ceo, co).post(`/procurement/purchase-orders/${po1.id}/approve`, { payByCash: false }), 200)
+      await asLegacyPo(po1.id)
       ok(await mgr.post(`/procurement/purchase-orders/${po1.id}/mark-sent`, { channel: 'phone', note: 'Phoned to Karachi Meats' }), 200)
       const lineOf = (itemId: string) => (po1.lines as Array<{ id: string; inventoryItemId: string }>).find((l) => l.inventoryItemId === itemId)!.id
       s.po1 = { id: po1.id, lines: { chicken: lineOf(s.items.chicken), cola: lineOf(s.items.cola), boxes: lineOf(s.items.boxes), mint: lineOf(s.items.mint), flour: '' } }

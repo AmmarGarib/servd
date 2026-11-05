@@ -1,18 +1,12 @@
-// The PO approval chain and its cash (owner, 2026-11-03: "Whatever is being purchased, lets start making PO on
-// servd. PO goes to Asif. Asif push to Hasnain. Hasnain push to me. approved by me. asif takes cash from hasnain.
-// asif buys" — cash: "Cash voucher tied to PO"; follow-ups the same day: "raiser cannot mark recvd", "yes add editing").
+// The PO → GRN workflow (owner, 2026-11-05 — REPLACES the buyer → finance → CEO chain of 2026-11-03):
 //
-//   - draft → buyer_check (the buyer) → finance_check (finance) → pending_approval (the CEO) → approved, whatever the
-//     total; each step only its own role, never the raiser / an earlier signer; another company's PO is 404.
-//   - Every step returns (→ draft, note ≥ 10) or rejects (→ cancelled).
-//   - A buyer's own PO skips the buyer step (signed by raising).
-//   - The CEO's approval raises ONE cash voucher (CV series of the PO's company) in the buyer's name, already approved.
-//   - Finance's pay of it TOPS UP the buyer's box (opened at float 0 when none): Dr 1011 / Cr 1010 — never an
-//     expense. A manager who did NOT raise it receives the PO — the raiser is refused (Dr 1210 food, Dr 6045
-//     non-food / Cr 2015). Finance bills the receipt
-//     (Dr 2015 / Cr 2010) and the buyer pays it from the box (Dr 2010 / Cr 1011 net): the money is booked once.
-//   - A draft (never submitted, or returned) is edited by its raiser or the CEO only; not in the chain (409).
-//   - Two companies: B's buyer / finance / CEO get 404 on A's PO and voucher.
+//   requester raises → the CEO approves (names the buyer: named / the company's one buyer / the requester; the cash
+//   voucher in the buyer's name, as before) → the buyer buys, attaches the invoice, marks it completed → the REQUESTER
+//   confirms receipt (a GRN: Dr 12x0 / Cr 2015) or sends it back with a note → finance verifies the GRN (never the
+//   requester / buyer) or returns it to the buyer → the buyer resubmits → the CEO approves the GRN: the supplier bill
+//   (Dr 2015 / Cr 2010) linked to the PO and the GRN → the buyer's box pays it.
+//   No bypass: the dock / PO receive and a hand-made bill on such a PO are refused; a GRN is not approved before
+//   finance. Two companies: B gets 404 on A's PO, GRN and files; my-tasks shows only the caller's own.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -25,13 +19,18 @@ import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
 import { trustopsRoutes } from '../src/modules/trustops/routes.js'
+import { recordFileRoutes } from '../src/modules/recordFiles/routes.js'
+import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
 import { approverIdsFor } from '../src/lib/approvalRights.js'
+import { flushNotifications } from '../src/lib/staffNotify.js'
 
 const P = `poch${Date.now()}`
 let app: FastifyInstance
 const T: Record<'A' | 'B', string> = { A: '', B: '' }
 const U: Record<string, { id: string; name: string; email: string; role: UserRole }> = {}
 let supA = '', supB = '', flour = '', soap = '', itemB = '', locA = ''
+const today = () => new Date().toISOString().slice(0, 10)
+const PDF = { fileName: 'invoice.pdf', mime: 'application/pdf', dataBase64: Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(64, 0x20)]).toString('base64') }
 
 async function mkUser(key: string, role: UserRole, tenants: string[]) {
   const u = await prisma.user.create({
@@ -44,7 +43,7 @@ async function mkUser(key: string, role: UserRole, tenants: string[]) {
   })
   U[key] = { id: u.id, name: u.name, email: u.email!, role: u.role }
 }
-const call = (key: string, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown) =>
+const call = (key: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, payload?: unknown) =>
   app.inject({ method, url: `/api/v1${url}`, headers: { authorization: `Bearer ${issueStaffSession(U[key]!).accessToken}` }, ...(payload !== undefined && { payload: payload as object }) })
 const code = (r: { json(): unknown }) => (r.json() as { error?: { code?: string } }).error?.code
 
@@ -58,7 +57,7 @@ async function netDebit(tenantId: string, codeOf: string): Promise<number> {
   return Number(sums.find((s) => s.type === 'debit')?._sum.amountCents ?? 0) - Number(sums.find((s) => s.type === 'credit')?._sum.amountCents ?? 0)
 }
 
-/** The chef (a kitchen manager) raises a PO for 10 kg flour @ 200 + 5 soap (non-food) @ 300 = PKR 35. */
+/** The chef raises 10 kg flour @ 200 + 5 soap (non-food) @ 300 = PKR 35. */
 async function chefPo(): Promise<{ id: string; lines: Array<{ id: string; inventoryItemId: string }> }> {
   const r = await call('chefA', 'POST', '/procurement/purchase-orders', {
     supplierId: supA, lines: [{ inventoryItemId: flour, quantityOrdered: 10, unitCostCents: 200 }, { inventoryItemId: soap, quantityOrdered: 5, unitCostCents: 300 }],
@@ -66,10 +65,11 @@ async function chefPo(): Promise<{ id: string; lines: Array<{ id: string; invent
   expect(r.statusCode, r.body).toBe(201)
   return r.json()
 }
+const upload = (who: string, poId: string) => call(who, 'POST', `/record-files/purchase_order/${poId}`, { files: [PDF] })
 
 beforeAll(async () => {
-  T.A = (await prisma.tenant.create({ data: { name: 'PO Chain A', slug: `${P}-a` } })).id
-  T.B = (await prisma.tenant.create({ data: { name: 'PO Chain B', slug: `${P}-b` } })).id
+  T.A = (await prisma.tenant.create({ data: { name: 'PO Flow A', slug: `${P}-a` } })).id
+  T.B = (await prisma.tenant.create({ data: { name: 'PO Flow B', slug: `${P}-b` } })).id
   for (const t of [T.A, T.B]) await ensureChartOfAccounts(t)
   invalidateSetupCache()
   await mkUser('ceoA', 'admin', [T.A])
@@ -79,16 +79,18 @@ beforeAll(async () => {
   await mkUser('storeA', 'manager', [T.A])
   await mkUser('ceoB', 'admin', [T.B])
   await mkUser('buyerB', 'procurement', [T.B])
+  await mkUser('buyerB2', 'procurement', [T.B])
+  await mkUser('mgrB', 'manager', [T.B])
   await mkUser('finB', 'finance', [T.B])
 
-  supA = (await prisma.supplier.create({ data: { name: `${P} Metro`, tenantId: T.A, paymentTermsDays: 0, filerStatus: 'filer' } })).id
+  supA = (await prisma.supplier.create({ data: { name: `${P} Metro`, tenantId: T.A, paymentTermsDays: 7, filerStatus: 'filer' } })).id
   supB = (await prisma.supplier.create({ data: { name: `${P} B Mart`, tenantId: T.B, paymentTermsDays: 0, filerStatus: 'filer' } })).id
   flour = (await prisma.inventoryItem.create({ data: { name: `${P} Flour`, unit: 'kg', tenantId: T.A, category: 'flour_grain', currentStock: 0, unitCostCents: 200 } })).id
   soap = (await prisma.inventoryItem.create({ data: { name: `${P} Dish soap`, unit: 'pcs', tenantId: T.A, category: 'non_food', issueOnReceipt: true, currentStock: 0, unitCostCents: 300 } })).id
   itemB = (await prisma.inventoryItem.create({ data: { name: `${P} B Flour`, unit: 'kg', tenantId: T.B, category: 'flour_grain', currentStock: 0, unitCostCents: 200 } })).id
-  locA = (await prisma.location.create({ data: { slug: `${P}-la`, name: 'Chain outlet', tenantId: T.A } })).id
+  locA = (await prisma.location.create({ data: { slug: `${P}-la`, name: 'Flow outlet', tenantId: T.A } })).id
 
-  app = Fastify()
+  app = Fastify({ bodyLimit: 30 * 1024 * 1024 })
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof AppError) return reply.status(err.statusCode).send({ error: { code: err.code, message: err.message } })
     if (err instanceof ZodError) return reply.status(400).send({ error: { code: 'VALIDATION_ERROR', issues: err.issues } })
@@ -98,6 +100,8 @@ beforeAll(async () => {
   await app.register(async (api) => {
     await api.register(procurementRoutes, { prefix: '/procurement' })
     await api.register(trustopsRoutes, { prefix: '/trustops' })
+    await api.register(recordFileRoutes, { prefix: '/record-files' })
+    await api.register(crosschecksRoutes, { prefix: '/crosschecks' })
   }, { prefix: '/api/v1' })
   await app.ready()
 }, 120_000)
@@ -107,258 +111,275 @@ afterAll(async () => {
   await app?.close()
 })
 
-describe('the chain: buyer → finance → the CEO, each step its own people', () => {
+describe('the whole flow: CEO → buyer → requester → GRN → finance → CEO → bill → paid from the box', () => {
   let poId = ''
   let lines: Array<{ id: string; inventoryItemId: string }> = []
   let voucherId = ''
+  let grnId = ''
+  let billId = ''
 
-  it('submit → the buyer; nobody else passes that step; B is 404', async () => {
+  it('submit → straight to the CEO; only the CEO approves; B is 404', async () => {
     const po = await chefPo()
     poId = po.id
     lines = po.lines
     const s = await call('chefA', 'POST', `/procurement/purchase-orders/${poId}/submit`)
     expect(s.statusCode, s.body).toBe(200)
-    expect(s.json().status).toBe('buyer_check')
-    // The bell: the buyer is told.
-    expect((await approverIdsFor('purchase_order_buyer', poId))?.userIds).toEqual([U.buyerA!.id])
-    // The buyer's queue lists it; finance's does not.
-    expect(((await call('buyerA', 'GET', '/procurement/po-steps?step=buyer')).json() as Array<{ id: string }>).map((p) => p.id)).toContain(poId)
-    expect(((await call('finA', 'GET', '/procurement/po-steps?step=finance')).json() as Array<{ id: string }>).map((p) => p.id)).not.toContain(poId)
-    // The raiser, finance and the CEO's final route cannot take the buyer's step.
-    expect((await call('chefA', 'POST', `/procurement/po-steps/${poId}/pass`)).statusCode).toBe(403)
-    expect((await call('finA', 'POST', `/procurement/po-steps/${poId}/pass`)).statusCode).toBe(403)
-    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${poId}/approve`)).statusCode).toBe(400)
-    // Company B's buyer: A's PO does not exist.
-    expect((await call('buyerB', 'POST', `/procurement/po-steps/${poId}/pass`)).statusCode).toBe(404)
-    expect(((await call('buyerB', 'GET', '/procurement/po-steps?step=buyer')).json() as Array<{ id: string }>).map((p) => p.id)).not.toContain(poId)
-    const pass = await call('buyerA', 'POST', `/procurement/po-steps/${poId}/pass`)
-    expect(pass.statusCode, pass.body).toBe(200)
-    expect(pass.json().status).toBe('finance_check')
-  })
-
-  it('finance passes it to the CEO; the buyer who checked it cannot; B is 404', async () => {
-    expect((await approverIdsFor('purchase_order_finance', poId))?.userIds).toEqual([U.finA!.id])
-    expect((await call('buyerA', 'POST', `/procurement/po-steps/${poId}/pass`)).statusCode).toBe(403)
-    expect((await call('finB', 'POST', `/procurement/po-steps/${poId}/pass`)).statusCode).toBe(404)
-    const pass = await call('finA', 'POST', `/procurement/po-steps/${poId}/pass`)
-    expect(pass.statusCode, pass.body).toBe(200)
-    expect(pass.json().status).toBe('pending_approval')
-    const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId } })
-    expect(po).toMatchObject({ buyerCheckedById: U.buyerA!.id, financeCheckedById: U.finA!.id, submittedById: U.chefA!.id })
-  })
-
-  it("the CEO approves (B's CEO 404, finance 403) and the PO's cash voucher is raised in the buyer's name", async () => {
+    expect(s.json().status).toBe('pending_approval')
+    expect((await approverIdsFor('purchase_order', poId))?.userIds).toEqual([U.ceoA!.id])
     expect((await call('finA', 'POST', `/procurement/purchase-orders/${poId}/approve`)).statusCode).toBe(403)
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/approve`)).statusCode).toBe(403)
     expect((await call('ceoB', 'POST', `/procurement/purchase-orders/${poId}/approve`)).statusCode).toBe(404)
+    // The buyer cannot buy before the CEO approves.
+    await upload('chefA', poId)
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/complete`, { invoiceNumber: 'X', invoiceDate: today() })).statusCode).toBe(409)
+  })
+
+  it("the CEO approves: the company's one buyer is named, the cash voucher is his, the activity log says how", async () => {
+    const bad = await call('ceoA', 'POST', `/procurement/purchase-orders/${poId}/approve`, { buyerUserId: U.buyerB!.id })
+    expect(bad.statusCode).toBe(422)
+    expect(code(bad)).toBe('BUYER_NOT_IN_COMPANY')
     const a = await call('ceoA', 'POST', `/procurement/purchase-orders/${poId}/approve`)
     expect(a.statusCode, a.body).toBe(200)
-    expect(a.json().status).toBe('approved')
+    expect(a.json()).toMatchObject({ status: 'approved', buyerUserId: U.buyerA!.id, buyerChosen: 'company_buyer' })
+    const row = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId } })
+    expect(row).toMatchObject({ grnWorkflow: true, buyerUserId: U.buyerA!.id, approvedById: U.ceoA!.id })
     voucherId = a.json().cashVoucher.id
     const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })
-    expect(v).toMatchObject({
-      tenantId: T.A, purchaseOrderId: poId, status: 'approved', kind: 'request', amountCents: 3_500,
-      payeeUserId: U.buyerA!.id, financeApprovedById: U.finA!.id, directorSignedById: U.ceoA!.id, category: null,
-    })
-    expect(v.number).toMatch(/^CV-\d{5}$/)
-    // Raising it posted nothing.
-    expect(await prisma.journalEntry.count({ where: { tenantId: T.A, reference: { contains: voucherId } } })).toBe(0)
+    expect(v).toMatchObject({ tenantId: T.A, purchaseOrderId: poId, status: 'approved', amountCents: 3_500, payeeUserId: U.buyerA!.id, directorSignedById: U.ceoA!.id })
+    const log = await prisma.poActivityLog.findFirstOrThrow({ where: { purchaseOrderId: poId, action: 'approved' } })
+    expect(log.details).toMatchObject({ buyerUserId: U.buyerA!.id, buyerChosen: 'company_buyer', cashVoucherId: voucherId })
+    // The buyer is told; it is his task.
+    await flushNotifications()
+    expect(await prisma.staffNotification.count({ where: { userId: U.buyerA!.id, kind: 'task.next', entityId: poId } })).toBeGreaterThan(0)
+    const tasks = (await call('buyerA', 'GET', '/procurement/my-tasks')).json()
+    expect(tasks.toBuy.map((p: { id: string }) => p.id)).toContain(poId)
+    expect((await call('chefA', 'GET', '/procurement/my-tasks')).json().toBuy.map((p: { id: string }) => p.id)).not.toContain(poId)
+    expect((await call('buyerB', 'GET', '/procurement/my-tasks')).json().toBuy.map((p: { id: string }) => p.id)).not.toContain(poId)
   })
 
-  it("the voucher is locked to the PO, cash only, and B's finance cannot see it", async () => {
-    const patch = await call('finA', 'PATCH', `/trustops/cash-vouchers/${voucherId}`, { amountCents: 1 })
-    expect(patch.statusCode).toBe(409)
-    expect(code(patch)).toBe('PO_VOUCHER_LOCKED')
-    const credit = await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, { source: 'credit', supplierId: supA })
-    expect(credit.statusCode).toBe(422)
-    expect(code(credit)).toBe('PO_VOUCHER_CASH_ONLY')
-    expect((await call('finB', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, {})).statusCode).toBe(404)
-    // The buyer does not pay himself: finance pays.
-    expect((await call('buyerA', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, {})).statusCode).toBe(403)
-  })
-
-  it("finance pays: the cash goes into the buyer's box (opened at 0) — Dr 1011 / Cr 1010, never an expense", async () => {
-    const before6xxx = await prisma.journalLine.count({ where: { journalEntry: { tenantId: T.A }, account: { code: { startsWith: '6' } } } })
+  it('finance pays the voucher into the buyer\'s box (unchanged)', async () => {
     const r = await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, { source: 'cash_on_hand' })
     expect(r.statusCode, r.body).toBe(200)
-    expect(r.json().toBox.opened).toBe(true)
     const box = await prisma.pettyCashBox.findFirstOrThrow({ where: { tenantId: T.A, custodianId: U.buyerA!.id } })
     expect(box.floatCents).toBe(3_500)
-    const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })
-    expect(v).toMatchObject({ status: 'disbursed', paySource: 'cash_on_hand', payAccountCode: '1010', bookedAtPay: true })
-    expect(await entryLines(`pettycash.topup:${v.pettyCashMovementId}`)).toEqual([['1010', 'credit', 3_500], ['1011', 'debit', 3_500]])
-    expect(await prisma.journalLine.count({ where: { journalEntry: { tenantId: T.A }, account: { code: { startsWith: '6' } } } })).toBe(before6xxx)
-    expect(r.json().voucher.paidAccountCode).toBe('1011')
-    // Paid once.
-    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, {})).statusCode).toBe(409)
-    // Change is never "returned on the voucher": it stays in the box.
-    const back = await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId: box.id, type: 'topup', source: 'cash_request', cashVoucherId: voucherId, amountCents: 100, reason: 'change' })
-    expect(back.statusCode).toBeGreaterThanOrEqual(400)
   })
 
-  it('the raiser cannot receive it; another manager does: flour on 1210, the non-food soap straight to 6045, all against 2015', async () => {
-    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/mark-sent`, { channel: 'in_person' })).statusCode).toBe(200)
-    const body = {
-      locationId: locA, photoUrl: 'https://example.com/dock.jpg',
-      lines: lines.map((l) => ({ poLineId: l.id, quantityReceived: l.inventoryItemId === flour ? 10 : 5 })),
-    }
-    const own = await call('chefA', 'POST', `/procurement/purchase-orders/${poId}/receive`, body)
-    expect(own.statusCode).toBe(403)
-    expect(code(own)).toBe('SELF_APPROVAL_BLOCKED')
-    // The buyer is no manager: refused too.
-    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/receive`, body)).statusCode).toBe(403)
-    const r = await call('storeA', 'POST', `/procurement/purchase-orders/${poId}/receive`, body)
-    expect(r.statusCode, r.body).toBe(201)
-    expect(await entryLines(`procurement.receipt:${r.json().receipt.id}`)).toEqual([
-      ['1210', 'debit', 2_000], ['2015', 'credit', 3_500], ['6045', 'debit', 1_500],
-    ])
-    // Soap: a lot opened and issued at once — no stock value, no 50x0 / 12x0 issue entry.
-    const soapLot = await prisma.stockLot.findFirstOrThrow({ where: { inventoryItemId: soap } })
-    expect(soapLot).toMatchObject({ costClass: 'non_food', remainingQty: 0, remainingValueCents: 0 })
-    expect(await prisma.journalEntry.count({ where: { tenantId: T.A, reference: `inventory.issue_on_receipt:${soapLot.id}` } })).toBe(0)
-    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: soap } })).currentStock).toBe(0)
-    expect(await netDebit(T.A, '1230')).toBe(0)
-    expect(await netDebit(T.A, '5010')).toBe(0)
+  it('only the buyer completes it, with an invoice file and number; the actual rate is logged', async () => {
+    // Files: the buyer attaches; B's people cannot see or attach (404).
+    expect((await upload('ceoB', poId)).statusCode).toBe(404)
+    expect((await call('buyerB', 'GET', `/record-files/purchase_order/${poId}`)).statusCode).toBe(404)
+    const body = { invoiceNumber: `${P}-INV1`, invoiceDate: today(), lines: [{ poLineId: lines.find((l) => l.inventoryItemId === flour)!.id, rateCents: 210 }] }
+    const notBuyer = await call('chefA', 'POST', `/procurement/purchase-orders/${poId}/complete`, body)
+    expect(notBuyer.statusCode).toBe(403)
+    expect(code(notBuyer)).toBe('PO_NOT_YOUR_TASK')
+    expect(code(await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/complete`, { ...body, invoiceDate: '2099-01-01' }))).toBe('INVOICE_DATE_IN_FUTURE')
+    expect((await call('buyerB', 'POST', `/procurement/purchase-orders/${poId}/complete`, body)).statusCode).toBe(404)
+    const up = await upload('buyerA', poId)
+    expect(up.statusCode, up.body).toBe(201)
+    const done = await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/complete`, body)
+    expect(done.statusCode, done.body).toBe(200)
+    expect(done.json().status).toBe('completed')
+    const row = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId }, include: { lines: true } })
+    expect(row).toMatchObject({ status: 'completed', invoiceNumber: `${P}-INV1`, completedById: U.buyerA!.id })
+    expect(Number(row.totalCents)).toBe(10 * 210 + 5 * 300)
+    const log = await prisma.poActivityLog.findFirstOrThrow({ where: { purchaseOrderId: poId, action: 'completed' } })
+    expect(log.details).toMatchObject({ rateChanges: [{ fromRateCents: 200, toRateCents: 210 }] })
+    // Twice: no.
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/complete`, body)).statusCode).toBe(409)
+    expect((await call('chefA', 'GET', '/procurement/my-tasks')).json().toConfirm.map((p: { id: string }) => p.id)).toContain(poId)
   })
 
-  it('finance bills the receipt and the buyer pays it from his box: the money is booked once', async () => {
-    const receipt = await prisma.goodsReceipt.findFirstOrThrow({ where: { poId }, include: { lines: true } })
-    const bill = await call('finA', 'POST', '/procurement/bills', {
-      supplierId: supA, poId, billNumber: `${P}-INV1`, billDate: new Date().toISOString().slice(0, 10),
-      lines: receipt.lines.map((l) => ({ receiptLineId: l.id, inventoryItemId: l.inventoryItemId, description: l.description ?? 'x', quantity: l.receivedQty, unitCostCents: l.inventoryItemId === flour ? 200 : 300 })),
+  it('no bypass: the dock, the PO receive route and the buyer cannot receive it; only the requester confirms', async () => {
+    const rl = lines.map((l) => ({ poLineId: l.id, quantityReceived: l.inventoryItemId === flour ? 10 : 5 }))
+    const dock = await call('storeA', 'POST', '/crosschecks/receiving', { poId, locationId: locA, photoUrl: 'https://example.com/d.jpg', lines: rl })
+    expect(dock.statusCode).toBe(409)
+    expect(code(dock)).toBe('USE_RECEIPT_CONFIRMATION')
+    const viaPo = await call('storeA', 'POST', `/procurement/purchase-orders/${poId}/receive`, { locationId: locA, photoUrl: 'https://example.com/d.jpg', lines: rl })
+    expect(code(viaPo)).toBe('USE_RECEIPT_CONFIRMATION')
+    const buyer = await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/confirm-receipt`, { lines: rl })
+    expect(code(buyer)).toBe('PO_NOT_YOUR_TASK')
+    expect((await call('ceoB', 'POST', `/procurement/purchase-orders/${poId}/confirm-receipt`, { lines: rl })).statusCode).toBe(404)
+    // A hand-made bill on the PO is refused too.
+    const hand = await call('finA', 'POST', '/procurement/bills', {
+      supplierId: supA, poId, billNumber: `${P}-HAND`, billDate: today(),
+      lines: [{ poLineId: rl[0]!.poLineId, description: 'x', quantity: 1, unitCostCents: 200 }],
     })
-    expect(bill.statusCode, bill.body).toBe(201)
-    expect(await entryLines(`supplier.bill:${bill.json().id}`)).toEqual([['2010', 'credit', 3_500], ['2015', 'debit', 3_500]])
+    expect(code(hand)).toBe('USE_GRN_APPROVAL')
+
+    const ok = await call('chefA', 'POST', `/procurement/purchase-orders/${poId}/confirm-receipt`, { locationId: locA, lines: rl })
+    expect(ok.statusCode, ok.body).toBe(201)
+    expect(ok.json().status).toBe('received')
+    grnId = ok.json().grn.id
+    const g = await prisma.goodsReceipt.findUniqueOrThrow({ where: { id: grnId } })
+    expect(g).toMatchObject({ poId, tenantId: T.A, grnStatus: 'finance_review', invoiceNumber: `${P}-INV1`, receivedById: U.chefA!.id })
+    expect(g.grnNumber).toMatch(/^GRN-\d{5}$/)
+    // Stock in at the actual rate: Dr 1210 food, Dr 6045 non-food / Cr 2015.
+    expect(await entryLines(`procurement.receipt:${grnId}`)).toEqual([['1210', 'debit', 2_100], ['2015', 'credit', 3_600], ['6045', 'debit', 1_500]])
+    // Finance is told; the activity log carries the GRN.
+    expect((await approverIdsFor('grn_finance', grnId))?.userIds).toEqual([U.finA!.id])
+    expect(await prisma.poActivityLog.count({ where: { purchaseOrderId: poId, action: 'received' } })).toBe(1)
+  })
+
+  it('finance verifies — never the requester or buyer; a return needs a note and goes to the buyer, who resubmits', async () => {
+    expect(code(await call('ceoA', 'POST', `/procurement/grns/${grnId}/approve`))).toBe('INVALID_STATE')   // not before finance
+    expect((await call('ceoA', 'POST', `/procurement/grns/${grnId}/approve`)).statusCode).toBe(409)
+    expect((await call('buyerA', 'POST', `/procurement/grns/${grnId}/finance-pass`)).statusCode).toBe(403)
+    expect((await call('chefA', 'POST', `/procurement/grns/${grnId}/finance-pass`)).statusCode).toBe(403)
+    expect((await call('finB', 'POST', `/procurement/grns/${grnId}/finance-pass`)).statusCode).toBe(404)
+    expect((await call('finB', 'GET', `/procurement/grns/${grnId}`)).statusCode).toBe(404)
+    // Finance's queue lists it; the buyer has no finance queue.
+    expect((await call('finA', 'GET', '/procurement/grns?queue=finance')).json().map((g: { id: string }) => g.id)).toContain(grnId)
+    expect((await call('buyerA', 'GET', '/procurement/grns?queue=finance')).statusCode).toBe(403)
+    expect((await call('finB', 'GET', '/procurement/grns?queue=finance')).json().map((g: { id: string }) => g.id)).not.toContain(grnId)
+
+    const short = await call('finA', 'POST', `/procurement/grns/${grnId}/return`, { note: 'no' })
+    expect(short.statusCode).toBe(422)
+    expect(code(short)).toBe('NOTE_REQUIRED')
+    expect((await call('finA', 'POST', `/procurement/grns/${grnId}/return`, { note: 'The invoice number has a typo, fix it' })).statusCode).toBe(200)
+    expect((await prisma.goodsReceipt.findUniqueOrThrow({ where: { id: grnId } })).grnStatus).toBe('buyer_fix')
+    expect((await call('buyerA', 'GET', '/procurement/my-tasks')).json().toFix.map((g: { id: string }) => g.id)).toContain(grnId)
+    expect((await call('chefA', 'POST', `/procurement/grns/${grnId}/resubmit`, { invoiceNumber: `${P}-INV1A` })).statusCode).toBe(403)
+    const re = await call('buyerA', 'POST', `/procurement/grns/${grnId}/resubmit`, { invoiceNumber: `${P}-INV1A` })
+    expect(re.statusCode, re.body).toBe(200)
+    expect(re.json().grnStatus).toBe('finance_review')
+    const pass = await call('finA', 'POST', `/procurement/grns/${grnId}/finance-pass`)
+    expect(pass.statusCode, pass.body).toBe(200)
+    expect(pass.json().grnStatus).toBe('ceo_review')
+    expect((await approverIdsFor('grn', grnId))?.userIds).toEqual([U.ceoA!.id])
+    const actions = (await prisma.poActivityLog.findMany({ where: { purchaseOrderId: poId }, orderBy: { createdAt: 'asc' } })).map((a) => a.action)
+    expect(actions).toEqual(expect.arrayContaining(['created', 'submitted', 'approved', 'completed', 'received', 'grn_returned', 'grn_resubmitted', 'grn_finance_checked']))
+  })
+
+  it('the CEO approves the GRN: the supplier bill from the invoice, linked to the PO and the GRN; B is 404', async () => {
+    expect((await call('finA', 'POST', `/procurement/grns/${grnId}/approve`)).statusCode).toBe(403)
+    expect((await call('ceoB', 'POST', `/procurement/grns/${grnId}/approve`)).statusCode).toBe(404)
+    const a = await call('ceoA', 'POST', `/procurement/grns/${grnId}/approve`)
+    expect(a.statusCode, a.body).toBe(200)
+    billId = a.json().supplierBillId
+    const bill = await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId }, include: { lines: true } })
+    expect(bill).toMatchObject({ supplierId: supA, poId, billNumber: `${P}-INV1A` })
+    expect(Number(bill.totalCents)).toBe(3_600)
+    expect(bill.lines.every((l) => !!l.receiptLineId && !!l.poLineId)).toBe(true)
+    // Due = invoice date + the supplier's 7 days.
+    expect(Math.round((bill.dueDate.getTime() - bill.billDate.getTime()) / 86_400_000)).toBe(7)
+    expect(await entryLines(`supplier.bill:${billId}`)).toEqual([['2010', 'credit', 3_600], ['2015', 'debit', 3_600]])
+    const g = await prisma.goodsReceipt.findUniqueOrThrow({ where: { id: grnId } })
+    expect(g).toMatchObject({ grnStatus: 'approved', supplierBillId: billId, approvedById: U.ceoA!.id })
+    expect((await call('ceoA', 'POST', `/procurement/grns/${grnId}/approve`)).statusCode).toBe(409)
+    // Finance (and the buyer, paying from his box) is told to pay.
+    await flushNotifications()
+    expect(await prisma.staffNotification.count({ where: { userId: U.finA!.id, entityId: grnId, kind: 'task.next' } })).toBe(1)
+    const detail = (await call('finA', 'GET', `/procurement/grns/${grnId}`)).json()
+    expect(detail.bill.id).toBe(billId)
+    expect(detail.files.length).toBeGreaterThan(0)
+  })
+
+  it("the buyer pays it from his box: 2015 and 2010 cleared, cash once", async () => {
     const box = await prisma.pettyCashBox.findFirstOrThrow({ where: { tenantId: T.A, custodianId: U.buyerA!.id } })
-    const pay = await call('buyerA', 'POST', '/trustops/petty-cash/movements', { boxId: box.id, type: 'spend', amountCents: 3_500, reason: 'Paid Metro for the PO', supplierBillId: bill.json().id })
+    // He had PKR 35 from the voucher; the invoice is PKR 36 — finance tops him up by 1 first.
+    const top = await call('finA', 'POST', '/trustops/petty-cash/movements', { boxId: box.id, type: 'topup', source: 'safe', amountCents: 100, reason: 'Invoice was a rupee more' })
+    expect(top.statusCode, top.body).toBe(201)
+    const pay = await call('buyerA', 'POST', '/trustops/petty-cash/movements', { boxId: box.id, type: 'spend', amountCents: 3_600, reason: 'Paid Metro for the PO', supplierBillId: billId })
     expect(pay.statusCode, pay.body).toBe(201)
-    expect((await prisma.pettyCashBox.findUniqueOrThrow({ where: { id: box.id } })).floatCents).toBe(0)
-    // Cash 1010 → the buyer's box 1011 → the supplier; 2015 and 2010 cleared; flour on 1210, soap on 6045.
-    expect(await netDebit(T.A, '1011')).toBe(0)
-    expect(await netDebit(T.A, '1010')).toBe(-3_500)
     expect(await netDebit(T.A, '2015')).toBe(0)
     expect(await netDebit(T.A, '2010')).toBe(0)
-    expect(await netDebit(T.A, '1210')).toBe(2_000)
+    expect(await netDebit(T.A, '1011')).toBe(0)
+    expect(await netDebit(T.A, '1210')).toBe(2_100)
     expect(await netDebit(T.A, '6045')).toBe(1_500)
   })
 })
 
-describe('returns, rejects and the buyer raising', () => {
-  it('every step can return (note ≥ 10) to draft; a resubmit starts the chain again', async () => {
+describe('the requester sends it back; a partial delivery makes a second GRN', () => {
+  it('"Not received" needs a note and goes back to the buyer', async () => {
     const po = await chefPo()
     await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
-    const short = await call('buyerA', 'POST', `/procurement/po-steps/${po.id}/return`, { note: 'no' })
-    expect(short.statusCode).toBe(400)
-    const back = await call('buyerA', 'POST', `/procurement/po-steps/${po.id}/return`, { note: 'Soap is cheaper at Metro, change it' })
+    await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`, { payByCash: false, buyerUserId: U.storeA!.id })
+    expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })).buyerUserId).toBe(U.storeA!.id)
+    // No invoice yet → refused.
+    const noFile = await call('storeA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-INV2`, invoiceDate: today() })
+    expect(code(noFile)).toBe('INVOICE_REQUIRED')
+    await upload('storeA', po.id)
+    expect((await call('storeA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-INV2`, invoiceDate: today() })).statusCode).toBe(200)
+    expect(code(await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/reject-receipt`, { note: 'short' }))).toBe('NOTE_REQUIRED')
+    const back = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/reject-receipt`, { note: 'Soap never came, flour bag torn' })
     expect(back.statusCode, back.body).toBe(200)
-    let row = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })
-    expect(row).toMatchObject({ status: 'draft', returnCount: 1, returnedById: U.buyerA!.id, returnNote: 'Soap is cheaper at Metro, change it' })
-    expect((await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)).json().status).toBe('buyer_check')
-    await call('buyerA', 'POST', `/procurement/po-steps/${po.id}/pass`)
-    // Finance returns too; then the CEO returns from the final step.
-    expect((await call('finA', 'POST', `/procurement/po-steps/${po.id}/return`, { note: 'Attach the quotation please' })).statusCode).toBe(200)
-    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
-    await call('buyerA', 'POST', `/procurement/po-steps/${po.id}/pass`)
-    await call('finA', 'POST', `/procurement/po-steps/${po.id}/pass`)
-    expect((await call('ceoA', 'POST', `/procurement/po-steps/${po.id}/return`, { note: 'Order half the flour this week' })).statusCode).toBe(200)
-    row = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })
-    expect(row).toMatchObject({ status: 'draft', returnCount: 3, buyerCheckedById: null, financeCheckedById: null })
-    expect(await prisma.cashVoucher.count({ where: { purchaseOrderId: po.id } })).toBe(0)
+    expect(back.json().status).toBe('approved')
+    const row = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })
+    expect(row).toMatchObject({ status: 'approved', receiptReturnNote: 'Soap never came, flour bag torn', receiptReturnedById: U.chefA!.id })
+    expect((await call('storeA', 'GET', '/procurement/my-tasks')).json().toBuy.map((p: { id: string }) => p.id)).toContain(po.id)
   })
 
-  it("a reject at any step is final (cancelled); the CEO's reject too", async () => {
+  it('a part delivery: GRN 1 for what came, back to the buyer, a NEW invoice for GRN 2', async () => {
     const po = await chefPo()
     await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
-    await call('buyerA', 'POST', `/procurement/po-steps/${po.id}/pass`)
-    const rej = await call('finA', 'POST', `/procurement/po-steps/${po.id}/reject`, { reason: 'Not in this month budget' })
-    expect(rej.statusCode, rej.body).toBe(200)
-    expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })).status).toBe('cancelled')
-
-    const po2 = await chefPo()
-    await call('chefA', 'POST', `/procurement/purchase-orders/${po2.id}/submit`)
-    await call('buyerA', 'POST', `/procurement/po-steps/${po2.id}/pass`)
-    await call('finA', 'POST', `/procurement/po-steps/${po2.id}/pass`)
-    const ceoRej = await call('ceoA', 'POST', `/procurement/purchase-orders/${po2.id}/reject`, { reason: 'Not needed' })
-    expect(ceoRej.statusCode, ceoRej.body).toBe(200)
-    expect(ceoRej.json().status).toBe('cancelled')
-  })
-
-  it("a buyer's own PO skips the buyer step; the CEO may approve without cash; cancelling a PO cancels its unpaid voucher", async () => {
-    const r = await call('buyerA', 'POST', '/procurement/purchase-orders', { supplierId: supA, lines: [{ inventoryItemId: flour, quantityOrdered: 1, unitCostCents: 200 }] })
-    const s = await call('buyerA', 'POST', `/procurement/purchase-orders/${r.json().id}/submit`)
-    expect(s.json().status).toBe('finance_check')
-    expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: r.json().id } })).buyerCheckedById).toBe(U.buyerA!.id)
-    await call('finA', 'POST', `/procurement/po-steps/${r.json().id}/pass`)
-    const noCash = await call('ceoA', 'POST', `/procurement/purchase-orders/${r.json().id}/approve`, { payByCash: false })
-    expect(noCash.statusCode, noCash.body).toBe(200)
-    expect(noCash.json().cashVoucher).toBeNull()
-    expect(await prisma.cashVoucher.count({ where: { purchaseOrderId: r.json().id } })).toBe(0)
-
-    const po = await chefPo()
-    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
-    await call('buyerA', 'POST', `/procurement/po-steps/${po.id}/pass`)
-    await call('finA', 'POST', `/procurement/po-steps/${po.id}/pass`)
-    const a = await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`)
-    expect(a.statusCode, a.body).toBe(200)
-    expect((await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/cancel`, { reason: 'Bought elsewhere' })).statusCode).toBe(200)
-    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: a.json().cashVoucher.id } })).status).toBe('cancelled')
-  })
-
-  it("B's PO stays B's: B's chain never reaches A's people", async () => {
-    const r = await call('buyerB', 'POST', '/procurement/purchase-orders', { supplierId: supB, lines: [{ inventoryItemId: itemB, quantityOrdered: 1, unitCostCents: 200 }] })
-    expect(r.statusCode, r.body).toBe(201)
-    await call('buyerB', 'POST', `/procurement/purchase-orders/${r.json().id}/submit`)
-    expect((await call('finA', 'POST', `/procurement/po-steps/${r.json().id}/pass`)).statusCode).toBe(404)
-    expect((await approverIdsFor('purchase_order_finance', r.json().id))?.userIds).toEqual([U.finB!.id])
-    expect((await call('finB', 'POST', `/procurement/po-steps/${r.json().id}/pass`)).statusCode).toBe(200)
-    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${r.json().id}/approve`)).statusCode).toBe(404)
-    const a = await call('ceoB', 'POST', `/procurement/purchase-orders/${r.json().id}/approve`)
-    expect(a.statusCode, a.body).toBe(200)
-    const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: a.json().cashVoucher.id } })
-    expect(v).toMatchObject({ tenantId: T.B, payeeUserId: U.buyerB!.id })
-    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${v.id}/pay`, {})).statusCode).toBe(404)
+    await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`, { payByCash: false })
+    await upload('buyerA', po.id)
+    await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-P1`, invoiceDate: today() })
+    const first = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, {
+      locationId: locA, lines: po.lines.map((l) => ({ poLineId: l.id, quantityReceived: l.inventoryItemId === flour ? 4 : 5 })),
+    })
+    expect(first.statusCode, first.body).toBe(201)
+    expect(first.json().status).toBe('partial')
+    // The old invoice file does not count for the rest.
+    const again = await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-P2`, invoiceDate: today() })
+    expect(code(again)).toBe('INVOICE_REQUIRED')
+    await upload('buyerA', po.id)
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-P2`, invoiceDate: today() })).statusCode).toBe(200)
+    const flourLine = po.lines.find((l) => l.inventoryItemId === flour)!
+    const second = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: [{ poLineId: flourLine.id, quantityReceived: 6 }] })
+    expect(second.statusCode, second.body).toBe(201)
+    expect(second.json().status).toBe('received')
+    const grns = await prisma.goodsReceipt.findMany({ where: { poId: po.id }, orderBy: { receivedAt: 'asc' } })
+    expect(grns.map((g) => g.invoiceNumber)).toEqual([`${P}-P1`, `${P}-P2`])
+    expect(new Set(grns.map((g) => g.grnNumber)).size).toBe(2)
   })
 })
 
-describe('editing a draft (owner, 2026-11-03: "yes add editing")', () => {
-  const edit = (who: string, id: string, body: Record<string, unknown>) => call(who, 'PATCH', `/procurement/purchase-orders/${id}`, body)
-  const body = (qty: number, item = flour, supplierId = supA) => ({ supplierId, notes: 'Edited', lines: [{ inventoryItemId: item, quantityOrdered: qty, unitCostCents: 250 }] })
-
-  it('the raiser edits a draft: lines replaced, total recomputed, number kept, logged and audited', async () => {
+describe("the CEO's return / reject at approval, and editing a draft", () => {
+  it('return needs a note (→ draft, editable, resubmitted); reject needs a reason (→ cancelled)', async () => {
     const po = await chefPo()
-    const before = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })
-    const r = await edit('chefA', po.id, body(4))
-    expect(r.statusCode, r.body).toBe(200)
-    const row = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } })
-    expect(row).toMatchObject({ reference: before.reference, notes: 'Edited', status: 'draft' })
-    expect(Number(row.totalCents)).toBe(1_000)
-    expect(row.lines.map((l) => [l.inventoryItemId, l.quantityOrdered, l.unitCostCents])).toEqual([[flour, 4, 250]])
-    expect(await prisma.poActivityLog.count({ where: { purchaseOrderId: po.id, action: 'edited' } })).toBe(1)
-    expect(await prisma.auditLog.findFirst({ where: { entityId: po.id, action: 'po.edit', tenantId: T.A } })).not.toBeNull()
-  })
-
-  it('only the raiser or the CEO; never in the chain; a returned PO is edited and goes through the chain again', async () => {
-    const po = await chefPo()
-    const other = await edit('buyerA', po.id, body(2))
-    expect(other.statusCode).toBe(403)
-    expect(code(other)).toBe('PO_EDIT_RAISER_ONLY')
-    expect((await edit('ceoA', po.id, body(3))).statusCode).toBe(200)
     await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
-    const inChain = await edit('chefA', po.id, body(5))
-    expect(inChain.statusCode).toBe(409)
-    expect(code(inChain)).toBe('PO_NOT_DRAFT')
-    await call('buyerA', 'POST', `/procurement/po-steps/${po.id}/return`, { note: 'Order five kilos, not three' })
-    expect((await edit('chefA', po.id, body(5))).statusCode).toBe(200)
-    expect((await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)).json().status).toBe('buyer_check')
-    expect(Number((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })).totalCents)).toBe(1_250)
+    expect(code(await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/return`, { note: 'no' }))).toBe('NOTE_REQUIRED')
+    expect((await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/return`, { note: 'Order half the flour this week' })).statusCode).toBe(403)
+    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/return`, { note: 'Order half the flour this week' })).statusCode).toBe(200)
+    expect(await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })).toMatchObject({ status: 'draft', returnCount: 1, returnedById: U.ceoA!.id })
+    const edit = await call('chefA', 'PATCH', `/procurement/purchase-orders/${po.id}`, { supplierId: supA, lines: [{ inventoryItemId: flour, quantityOrdered: 5, unitCostCents: 200 }] })
+    expect(edit.statusCode, edit.body).toBe(200)
+    expect((await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)).json().status).toBe('pending_approval')
+    expect(code(await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/reject`, { reason: 'No' }))).toBe('NOTE_REQUIRED')
+    const rej = await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/reject`, { reason: 'Not needed this month' })
+    expect(rej.statusCode, rej.body).toBe(200)
+    expect(rej.json().status).toBe('cancelled')
+    expect(await prisma.cashVoucher.count({ where: { purchaseOrderId: po.id } })).toBe(0)
   })
 
-  it("two companies: B's buyer 404 on A's draft; A's draft cannot take B's supplier (404) or B's item (422)", async () => {
+  it('only the raiser or the CEO edits a draft; never once submitted', async () => {
     const po = await chefPo()
-    expect((await edit('buyerB', po.id, body(1))).statusCode).toBe(404)
-    expect((await edit('chefA', po.id, body(1, flour, supB))).statusCode).toBe(404)
-    const item = await edit('chefA', po.id, body(1, itemB))
-    expect(item.statusCode).toBe(422)
-    // Nothing changed.
-    expect((await prisma.purchaseOrderLine.findMany({ where: { purchaseOrderId: po.id } })).map((l) => l.inventoryItemId).sort()).toEqual([flour, soap].sort())
+    expect(code(await call('buyerA', 'PATCH', `/procurement/purchase-orders/${po.id}`, { supplierId: supA, lines: [{ inventoryItemId: flour, quantityOrdered: 1, unitCostCents: 200 }] }))).toBe('PO_EDIT_RAISER_ONLY')
+    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+    expect(code(await call('chefA', 'PATCH', `/procurement/purchase-orders/${po.id}`, { supplierId: supA, lines: [{ inventoryItemId: flour, quantityOrdered: 1, unitCostCents: 200 }] }))).toBe('PO_NOT_DRAFT')
+  })
+})
+
+describe('company B: its own buyer rule, never A\'s people', () => {
+  it('with two buyers and none named, the requester buys it; the CEO may hand it to a buyer of B only', async () => {
+    const r = await call('mgrB', 'POST', '/procurement/purchase-orders', { supplierId: supB, lines: [{ inventoryItemId: itemB, quantityOrdered: 1, unitCostCents: 200 }] })
+    expect(r.statusCode, r.body).toBe(201)
+    await call('mgrB', 'POST', `/procurement/purchase-orders/${r.json().id}/submit`)
+    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${r.json().id}/approve`)).statusCode).toBe(404)
+    const a = await call('ceoB', 'POST', `/procurement/purchase-orders/${r.json().id}/approve`)
+    expect(a.statusCode, a.body).toBe(200)
+    expect(a.json()).toMatchObject({ buyerUserId: U.mgrB!.id, buyerChosen: 'requester' })
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: a.json().cashVoucher.id } }))).toMatchObject({ tenantId: T.B, payeeUserId: U.mgrB!.id })
+    expect(code(await call('ceoB', 'PUT', `/procurement/purchase-orders/${r.json().id}/buyer`, { buyerUserId: U.buyerA!.id }))).toBe('BUYER_NOT_IN_COMPANY')
+    expect((await call('ceoA', 'PUT', `/procurement/purchase-orders/${r.json().id}/buyer`, { buyerUserId: U.buyerA!.id })).statusCode).toBe(404)
+    expect((await call('mgrB', 'PUT', `/procurement/purchase-orders/${r.json().id}/buyer`, { buyerUserId: U.buyerB2!.id })).statusCode).toBe(403)
+    const re = await call('ceoB', 'PUT', `/procurement/purchase-orders/${r.json().id}/buyer`, { buyerUserId: U.buyerB2!.id })
+    expect(re.statusCode, re.body).toBe(200)
+    expect(await prisma.poActivityLog.count({ where: { purchaseOrderId: r.json().id, action: 'buyer_assigned' } })).toBe(1)
+    expect((await call('buyerB2', 'GET', '/procurement/my-tasks')).json().toBuy.map((p: { id: string }) => p.id)).toContain(r.json().id)
+    expect((await call('buyerA', 'GET', '/procurement/my-tasks')).json().toBuy.map((p: { id: string }) => p.id)).not.toContain(r.json().id)
+    // A's GRN list never shows B's.
+    expect((await call('finA', 'GET', `/procurement/grns?poId=${r.json().id}`)).json()).toEqual([])
   })
 })

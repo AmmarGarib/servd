@@ -70,9 +70,9 @@ export const APPROVAL_TYPES = [
   'staff_login',
   'storefront_publish',
   'purchase_order',
-  // The PO approval chain (owner, 2026-11-03: "PO goes to Asif. Asif push to Hasnain. Hasnain push to me").
-  'purchase_order_buyer',   // a submitted PO at the buyer's check (role procurement) — then finance, then the CEO
-  'purchase_order_finance', // a PO the buyer passed, at finance's check (role finance) — then the CEO (purchase_order)
+  // The PO → GRN workflow (owner, 2026-11-05; procurement/poWorkflow.ts — REPLACES the buyer / finance PO checks).
+  'grn_finance',            // a GRN the requester confirmed, at finance's verification (role finance) — then the CEO
+  'grn',                    // a GRN finance verified, at the CEO's final approval (creates the supplier bill)
   'recipe',
   'hr_request',
   'payroll_run',
@@ -194,19 +194,18 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     label: 'Purchase orders', section: 'procurement', queueModule: 'procurement', roles: ADMIN_ONLY,
     delegable: true, mustHoldModule: 'procurement', ownership: 'company',
   },
-  purchase_order_buyer: {
-    // The buyer's check (POST /procurement/po-steps/:id/pass | return | reject at status buyer_check): role
-    // procurement holding the procurement module, a member of the PO's company, never whoever raised / submitted it.
-    // The CEO may act as an override (a company with no buyer). Never handed over; the head-office rule (A3) applies
-    // only at the CEO's own step.
-    label: 'Purchase orders — buyer check', section: 'procurement', queueModule: 'procurement', roles: ['procurement', 'admin'],
+  grn_finance: {
+    // Finance verifies a GRN (POST /procurement/grns/:id/finance-pass | return at grnStatus finance_review): role
+    // finance holding the accounting module, a member of the GRN's company, never the PO's requester or buyer
+    // (403 SELF_APPROVAL_BLOCKED). The CEO as an override. Never handed over.
+    label: 'GRNs — finance check', section: 'finance', queueModule: 'accounting', roles: ['finance', 'admin'],
     overrideRoles: ['admin'], delegable: false, mustHoldModule: null, ownership: 'company', exemptThroughHeadOffice: true,
   },
-  purchase_order_finance: {
-    // Finance's check (POST /procurement/po-steps/:id/pass | return | reject at status finance_check): role finance
-    // holding the accounting module, never whoever raised, submitted or buyer-checked it. The CEO as an override.
-    label: 'Purchase orders — finance check', section: 'finance', queueModule: 'accounting', roles: ['finance', 'admin'],
-    overrideRoles: ['admin'], delegable: false, mustHoldModule: null, ownership: 'company', exemptThroughHeadOffice: true,
+  grn: {
+    // The CEO's final approval of a GRN (POST /procurement/grns/:id/approve | return at grnStatus ceo_review): it
+    // creates the supplier bill from the invoice. The CEO only, never handed over (owner, 2026-11-05).
+    label: 'GRNs', section: 'ceo', queueModule: 'procurement', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
   },
   recipe: {
     label: 'Recipes', section: 'operations', queueModule: 'recipes', roles: APPROVERS,
@@ -924,7 +923,7 @@ export async function auditApproval(
   e: { type: string; id: string; tenantId: string | null; decision: string; grant: ApprovalGrant; entity?: string; metadata?: Record<string, unknown> },
 ): Promise<void> {
   const section = isApprovalType(e.type) ? APPROVAL_RIGHTS[e.type].section : 'ceo'
-  const money = section === 'finance' || ['purchase_order', 'purchase_order_buyer', 'purchase_order_finance', 'cash_voucher', 'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'stock_difference', 'on_account_client', 'payroll_run', 'shift_correction'].includes(e.type)
+  const money = section === 'finance' || ['purchase_order', 'grn_finance', 'grn', 'cash_voucher', 'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'stock_difference', 'on_account_client', 'payroll_run', 'shift_correction'].includes(e.type)
   await audit({
     category: money ? 'accounting' : 'identity',
     action: 'approval.decide',
@@ -1064,17 +1063,21 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const s = await db.siteLayout.findFirst({ where: { OR: [{ id }, { slug: id }] }, select: { tenantId: true, submittedById: true, draftUpdatedById: true, draftStatus: true, submittedAt: true, viaHeadOfficeId: true } })
       return s && subject({ companyIds: [s.tenantId], ownerTenantId: s.tenantId, submitterIds: [s.submittedById, s.draftUpdatedById], viaHeadOfficeId: s.viaHeadOfficeId, status: s.draftStatus, submittedAt: s.submittedAt })
     }
-    case 'purchase_order':
-    case 'purchase_order_buyer':
-    case 'purchase_order_finance': {
-      const p = await db.purchaseOrder.findUnique({ where: { id }, select: { status: true, createdBy: true, submittedById: true, buyerCheckedById: true, financeCheckedById: true, viaHeadOfficeId: true, updatedAt: true, supplier: { select: { tenantId: true } } } })
+    case 'purchase_order': {
+      const p = await db.purchaseOrder.findUnique({ where: { id }, select: { status: true, createdBy: true, submittedById: true, viaHeadOfficeId: true, updatedAt: true, supplier: { select: { tenantId: true } } } })
       if (!p) return null
-      // Separation of duties along the chain (owner, 2026-11-03: nobody approves their own PO at a step): the raiser /
-      // submitter never decides any step; whoever passed an earlier step never decides a later one (the CEO exempt).
-      const submitterIds = type === 'purchase_order_buyer' ? [p.createdBy, p.submittedById]
-        : type === 'purchase_order_finance' ? [p.createdBy, p.submittedById, p.buyerCheckedById]
-          : [p.createdBy, p.submittedById, p.buyerCheckedById, p.financeCheckedById]
-      return subject({ companyIds: [p.supplier.tenantId], ownerTenantId: p.supplier.tenantId, submitterIds, viaHeadOfficeId: p.viaHeadOfficeId, status: p.status, submittedAt: null })
+      // The raiser / submitter never approves their own PO (the CEO exempt).
+      return subject({ companyIds: [p.supplier.tenantId], ownerTenantId: p.supplier.tenantId, submitterIds: [p.createdBy, p.submittedById], viaHeadOfficeId: p.viaHeadOfficeId, status: p.status, submittedAt: null })
+    }
+    case 'grn_finance':
+    case 'grn': {
+      const g = await db.goodsReceipt.findUnique({ where: { id }, select: { tenantId: true, grnNumber: true, grnStatus: true, poId: true, receivedAt: true, financeCheckedById: true } })
+      if (!g?.grnNumber || !g.poId) return null
+      const p = await db.purchaseOrder.findUnique({ where: { id: g.poId }, select: { createdBy: true, buyerUserId: true, completedById: true } })
+      // Separation of duties (owner, 2026-11-05): the PO's requester and buyer never verify or approve its GRN;
+      // finance's checker never gives the CEO's approval (the CEO exempt).
+      const submitterIds = [p?.createdBy, p?.buyerUserId, p?.completedById, ...(type === 'grn' ? [g.financeCheckedById] : [])]
+      return subject({ companyIds: [g.tenantId], ownerTenantId: g.tenantId, submitterIds, viaHeadOfficeId: null, status: g.grnStatus ?? 'none', submittedAt: g.receivedAt })
     }
     case 'recipe': {
       const r = await db.recipe.findUnique({ where: { id }, select: { status: true, submittedById: true, submittedAt: true, createdById: true, editedByIds: true, viaHeadOfficeId: true } })
@@ -1297,8 +1300,8 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   staff_login: ['pending'],
   storefront_publish: ['pending'],
   purchase_order: ['pending_approval'],
-  purchase_order_buyer: ['buyer_check'],
-  purchase_order_finance: ['finance_check'],
+  grn_finance: ['finance_review'],
+  grn: ['ceo_review'],
   recipe: ['pending_approval'],
   hr_request: ['submitted'],
   payroll_run: ['finance_checked'],

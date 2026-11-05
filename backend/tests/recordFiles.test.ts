@@ -68,6 +68,8 @@ async function mkRecords(tag: string, tenantId: string, cook: string): Promise<C
   const sup = await prisma.supplier.create({ data: { name: `Supplier ${tag}`, tenantId } })
   const bill = await prisma.supplierBill.create({ data: { supplierId: sup.id, billNumber: `B-${tag}-${RUN}`, billDate: new Date(), dueDate: new Date() } })
   const grn = await prisma.goodsReceipt.create({ data: { supplierId: sup.id, receivedById: cook, tenantId } })
+  // The supplier's invoice on a PO (owner, 2026-11-05: the PO → GRN workflow).
+  const po = await prisma.purchaseOrder.create({ data: { supplierId: sup.id, status: 'approved', grnWorkflow: true, createdBy: cook } })
   const prep = await prisma.prepBatch.create({ data: { tenantId, itemName: 'Confit garlic', inputs: [], actualYieldQty: 1, staffId: cook } })
   const emp = await prisma.hrEmployee.create({ data: { tenantId, employeeCode: `E-${tag}-${RUN}`, fullName: `Person ${tag}` } })
   const doc = await prisma.hrDocument.create({ data: { tenantId, employeeId: emp.id, docType: 'cnic_front' } })
@@ -90,6 +92,7 @@ async function mkRecords(tag: string, tenantId: string, cook: string): Promise<C
       [RECORD_OWNER.journal_entry]: paid.entryId,
       [RECORD_OWNER.opex_payment]: pay.id, [RECORD_OWNER.supplier_bill]: bill.id, [RECORD_OWNER.goods_receipt]: grn.id,
       [RECORD_OWNER.prep_batch]: prep.id, [RECORD_OWNER.hr_document]: doc.id, [RECORD_OWNER.rider_document]: rider.id, [RECORD_OWNER.fixed_asset]: asset.id,
+      [RECORD_OWNER.purchase_order]: po.id,
     },
   }
 }
@@ -112,6 +115,7 @@ const ACTOR: Record<string, [string, string]> = {
   [RECORD_OWNER.payment]:       ['finA', 'finB'],
   [RECORD_OWNER.journal_entry]: ['finA', 'finB'],
   [RECORD_OWNER.rider_document]: ['fohA', 'fohB'],
+  [RECORD_OWNER.purchase_order]: ['finA', 'finB'],
 }
 
 beforeAll(async () => {
@@ -152,7 +156,7 @@ beforeAll(async () => {
 afterAll(async () => { invalidateSetupCache(); await app?.close() })
 
 describe('record files: every owner type, two companies', () => {
-  it('registers exactly the ten owner types', () => {
+  it('registers exactly the eleven owner types', () => {
     expect(recordFileOwnerTypes()).toEqual(Object.values(RECORD_OWNER).sort())
   })
 

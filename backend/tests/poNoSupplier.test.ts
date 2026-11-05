@@ -12,6 +12,7 @@ import { invalidateSetupCache } from '../src/lib/setup-config.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
 import { trustopsRoutes } from '../src/modules/trustops/routes.js'
 import { approverIdsFor } from '../src/lib/approvalRights.js'
+import { attachInvoiceFile } from './poChain.js'
 
 const P = `pons${Date.now()}`
 let app: FastifyInstance
@@ -107,17 +108,18 @@ describe('a PO with no supplier', () => {
     expect(bad.statusCode).toBe(422)
 
     expect((await call('chefA', 'POST', `/procurement/purchase-orders/${poId}/submit`)).statusCode).toBe(200)
-    expect((await call('buyerA', 'POST', `/procurement/po-steps/${poId}/pass`)).statusCode).toBe(200)
-    expect((await call('finA', 'POST', `/procurement/po-steps/${poId}/pass`)).statusCode).toBe(200)
     const ap = await call('ceoA', 'POST', `/procurement/purchase-orders/${poId}/approve`, { payByCash: true })
     expect(ap.statusCode, ap.body).toBe(200)
     const v = await prisma.cashVoucher.findFirstOrThrow({ where: { purchaseOrderId: poId } })
     expect(v.tenantId).toBe(T.A)
   })
 
-  it('cannot be sent or received until its supplier is chosen', async () => {
+  it('cannot be sent, completed or received until its supplier is chosen', async () => {
     const sent = await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/mark-sent`, { channel: 'in_person' })
     expect(code(sent)).toBe('PO_SUPPLIER_NOT_CHOSEN')
+    await attachInvoiceFile(poId, U.buyerA!.id)
+    const done = await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/complete`, { invoiceNumber: 'INV-NS-1', invoiceDate: new Date().toISOString().slice(0, 10) })
+    expect(code(done)).toBe('PO_SUPPLIER_NOT_CHOSEN')
     const rc = await call('storeA', 'POST', `/procurement/purchase-orders/${poId}/receive`, {
       locationId: locA, photoUrl: 'https://example.com/dock.jpg', lines: lines.map((l) => ({ poLineId: l.id, quantityReceived: 10 })),
     })
@@ -133,9 +135,17 @@ describe('a PO with no supplier', () => {
     const again = await call('buyerA', 'PUT', `/procurement/purchase-orders/${poId}/supplier`, { supplierId: supA })
     expect(code(again)).toBe('PO_SUPPLIER_ALREADY_CHOSEN')
     expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/mark-sent`, { channel: 'in_person' })).statusCode).toBe(200)
-    const rc = await call('storeA', 'POST', `/procurement/purchase-orders/${poId}/receive`, {
+    // The PO → GRN workflow (owner, 2026-11-05): the buyer completes it; the requester (not the dock) confirms receipt.
+    const dock = await call('storeA', 'POST', `/procurement/purchase-orders/${poId}/receive`, {
       locationId: locA, photoUrl: 'https://example.com/dock.jpg', lines: lines.map((l) => ({ poLineId: l.id, quantityReceived: 10 })),
     })
+    expect(code(dock)).toBe('USE_RECEIPT_CONFIRMATION')
+    const done = await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/complete`, { invoiceNumber: 'INV-NS-1', invoiceDate: new Date().toISOString().slice(0, 10) })
+    expect(done.statusCode, done.body).toBe(200)
+    const rc = await call('chefA', 'POST', `/procurement/purchase-orders/${poId}/confirm-receipt`, {
+      locationId: locA, lines: lines.map((l) => ({ poLineId: l.id, quantityReceived: 10 })),
+    })
     expect(rc.statusCode, rc.body).toBe(201)
+    expect(rc.json().grn.grnNumber).toMatch(/^GRN-\d{5}$/)
   })
 })

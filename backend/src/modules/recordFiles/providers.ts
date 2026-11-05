@@ -30,6 +30,7 @@
 //   journal_entry   JournalEntry (a MANUAL entry, reference 'manual:…')   FINANCIALS_VIEWERS (GET /accounting/ledger)   JOURNAL_POSTERS   /accounting/ledger (read) · /accounting/journal (write)
 //                   — the supporting documents of a manual journal entry (owner, 2026-10-20)
 //
+//   purchase_order  PurchaseOrder  AP_READERS + its requester / buyer   its buyer, requester, the CEO, finance (accounting)   /procurement/purchase-orders (procurement; reads + accounting) — the supplier's invoice (owner, 2026-11-05)
 //   rider_document  Rider          MANAGERS (riders admin)      MANAGERS (riders admin)        /riders (riders) — private rider documents (CNIC, licence, bike papers; owner C16, 2026-10-27); rider tokens never reach /record-files
 //
 // The Purchase-order screen's "Attachment URL" is the SUPPLIER BILL form's
@@ -67,6 +68,7 @@ export const RECORD_OWNER = {
   payment: 'payment',
   journal_entry: 'journal_entry',
   rider_document: 'rider_document',
+  purchase_order: 'purchase_order',
 } as const
 
 /** 403 unless the caller's role is in the module's array for this mode. */
@@ -289,5 +291,40 @@ const riderDocument: RecordFileProvider = {
   },
 }
 
+// The supplier's invoice / bill on a purchase order (owner, 2026-11-05: "Buyer buys, uploads the supplier's
+// invoice/bill"; procurement/poWorkflow.ts). Read: the PO readers (AP_READERS — procurement team + finance) of the
+// PO's company, and its own requester / buyer. Attach: the PO's buyer, its requester, the CEO, or finance holding
+// 'accounting'. Module gate: /procurement/purchase-orders (procurement; reads admit accounting). Foreign → 404.
+const purchaseOrder: RecordFileProvider = {
+  ownerType: RECORD_OWNER.purchase_order,
+  label: 'purchase order',
+  allowOffice: true,
+  auditCategory: 'accounting',
+  fileStem: 'supplier-invoice',
+  async resolve(req, ownerId, mode) {
+    const su = req.staffUser!
+    const po = await prisma.purchaseOrder.findFirst({
+      where: { id: ownerId, supplier: await supplierScopeWhere(req, scopeMode(mode)) },
+      select: { createdBy: true, buyerUserId: true, supplier: { select: { tenantId: true } } },
+    })
+    const tenantId = po?.supplier.tenantId
+    if (!po || !tenantId) throw new NotFoundError('PurchaseOrder', ownerId)
+    const own = po.createdBy === su.id || po.buyerUserId === su.id
+    if (mode === 'read') {
+      if (!own) assertRole(req, AP_READERS, this.label)
+      await gateAs(req, '/procurement/purchase-orders', mode)
+      return { tenantId }
+    }
+    if (su.role === 'finance') {
+      await gateAs(req, '/procurement/bills', mode)
+      await requireApWriterModule(req)
+      return { tenantId }
+    }
+    if (su.role !== 'admin' && !own) throw new ForbiddenError("Only this PO's buyer, its requester, finance or the CEO attach its invoice")
+    await gateAs(req, '/procurement/purchase-orders', mode)
+    return { tenantId }
+  },
+}
+
 /** Registered once, at import (routes.ts imports this file). */
-for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote, payment, journalEntry, riderDocument]) registerRecordFileProvider(p)
+for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote, payment, journalEntry, riderDocument, purchaseOrder]) registerRecordFileProvider(p)

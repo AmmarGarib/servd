@@ -3019,7 +3019,7 @@ model KitchenTimer {
 model PurchaseOrder {
   id           String    @id @default(uuid())
   supplierId   String
-  status       String    @default("draft") // draft | pending_approval | sent | received | partial | cancelled
+  status       String    @default("draft") // draft | pending_approval | approved | sent | partial | completed | received | cancelled
   orderDate    DateTime  @default(now())
   expectedDate DateTime?
   receivedDate DateTime?
@@ -3058,6 +3058,23 @@ model PurchaseOrder {
   // (bought on credit). The voucher row carries purchaseOrderId.
   payByCash          Boolean   @default(true)
 
+  // The PO → GRN workflow (owner, 2026-11-05; procurement/poWorkflow.ts — REPLACES the buyer_check / finance_check
+  // steps of 2026-11-03, whose stamps above stay as history): draft → pending_approval (the CEO) → approved (the
+  // buyer: buyerUserId) → completed (the buyer bought it and attached the supplier's invoice) → received | partial
+  // (the requester confirmed receipt: a GRN, GoodsReceipt.grnNumber). `grnWorkflow` is set at the CEO's approval:
+  // such a PO is received ONLY through the requester's confirmation (409 USE_RECEIPT_CONFIRMATION elsewhere) and
+  // billed ONLY at the CEO's approval of its GRN. Plain ids, no FKs.
+  grnWorkflow         Boolean   @default(false)
+  buyerUserId         String?
+  buyerAssignedAt     DateTime?
+  invoiceNumber       String?
+  invoiceDate         DateTime? @db.Date
+  completedById       String?
+  completedAt         DateTime?
+  receiptReturnNote   String?
+  receiptReturnedById String?
+  receiptReturnedAt   DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3070,17 +3087,18 @@ model PurchaseOrder {
 
   @@index([supplierId, status])
   @@index([status, orderDate(sort: Desc)])
+  @@index([buyerUserId, status])
   @@map("purchase_orders")
 }
 
 model PurchaseOrderLine {
-  id               String  @id @default(uuid())
-  purchaseOrderId  String
-  inventoryItemId  String
-  quantityOrdered  Float
-  quantityReceived Float   @default(0)
-  unitCostCents    Int // agreed cost per unit (paisa)
-  notes            String?
+  id                 String  @id @default(uuid())
+  purchaseOrderId    String
+  inventoryItemId    String
+  quantityOrdered    Float
+  quantityReceived   Float   @default(0)
+  unitCostCents      Int // agreed cost per unit (paisa)
+  notes              String?
   // The unit the line was ORDERED in (owner, 2026-11-05: "give options to choose in Grams, KGs, MLs or other required
   // UOM … and Rate per mentioned UOM"): quantityOrdered / unitCostCents stay in the item's stock unit; these keep what
   // was typed — orderUnit, stock units per order unit, and the rate per order unit — so the line is valued exactly
@@ -6548,12 +6566,32 @@ model GoodsReceipt {
   settledById        String?
   settledAccountCode String? // the credit side the cash document books (1011 box / 1355 advance)
 
+  // The GRN of the PO → GRN workflow (owner, 2026-11-05; procurement/poWorkflow.ts): set only on a receipt made by
+  // the requester's confirmation. GRN-00001 per company. grnStatus: finance_review (finance verifies) → ceo_review
+  // (the CEO) → approved (the supplier bill is created: supplierBillId); a return → buyer_fix (the buyer corrects the
+  // invoice) → finance_review. invoiceNumber / invoiceDate are the supplier's invoice the bill is booked from.
+  grnNumber          String?
+  grnStatus          String?
+  invoiceNumber      String?
+  invoiceDate        DateTime? @db.Date
+  financeCheckedById String?
+  financeCheckedAt   DateTime?
+  approvedById       String?
+  approvedAt         DateTime?
+  returnNote         String?
+  returnedById       String?
+  returnedAt         DateTime?
+  returnCount        Int       @default(0)
+  supplierBillId     String?
+
   lines GoodsReceiptLine[]
 
+  @@unique([tenantId, grnNumber])
   @@unique([tenantId, settledByType, settledById])
   @@index([supplierId, receivedAt])
   @@index([status])
   @@index([tenantId, receivedAt])
+  @@index([tenantId, grnStatus])
   @@map("goods_receipts")
 }
 

@@ -5,8 +5,9 @@
 //
 //   1. CEO approves the PO (service.ts approvePo) → in the SAME transaction raisePoCashVoucherTx raises ONE cash
 //      voucher (CashVoucher.purchaseOrderId @unique, kind 'request', CV-00001 series of the PO's company) for the PO
-//      total, in the BUYER's name (the holder), already 'approved' — the PO chain's finance check and the CEO's
-//      approval ARE its approvals (financeApprovedById / directorSignedById are stamped from the PO). Posts nothing.
+//      total, in the BUYER's name (the holder — the buyer the approval named, owner 2026-11-05), already 'approved' —
+//      the CEO's approval of the PO IS its approval (directorSignedById; financeApprovedById only for a PO checked by
+//      finance under the retired 2026-11-03 chain). Posts nothing.
 //
 //   2. Finance pays it (POST /trustops/cash-vouchers/:id/pay — the normal pay route, finance only). For a PO voucher
 //      the pay is NOT an expense (that would double-count: the goods are booked at the dock). It TOPS UP the buyer's
@@ -18,16 +19,19 @@
 //      The cash is now in the buyer's custody ON THE BOOKS (1011, his box's float) — never an advance account (1355 /
 //      1357 are retired) and never an expense.
 //
-//   3. The buyer buys; a manager who did NOT raise the PO receives it (receiving.ts receiveGoods — the existing route;
-//      owner 2026-11-03: "raiser cannot mark recvd"):
+//   3. The buyer buys, attaches the supplier's invoice and marks the PO completed; the REQUESTER (the PO's raiser —
+//      owner, 2026-11-05: "the completed PO + invoice goes back to the original Requester to confirm the items were
+//      received") confirms what arrived, which makes the GRN through the receiving engine (poWorkflow.ts
+//      confirmReceipt → receiving.ts receiveGoods):
 //         'procurement.receipt:<receiptId>'  Dr 12x0 per class (6045 for non-food) / Cr 2015 GRNI
 //
-//   4. Finance records the supplier's bill against that receipt (createBill); the buyer (the box's custodian) — or
-//      finance — pays it FROM THE BUYER'S BOX: POST /trustops/petty-cash/movements {type 'spend', supplierBillId}
-//      (createPaymentTx method cash + recordPettyCashSpendTx nature 'bill' — the existing engines):
-//         'supplier.bill:<billId>'      Dr 2015 / Cr 2010
+//   4. Finance verifies the GRN, the CEO approves it — and that approval creates the supplier's bill from the invoice
+//      (poWorkflow.ts approveGrn → createBill's engine): 'supplier.bill:<billId>'  Dr 2015 / Cr 2010. The buyer (the
+//      box's custodian) — or finance — then pays it FROM THE BUYER'S BOX: POST /trustops/petty-cash/movements
+//      {type 'spend', supplierBillId} (createPaymentTx method cash + recordPettyCashSpendTx nature 'bill'):
 //         'supplier.payment:<id>'       Dr 2010 / Cr 1010, and the box spend nature 'bill'  Dr 1010 / Cr 1011
 //      Change stays in the buyer's box (his float) or goes back with a box return (Dr 1010 / Cr 1011).
+//      A PO the CEO approved without cash (bought on credit) is paid by finance through Supplier payments.
 //
 // Net effect: cash 1010 → 1011 (buyer) → supplier; stock / expense once at the dock; AP raised and cleared once.
 //
@@ -54,15 +58,15 @@ export interface PoCashPlan {
 }
 
 /**
- * Who takes the cash: the login the CEO names, else the buyer who passed the buyer step (a 'procurement' login),
- * else the PO's raiser. Must be an active login of the PO's company (422 CASH_HOLDER_NOT_IN_COMPANY).
+ * Who takes the cash: the login the CEO names, else the PO's buyer (approvePo passes the buyer it chose — owner,
+ * 2026-11-05), else the PO's raiser. Must be an active login of the PO's company (422 CASH_HOLDER_NOT_IN_COMPANY).
  */
 export async function prepareCashVoucher(poId: string, namedHolderId: string | null): Promise<PoCashPlan> {
   const po = await prisma.purchaseOrder.findUnique({
     where: { id: poId },
     select: {
       id: true, reference: true, totalCents: true, conceptId: true, createdBy: true, submittedById: true,
-      buyerCheckedById: true, financeCheckedById: true, supplier: { select: { name: true, tenantId: true, systemKind: true } },
+      financeCheckedById: true, buyerUserId: true, supplier: { select: { name: true, tenantId: true, systemKind: true } },
     },
   })
   if (!po) throw new NotFoundError('PurchaseOrder', poId)
@@ -73,10 +77,7 @@ export async function prepareCashVoucher(poId: string, namedHolderId: string | n
   if (amountCents > INT4_MAX_CENTS) {
     throw new AppError('AMOUNT_TOO_LARGE', 'This PO is too large to be paid in cash — approve it without the cash voucher and pay the supplier by bank', 422)
   }
-  const buyer = po.buyerCheckedById
-    ? await prisma.user.findUnique({ where: { id: po.buyerCheckedById }, select: { id: true, role: true } })
-    : null
-  const holderId = namedHolderId ?? (buyer?.role === 'procurement' ? buyer.id : null) ?? po.createdBy
+  const holderId = namedHolderId ?? po.buyerUserId ?? po.createdBy
   if (!holderId) throw new AppError('CASH_HOLDER_REQUIRED', 'Name who takes the cash for this PO', 422)
   const holder = await prisma.user.findFirst({
     where: { id: holderId, deletedAt: null, isActive: true, OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] },

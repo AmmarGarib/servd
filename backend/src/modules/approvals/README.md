@@ -42,7 +42,9 @@ something). The old "My approvals" (`/hr/approvals`) redirects there.
 |---|---|---|---|
 | `staff_login` | `GET /auth/staff/pending` | `PATCH /auth/staff/:id/approve`, `/reject` | admin |
 | `storefront_publish` | `GET /site-layouts?status=pending` | `POST /site-layouts/:slug/approve`, `/reject` (note) | admin |
-| `purchase_order` | `GET /procurement/approvals` | `POST /procurement/purchase-orders/:id/approve`, `/reject` (reason) | admin |
+| `purchase_order` | `GET /procurement/approvals` | `POST /procurement/purchase-orders/:id/approve` (optional `buyerUserId`), `/return` (note ≥10), `/reject` (reason ≥10) | admin |
+| `grn_finance` | `GET /procurement/grns?queue=finance` | `POST /procurement/grns/:id/finance-pass`, `/return` (note ≥10) | finance (accounting) — never the PO's requester or buyer; the CEO as override |
+| `grn` | `GET /procurement/grns?queue=ceo` | `POST /procurement/grns/:id/approve` (books the supplier bill), `/return` (note ≥10) | admin |
 | `recipe` | `GET /recipes/pending-approval` | `POST /recipes/:id/approve`, `/reject` | admin, owner (never your own submission) |
 | `hr_request` | `GET /hr/approvals` | `POST /hr/records/:section/:id/decide` | per record step: reporting manager, HR, management |
 | `payroll_finance_review` ("Payroll — finance review", 2026-10-30) | `GET /hr/payroll/runs` (`finance_review`) | `POST /hr/payroll/runs/:id/finance-pass` (note?), `/finance-return` (note ≥10) | finance with accounting, or the CEO (never whoever created, prepared or sent it) |
@@ -122,6 +124,8 @@ queue routes and the hand-over catalogue all read it.
 | `staff_login` | operations (floor roles); **ceo** for every password role | role_management | admin | floor logins only | staff_directory |
 | `storefront_publish` | marketing; **ceo** for shared (no-company) pages | storefront | admin | company pages — **locked** (`DELEGATION_ENABLED.storefront_publish = false`) | storefront |
 | `purchase_order` | procurement | procurement | admin | yes | procurement |
+| `grn_finance` | finance | accounting | finance, admin (override) | no | — |
+| `grn` | **ceo** | procurement | admin | no | — |
 | `recipe` | operations; **ceo** when it has no company (A21) | recipes | admin, owner | yes | recipes |
 | `hr_request` | hr | staff_hr | per step | the final step | staff_hr |
 | `payroll_finance_review` | finance | accounting | finance, admin | **never** | — |

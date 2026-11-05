@@ -311,10 +311,11 @@ describe('purchasing and a client invoice for the return (3–20 Oct)', () => {
       { inventoryItemId: chicken.id, quantityOrdered: 100, unitCostCents: 3_000 },
       { inventoryItemId: boxes.id, quantityOrdered: 500, unitCostCents: 60 },
     ] }), 201)
-    // The PO chain (owner, 2026-11-03): the buyer's step is signed by raising → finance → the CEO (bought on credit).
-    expect(ok(await mgr.post(`/procurement/purchase-orders/${po.id}/submit`, {}), 200).status).toBe('finance_check')
-    ok(await sim.as(A.finance, A).post(`/procurement/po-steps/${po.id}/pass`, {}), 200)
+    // Submit → the CEO approves (bought on credit). This simulation is dated October — before the PO → GRN workflow of
+    // 2026-11-05 — so the PO is received at the dock and billed by hand: marked as approved under the old rules.
+    expect(ok(await mgr.post(`/procurement/purchase-orders/${po.id}/submit`, {}), 200).status).toBe('pending_approval')
     ok(await sim.as(sim.ceo, A).post(`/procurement/purchase-orders/${po.id}/approve`, { payByCash: false }), 200)
+    await sim.prisma.purchaseOrder.update({ where: { id: po.id }, data: { grnWorkflow: false } })
     ok(await mgr.post(`/procurement/purchase-orders/${po.id}/mark-sent`, { channel: 'phone' }), 200)
     const poRow = await sim.prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } })
     const poLine = (itemId: string) => poRow.lines.find((l) => l.inventoryItemId === itemId)!

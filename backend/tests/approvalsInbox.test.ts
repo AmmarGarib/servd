@@ -255,8 +255,8 @@ describe('two companies', () => {
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
-      'bad_debt', 'bank_reconciliation', 'cash_request_finance', 'cash_voucher', 'fixed_asset_request', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
-      'purchase_order', 'purchase_order_buyer', 'purchase_order_finance', 'raast_void', 'recipe', 'staff_login', 'stock_brand_move', 'stock_transfer', 'storefront_publish', 'tip_pool',
+      'bad_debt', 'bank_reconciliation', 'cash_request_finance', 'cash_voucher', 'fixed_asset_request', 'grn', 'grn_finance', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
+      'purchase_order', 'raast_void', 'recipe', 'staff_login', 'stock_brand_move', 'stock_transfer', 'storefront_publish', 'tip_pool',
       // Wage changes at the CEO's step (owner, 2026-10-27) read the same /hr/approvals queue: listed, none waiting.
       'wage_change',
       // Employee work map pins (owner, 2026-10-27) read /hr/work-pins (registered with the HR routes): listed, none waiting.
@@ -267,7 +267,7 @@ describe('two companies', () => {
     // Owner, 2026-10-30: only what is at the CEO's step. Finance's payroll review and a manager's stock
     // transfer are listed (the CEO may be their stranded approver) but none is waiting on the CEO: company A
     // has a finance login and managers.
-    for (const t of ['payroll_finance_review', 'stock_transfer', 'cash_request_finance', 'purchase_order_buyer', 'purchase_order_finance']) expect(countOf(body, t), t).toBe(0)
+    for (const t of ['payroll_finance_review', 'stock_transfer', 'cash_request_finance', 'grn_finance', 'grn']) expect(countOf(body, t), t).toBe(0)
     for (const t of ['staff_login', 'storefront_publish', 'purchase_order', 'payroll_run', 'tip_pool', 'cash_voucher',
       'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'on_account_client']) {
       expect(countOf(body, t), t).toBe(1)
@@ -330,10 +330,10 @@ describe('each role sees only the types it can approve', () => {
     expect(await typesOf('hodA')).toEqual(['hr_request', 'stock_transfer'])
     // Finance: the cash-voucher finance step (2026-10-15 flow).
     // …and a payroll HR sent for review (owner, 2026-10-30).
-    // …and a PO at finance's check (owner, 2026-11-03).
-    expect(await typesOf('finance')).toEqual(['cash_request_finance', 'payroll_finance_review', 'purchase_order_finance'])
-    // The buyer: a PO at the buyer's check (owner, 2026-11-03).
-    expect(await typesOf('procurement')).toEqual(['purchase_order_buyer'])
+    // …and a GRN to verify (owner, 2026-11-05: the PO → GRN workflow).
+    expect(await typesOf('finance')).toEqual(['cash_request_finance', 'grn_finance', 'payroll_finance_review'])
+    // The buyer: no approval of their own (their tasks are Procurement → My tasks).
+    expect(await typesOf('procurement')).toEqual([])
     for (const r of ['cashier', 'foh', 'boh', 'kitchen', 'expediter', 'marketing', 'brand_manager', 'it']) {
       expect(await typesOf(r), r).toEqual([])
     }

@@ -35,8 +35,8 @@ import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { invalidateSetupCache } from '../src/lib/setup-config.js'
-import { createPo, submitPo, passPoStep, markPoSent, createPaymentTx, agingReport } from '../src/modules/procurement/service.js'
-import { approvePoChain } from './poChain.js'
+import { createPo, submitPo, markPoSent, createPaymentTx, agingReport } from '../src/modules/procurement/service.js'
+import { approveLegacyPo as approvePoChain } from './poChain.js'
 import { postSupplierBill } from '../src/modules/accounting/supplierPosting.js'
 import { consumeFifoTx } from '../src/lib/stockLedger.js'
 import { procurementRoutes } from '../src/modules/procurement/routes.js'
@@ -82,15 +82,15 @@ const entry = (tenantId: string, reference: string) =>
   prisma.journalEntry.findFirst({ where: { tenantId, reference }, include: { lines: { include: { account: { select: { code: true } } } } } })
 
 /**
- * The PO chain (owner, 2026-11-03): the buyer submits (their own buyer step signed by raising) → finance's check
- * (here the CEO, as the override) → the CEO approves (bought on credit: no cash voucher).
+ * Submit → the CEO approves (bought on credit: no cash voucher), as a PO approved before the PO → GRN workflow.
  */
 async function chainToApproved(poId: string) {
-  expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/submit`)).json().status).toBe('finance_check')
-  const pass = await call('ceoA', 'POST', `/procurement/po-steps/${poId}/pass`)
-  expect(pass.statusCode, pass.body).toBe(200)
+  expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/submit`)).json().status).toBe('pending_approval')
   const ok = await call('ceoA', 'POST', `/procurement/purchase-orders/${poId}/approve`, { payByCash: false })
   expect(ok.statusCode, ok.body).toBe(200)
+  // These tests exercise the dock receive / bill-priced-off-the-PO mechanics: the PO is marked as approved under the
+  // pre-workflow rules (grnWorkflow false), which keep the dock path (poApprovalChain.test.ts covers the workflow).
+  await prisma.purchaseOrder.update({ where: { id: poId }, data: { grnWorkflow: false } })
 }
 
 /** A PO raised by the buyer, approved through the chain and marked sent. */
@@ -183,9 +183,8 @@ describe('BOH-09: the buyer role can buy', () => {
     expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${mgrPo.id}/receive`, { photoUrl: PHOTO, lines: [{ poLineId: line, quantityReceived: 1 }] })).statusCode).toBe(403)
 
     const big = await createPo({ supplierId: supA, lines: [{ inventoryItemId: flourA, quantityOrdered: 1, unitCostCents: 6_000_000 }], createdBy: users['buyerA']!.id })
-    expect((await submitPo(big.id, users['buyerA']!.id)).status).toBe('finance_check')
-    // Finance's step is not the buyer's, nor is the CEO's.
-    expect((await call('buyerA', 'POST', `/procurement/po-steps/${big.id}/pass`)).statusCode).toBe(403)
+    expect((await submitPo(big.id, users['buyerA']!.id)).status).toBe('pending_approval')
+    // The CEO's step is not the buyer's.
     expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${big.id}/approve`)).statusCode).toBe(403)
   })
 
@@ -262,9 +261,8 @@ describe('BOH-14: approved is not sent', () => {
     expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/mark-sent`, { channel: 'phone' })).json().error.code).toBe('PO_NOT_APPROVED')
 
     await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
-    // In the chain (finance's check) it still cannot go out.
+    // Waiting for the CEO it still cannot go out.
     expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/send`)).json().error.code).toBe('PO_NOT_APPROVED')
-    expect((await call('ceoA', 'POST', `/procurement/po-steps/${po.id}/pass`)).statusCode).toBe(200)
     expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`, { payByCash: false })).statusCode).toBe(200)
     const sent = await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/send`)
     expect(sent.statusCode).toBe(200)
@@ -277,7 +275,6 @@ describe('BOH-14: approved is not sent', () => {
   it("the CEO's approval of a large PO approves it — it does not send it", async () => {
     const big = await createPo({ supplierId: supA, lines: [{ inventoryItemId: flourA, quantityOrdered: 1, unitCostCents: 7_000_000 }], createdBy: users['buyerA']!.id })
     await submitPo(big.id, users['buyerA']!.id)
-    await passPoStep(big.id, users['ceoA']!.id, 'finance_check')
     const r = await call('ceoA', 'POST', `/procurement/purchase-orders/${big.id}/approve`, { payByCash: false })
     expect(r.json().status).toBe('approved')
     const row = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: big.id } })

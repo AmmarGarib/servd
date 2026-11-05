@@ -231,77 +231,79 @@ const purchaseOrders: ApprovalProvider = {
       link: '/procurement',
       actions: [
         { kind: 'approve', label: 'Approve', method: 'POST', path: `/procurement/purchase-orders/${r.id}/approve`, body: {},
-          confirm: 'Approve this PO? A cash voucher for its total is raised in the buyer\'s name for finance to pay (open the PO to approve it without cash).' },
-        { kind: 'return', label: 'Return', method: 'POST', path: `/procurement/po-steps/${r.id}/return`, body: {},
+          confirm: 'Approve this PO? It goes to the company\'s buyer (else the requester), and a cash voucher for its total is raised in the buyer\'s name for finance to pay (open the PO to pick the buyer or approve it without cash).' },
+        { kind: 'return', label: 'Return', method: 'POST', path: `/procurement/purchase-orders/${r.id}/return`, body: {},
           input: { field: 'note', label: 'What needs to change (at least 10 characters)', required: true } },
         { kind: 'reject', label: 'Reject', method: 'POST', path: `/procurement/purchase-orders/${r.id}/reject`, body: {},
-          input: { field: 'reason', label: 'Reason', required: true } },
+          input: { field: 'reason', label: 'Reason (at least 10 characters)', required: true } },
       ],
     }))
   },
 }
 
-// ── The PO chain's buyer and finance checks (owner, 2026-11-03) ─────────────
-// procurement/routes.ts: GET /procurement/po-steps?step=buyer|finance, POST /procurement/po-steps/:id/pass |
-// return {note ≥10} | reject {reason ≥10} — the step's role (procurement / finance) of the PO's company, never the
-// raiser, submitter or an earlier step's signer.
-function poStepProvider(type: 'purchase_order_buyer' | 'purchase_order_finance'): ApprovalProvider {
-  const buyer = type === 'purchase_order_buyer'
+// ── GRNs (owner, 2026-11-05: the PO → GRN workflow, procurement/poWorkflow.ts) ─────────
+// procurement/routes.ts: GET /procurement/grns?queue=finance|ceo (the caller's own queue), POST
+// /procurement/grns/:id/finance-pass | approve | return {note ≥10}. Finance (role finance + accounting) verifies, the
+// CEO approves (creates the supplier bill); never the PO's requester or buyer, never finance's checker at the CEO's.
+function grnProvider(type: 'grn_finance' | 'grn'): ApprovalProvider {
+  const fin = type === 'grn_finance'
   return {
     type,
-    label: buyer ? 'Purchase orders — buyer check' : 'Purchase orders — finance check',
-    module: buyer ? 'procurement' : 'accounting',
-    link: '/procurement',
+    label: APPROVAL_RIGHTS[type].label,
+    module: APPROVAL_RIGHTS[type].queueModule,
+    link: '/procurement?tab=grns',
     ...rightsOf(type),
     async load(ctx) {
       type Row = {
-        id: string; totalCents: number; reference: string | null; notes: string | null; createdBy: string | null
-        submittedById: string | null; submittedAt: string | null; buyerCheckedById: string | null; createdAt: string
-        expectedDate: string | null; supplier: { name: string; tenantId: string | null; systemKind?: string | null } | null; lines: unknown[]
-        viaHeadOfficeId?: string | null; own?: boolean; returnCount?: number
+        id: string; tenantId: string | null; grnNumber: string; invoiceNumber: string | null; invoiceDate: string | null
+        receivedAt: string; valueCents: number; invoicedCents: number; returnCount: number
+        supplier: { name: string } | null
+        po: { id: string; reference: string | null; createdBy: string | null; buyerUserId: string | null; completedById: string | null; payByCash: boolean } | null
+        financeCheckedById: string | null; own?: boolean; names?: Record<string, string | null>
       }
-      const rows = await ctx.read<Row[]>(`/procurement/po-steps?step=${buyer ? 'buyer' : 'finance'}`)
-      if (rows === null) return null
-      if (rows.length === 0) return []
-      const names = await userNames(rows.flatMap((r) => [r.createdBy, r.buyerCheckedById]))
+      const res = await ctx.read<unknown>(`/procurement/grns?queue=${fin ? 'finance' : 'ceo'}`)
+      if (res === null) return null
+      const rows = rowsOf<Row>(res, 'grns')
       return rows.map((r): ApprovalItem => {
-        const base = `/procurement/po-steps/${r.id}`
-        const own = r.own ? { disabledReason: 'You raised or checked this PO — someone else takes this step' } : {}
+        const base = `/procurement/grns/${r.id}`
+        const own = r.own ? { disabledReason: 'You raised, bought or checked this purchase — someone else takes this step' } : {}
         return {
           type,
           id: r.id,
-          tenantId: r.supplier?.tenantId ?? null,
-          submittedByIds: idList(r.createdBy, r.submittedById, buyer ? null : r.buyerCheckedById),
-          viaHeadOfficeId: r.viaHeadOfficeId ?? null,
-          title: `${r.reference ?? 'PO'} — ${poSupplierName(r.supplier)} — ${pkr(r.totalCents)}`,
-          subtitle: buyer ? 'Waiting for the buyer\'s check' : 'Checked by the buyer — waiting for finance',
+          tenantId: r.tenantId,
+          section: APPROVAL_RIGHTS[type].section,
+          submittedByIds: idList(r.po?.createdBy, r.po?.buyerUserId, r.po?.completedById, fin ? null : r.financeCheckedById),
+          title: `${r.grnNumber} — ${r.supplier?.name ?? 'Supplier'} — ${pkr(r.invoicedCents)}`,
+          subtitle: fin ? 'Receipt confirmed by the requester — verify the PO, quantities, invoice and documents' : 'Verified by finance — approving books the supplier bill',
           facts: facts([
-            ['Supplier', poSupplierName(r.supplier)],
-            ['Total', pkr(r.totalCents)],
-            ['Lines', String(r.lines?.length ?? 0)],
-            ['Raised by', r.createdBy ? names.get(r.createdBy) : null],
-            ['Buyer check', !buyer && r.buyerCheckedById ? names.get(r.buyerCheckedById) : null],
-            ['Expected', r.expectedDate ? ymd(r.expectedDate) : null],
+            ['PO', r.po?.reference ?? null],
+            ['Invoice', [r.invoiceNumber, r.invoiceDate ? ymd(r.invoiceDate) : null].filter(Boolean).join(' · ') || null],
+            ['Received value', pkr(r.valueCents)],
+            ['Invoice value', pkr(r.invoicedCents)],
+            ['Requester', r.names?.createdBy ?? null],
+            ['Buyer', r.names?.buyer ?? null],
+            ['Finance check', !fin ? r.names?.financeChecked ?? null : null],
+            ['Paid by', r.po ? (r.po.payByCash ? "Cash from the buyer's box" : 'Supplier payment (credit)') : null],
             ['Returned before', r.returnCount ? String(r.returnCount) : null],
-            ['Notes', r.notes],
           ]),
-          amountCents: r.totalCents,
-          waitingSince: iso(r.submittedAt ?? r.createdAt),
-          link: '/procurement',
+          amountCents: r.invoicedCents,
+          waitingSince: iso(r.receivedAt),
+          link: `/procurement?tab=grns&grn=${r.id}`,
           actions: [
-            { kind: 'approve', label: buyer ? 'Pass to finance' : 'Pass to CEO', method: 'POST', path: `${base}/pass`, body: {}, ...own },
-            { kind: 'return', label: 'Return', method: 'POST', path: `${base}/return`, body: {},
-              input: { field: 'note', label: 'What needs to change (at least 10 characters)', required: true }, ...own },
-            { kind: 'reject', label: 'Reject', method: 'POST', path: `${base}/reject`, body: {},
-              input: { field: 'reason', label: 'Reason (at least 10 characters)', required: true }, ...own },
+            fin
+              ? { kind: 'approve', label: 'Verified — to the CEO', method: 'POST', path: `${base}/finance-pass`, body: {}, ...own }
+              : { kind: 'approve', label: 'Approve & book the bill', method: 'POST', path: `${base}/approve`, body: {},
+                  confirm: "Approve this GRN? The supplier's bill is booked from its invoice (Dr GRNI / Cr payables) and finance is told to pay.", ...own },
+            { kind: 'return', label: 'Return to the buyer', method: 'POST', path: `${base}/return`, body: {},
+              input: { field: 'note', label: 'What the buyer must correct (at least 10 characters)', required: true }, ...own },
           ],
         }
       })
     },
   }
 }
-const purchaseOrdersBuyer = poStepProvider('purchase_order_buyer')
-const purchaseOrdersFinance = poStepProvider('purchase_order_finance')
+const grnsFinance = grnProvider('grn_finance')
+const grnsCeo = grnProvider('grn')
 
 // ── Recipe sign-off ──────────────────────────────────────────────────────────
 // recipes/routes.ts: GET /recipes/pending-approval, POST /recipes/:id/approve|
@@ -1571,9 +1573,9 @@ const connectorChanges: ApprovalProvider = {
 export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   staffLogins,
   storefrontPublish,
-  purchaseOrdersBuyer,
-  purchaseOrdersFinance,
   purchaseOrders,
+  grnsFinance,
+  grnsCeo,
   recipes,
   hrRequests,
   payrollFinanceReviews,

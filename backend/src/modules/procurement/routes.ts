@@ -17,6 +17,8 @@ import { supplierScopeWhere, findSupplierInScope, activeTenantOr422 } from './sc
 import type { UserRole } from '@prisma/client'
 import { approvalWaiting } from '../approvals/notify.js'
 import { requireModule } from '../notifications/requireModule.js'
+import { assertNote, poTaskNotice } from './poWorkflow.js'
+import { registerPoWorkflowRoutes } from './poWorkflowRoutes.js'
 
 // Company scope: every procurement row belongs to its supplier's company, so
 // every route below scopes through the supplier (./scope.ts). Reads use
@@ -50,7 +52,7 @@ import { requireModule } from '../notifications/requireModule.js'
 //     raises, approves and receives NOTHING here; it bills and pays as an
 //     AP_WRITER.
 import {
-  createPo, updatePoDraft, submitPo, approvePo, rejectPo, returnPo, passPoStep, cancelPo, sendPoToSupplier, markPoSent, isPoChainStatus,
+  createPo, updatePoDraft, submitPo, approvePo, rejectPo, returnPo, cancelPo, sendPoToSupplier, markPoSent, isPoChainStatus,
   noSupplierFor, setPoSupplier,
   createBill, voidBill, matchBill,
   createPayment, allocatePayment, unapplyPayment, voidPayment,
@@ -96,12 +98,6 @@ export async function requireApWriterModule(req: FastifyRequest): Promise<void> 
 const apWrite = { preHandler: [requireAuth(...AP_WRITERS), requireApWriterModule] }
 
 const PO_TYPE: ApprovalType = 'purchase_order'
-/** The approval type of each step of the PO chain (owner, 2026-11-03): buyer → finance → the CEO. */
-const PO_STEP_TYPE: Record<string, ApprovalType | undefined> = {
-  buyer_check: 'purchase_order_buyer',
-  finance_check: 'purchase_order_finance',
-  pending_approval: 'purchase_order',
-}
 
 /**
  * The approve / reject / queue routes are ALL_STAFF (a hand-over may name a
@@ -598,7 +594,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         where: {
           supplier: tenantWhere,
           ...(req.query.supplierId && { supplierId: req.query.supplierId }),
-          ...(req.query.status     && { status: req.query.status }),
+          // One status, or several comma-separated (the workflow's stages: 'approved,sent,partial' = buying).
+          ...(req.query.status     && { status: req.query.status.includes(',') ? { in: req.query.status.split(',').slice(0, 10) } : req.query.status }),
         },
         include: {
           supplier: { select: { name: true, email: true, tenantId: true, systemKind: true, tenant: { select: { id: true, name: true, slug: true } } } },
@@ -625,8 +622,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         },
       })
       if (!po) throw new NotFoundError('PurchaseOrder', req.params.id)
-      // The chain's people by name and the PO's cash voucher (owner, 2026-11-03) — for the PO's own screen.
-      const ids = [po.createdBy, po.submittedById, po.buyerCheckedById, po.financeCheckedById, po.approvedById, po.returnedById].filter((x): x is string => !!x)
+      // The workflow's people by name, the PO's cash voucher and its GRNs (owner, 2026-11-05) — for the PO's own screen.
+      const grns = await prisma.goodsReceipt.findMany({
+        where: { poId: po.id, grnNumber: { not: null } },
+        select: { id: true, grnNumber: true, grnStatus: true, invoiceNumber: true, invoiceDate: true, receivedAt: true, receivedById: true, financeCheckedById: true, financeCheckedAt: true, approvedById: true, approvedAt: true, returnNote: true, returnCount: true, supplierBillId: true },
+        orderBy: { receivedAt: 'asc' },
+      })
+      const ids = [po.createdBy, po.submittedById, po.buyerCheckedById, po.financeCheckedById, po.approvedById, po.returnedById, po.buyerUserId, po.completedById, po.receiptReturnedById,
+        ...grns.flatMap((g) => [g.receivedById, g.financeCheckedById, g.approvedById])].filter((x): x is string => !!x)
       const people = ids.length ? await prisma.user.findMany({ where: { id: { in: [...new Set(ids)] } }, select: { id: true, name: true } }) : []
       const nameOf = (id: string | null) => (id ? people.find((u) => u.id === id)?.name ?? null : null)
       const voucher = await prisma.cashVoucher.findFirst({
@@ -638,8 +641,10 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         names: {
           createdBy: nameOf(po.createdBy), submittedBy: nameOf(po.submittedById), buyerCheckedBy: nameOf(po.buyerCheckedById),
           financeCheckedBy: nameOf(po.financeCheckedById), approvedBy: nameOf(po.approvedById), returnedBy: nameOf(po.returnedById),
+          buyer: nameOf(po.buyerUserId), completedBy: nameOf(po.completedById), receiptReturnedBy: nameOf(po.receiptReturnedById),
         },
         cashVoucher: voucher,
+        grns: grns.map((g) => ({ ...g, receivedBy: nameOf(g.receivedById), financeCheckedBy: nameOf(g.financeCheckedById), approvedBy: nameOf(g.approvedById) })),
       }
     },
   )
@@ -708,8 +713,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       // The bell: a PO that entered the approval queue (queued, after the submit committed).
       // Round = the PO's updatedAt stamped by this submit, so a reject + resubmit notifies again.
       const announce = async (r: { status: string }) => {
-        const type = PO_STEP_TYPE[r.status]
-        if (!type) return
+        if (r.status !== 'pending_approval') return
+        const type = PO_TYPE
         const row = await prisma.purchaseOrder.findUnique({ where: { id: req.params.id }, select: { updatedAt: true } })
         approvalWaiting(type, req.params.id, { round: `submit:${(row?.updatedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
       }
@@ -754,9 +759,11 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     return { s, grant }
   }
 
-  // The CEO's final step (owner, 2026-11-03: "approved by me"). Body: payByCash (default the PO's own, true) raises
-  // the PO's cash voucher in the buyer's name in the same transaction (poCash.ts); cashHolderUserId names someone
-  // else to take the cash (a login of the PO's company).
+  // The CEO's approval (owner, 2026-11-05: "PO automatically goes to the CEO for approval. Once approved, the PO goes
+  // to the designated Buyer"). Body: buyerUserId names the buyer (an active login of the PO's company — 422
+  // BUYER_NOT_IN_COMPANY; omitted = the company's one 'procurement' login, else the requester); payByCash (default
+  // the PO's own, true) raises the PO's cash voucher in the buyer's name in the same transaction (poCash.ts);
+  // cashHolderUserId names someone else to take the cash (a login of the PO's company).
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/approve',
     { preHandler: requireAuth(...ALL_STAFF) },
@@ -764,13 +771,15 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       const body = z.object({
         payByCash: z.boolean().optional(),
         cashHolderUserId: z.string().min(1).max(64).nullable().optional(),
+        buyerUserId: z.string().min(1).max(64).nullable().optional(),
       }).parse(req.body ?? {})
       const { s, grant } = await poDecisionRight(req, req.params.id, 'approve')
-      const result = await approvePo(req.params.id, req.staffUser!.id, grant, { payByCash: body.payByCash, cashHolderUserId: body.cashHolderUserId ?? null })
+      const result = await approvePo(req.params.id, req.staffUser!.id, grant, { payByCash: body.payByCash, cashHolderUserId: body.cashHolderUserId ?? null, buyerUserId: body.buyerUserId ?? null })
       await auditApproval(req, {
         type: PO_TYPE, id: req.params.id, tenantId: s.ownerTenantId, decision: 'approve', grant, entity: 'PurchaseOrder',
-        metadata: { final: true, ...(result.cashVoucher ? { cashVoucherId: result.cashVoucher.id, cashVoucherNumber: result.cashVoucher.number } : { payByCash: false }) },
+        metadata: { final: true, buyerUserId: result.buyerUserId, buyerChosen: result.buyerChosen, ...(result.cashVoucher ? { cashVoucherId: result.cashVoucher.id, cashVoucherNumber: result.cashVoucher.number } : { payByCash: false }) },
       })
+      poTaskNotice('to_buy', req.params.id, req.staffUser!.id)
       if (result.cashVoucher) {
         // The bell: finance has a voucher to pay (the buyer takes the cash from finance).
         const { voucherTaskNotice } = await import('../trustops/cashVouchers.js')
@@ -780,120 +789,32 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // Reject at the CEO's step (final): the PO is cancelled with the reason. The buyer's and finance's own reject is
-  // POST /po-steps/:id/reject; a return for correction (any step) is POST /po-steps/:id/return.
+  // Reject at the CEO's step (final): the PO is cancelled with the reason (mandatory, ≥ 10 — owner, 2026-11-05).
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/purchase-orders/:id/reject',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
       const { s, grant } = await poDecisionRight(req, req.params.id, 'reject')
-      const { reason } = z.object({ reason: z.string().trim().min(1) }).parse(req.body)
-      const result = await rejectPo(req.params.id, req.staffUser!.id, reason, grant)
-      await auditApproval(req, { type: PO_TYPE, id: req.params.id, tenantId: s.ownerTenantId, decision: 'reject', grant, entity: 'PurchaseOrder', metadata: { reason } })
+      const { reason } = z.object({ reason: z.string().max(500).optional().nullable() }).parse(req.body ?? {})
+      const r = assertNote(reason, 'Give the reason')
+      const result = await rejectPo(req.params.id, req.staffUser!.id, r, grant)
+      await auditApproval(req, { type: PO_TYPE, id: req.params.id, tenantId: s.ownerTenantId, decision: 'reject', grant, entity: 'PurchaseOrder', metadata: { reason: r } })
       return result
     },
   )
 
-  // ── The buyer's and finance's steps (owner, 2026-11-03) ───────────────────
-  // /po-steps is its own module rule (lib/moduleAccess.ts GATED_PREFIXES: procurement | accounting); the step's own
-  // module is checked here: the buyer step needs 'procurement', finance's 'accounting' (the CEO is never refused).
-  // Who may act is the step's approval type (lib/approvalRights.ts purchase_order_buyer / purchase_order_finance):
-  // its role, a member of the PO's company, never the raiser / submitter / an earlier step's signer (403
-  // SELF_APPROVAL_BLOCKED). Another company's PO is 404.
-  const STEP_MODULE: Record<'buyer_check' | 'finance_check', ReturnType<typeof requireModule>> = {
-    buyer_check: requireModule('procurement'),
-    finance_check: requireModule('accounting'),
-  }
-  async function poStepRight(req: FastifyRequest, poId: string, action: string) {
-    const head = await approvalSubject(PO_TYPE, poId)
-    if (!head) throw new NotFoundError('PurchaseOrder', poId)
-    if (head.status === 'pending_approval') {
-      const r = await poDecisionRight(req, poId, action === 'pass' ? 'approve' : 'reject')
-      return { status: 'pending_approval' as const, type: PO_TYPE, s: r.s, grant: r.grant }
-    }
-    if (head.status !== 'buyer_check' && head.status !== 'finance_check') {
-      throw new AppError('INVALID_STATE', `This PO is ${head.status.replace(/_/g, ' ')} — it is not waiting for a check`, 409)
-    }
-    const status: 'buyer_check' | 'finance_check' = head.status
-    const type = PO_STEP_TYPE[status]!
-    const su = req.staffUser!
-    if (!(APPROVAL_RIGHTS[type].roles as readonly string[]).includes(su.role)) {
-      // A stranger to the step: as unknown as another company's PO when they share no company with it.
-      if (!head.companyIds.some((t) => (su.memberTenantIds ?? []).includes(t))) throw new NotFoundError('PurchaseOrder', poId)
-      throw new AppError('PO_STEP_NOT_YOURS', status === 'buyer_check' ? 'This PO is waiting for the buyer' : 'This PO is waiting for finance', 403)
-    }
-    await STEP_MODULE[status](req)
-    const s = await approvalSubject(type, poId)
-    if (!s) throw new NotFoundError('PurchaseOrder', poId)
-    let grant: ApprovalGrant
-    try {
-      grant = await assertCanApprove(req, approvalInputOf(type, poId, s, { entity: 'PurchaseOrder', action: `${action} purchase order (${status.replace('_', ' ')})` }))
-    } catch (err) {
-      if (err instanceof AppError && err.statusCode === 404) throw new NotFoundError('PurchaseOrder', poId)
-      throw err
-    }
-    return { status, type, s, grant }
-  }
-
-  // The queue of one step: POs waiting for the caller's check, in their member companies (never their own).
-  fastify.get<{ Querystring: { step?: string } }>('/po-steps', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const step = z.enum(['buyer', 'finance']).parse(req.query.step ?? (req.staffUser!.role === 'finance' ? 'finance' : 'buyer'))
-    const status = step === 'buyer' ? 'buyer_check' : 'finance_check'
-    const type = PO_STEP_TYPE[status]!
-    const su = req.staffUser!
-    if (!(APPROVAL_RIGHTS[type].roles as readonly string[]).includes(su.role)) return []
-    try { await STEP_MODULE[status](req) } catch (err) { if (err instanceof ForbiddenError) return []; throw err }
-    const members = new Set(su.memberTenantIds ?? [])
-    const view = (await resolveTenantScope(req)).tenantIds.filter((t) => members.has(t))
-    if (view.length === 0) return []
-    const rows = await prisma.purchaseOrder.findMany({
-      where: { status, supplier: { tenantId: { in: view } } },
-      include: {
-        supplier: { select: { name: true, tenantId: true, systemKind: true } },
-        lines:    { include: { inventoryItem: { select: { name: true, unit: true, category: true } } } },
-      },
-      orderBy: { submittedAt: 'asc' },
-      take: 200,
-    })
-    const mine = (p: { createdBy: string | null; submittedById: string | null; buyerCheckedById: string | null }) =>
-      su.role !== 'admin' && [p.createdBy, p.submittedById, ...(status === 'finance_check' ? [p.buyerCheckedById] : [])].includes(su.id)
-    return rows.map((p) => ({ ...p, totalCents: Number(p.totalCents), own: mine(p) }))
-  })
-
-  // Pass the step the PO is at (buyer → finance, finance → the CEO). At the CEO's step use /purchase-orders/:id/approve.
-  fastify.post<{ Params: { id: string } }>('/po-steps/:id/pass', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const body = z.object({ note: z.string().trim().max(500).nullable().optional() }).parse(req.body ?? {})
-    const r = await poStepRight(req, req.params.id, 'pass')
-    if (r.status === 'pending_approval') {
-      throw new AppError('USE_APPROVE', 'This PO is with the CEO — approve it from the PO (it raises the cash voucher)', 409)
-    }
-    const result = await passPoStep(req.params.id, req.staffUser!.id, r.status, body.note ?? null)
-    await auditApproval(req, {
-      type: r.type, id: req.params.id, tenantId: r.s.ownerTenantId, decision: 'approve', grant: r.grant, entity: 'PurchaseOrder',
-      metadata: { final: false, from: r.status, to: result.status, ...(body.note ? { note: body.note } : {}) },
-    })
-    const row = await prisma.purchaseOrder.findUnique({ where: { id: req.params.id }, select: { updatedAt: true } })
-    approvalWaiting(PO_STEP_TYPE[result.status]!, req.params.id, { round: `${result.status}:${(row?.updatedAt ?? new Date()).toISOString()}`, actorId: req.staffUser!.id })
+  // Return at the CEO's step for correction → draft with the note (mandatory, ≥ 10). The raiser edits and resubmits.
+  fastify.post<{ Params: { id: string } }>('/purchase-orders/:id/return', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const { note } = z.object({ note: z.string().max(500).optional().nullable() }).parse(req.body ?? {})
+    const n = assertNote(note, 'Say what needs to change')
+    const { s, grant } = await poDecisionRight(req, req.params.id, 'reject')
+    const result = await returnPo(req.params.id, req.staffUser!.id, n, grant)
+    await auditApproval(req, { type: PO_TYPE, id: req.params.id, tenantId: s.ownerTenantId, decision: 'return', grant, entity: 'PurchaseOrder', metadata: { note: n, from: result.from } })
     return result
   })
 
-  // Return for correction, from any step (the buyer's, finance's or the CEO's) → draft with the note (≥ 10).
-  fastify.post<{ Params: { id: string } }>('/po-steps/:id/return', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const { note } = z.object({ note: z.string().trim().min(10, 'Say what needs to change (at least 10 characters)').max(500) }).parse(req.body ?? {})
-    const r = await poStepRight(req, req.params.id, 'return')
-    const result = await returnPo(req.params.id, req.staffUser!.id, note, r.grant)
-    await auditApproval(req, { type: r.type, id: req.params.id, tenantId: r.s.ownerTenantId, decision: 'return', grant: r.grant, entity: 'PurchaseOrder', metadata: { note, from: r.status } })
-    return result
-  })
-
-  // Reject at the buyer's or finance's step (final: cancelled with the reason ≥ 10). The CEO's: /purchase-orders/:id/reject.
-  fastify.post<{ Params: { id: string } }>('/po-steps/:id/reject', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
-    const { reason } = z.object({ reason: z.string().trim().min(10, 'Give the reason (at least 10 characters)').max(500) }).parse(req.body ?? {})
-    const r = await poStepRight(req, req.params.id, 'reject')
-    const result = await rejectPo(req.params.id, req.staffUser!.id, reason, r.grant)
-    await auditApproval(req, { type: r.type, id: req.params.id, tenantId: r.s.ownerTenantId, decision: 'reject', grant: r.grant, entity: 'PurchaseOrder', metadata: { reason, from: r.status } })
-    return result
-  })
+  // The PO → GRN workflow's own routes (buyer, requester, finance, the CEO's GRN approval, my tasks): ./poWorkflowRoutes.ts.
+  await registerPoWorkflowRoutes(fastify, { guardPo })
 
   // Cancel. Through a head-office lens only your OWN PO, while it is still a
   // draft or waiting for approval (spec §6.4).
@@ -1070,7 +991,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           supplier: tenantWhere,
           ...(kind !== 'all' && { kind }),
           ...(req.query.supplierId && { supplierId: req.query.supplierId }),
-          ...(req.query.status     && { status: req.query.status }),
+          // One status, or several comma-separated (the workflow's stages: 'approved,sent,partial' = buying).
+          ...(req.query.status     && { status: req.query.status.includes(',') ? { in: req.query.status.split(',').slice(0, 10) } : req.query.status }),
           ...(req.query.overdue === 'true' && {
             kind:    'bill',
             status:  { in: ['open', 'partially_paid'] },

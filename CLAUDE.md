@@ -1866,6 +1866,29 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   finance only Bills, Payments and Aging (`useApOnly`); sidebar Accounting →
   "Supplier bills & payments". A payment or due date that is not a date is 422
   `INVALID_DATE`.
+- **PO → GRN workflow (owner, 2026-11-05; REPLACES the buyer → finance → CEO PO chain of 2026-11-03).** Contract:
+  header of `backend/src/modules/procurement/poWorkflow.ts` (routes `poWorkflowRoutes.ts`). Requester raises → submit
+  → `pending_approval` (the CEO only; return → draft / reject → cancelled, note ≥10 — 422 `NOTE_REQUIRED`) → the CEO
+  approves and names the BUYER (`buyerUserId`: named — 422 `BUYER_NOT_IN_COMPANY` — else the company's one active
+  `procurement` login, else the requester; `PUT /purchase-orders/:id/buyer` CEO-only reassign) and raises the PO's
+  cash voucher in the buyer's name (`poCash.ts`, unchanged, unless "pay by cash" is unticked); `grnWorkflow` = true →
+  buyer stage (approved | sent | partial): the buyer attaches the supplier's invoice (record files, owner type
+  `purchase_order`; ≥1 file since the last GRN, else 422 `INVOICE_REQUIRED`), real supplier chosen, invoice no. +
+  date, optional actual rates → `POST /purchase-orders/:id/complete` → `completed` → the REQUESTER (only them or the
+  CEO) confirms what arrived (`/confirm-receipt`: `receiving.ts receiveGoods {confirmation}` — the ONE receiving
+  engine, Dr 12x0 / Cr 2015, no raiser block, no dock photo) → a GRN on `goods_receipts` (`grnNumber` GRN-00001 per
+  company, `grnStatus` finance_review) and the PO received | partial (partial = back to the buyer, a second GRN), or
+  sends it back (`/reject-receipt`, note) → finance with `accounting` verifies (approval type `grn_finance`; never the
+  requester / buyer) → the CEO approves (`grn`, never delegable): ONE transaction creates the supplier bill through
+  `prepareBill` + `insertBillTx` (number = invoice no., date = invoice date, due by the supplier's terms, a line per
+  receipt line at the PO line's current rate — `viaGrn`, exact `lineTotalCents`; Dr 2015 / Cr 2010; 409
+  `BILL_NUMBER_TAKEN`) → finance pays: a cash PO from the buyer's box (petty-cash spend with `supplierBillId`), a
+  credit PO through Supplier payments. A return at finance / the CEO → `buyer_fix` → the buyer resubmits. No bypass:
+  dock / PO receive of a `grnWorkflow` PO 409 `USE_RECEIPT_CONFIRMATION`, a hand-made bill 409 `USE_GRN_APPROVAL`, a
+  GRN approved before finance 409. POs approved before this keep the old dock path (`grnWorkflow` false). Every step
+  writes `PoActivityLog` (GRN steps carry `grnId`). `GET /procurement/my-tasks` = the caller's own to buy / to confirm
+  / to fix; finance and the CEO work the approvals inbox. Migration `20261105140000_po_grn_workflow` (moved
+  buyer_check / finance_check POs to the CEO). Tests: `tests/poApprovalChain.test.ts`.
 - **PO cancel:** a PO with a pending GRNI match (a bill booked before
   delivery) cannot be cancelled (409 `PO_BILLED_AHEAD`; void the bill or raise
   a "short" credit note first); billing ahead on a cancelled PO is 409

@@ -113,13 +113,11 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   staff_login: spec(() => '/workforce'),
   storefront_publish: spec(() => '/storefront?tab=approvals'),
   purchase_order: spec(() => '/procurement'),
-  // The PO chain (owner, 2026-11-03): the buyer, then finance, then the CEO (purchase_order).
-  purchase_order_buyer: spec(() => '/procurement', {
-    waitingTitle: (_s, f) => `${f.ref} waiting for your buyer check${f.companyName ? ` (${f.companyName})` : ''}`,
+  // The PO → GRN workflow (owner, 2026-11-05): finance verifies the GRN, then the CEO approves it (the bill).
+  grn_finance: spec(() => '/procurement?tab=grns', {
+    waitingTitle: (_s, f) => `${f.ref} waiting for finance's check${f.amountCents != null ? ` — ${formatPkr(f.amountCents)}` : ''}${f.companyName ? ` (${f.companyName})` : ''}`,
   }),
-  purchase_order_finance: spec(() => '/procurement', {
-    waitingTitle: (_s, f) => `${f.ref} waiting for finance's check${f.companyName ? ` (${f.companyName})` : ''}`,
-  }),
+  grn: spec(() => '/procurement?tab=grns'),
   recipe: spec((id) => `/accounting/recipes/${encodeURIComponent(id)}`),
   hr_request: spec(() => '/hr/me', {
     // The employee is told the OUTCOME (final approval or a rejection), never each step.
@@ -200,9 +198,17 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       const l = await db.siteLayout.findFirst({ where: { OR: [{ id }, { slug: id }] }, select: { title: true, slug: true } })
       return l && { ref: `Website change ${l.title ?? l.slug}` }
     }
-    case 'purchase_order':
-    case 'purchase_order_buyer':
-    case 'purchase_order_finance': {
+    case 'grn_finance':
+    case 'grn': {
+      const g = await db.goodsReceipt.findUnique({ where: { id }, select: { grnNumber: true, invoiceNumber: true, poId: true, supplierId: true } })
+      if (!g) return null
+      const [po, sup] = await Promise.all([
+        g.poId ? db.purchaseOrder.findUnique({ where: { id: g.poId }, select: { reference: true } }) : null,
+        db.supplier.findUnique({ where: { id: g.supplierId }, select: { name: true } }),
+      ])
+      return { ref: `${g.grnNumber ?? 'GRN'}${po?.reference ? ` (${po.reference})` : ''}`, detail: [sup?.name ? `Supplier: ${sup.name}` : null, g.invoiceNumber ? `Invoice ${g.invoiceNumber}` : null].filter(Boolean).join(' · ') || null }
+    }
+    case 'purchase_order': {
       const p = await db.purchaseOrder.findUnique({ where: { id }, select: { reference: true, totalCents: true, supplier: { select: { name: true } } } })
       return p && { ref: `PO ${p.reference ?? short(id)}`, amountCents: Number(p.totalCents), detail: p.supplier?.name ? `Supplier: ${p.supplier.name}` : null }
     }
@@ -440,7 +446,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
   let final = e.final
   if (final === undefined && outcome === 'approved') {
     if (type === 'hr_request') final = s.status === 'approved'
-    else if (type === 'cash_request_finance' || type === 'payroll_finance_review' || type === 'purchase_order_buyer' || type === 'purchase_order_finance') final = false
+    else if (type === 'cash_request_finance' || type === 'payroll_finance_review' || type === 'grn_finance') final = false
   }
   const nonFinal = outcome === 'approved' && final === false
 
@@ -455,7 +461,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
       verb = 'approved'
       if (nonFinal) {
         const next = await nextStepLabel(type, e.id)
-        verb = type === 'cash_request_finance' ? 'approved by finance' : type === 'payroll_finance_review' || type === 'purchase_order_finance' ? 'checked by finance' : type === 'purchase_order_buyer' ? 'checked by the buyer' : 'approved at this step'
+        verb = type === 'cash_request_finance' ? 'approved by finance' : type === 'payroll_finance_review' || type === 'grn_finance' ? 'checked by finance' : 'approved at this step'
         body = next ? `Now with ${next}.` : null
       } else if (type === 'storefront_publish') {
         const at = iso(e.publishAt)
@@ -499,8 +505,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
 /** "HR", "the CEO" … — who a multi-step item is with now. */
 async function nextStepLabel(type: ApprovalType, id: string): Promise<string | null> {
   if (type === 'cash_request_finance' || type === 'payroll_finance_review') return 'the CEO'
-  if (type === 'purchase_order_buyer') return 'finance'
-  if (type === 'purchase_order_finance') return 'the CEO'
+  if (type === 'grn_finance') return 'the CEO'
   if (type !== 'hr_request') return null
   try {
     const rec = await serviceClient.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, formVersion: true, currentStep: true, status: true, data: true, amountCents: true } })
