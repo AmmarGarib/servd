@@ -5273,9 +5273,10 @@ model BankReconBookMark {
   tenantId      String
   bankAccountId String
   journalLineId String   @unique
-  status        String // under_review | cleared_prior
+  status        String // under_review | cleared_prior | cleared_manual (owner, 2026-11-05: cleared by manual entry)
   note          String
   reference     String?
+  clearedOn     DateTime? @db.Date // cleared_manual only: the day the bank cleared it
   createdById   String
   createdAt     DateTime @default(now())
 

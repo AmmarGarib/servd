@@ -323,6 +323,7 @@ export async function brsRoutes(fastify: FastifyInstance) {
       if (!jl) throw new NotFoundError('JournalLine', body.journalLineId!)
       const mark = await prisma.bankReconBookMark.findUnique({ where: { journalLineId: jl.id } })
       if (mark?.status === 'cleared_prior') throw new AppError('LINE_CLEARED_PRIOR', 'That entry is marked cleared before the first reconciliation — remove that mark first', 409)
+      if (mark?.status === 'cleared_manual') throw new AppError('LINE_CLEARED_MANUAL', 'That entry is marked cleared by the bank — undo that first', 409)
       if (body.underReview) {
         if (!body.note || body.note.length < 3) throw new AppError('NOTE_REQUIRED', 'Say what is being reviewed', 422)
         await prisma.bankReconBookMark.upsert({
@@ -333,6 +334,64 @@ export async function brsRoutes(fastify: FastifyInstance) {
       } else if (mark) await prisma.bankReconBookMark.delete({ where: { id: mark.id } })
     }
     await auditRec(req, r, 'review', { statementLineId: body.statementLineId ?? null, journalLineId: body.journalLineId ?? null, underReview: body.underReview, note: body.note ?? null })
+    return { ok: true }
+  })
+
+  // ── Cleared by the bank — entered by hand, no statement line (owner, 2026-11-05: "Make it settle by manual entry
+  // instead of matching with bank statement") ──────────────────────────────────────────────────────────────────
+  // A MARK, never a posting (the cheque / deposit is already in the books): the day the bank cleared it (on or after
+  // the entry's day, not in the future), the bank's reference and a note ≥10. Once that day is on or before a
+  // reconciliation's end the item is not outstanding there (brs.ts computeStatement); later it shows "cleared on".
+  // Draft reconciliations only; refused while the day sits in an APPROVED period of this bank (409
+  // RECONCILIATION_LOCKED), when a statement line already pairs it (409 LINE_MATCHED — it is cleared already) or
+  // when it carries the "cleared before" mark. Undo = `cleared: false` (same lock rule). A statement imported later
+  // can still be matched to the entry (the match then decides).
+  fastify.post<{ Params: { id: string } }>('/:id/cleared-manual', { preHandler: BANK_BOOKERS }, async (req) => {
+    const body = z.object({
+      journalLineId: z.string().min(1).max(64), cleared: z.boolean(),
+      clearedOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD').optional(),
+      reference: z.string().trim().max(200).optional(),
+      note: z.string().trim().min(MIN_TEXT, `Say why (at least ${MIN_TEXT} characters)`).max(500).optional(),
+    }).parse(req.body ?? {})
+    const r = await loadRec(req, req.params.id, 'write')
+    assertDraft(r)
+    const bank = await loadBank(prisma, r.bankAccountId, [r.tenantId])
+    const jl = await prisma.journalLine.findFirst({
+      where: { id: body.journalLineId, journalEntry: { tenantId: r.tenantId }, account: { code: r.accountCode, tenantId: r.tenantId } },
+      select: { id: true, journalEntry: { select: { entryDate: true } } },
+    })
+    if (!jl) throw new NotFoundError('JournalLine', body.journalLineId)
+    const mark = await prisma.bankReconBookMark.findUnique({ where: { journalLineId: jl.id } })
+    const locked = async (day: string) => {
+      if (await approvedPeriodHolding(prisma, bank, day)) throw new AppError('RECONCILIATION_LOCKED', `${day} is in an approved reconciliation of this bank — reopen it first`, 409)
+    }
+    if (!body.cleared) {
+      if (mark?.status !== 'cleared_manual') throw new AppError('NOT_CLEARED_MANUAL', 'That entry is not marked cleared by the bank', 409)
+      await locked(isoDay(mark.clearedOn!))
+      await prisma.bankReconBookMark.delete({ where: { id: mark.id } })
+      await auditRec(req, r, 'cleared_manual_undo', { journalLineId: jl.id, clearedOn: isoDay(mark.clearedOn!), reference: mark.reference })
+      return { ok: true }
+    }
+    if (!body.clearedOn) throw new AppError('CLEARED_ON_REQUIRED', 'Enter the date the bank cleared it', 422)
+    if (!body.note) throw new AppError('NOTE_REQUIRED', `Say why (at least ${MIN_TEXT} characters)`, 422)
+    if (mark?.status === 'cleared_prior') throw new AppError('LINE_CLEARED_PRIOR', 'That entry is marked cleared before the first reconciliation — remove that mark first', 409)
+    const entryDay = isoDay(new Date(jl.journalEntry.entryDate.getTime() + 5 * 3600_000))
+    const todayPkt = isoDay(new Date(Date.now() + 5 * 3600_000))
+    if (body.clearedOn < entryDay) throw new AppError('CLEARED_BEFORE_ENTRY', `The bank cannot clear it before the entry's own date (${entryDay})`, 422)
+    if (body.clearedOn > todayPkt) throw new AppError('CLEARED_IN_FUTURE', 'The clearing date cannot be in the future', 422)
+    if (entryDay > isoDay(r.periodTo)) throw new AppError('NOT_IN_PERIOD', 'That entry is dated after this reconciliation', 422)
+    if (await prisma.bankStatementLine.count({ where: { matchedJournalLineId: jl.id, matchStatus: { in: ['matched', 'adjusted'] } } })) {
+      throw new AppError('LINE_MATCHED', 'A bank statement line already clears that entry', 409)
+    }
+    await locked(body.clearedOn)
+    if (mark?.status === 'cleared_manual') await locked(isoDay(mark.clearedOn!))
+    const day = new Date(`${body.clearedOn}T00:00:00Z`)
+    await prisma.bankReconBookMark.upsert({
+      where: { journalLineId: jl.id },
+      create: { tenantId: r.tenantId, bankAccountId: r.bankAccountId, journalLineId: jl.id, status: 'cleared_manual', clearedOn: day, note: body.note, reference: body.reference || null, createdById: req.staffUser!.id },
+      update: { status: 'cleared_manual', clearedOn: day, note: body.note, reference: body.reference || null },
+    })
+    await auditRec(req, r, 'cleared_manual', { journalLineId: jl.id, clearedOn: body.clearedOn, reference: body.reference ?? null, note: body.note, replaced: mark?.status ?? null })
     return { ok: true }
   })
 
@@ -359,7 +418,7 @@ export async function brsRoutes(fastify: FastifyInstance) {
       await prisma.bankReconBookMark.upsert({
         where: { journalLineId: jl.id },
         create: { tenantId: r.tenantId, bankAccountId: r.bankAccountId, journalLineId: jl.id, status: 'cleared_prior', note: body.note, reference: body.reference ?? null, createdById: req.staffUser!.id },
-        update: { status: 'cleared_prior', note: body.note, reference: body.reference ?? null },
+        update: { status: 'cleared_prior', note: body.note, reference: body.reference ?? null, clearedOn: null },
       })
     } else {
       await prisma.bankReconBookMark.deleteMany({ where: { journalLineId: jl.id, status: 'cleared_prior' } })
@@ -600,6 +659,11 @@ export async function brsRoutes(fastify: FastifyInstance) {
         ...items('D. Amounts credited by the bank, not recorded in the books', bankRows(s.bankCredits)),
         ...items('E. Amounts debited by the bank, not recorded in the books', bankRows(s.bankDebits)),
         ...items('F. Other adjustments / errors', s.adjustments.map((a) => ({ date: a.createdAt.slice(0, 10), voucher: a.side === 'bank' ? 'Bank side' : 'Book side', reference: a.reference, party: a.kindLabel, description: a.narration, amount: a.amountCents }))),
+        // For the record (not in the arithmetic): items cleared by a manual entry in this period, with no statement line.
+        ...(s.manuallyCleared.length ? items('Note: cleared by manual entry (no bank statement line)', s.manuallyCleared.map((i) => ({
+          date: i.date, voucher: i.voucherNo ?? '', reference: i.manualClear?.reference ?? i.chequeRef ?? '', party: i.party ?? '',
+          description: `${i.kind === 'deposit' ? 'Deposit' : 'Cheque'} — ${i.description} — cleared ${i.manualClear?.clearedOn ?? ''}: ${i.manualClear?.note ?? ''}`, amount: i.amountCents,
+        }))) : []),
       ]
       t = {
         ...base, title: 'Bank Reconciliation Statement',

@@ -36,6 +36,7 @@ export interface BookItem {
   journalLineId: string; entryId: string; date: string; voucherNo: string | null; reference: string | null
   chequeRef: string | null; party: string | null; description: string; amountCents: number
   underReview: boolean; reviewNote: string | null; clearedOn: string | null; raast?: boolean
+  manualClear?: { clearedOn: string; reference: string | null; note: string } | null
 }
 export interface BankItem {
   statementLineId: string; date: string; reference: string | null; description: string; amountCents: number
@@ -51,6 +52,7 @@ export interface BrsStatement {
   book: { openingCents: number; receiptsCents: number; paymentsCents: number; closingCents: number }
   bankClosingCents: number | null
   deposits: BookItem[]; cheques: BookItem[]; bankCredits: BankItem[]; bankDebits: BankItem[]; adjustments: AdjItem[]
+  manuallyCleared?: Array<BookItem & { kind: 'deposit' | 'cheque' }>
   totals: BrsTotals
   firstReconciliation: boolean
 }

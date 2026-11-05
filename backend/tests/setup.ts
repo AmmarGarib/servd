@@ -193,6 +193,10 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Bank reconciliation statements (2026-11-05): status / period / side / kind / text CHECKs + the dedupe index (RLS out).
   for (const statement of migrationSection('20261105100000_bank_reconciliations',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
+  // Cleared by manual entry (2026-11-05): the mark status CHECK learns 'cleared_manual' — drop the old one, then the new.
+  await prisma.$executeRawUnsafe('ALTER TABLE "bank_recon_book_marks" DROP CONSTRAINT IF EXISTS "bank_recon_book_marks_status_chk"')
+  for (const statement of migrationSection('20261105200000_brs_manual_clear',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
   // Sub-accounts (2026-10-23): the kind / employee and positive-amount CHECKs (RLS out).
   for (const statement of migrationSection('20261023110000_sub_accounts',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)

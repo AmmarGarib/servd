@@ -108,6 +108,7 @@ type Tool =
   | { kind: 'flag'; item: BookItem }
   | { kind: 'cleared'; item: BookItem }
   | { kind: 'matchBank'; item: BookItem; deposit: boolean }
+  | { kind: 'clearManual'; item: BookItem; deposit: boolean }
   | { kind: 'addAdj' }
   | { kind: 'removeAdj'; adj: AdjItem }
   | { kind: 'cancel' } | { kind: 'return' } | { kind: 'reopen' }
@@ -159,6 +160,11 @@ export default function BankReconciliationWorkspace() {
   })
   const review = useMutation({
     mutationFn: (b: { statementLineId?: string; journalLineId?: string; underReview: boolean; note?: string }) => post('/review', b),
+    onSuccess: () => { setActionErr(null); refresh() },
+    onError: (e) => setActionErr(errText(e)),
+  })
+  const undoManual = useMutation({
+    mutationFn: (journalLineId: string) => post('/cleared-manual', { journalLineId, cleared: false }),
     onSuccess: () => { setActionErr(null); refresh() },
     onError: (e) => setActionErr(errText(e)),
   })
@@ -362,14 +368,14 @@ export default function BankReconciliationWorkspace() {
           open={!!open.B} onToggle={() => toggle('B')}>
           <BookTable items={st.deposits} kind="deposit" st={st} editable={editable} busy={review.isPending}
             onFlag={(i) => setTool({ kind: 'flag', item: i })} onUnflag={(i) => review.mutate({ journalLineId: i.journalLineId, underReview: false })}
-            onCleared={(i) => setTool({ kind: 'cleared', item: i })} onMatchBank={(i) => setTool({ kind: 'matchBank', item: i, deposit: true })} />
+            onCleared={(i) => setTool({ kind: 'cleared', item: i })} onMatchBank={(i) => setTool({ kind: 'matchBank', item: i, deposit: true })} onClearManual={(i) => setTool({ kind: 'clearManual', item: i, deposit: true })} />
         </Section>
 
         <Section letter="C" title="Cheques issued but not presented" total={t.chequesCents} count={st.cheques.length}
           open={!!open.C} onToggle={() => toggle('C')}>
           <BookTable items={st.cheques} kind="cheque" st={st} editable={editable} busy={review.isPending}
             onFlag={(i) => setTool({ kind: 'flag', item: i })} onUnflag={(i) => review.mutate({ journalLineId: i.journalLineId, underReview: false })}
-            onCleared={(i) => setTool({ kind: 'cleared', item: i })} onMatchBank={(i) => setTool({ kind: 'matchBank', item: i, deposit: false })} />
+            onCleared={(i) => setTool({ kind: 'cleared', item: i })} onMatchBank={(i) => setTool({ kind: 'matchBank', item: i, deposit: false })} onClearManual={(i) => setTool({ kind: 'clearManual', item: i, deposit: false })} />
         </Section>
 
         <Section letter="D" title="Amounts credited by the bank, not in the books" total={t.bankCreditsCents} count={st.bankCredits.length}
@@ -389,6 +395,18 @@ export default function BankReconciliationWorkspace() {
             onIgnore={(i) => setTool({ kind: 'ignore', item: i })}
             onReview={(i, on) => review.mutate({ statementLineId: i.statementLineId, underReview: on })} />
         </Section>
+
+        {(st.manuallyCleared?.length ?? 0) > 0 && (
+          <Section title="Cleared by manual entry this period" total={(st.manuallyCleared ?? []).reduce((x, i) => x + i.amountCents, 0)} count={st.manuallyCleared!.length}
+            hint="Cheques and deposits marked cleared by the bank by hand (no statement line). They are not outstanding; nothing was posted to the ledger."
+            open={!!open.M} onToggle={() => toggle('M')}>
+            <ManuallyClearedTable items={st.manuallyCleared!} editable={editable} busy={undoManual.isPending}
+              onUndo={async (i) => {
+                const ok = await confirm({ title: 'Undo "cleared by bank"?', body: `${i.voucherNo ?? ''} ${i.description} goes back to the outstanding list.`, confirmLabel: 'Undo' })
+                if (ok) undoManual.mutate(i.journalLineId)
+              }} />
+          </Section>
+        )}
 
         <Section letter="F" title="Other adjustments and errors" count={st.adjustments.length}
           hint="Errors by the bank or in the books, duplicates and wrong amounts. These change the reconciliation only — nothing is posted to the ledger."
@@ -439,6 +457,7 @@ export default function BankReconciliationWorkspace() {
       </div>
 
       {/* Tools */}
+      {tool?.kind === 'clearManual' && <ClearManualDialog id={id} item={tool.item} deposit={tool.deposit} periodTo={st.periodTo} onClose={close} onDone={refresh} />}
       {tool?.kind === 'matchBank' && (
         <MatchToBankLine recId={id} item={tool.item} deposit={tool.deposit} periodTo={st.periodTo} onDone={() => { close(); refresh() }} onClose={close} />
       )}
@@ -489,9 +508,10 @@ export default function BankReconciliationWorkspace() {
 
 // ── tables ───────────────────────────────────────────────────────────────────
 
-function BookTable({ items, kind, st, editable, busy, onFlag, onUnflag, onCleared, onMatchBank }: {
+function BookTable({ items, kind, st, editable, busy, onFlag, onUnflag, onCleared, onMatchBank, onClearManual }: {
   items: BookItem[]; kind: 'deposit' | 'cheque'; st: BrsDetail['statement']; editable: boolean; busy: boolean
   onFlag: (i: BookItem) => void; onUnflag: (i: BookItem) => void; onCleared: (i: BookItem) => void; onMatchBank: (i: BookItem) => void
+  onClearManual: (i: BookItem) => void
 }) {
   if (items.length === 0) return <CompactEmptyState message={kind === 'deposit' ? 'No uncredited deposits.' : 'No unpresented cheques.'} />
   const dep = kind === 'deposit'
@@ -521,7 +541,8 @@ function BookTable({ items, kind, st, editable, busy, onFlag, onUnflag, onCleare
                 <td className={`${TD} text-right`}>
                   {editable && !i.raast && (
                     <span className="inline-flex flex-wrap justify-end gap-x-3 gap-y-1">
-                      <LinkButton size="md" onClick={() => onMatchBank(i)} title="The bank has it — pair it with its line on the imported statement">Match to bank line</LinkButton>
+                      <LinkButton size="md" onClick={() => onClearManual(i)} title="The bank has cleared it — enter the date and the bank's reference by hand (no statement needed)">{i.manualClear ? 'Edit clearing' : 'Cleared by bank'}</LinkButton>
+                      <LinkButton tone="muted" size="md" onClick={() => onMatchBank(i)} title="Pair it with its line on an imported bank statement">Match to bank line</LinkButton>
                       {i.underReview
                         ? <LinkButton tone="muted" size="md" disabled={busy} onClick={() => onUnflag(i)}>Clear review</LinkButton>
                         : <LinkButton tone="muted" size="md" onClick={() => onFlag(i)}>Under review</LinkButton>}
@@ -871,5 +892,68 @@ function MatchToBankLine({ recId, item, deposit, periodTo, onDone, onClose }: { 
         {m.error && <ErrorBanner message={(m.error as Error).message} />}
       </div>
     </Dialog>
+  )
+}
+
+// ── "Cleared by bank" by manual entry (owner, 2026-11-05: "Make it settle by manual entry instead of matching with bank
+// statement"). A mark on the reconciliation, never a ledger entry: the clearing date, the bank's reference, a note.
+function ClearManualDialog({ id, item, deposit, periodTo, onClose, onDone }: { id: string; item: BookItem; deposit: boolean; periodTo: string; onClose: () => void; onDone: () => void }) {
+  const [clearedOn, setClearedOn] = useState(item.manualClear?.clearedOn ?? (todayPktIso() < periodTo ? todayPktIso() : periodTo))
+  const [reference, setReference] = useState(item.manualClear?.reference ?? '')
+  const [note, setNote] = useState(item.manualClear?.note ?? '')
+  const [err, setErr] = useState<string | null>(null)
+  const run = useMutation({
+    mutationFn: () => api.post(`${BRS}/${id}/cleared-manual`, { journalLineId: item.journalLineId, cleared: true, clearedOn, note: note.trim(), ...(reference.trim() ? { reference: reference.trim() } : {}) }),
+    onSuccess: () => { onClose(); onDone() },
+    onError: (e) => setErr(errText(e)),
+  })
+  const missing = !clearedOn ? 'Enter the date the bank cleared it.' : note.trim().length < 10 ? 'Add a note of at least 10 characters.' : null
+  return (
+    <Dialog title={deposit ? 'Deposit credited by the bank' : 'Cheque cleared by the bank'} onClose={onClose} dirty={!!note && !item.manualClear}>
+      <DialogForm busy={run.isPending} missing={missing} onSubmit={() => { setErr(null); run.mutate() }}>
+        <p className="text-sm text-s-muted mb-3 break-words">
+          {fmtDay(item.date)} · {item.voucherNo ?? '—'} · {item.description} · <strong className="text-s-text">{fmtPkr(item.amountCents)}</strong>
+        </p>
+        <p className="text-xs text-s-muted mb-3">Nothing is posted — the entry is already in the books. Cleared on or before {fmtDay(periodTo)}, it leaves the outstanding list of this reconciliation.</p>
+        <div className="space-y-3">
+          <Field label={deposit ? 'Date credited by the bank' : 'Date the cheque cleared'} required>
+            <Input type="date" value={clearedOn} min={item.date} max={todayPktIso()} onChange={(e) => setClearedOn(e.target.value)} />
+          </Field>
+          <Field label="Bank reference (optional)"><Input value={reference} onChange={(e) => setReference(e.target.value)} maxLength={100} placeholder="e.g. the transaction no. on the bank statement" /></Field>
+          <Field label="Note" required><Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="e.g. Seen on the UBL online statement" /></Field>
+        </div>
+        {err && <div className="mt-3"><ErrorBanner message={err} /></div>}
+        <DialogFooter onCancel={onClose}><Button type="submit" disabled={run.isPending}>{run.isPending ? 'Saving…' : 'Mark cleared'}</Button></DialogFooter>
+      </DialogForm>
+    </Dialog>
+  )
+}
+
+function ManuallyClearedTable({ items, editable, busy, onUndo }: {
+  items: Array<BookItem & { kind: 'deposit' | 'cheque' }>; editable: boolean; busy: boolean; onUndo: (i: BookItem) => void
+}) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead><tr className="text-xs text-s-muted border-b border-s-border">
+          <th className={TH}>Date</th><th className={TH}>Voucher</th><th className={TH}>Kind</th><th className={TH}>Description</th>
+          <th className={TH}>Cleared on</th><th className={TH}>Bank ref</th><th className={`${TH} text-right`}>Amount</th><th className="px-3 py-2" />
+        </tr></thead>
+        <tbody>
+          {items.map((i) => (
+            <tr key={i.journalLineId} className="border-b border-s-border">
+              <td className={`${TD} whitespace-nowrap`}>{fmtDay(i.date)}</td>
+              <td className={`${TD} font-mono whitespace-nowrap`}>{i.voucherNo ?? '—'}</td>
+              <td className={TD}>{i.kind === 'deposit' ? 'Deposit' : 'Cheque'}</td>
+              <td className={`${TD} min-w-[12rem] break-words`}>{i.description}{i.manualClear?.note && <span className="block text-[11px] text-s-muted">{i.manualClear.note}</span>}</td>
+              <td className={`${TD} whitespace-nowrap`}>{i.manualClear ? fmtDay(i.manualClear.clearedOn) : '—'}</td>
+              <td className={`${TD} break-words`}>{i.manualClear?.reference ?? '—'}</td>
+              <td className={AMT}>{fmtPkr(i.amountCents)}</td>
+              <td className={`${TD} text-right`}>{editable && <LinkButton tone="muted" size="md" disabled={busy} onClick={() => onUndo(i)}>Undo</LinkButton>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }

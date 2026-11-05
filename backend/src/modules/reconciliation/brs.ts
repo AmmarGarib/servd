@@ -157,6 +157,8 @@ export interface BookItem {
   journalLineId: string; entryId: string; date: string; voucherNo: string | null; reference: string | null
   chequeRef: string | null; party: string | null; description: string; amountCents: number
   underReview: boolean; reviewNote: string | null; clearedOn: string | null; raast?: boolean
+  /** Cleared by a manual entry (owner, 2026-11-05) — the bank's date / reference / note; no statement line. */
+  manualClear?: { clearedOn: string; reference: string | null; note: string } | null
 }
 export interface BankItem {
   statementLineId: string; date: string; reference: string | null; description: string; amountCents: number
@@ -172,6 +174,8 @@ export interface Statement {
   book: { openingCents: number; receiptsCents: number; paymentsCents: number; closingCents: number }
   bankClosingCents: number | null
   deposits: BookItem[]; cheques: BookItem[]; bankCredits: BankItem[]; bankDebits: BankItem[]; adjustments: AdjustmentItem[]
+  /** Book items cleared by a manual entry dated in this period (shown for review / undo; not outstanding). */
+  manuallyCleared: Array<BookItem & { kind: 'deposit' | 'cheque' }>
   totals: {
     depositsCents: number; chequesCents: number; bankCreditsCents: number; bankDebitsCents: number
     bankAdjustmentsCents: number; bookAdjustmentsCents: number
@@ -289,11 +293,15 @@ export async function computeStatement(db: Db, rec: {
   for (const g of groups.values()) if (g.hasReversal && g.ids.length >= 2 && g.net === 0) for (const id of g.ids) cancelled.add(id)
 
   // Marks: 'cleared_prior' = cleared before this bank's first reconciliation; 'under_review' = flagged.
-  const marks = await db.bankReconBookMark.findMany({ where: { tenantId, bankAccountId: bank.id }, select: { journalLineId: true, status: true, note: true } })
+  // 'cleared_manual' = cleared by the bank on `clearedOn`, entered by hand (no statement line): not outstanding once
+  // that day is on or before the period end.
+  const marks = await db.bankReconBookMark.findMany({ where: { tenantId, bankAccountId: bank.id }, select: { journalLineId: true, status: true, note: true, reference: true, clearedOn: true } })
   const markOf = new Map(marks.map((m) => [m.journalLineId, m]))
+  const manualDay = (id: string) => { const m = markOf.get(id); return m?.status === 'cleared_manual' && m.clearedOn ? isoDay(m.clearedOn) : null }
+  const manuallyClearedIds = new Set(open.filter((r) => { const d = manualDay(r.id); return d != null && d <= periodTo }).map((r) => r.id))
 
-  const live = open.filter((r) => !isRaast(r) && !adjCleared.has(r.id) && !cancelled.has(r.id) && markOf.get(r.id)?.status !== 'cleared_prior')
-  const parties = await partiesOf(db, tenantId, live.map((r) => r.reference ?? '').filter(Boolean))
+  const live = open.filter((r) => !isRaast(r) && !adjCleared.has(r.id) && !cancelled.has(r.id) && markOf.get(r.id)?.status !== 'cleared_prior' && !manuallyClearedIds.has(r.id))
+  const parties = await partiesOf(db, tenantId, [...live, ...open.filter((r) => manuallyClearedIds.has(r.id))].map((r) => r.reference ?? '').filter(Boolean))
   // When did each still-open line clear (a statement line dated after periodTo)? For the "cleared on" column.
   const later = live.length
     ? await db.bankStatementLine.findMany({
@@ -312,11 +320,15 @@ export async function computeStatement(db: Db, rec: {
       reference: r.reference, chequeRef: split.reference ?? p?.chequeRef ?? null, party: p?.party ?? null,
       description: (r.memo && !isManual ? `${split.description} — ${r.memo}` : split.description).slice(0, 500),
       amountCents: Math.abs(signedOf(r)), underReview: m?.status === 'under_review', reviewNote: m?.status === 'under_review' ? m.note : null,
-      clearedOn: laterOf.get(r.id) ?? null,
+      clearedOn: laterOf.get(r.id) ?? manualDay(r.id),
+      manualClear: m?.status === 'cleared_manual' && m.clearedOn ? { clearedOn: isoDay(m.clearedOn), reference: m.reference, note: m.note } : null,
     }
   }
   const deposits: BookItem[] = live.filter((r) => r.type === 'debit').map(toBookItem)
   const cheques: BookItem[] = live.filter((r) => r.type === 'credit').map(toBookItem)
+  const manuallyCleared = open
+    .filter((r) => manuallyClearedIds.has(r.id) && !adjCleared.has(r.id) && !cancelled.has(r.id) && (manualDay(r.id) ?? '') >= periodFrom)
+    .map((r) => ({ ...toBookItem(r), kind: (r.type === 'debit' ? 'deposit' : 'cheque') as 'deposit' | 'cheque' }))
 
   // Raast: book Raast net ≤ periodTo − Raast money the bank statement shows ≤ periodTo = Raast still to arrive.
   // (Raast book lines are never matched one-to-one, so every one of them is in `open`.)
@@ -383,7 +395,7 @@ export async function computeStatement(db: Db, rec: {
     periodFrom, periodTo, financialYear: financialYearOf(periodTo),
     book: { openingCents, receiptsCents, paymentsCents, closingCents },
     bankClosingCents: rec.bankClosingCents,
-    deposits, cheques, bankCredits, bankDebits, adjustments,
+    deposits, cheques, bankCredits, bankDebits, adjustments, manuallyCleared,
     totals: {
       depositsCents, chequesCents, bankCreditsCents, bankDebitsCents, bankAdjustmentsCents, bookAdjustmentsCents,
       adjustedBankCents, adjustedBookCents, differenceCents: adjustedBankCents == null ? null : adjustedBankCents - adjustedBookCents,

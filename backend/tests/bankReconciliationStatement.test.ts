@@ -315,11 +315,12 @@ describe('imports', () => {
 // Owner, 2026-11-05: "This transaction is cleared and received in bank, why it's showing in uncredited amounts? …
 // Give finance option to settle these type of issues" — the book side's own "Match to bank line".
 describe('match a deposit to its bank line from the book side', () => {
+  let id = ''
   it('lists the same-amount unmatched lines of this bank and matches through the existing engine', async () => {
     await bankEntry(T.A, '1020', R(460_000), '2026-11-03', 'Cash deposited in UBL')
     const c = await call('finA', 'POST', '/reconciliation/brs', { bankAccountId: bank.A!.id, periodFrom: '2026-11-01', periodTo: '2026-11-30', periodKind: 'month' })
     expect(c.statusCode, c.body).toBe(201)
-    const id = c.json().id as string
+    id = c.json().id as string
     const dep = (await getRec('finA', id)).statement.deposits.find((d) => d.amountCents === R(460_000))!
     expect(dep).toBeTruthy()
     // Nothing on the statement yet.
@@ -337,5 +338,32 @@ describe('match a deposit to its bank line from the book side', () => {
     const s = (await getRec('finA', id)).statement
     expect(s.deposits.some((d) => d.journalLineId === dep.journalLineId)).toBe(false)
     expect(s.bankCredits.some((d) => d.amountCents === R(460_000))).toBe(false)
+  })
+
+  // Owner, 2026-11-05: "Make it settle by manual entry instead of matching with bank statement".
+  it('a cheque is cleared by a manual entry — no posting, out of the outstanding list, undoable', async () => {
+    await bankEntry(T.A, '1020', -R(19_481), '2026-11-04', 'Paid to FBR CHQ 87756444')
+    const before = (await getRec('finA', id)).statement
+    const chq = before.cheques.find((d) => d.amountCents === R(19_481))!
+    expect(chq).toBeTruthy()
+    const entriesBefore = await prisma.journalEntry.count({ where: { tenantId: T.A } })
+    const url = `/reconciliation/brs/${id}/cleared-manual`
+    // Checks: a note, not before the entry, not in the future; company B 404.
+    expect(code(await call('finA', 'POST', url, { journalLineId: chq.journalLineId, cleared: true, clearedOn: '2026-11-05', note: 'short' }))).toBe('VALIDATION_ERROR')
+    expect(code(await call('finA', 'POST', url, { journalLineId: chq.journalLineId, cleared: true, clearedOn: '2026-11-03', note: 'Seen on the online statement' }))).toBe('CLEARED_BEFORE_ENTRY')
+    expect(code(await call('finA', 'POST', url, { journalLineId: chq.journalLineId, cleared: true, clearedOn: '2099-01-01', note: 'Seen on the online statement' }))).toBe('CLEARED_IN_FUTURE')
+    expect((await call('finB', 'POST', url, { journalLineId: chq.journalLineId, cleared: true, clearedOn: '2026-11-05', note: 'Seen on the online statement' })).statusCode).toBe(404)
+    const ok = await call('finA', 'POST', url, { journalLineId: chq.journalLineId, cleared: true, clearedOn: '2026-11-05', reference: 'TRX5521', note: 'Seen on the online statement' })
+    expect(ok.statusCode, ok.body).toBe(200)
+    const s1 = (await getRec('finA', id)).statement as St & { manuallyCleared: Array<{ journalLineId: string; manualClear: { clearedOn: string; reference: string } }> }
+    expect(s1.cheques.some((d) => d.journalLineId === chq.journalLineId)).toBe(false)
+    expect(s1.totals.chequesCents).toBe(before.totals.chequesCents - R(19_481))
+    expect(s1.manuallyCleared.map((m) => [m.journalLineId, m.manualClear.clearedOn, m.manualClear.reference])).toEqual([[chq.journalLineId, '2026-11-05', 'TRX5521']])
+    expect(await prisma.journalEntry.count({ where: { tenantId: T.A } })).toBe(entriesBefore) // nothing posted
+    // "Under review" cannot overwrite it; undo brings it back.
+    expect(code(await call('finA', 'POST', `/reconciliation/brs/${id}/review`, { journalLineId: chq.journalLineId, underReview: true, note: 'check it' }))).toBe('LINE_CLEARED_MANUAL')
+    expect((await call('finA', 'POST', url, { journalLineId: chq.journalLineId, cleared: false })).statusCode).toBe(200)
+    const s2 = (await getRec('finA', id)).statement
+    expect(s2.cheques.some((d) => d.journalLineId === chq.journalLineId)).toBe(true)
   })
 })
