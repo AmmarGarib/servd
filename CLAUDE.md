@@ -344,6 +344,22 @@ module id must be placed in a workspace in the same change.
   `hr.employee.delete_request(.approve|.reject|.withdraw)`, `hr.employee.deleted`. Admin: "Request deletion (CEO
   approves)" / "Delete employee" on the employee page and on list rows without a login (`components/hr/
   DeleteEmployeeButton.tsx`). Tests: `tests/employeeDeleteApproval.test.ts`.
+- **Self-evaluation & performance appraisal (owner, 2026-11-06; REPLACES the old "Performance reviews" section — now
+  `movedTo`; answers: replace it, the reporting manager's approval is final).** Contract: header of
+  `backend/src/modules/hr/performance.ts`; tables `performance_cycles` / `performance_templates` /
+  `performance_evaluations` (tenantId = the employee's company, RLS, merge repoint; migration `20261106120000`). The
+  owner's Word form is the default: 7 sections, 9 areas with fixed weights (`STANDARD_AREAS`, sum 10000 bp). HR makes a
+  CYCLE (`/hr/performance/admin/cycles`, staff_hr; areas / weights / self-manager split 30/70 lock once evaluations
+  exist — 409 `CYCLE_IN_USE`). The REPORTING MANAGER (HR reporting line → the manager's login; the CEO for reportsToCeo)
+  assigns with their own questions or a template (`POST /hr/performance/evaluations`; 403 `NOT_YOUR_REPORT`); the
+  employee rates every question 1–5 and submits (422 `RATINGS_MISSING`), locked after; the manager rates every area
+  independently (never edits the employee's part), returns (note ≥10) or approves = finalized: area = rating ÷ 5 ×
+  weight, final = self × 30% + manager × 70%, categories at 90 / 80 / 70 / 60. The employee sees the manager's part only
+  once finalized and acknowledges once; HR reopens with a reason. Results dashboard `GET
+  /hr/performance/admin/results` (+ `?format=`), individual report `/evaluations/:id/report`. Bell kind
+  `hr.performance`. A finalized evaluation blocks deleting the employee. Admin: My HR → My Performance Evaluation
+  (`/hr/me/performance/[id]`), Team evaluations (`/hr/me/team-evaluations`), HR → Performance (`/hr/performance`).
+  Tests: `tests/performanceEvaluation.test.ts`.
 - **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
   also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
   (same scope as offboard; never `admin` / `owner` — 403 `REISSUE_CEO_ONLY`,
