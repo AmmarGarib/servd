@@ -641,49 +641,51 @@ export async function brsRoutes(fastify: FastifyInstance) {
       ]
       t = { ...base, title: 'Unmatched Bank Transactions', columns: [{ key: 'section', label: 'Section' }, ...bookCols], rows, sectionKey: 'section', notes: [bankLine], wrapKeys: ['description'] }
     } else {
-      // The statement: summary (both methods), then each section's items, then the sign-off. One shared header
-      // (Date · Voucher · Cheque / ref · Particulars · PKR) so long particulars wrap in the PDF.
+      // The statement, short and in plain words (owner, 2026-11-06: "keep it short and comprehensive and understandable
+      // to a non accounting person, no need to show sections with 0 balance or no record, no need for Book balance
+      // general ledger box but keep the manual entry details in the last"): ONE summary from the bank's balance to our
+      // books' balance and the difference, lines with a zero amount left out; then only the lists that hold items;
+      // the manual clearings last. Upper-case particulars print bold (isTotal).
       const T = s.totals
-      const sum = (section: string, label: string, cents: number | null) => ({ section, date: '', voucher: '', reference: '', particulars: label, amount: cents })
-      const items = (section: string, xs: ReportRow[]) => (xs.length ? xs : [{ date: '', voucher: '', reference: '', party: '', description: 'None', amount: null }])
-        .map((x) => ({ section, date: x.date, voucher: x.voucher, reference: x.reference, particulars: [x.party, x.description].filter(Boolean).join(' — '), amount: x.amount }))
-      const S1 = 'Summary — Method 1: bank statement to books'
-      const S2 = 'Summary — Method 2: books to bank statement (check)'
+      const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
+      const SUM = `Summary as at ${day(s.periodTo)}`
+      const line = (label: string, cents: number | null) => ({ section: SUM, date: '', voucher: '', reference: '', particulars: label, amount: cents })
+      const ifAny = (cents: number, label: string, signed: number) => (cents ? [line(label, signed)] : [])
+      const bookSideItems = T.bankCreditsCents !== 0 || T.bankDebitsCents !== 0 || T.bookAdjustmentsCents !== 0
+      const diff = T.differenceCents
       const rows: ReportRow[] = [
-        sum(S1, 'Closing balance as per bank statement (A)', s.bankClosingCents),
-        sum(S1, 'Add: deposits not yet credited by the bank (B)', T.depositsCents),
-        sum(S1, 'Less: cheques issued but not presented (C)', -T.chequesCents),
-        ...(T.bankAdjustmentsCents ? [sum(S1, 'Add / (less): bank-side adjustments (F)', T.bankAdjustmentsCents)] : []),
-        sum(S1, 'ADJUSTED BALANCE AS PER BANK', T.adjustedBankCents),
-        sum(S1, 'Closing balance as per books (bank ledger)', s.book.closingCents),
-        sum(S1, 'Add: credited by the bank, not recorded in the books (D)', T.bankCreditsCents),
-        sum(S1, 'Less: debited by the bank, not recorded in the books (E)', -T.bankDebitsCents),
-        ...(T.bookAdjustmentsCents ? [sum(S1, 'Add / (less): book-side adjustments (F)', T.bookAdjustmentsCents)] : []),
-        sum(S1, 'ADJUSTED BALANCE AS PER BOOKS', T.adjustedBookCents),
-        sum(S1, 'UNRECONCILED DIFFERENCE', T.differenceCents),
-        sum(S2, 'Closing balance as per books', s.book.closingCents),
-        sum(S2, 'Less: deposits not yet credited (B)', -T.depositsCents),
-        sum(S2, 'Add: cheques not presented (C)', T.chequesCents),
-        sum(S2, 'Add: credited by the bank, not in the books (D)', T.bankCreditsCents),
-        sum(S2, 'Less: debited by the bank, not in the books (E)', -T.bankDebitsCents),
-        ...(T.bookAdjustmentsCents || T.bankAdjustmentsCents ? [sum(S2, 'Add / (less): adjustments (F)', T.bookAdjustmentsCents - T.bankAdjustmentsCents)] : []),
-        sum(S2, 'BALANCE THE BANK STATEMENT SHOULD SHOW', T.expectedBankCents),
-        sum(S2, 'Closing balance as per bank statement', s.bankClosingCents),
-        sum('Book balances (general ledger)', 'Opening balance as per books', s.book.openingCents),
-        sum('Book balances (general ledger)', 'Receipts in the period', s.book.receiptsCents),
-        sum('Book balances (general ledger)', 'Payments in the period', -s.book.paymentsCents),
-        sum('Book balances (general ledger)', 'CLOSING BALANCE AS PER BOOKS', s.book.closingCents),
-        ...items('B. Deposits not yet credited by the bank (uncredited cheques)', bookRows(s.deposits)),
-        ...items('C. Cheques issued but not presented (unpresented cheques)', bookRows(s.cheques)),
-        ...items('D. Amounts credited by the bank, not recorded in the books', bankRows(s.bankCredits)),
-        ...items('E. Amounts debited by the bank, not recorded in the books', bankRows(s.bankDebits)),
-        ...items('F. Other adjustments / errors', s.adjustments.map((a) => ({ date: a.createdAt.slice(0, 10), voucher: a.side === 'bank' ? 'Bank side' : 'Book side', reference: a.reference, party: a.kindLabel, description: a.narration, amount: a.amountCents }))),
-        // For the record (not in the arithmetic): items cleared by a manual entry in this period, with no statement line.
-        ...(s.manuallyCleared.length ? items('Note: cleared by manual entry (no bank statement line)', s.manuallyCleared.map((i) => ({
-          date: i.date, voucher: i.voucherNo ?? '', reference: i.manualClear?.reference ?? i.chequeRef ?? '', party: i.party ?? '',
-          description: `${i.kind === 'deposit' ? 'Deposit' : 'Cheque'} — ${i.description} — cleared ${i.manualClear?.clearedOn ?? ''}: ${i.manualClear?.note ?? ''}`, amount: i.amountCents,
-        }))) : []),
+        line('Balance as per bank statement', s.bankClosingCents),
+        ...ifAny(T.depositsCents, 'Add: deposits made, not yet shown by the bank', T.depositsCents),
+        ...ifAny(T.chequesCents, 'Less: cheques issued, not yet paid by the bank', -T.chequesCents),
+        ...ifAny(T.bankAdjustmentsCents, 'Add / (less): corrections to the bank side', T.bankAdjustmentsCents),
+        ...(T.depositsCents || T.chequesCents || T.bankAdjustmentsCents ? [line('BANK BALANCE AFTER THESE ITEMS', T.adjustedBankCents)] : []),
+        line('Balance as per our books', s.book.closingCents),
+        ...ifAny(T.bankCreditsCents, 'Add: received in the bank, not yet entered in our books', T.bankCreditsCents),
+        ...ifAny(T.bankDebitsCents, 'Less: deducted by the bank, not yet entered in our books', -T.bankDebitsCents),
+        ...ifAny(T.bookAdjustmentsCents, 'Add / (less): corrections to our books', T.bookAdjustmentsCents),
+        ...(bookSideItems ? [line('BOOKS BALANCE AFTER THESE ITEMS', T.adjustedBookCents)] : []),
+        line(diff === 0 ? 'DIFFERENCE — NONE, RECONCILED' : diff == null ? 'DIFFERENCE — BANK BALANCE NOT ENTERED' : 'DIFFERENCE — TO BE EXPLAINED', diff),
       ]
+      const list = (section: string, xs: Statement['deposits'], extra?: (i: Statement['deposits'][number]) => string) => xs.map((i) => ({
+        section, date: i.date, voucher: i.voucherNo ?? '', reference: i.chequeRef ?? '',
+        particulars: [i.party, i.description, extra?.(i)].filter(Boolean).join(' — '), amount: i.amountCents,
+      }))
+      const bankList = (section: string, xs: Statement['bankCredits']) => xs.map((i) => ({
+        section, date: i.date, voucher: '', reference: i.reference ?? '', particulars: i.description, amount: i.amountCents,
+      }))
+      rows.push(
+        ...list('Cheques issued, not yet paid by the bank', s.cheques),
+        ...list('Deposits made, not yet shown by the bank', s.deposits),
+        ...bankList('Received in the bank, not yet entered in our books', s.bankCredits),
+        ...bankList('Deducted by the bank, not yet entered in our books', s.bankDebits),
+        ...s.adjustments.map((a) => ({ section: 'Corrections', date: a.createdAt.slice(0, 10), voucher: a.side === 'bank' ? 'Bank side' : 'Our books', reference: a.reference, particulars: `${a.kindLabel} — ${a.narration}`, amount: a.amountCents })),
+        // Last, for the record (already out of the lists above): cleared by hand, no bank statement line.
+        ...s.manuallyCleared.map((i) => ({
+          section: 'Cleared by manual entry (no bank statement line)', date: i.date, voucher: i.voucherNo ?? '', reference: i.manualClear?.reference ?? i.chequeRef ?? '',
+          particulars: `${i.kind === 'deposit' ? 'Deposit' : 'Cheque'} — ${i.description} — cleared on ${i.manualClear ? day(i.manualClear.clearedOn) : ''}${i.manualClear?.note ? ` — ${i.manualClear.note}` : ''}`,
+          amount: i.amountCents,
+        })),
+      )
       t = {
         ...base, title: 'Bank Reconciliation Statement',
         columns: [
@@ -691,10 +693,12 @@ export async function brsRoutes(fastify: FastifyInstance) {
           { key: 'particulars', label: 'Particulars' }, { key: 'amount', label: 'PKR', type: 'cents' },
         ],
         rows, sectionKey: 'section', wrapKeys: ['particulars'], narrowKeys: ['voucher', 'reference'],
-        isTotal: (row) => typeof row.particulars === 'string' && /^[A-Z][A-Z ()/:-]+$/.test(row.particulars),
+        // Bold = the summary's own upper-case lines (never an item: those carry a date).
+        isTotal: (row) => !row.date && typeof row.particulars === 'string' && /[A-Z]/.test(row.particulars) && row.particulars === row.particulars.toUpperCase(),
         notes: [
-          bankLine, `Financial year ${s.financialYear} · status ${r.status}${r.status !== 'approved' ? ' (figures live — not yet approved)' : ''}`,
-          'Unpresented cheques and uncredited deposits remain recorded in the books; this statement changes no entry.',
+          bankLine,
+          `Financial year ${s.financialYear} · ${r.status === 'approved' ? 'approved' : r.status === 'superseded' ? 'replaced by a newer approved reconciliation' : 'not yet approved — figures may still change'}`,
+          'Cheques and deposits listed here are already in our books; they only wait for the bank. Nothing on this statement changes the books.',
         ],
         signatures: [
           { label: 'Prepared by', name: who.get(r.preparedById) ?? null, at: isoDay(r.preparedAt) },
