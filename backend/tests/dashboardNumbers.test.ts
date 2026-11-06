@@ -7,6 +7,8 @@ import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { issueStaffSession } from '../src/modules/auth/service.js'
 import { AppError } from '../src/lib/errors.js'
 import { dashboardRoutes } from '../src/modules/dashboards/routes.js'
+import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
+import { postJournalEntry } from '../src/modules/accounting/journal.js'
 
 const P = `dsh${Date.now()}`
 let app: FastifyInstance
@@ -60,9 +62,10 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.order.deleteMany({ where: { id: { in: O } } })
   await prisma.hrEmployee.deleteMany({ where: { tenantId: { in: [T.A!, T.B!] } } })
+  await prisma.bankAccount.deleteMany({ where: { tenantId: { in: [T.A!, T.B!] } } })
   await prisma.concept.deleteMany({ where: { id: { in: [C.A!, C.B!] } } })
   await prisma.user.deleteMany({ where: { email: { startsWith: P } } })
-  await prisma.tenant.deleteMany({ where: { id: { in: [T.A!, T.B!] } } })
+  // The two companies keep their books (the ledger is append-only); the test schema is rebuilt per file.
   await app.close()
 })
 
@@ -88,9 +91,40 @@ describe('dashboard numbers', () => {
   it('a failing source never fails the call; marketing and CEO sets answer', async () => {
     const r = await get('ceoA', '/dashboards/ceo/numbers')
     expect(r.statusCode).toBe(200)
-    expect((r.json() as { numbers: N[] }).numbers.map((n) => n.key)).toEqual(['sales_by_brand', 'food_cost_pct', 'cash_bank', 'approvals_waiting'])
+    expect((r.json() as { numbers: N[] }).numbers.map((n) => n.key)).toEqual(['cash_in_safe', 'cash_in_bank', 'approvals_waiting'])
     const m = numbers(await get('ceoA', '/dashboards/marketing/numbers'))
     expect(m.orders_by_channel!.value).toBe(2)
+  })
+  it('?tenantId= shows ONE of the caller\'s companies; another company is 404', async () => {
+    const own = await get('ceoA', `/dashboards/ceo/numbers?tenantId=${T.A}`)
+    expect(own.statusCode).toBe(200)
+    expect((own.json() as { companies: number; tenantId: string }).companies).toBe(1)
+    expect((own.json() as { tenantId: string }).tenantId).toBe(T.A)
+    expect(numbers(own).cash_in_safe!.value).toBe(0)
+    expect((await get('ceoA', `/dashboards/ceo/numbers?tenantId=${T.B}`)).statusCode).toBe(404)
+    expect((await get('ceoB', `/dashboards/finance/numbers?tenantId=${T.A}`)).statusCode).toBe(404)
+    // A login in both companies flips between them: B's headcount is B's only.
+    await prisma.tenantMember.create({ data: { userId: (await prisma.user.findFirstOrThrow({ where: { email: `${P}.ceoA@dsh.pk` } })).id, tenantId: T.B!, role: 'member' } })
+    expect(numbers(await get('ceoA', `/dashboards/hr/numbers?tenantId=${T.B}`)).headcount!.value).toBe(1)
+    expect(numbers(await get('ceoA', `/dashboards/hr/numbers?tenantId=${T.A}`)).headcount!.value).toBe(3)
+  })
+  it('cash in safe = 1010, cash in bank = each bank account, per company', async () => {
+    await ensureChartOfAccounts(T.A!); await ensureChartOfAccounts(T.B!)
+    await prisma.bankAccount.create({ data: { tenantId: T.A!, name: 'HBL Ops', accountCode: '1020' } })
+    const post = (tenantId: string, id: string, code: string, cents: number) => postJournalEntry({
+      tenantId, sourceType: 'test.dashboard_cash', sourceId: `${P}-${id}`, description: 'cash', entryDate: new Date(),
+      lines: [{ accountCode: code, type: 'debit', amountCents: cents }, { accountCode: '3010', type: 'credit', amountCents: cents }],
+    })
+    await post(T.A!, 'a-safe', '1010', 50_000_00)
+    await post(T.A!, 'a-bank', '1020', 120_000_00)
+    await post(T.A!, 'a-petty', '1011', 3_000_00)
+    await post(T.B!, 'b-safe', '1010', 7_000_00)
+    const a = numbers(await get('ceoA', `/dashboards/ceo/numbers?tenantId=${T.A}`))
+    expect(a.cash_in_safe!.value).toBe(50_000_00)
+    expect(a.cash_in_bank!.value).toBe(120_000_00)
+    const b = numbers(await get('ceoA', `/dashboards/ceo/numbers?tenantId=${T.B}`))
+    expect(b.cash_in_safe!.value).toBe(7_000_00)
+    expect(b.cash_in_bank!.value).toBe(0)
   })
   it('unknown dashboard 404; a role without the module 403; money hidden from non-viewers', async () => {
     expect((await get('ceoA', '/dashboards/nope/numbers')).statusCode).toBe(404)

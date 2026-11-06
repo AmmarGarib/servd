@@ -5,7 +5,7 @@
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { fmtPkrShort } from '../../lib/money'
+import { fmtPkrShort, fmtPkrWhole } from '../../lib/money'
 import { CompactEmptyState } from './CompactEmptyState'
 
 export type DashboardId = 'ceo' | 'operations' | 'finance' | 'marketing' | 'hr'
@@ -17,18 +17,22 @@ interface Tile {
   hidden?: boolean; reason?: string
 }
 
-function show(unit: Tile['unit'], v: number | null | undefined): string {
+// Cash tiles show the exact rupee (owner, 2026-11-06: cash in front of me), never "87K".
+const EXACT_KEYS = new Set(['cash_in_safe', 'cash_in_bank'])
+
+function show(unit: Tile['unit'], v: number | null | undefined, exact = false): string {
   if (v == null) return '—'
-  if (unit === 'pkr') return fmtPkrShort(v)
+  if (unit === 'pkr') return exact ? fmtPkrWhole(v) : fmtPkrShort(v)
   if (unit === 'pct') return `${v}%`
   if (unit === 'minutes') return `${v} min`
   return v.toLocaleString('en-PK')
 }
 
-export function DashboardTiles({ id }: { id: DashboardId }) {
+/** `tenantId` = show ONE company's numbers (the CEO home's company switcher); omitted = the signed-in company view. */
+export function DashboardTiles({ id, tenantId }: { id: DashboardId; tenantId?: string }) {
   const { data, isLoading, isError } = useQuery<{ numbers: Tile[] }>({
-    queryKey: ['dashboard-numbers', id],
-    queryFn: () => api.get(`/dashboards/${id}/numbers`),
+    queryKey: ['dashboard-numbers', id, tenantId ?? null],
+    queryFn: () => api.get(`/dashboards/${id}/numbers${tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : ''}`),
     refetchInterval: 60_000,
   })
   if (isLoading) {
@@ -53,14 +57,14 @@ export function DashboardTiles({ id }: { id: DashboardId }) {
             <span className="mt-2 text-sm text-white/40">{t.reason ?? 'No figure yet.'}</span>
           ) : (
             <>
-              {t.value != null && <span className="mt-1 text-2xl font-black text-white/90">{show(t.unit, t.value)}</span>}
+              {t.value != null && <span className="mt-1 text-2xl font-black text-white/90">{show(t.unit, t.value, EXACT_KEYS.has(t.key))}</span>}
               {t.monthToDate != null && <span className="text-xs text-white/45">Month to date {show(t.unit, t.monthToDate)}</span>}
               {t.breakdown && (
                 <ul className="mt-2 space-y-0.5 text-xs text-white/60">
                   {t.breakdown.slice(0, 5).map((b) => (
                     <li key={b.label} className="flex justify-between gap-3">
                       <span className="truncate">{b.label}</span>
-                      <span className="font-bold text-white/80">{show(t.unit === 'pkr' && t.key === 'bills_due' ? 'count' : t.unit, b.value)}</span>
+                      <span className="font-bold text-white/80">{show(t.unit === 'pkr' && t.key === 'bills_due' ? 'count' : t.unit, b.value, EXACT_KEYS.has(t.key))}</span>
                     </li>
                   ))}
                 </ul>

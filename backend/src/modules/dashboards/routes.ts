@@ -10,6 +10,7 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, FINANCIALS_VIEWERS } from '../auth/middleware.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
+import { NotFoundError } from '../../lib/errors.js'
 import { salesTotals, salesByChannel, stationTimes, soldOrderWhere, type SalesQuery } from '../reports/service.js'
 import { foodCostSummary } from '../reports/foodCost.js'
 import { trialBalance } from '../accounting/reports.js'
@@ -51,7 +52,7 @@ const seesMoney = (req: FastifyRequest) => FINANCIALS_VIEWERS.includes(req.staff
 export async function dashboardRoutes(fastify: FastifyInstance) {
   const apiBase = fastify.prefix.replace(/\/dashboards\/?$/, '').replace(/\/$/, '')
 
-  fastify.get<{ Params: { id: string } }>(
+  fastify.get<{ Params: { id: string }; Querystring: { tenantId?: string } }>(
     '/:id/numbers',
     {
       preHandler: [
@@ -66,9 +67,23 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     async (req) => {
       const id = z.enum(DASHBOARD_IDS).parse(req.params.id)
       const money = seesMoney(req)
-      const scope = await resolveTenantScope(req)
-      const company = await scopeTenantWhere(req, 'read')
-      const tenantIds = scope.tenantIds
+      // `?tenantId=` = ONE company of the caller's (the CEO home's company switcher, owner 2026-11-06: "switch to
+      // flipd cash in front of me cleanly"): a member company, the active one, or one reached through a head office
+      // — anything else is 404, never a wider view.
+      const pick = z.string().min(1).max(64).optional().parse(req.query.tenantId)
+      let tenantIds: string[]
+      let company: Awaited<ReturnType<typeof scopeTenantWhere>>
+      if (pick) {
+        const su = req.staffUser!
+        const mine = new Set<string>([...(su.memberTenantIds ?? []), ...(su.reachTenantIds ?? []), ...(su.tenantId ? [su.tenantId] : [])])
+        if (!mine.has(pick)) throw new NotFoundError('Company')
+        tenantIds = [pick]
+        company = { tenantId: { in: [pick] } }
+      } else {
+        const scope = await resolveTenantScope(req)
+        company = await scopeTenantWhere(req, 'read')
+        tenantIds = scope.tenantIds
+      }
       const now = new Date()
       const todayKey = fmtPktDate(now)
       const today = { from: parsePktStartOfDay(todayKey), to: parsePktEndOfDay(todayKey) }
@@ -119,6 +134,31 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         const tb = await trialBalance(tenantIds, now)
         const value = tb.rows.filter((r) => codes.has(r.code)).reduce((s, r) => s + Number(r.debitCents) - Number(r.creditCents), 0)
         return { value }
+      })
+      // Cash in the safe (1010 Cash on Hand — the safe; petty-cash boxes 1011 and open till drawers 1015 are not the
+      // safe) and cash in the bank (1020 + every bank account's own code, one line per bank). Ledger balances as of
+      // now, from the trial balance — the same figures as the books.
+      const cashSplit = async () => {
+        const banks = await prisma.bankAccount.findMany({
+          where: { ...company, deletedAt: null }, select: { name: true, bankName: true, accountCode: true }, orderBy: { name: 'asc' },
+        })
+        const tb = await trialBalance(tenantIds, now)
+        const bal = (code: string) => tb.rows.filter((r) => r.code === code && !r.virtual).reduce((s, r) => s + Number(r.debitCents) - Number(r.creditCents), 0)
+        // One line per bank account (its own ledger code); 1020 only when no bank account uses it and it holds money.
+        const bankCodes = new Map<string, string>()
+        for (const b of banks) if (b.accountCode && !bankCodes.has(b.accountCode)) bankCodes.set(b.accountCode, b.name || b.bankName || b.accountCode)
+        if (!bankCodes.has('1020') && bal('1020') !== 0) bankCodes.set('1020', 'Bank — Operating Account')
+        const bankLines = [...bankCodes].map(([code, label]) => ({ label, value: bal(code) }))
+        return { safe: bal('1010'), bank: bankLines.reduce((s, l) => s + l.value, 0), bankLines }
+      }
+      let cashSplitP: ReturnType<typeof cashSplit> | null = null
+      const cashOnce = () => (cashSplitP ??= cashSplit())
+      const safeN = () => num({ key: 'cash_in_safe', label: 'Cash in safe', unit: 'pkr', href: '/accounting/ledger' }, true, async () => ({
+        value: (await cashOnce()).safe,
+      }))
+      const bankN = () => num({ key: 'cash_in_bank', label: 'Cash in bank', unit: 'pkr', href: '/configuration/bank-accounts' }, true, async () => {
+        const c = await cashOnce()
+        return { value: c.bank, ...(c.bankLines.length > 1 && { breakdown: c.bankLines }) }
       })
       const approvalsN = () => num({ key: 'approvals_waiting', label: 'Approvals waiting', unit: 'count', href: '/ceo/approvals' }, false, async () => {
         const headers: Record<string, string> = {}
@@ -194,7 +234,8 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       ))
 
       const sets: Record<DashboardId, Array<() => Promise<DashboardNumber>>> = {
-        ceo: [() => salesN('sales_by_brand', 'Sales by company and brand (today)', 'company'), () => foodCostN(), () => cashN(), () => approvalsN()],
+        // CEO home (owner, 2026-11-06: "add cash in safe and cash in bank … remove food cost and sales").
+        ceo: [() => safeN(), () => bankN(), () => approvalsN()],
         operations: [() => salesN('sales_by_brand', 'Sales by brand (today)', 'brand'), () => openTicketsN(), () => ticketTimeN(), () => lowStockN(), () => coversN()],
         finance: [() => salesN('sales', 'Sales (today)', 'none'), () => foodCostN(), () => cashN(), () => billsDueN(), () => heldFiscalN()],
         hr: [() => headcountN(), () => attendanceN(), () => leaveN(), () => payrollN(), () => docsN()],
@@ -205,6 +246,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         asOf: now.toISOString(),
         day: todayKey,
         companies: tenantIds.length,
+        tenantId: pick ?? null,
         moneyHidden: !money,
         numbers: await Promise.all(sets[id].map((f) => f())),
       }
