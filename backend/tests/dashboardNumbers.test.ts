@@ -118,14 +118,18 @@ describe('dashboard numbers', () => {
     await post(T.A!, 'a-safe', '1010', 50_000_00)
     await post(T.A!, 'a-bank', '1020', 120_000_00)
     await post(T.A!, 'a-petty', '1011', 3_000_00)
+    // Finance's own "Cash in Safe" account (as on GS Foods' balance sheet): that is the safe; 1010 is petty cash.
+    await prisma.account.create({ data: { tenantId: T.A!, code: '4256', name: 'Cash in Safe', type: 'asset' } })
+    await post(T.A!, 'a-vault', '4256', 830_900_00)
     await post(T.B!, 'b-safe', '1010', 7_000_00)
     const a = numbers(await get('ceoA', `/dashboards/ceo/numbers?tenantId=${T.A}`))
     // Three tiles: the safe (1010), petty cash (1011), the bank — each its own figure.
-    expect(a.cash_in_safe!.value).toBe(50_000_00)
-    expect(a.petty_cash!.value).toBe(3_000_00)
+    expect(a.cash_in_safe!.value).toBe(830_900_00)
+    expect(a.petty_cash!.value).toBe(53_000_00)
     expect(a.cash_in_bank!.value).toBe(120_000_00)
     const b = numbers(await get('ceoA', `/dashboards/ceo/numbers?tenantId=${T.B}`))
-    expect(b.cash_in_safe!.value).toBe(7_000_00)
+    expect(b.cash_in_safe!.value).toBe(0)
+    expect(b.petty_cash!.value).toBe(7_000_00)
     expect(b.cash_in_bank!.value).toBe(0)
   })
   it('unknown dashboard 404; a role without the module 403; money hidden from non-viewers', async () => {

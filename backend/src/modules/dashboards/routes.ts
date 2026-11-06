@@ -136,7 +136,10 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         return { value }
       })
       // Three tiles (owner, 2026-11-06: "I need three … Safe is with me. Cash with Hasnain is petty cash, and then
-      // bank"): Cash in safe = 1010 (the CEO's safe), Petty cash = 1011 (finance's boxes), Cash in bank (1020 + every bank account's own code, one line per bank). Ledger balances as of
+      // bank"; "hasnain has all these figures … tallied and correct in balance sheet"). Read exactly as finance keeps
+      // the balance sheet: Cash in safe = the company's asset account(s) named "… safe …" (GS Foods: 4256 Cash in
+      // Safe — finance's own account, not 1010), Petty cash = 1010 Cash on Hand + 1011 petty-cash boxes (finance's
+      // cash), Cash in bank (1020 + every bank account's own code, one line per bank). Ledger balances as of
       // now, from the trial balance — the same figures as the books.
       const cashSplit = async () => {
         const banks = await prisma.bankAccount.findMany({
@@ -149,7 +152,11 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         for (const b of banks) if (b.accountCode && !bankCodes.has(b.accountCode)) bankCodes.set(b.accountCode, b.name || b.bankName || b.accountCode)
         if (!bankCodes.has('1020') && bal('1020') !== 0) bankCodes.set('1020', 'Bank — Operating Account')
         const bankLines = [...bankCodes].map(([code, label]) => ({ label, value: bal(code) }))
-        return { safe: bal('1010'), petty: bal('1011'), bank: bankLines.reduce((s, l) => s + l.value, 0), bankLines }
+        const bankSet = new Set(bankCodes.keys())
+        const safeCodes = new Set(tb.rows.filter((r) => !r.virtual && r.type === 'asset' && /\bsafe\b/i.test(r.name) && !bankSet.has(r.code)).map((r) => r.code))
+        const petty = ['1010', '1011'].filter((c) => !safeCodes.has(c)).reduce((s, c) => s + bal(c), 0)
+        const safe = [...safeCodes].reduce((s, c) => s + bal(c), 0)
+        return { safe, petty, bank: bankLines.reduce((s, l) => s + l.value, 0), bankLines }
       }
       let cashSplitP: ReturnType<typeof cashSplit> | null = null
       const cashOnce = () => (cashSplitP ??= cashSplit())
