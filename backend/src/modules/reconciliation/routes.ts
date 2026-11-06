@@ -12,6 +12,7 @@ import {
 } from './service.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { assertStatementLineEditable } from './brs.js'
+import { pdfStatementCsv } from './pdfStatement.js'
 import { xlsxFirstSheetCsv } from '../../lib/xlsxRead.js'
 import { brsRoutes } from './brsRoutes.js'
 import { raastReconciliationRoutes, raastPaidCents } from './raastRoutes.js'
@@ -67,7 +68,9 @@ const importBankSchema = z.object({
   csv: z.string().min(1).optional(),
   // An Excel statement (.xlsx, base64): its first sheet is read as the CSV would be (lib/xlsxRead.ts).
   xlsxBase64: z.string().min(1).max(14_000_000).optional(),
-}).refine((b) => !!b.csv || !!b.xlsxBase64, { message: 'Bank statement contents required — upload the CSV or Excel file', path: ['csv'] })
+  // A PDF statement the bank generated (base64): its transaction table is read into the same CSV (./pdfStatement.ts).
+  pdfBase64: z.string().min(1).max(14_000_000).optional(),
+}).refine((b) => !!b.csv || !!b.xlsxBase64 || !!b.pdfBase64, { message: 'Bank statement contents required — upload the CSV, Excel or PDF file', path: ['csv'] })
 
 // The other side of an unmatched statement line: one contra account for the
 // whole amount, or a balanced split (BOOKS-11 — a card settlement net of its
@@ -171,7 +174,8 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
       closingBalanceCents: body.closingBalanceCents,
       filename: body.filename,
       importedById: req.staffUser!.id,
-      csv: body.csv ?? xlsxFirstSheetCsv(Buffer.from(body.xlsxBase64!, 'base64')),
+      csv: body.csv
+        ?? (body.xlsxBase64 ? xlsxFirstSheetCsv(Buffer.from(body.xlsxBase64, 'base64')) : await pdfStatementCsv(Buffer.from(body.pdfBase64!, 'base64'))),
     })
     // Night audit (sales days): an audited day whose bank side is now matched closes.
     import('../nightAudit/service.js').then((m) => m.nudgeNightAudit(tenantId)).catch(() => undefined)

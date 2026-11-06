@@ -781,7 +781,8 @@ function ImportPanel({ rec, bankName, periodTo, bankClosing, onDone }: { rec: Br
   const [opening, setOpening] = useState(0)
   const [closing, setClosing] = useState(bankClosing ?? 0)
   const [csv, setCsv] = useState('')
-  const [xlsx, setXlsx] = useState<{ name: string; b64: string } | null>(null)
+  // An uploaded Excel or PDF statement (read on the server); a CSV is read here.
+  const [xlsx, setXlsx] = useState<{ name: string; b64: string; kind: 'xlsx' | 'pdf' } | null>(null)
   const [fileName, setFileName] = useState('')
   const [result, setResult] = useState<Record<string, unknown> | null>(null)
   const [readErr, setReadErr] = useState<string | null>(null)
@@ -790,9 +791,12 @@ function ImportPanel({ rec, bankName, periodTo, bankClosing, onDone }: { rec: Br
     setReadErr(null); setResult(null)
     if (!f) return
     try {
-      if (/\.xlsx$/i.test(f.name)) { setXlsx({ name: f.name, b64: toBase64(await f.arrayBuffer()) }); setCsv(''); setFileName(f.name) }
+      if (/\.(xlsx|pdf)$/i.test(f.name)) {
+        if (f.size > 10_000_000) { setReadErr('That file is over 10 MB — import the statement month by month.'); return }
+        setXlsx({ name: f.name, b64: toBase64(await f.arrayBuffer()), kind: /\.pdf$/i.test(f.name) ? 'pdf' : 'xlsx' }); setCsv(''); setFileName(f.name)
+      }
       else if (/\.(csv|txt)$/i.test(f.name)) { setCsv(await f.text()); setXlsx(null); setFileName(f.name) }
-      else setReadErr('Choose a .csv or .xlsx file.')
+      else setReadErr('Choose a .csv, .xlsx or .pdf file.')
     } catch { setReadErr('That file could not be read.') }
   }
 
@@ -800,16 +804,18 @@ function ImportPanel({ rec, bankName, periodTo, bankClosing, onDone }: { rec: Br
     mutationFn: () => {
       const name = fileName || `${bankName}-${date}.csv`
       const fileUrl = xlsx
-        ? (xlsx.b64.length < 3_000_000 ? `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${xlsx.b64}` : `data:text/plain;base64,${btoa(name)}`)
+        ? (xlsx.b64.length < 3_000_000
+          ? `data:${xlsx.kind === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'};base64,${xlsx.b64}`
+          : `data:text/plain;base64,${btoa(name)}`)
         : `data:text/csv;base64,${btoa(unescape(encodeURIComponent(csv)))}`
       return api.post<Record<string, unknown>>('/reconciliation/bank/imports', {
         bankAccountId: rec.bankAccountId, statementDate: date, openingBalanceCents: opening, closingBalanceCents: closing,
-        ...(xlsx ? { xlsxBase64: xlsx.b64 } : { csv }), filename: name, fileUrl,
+        ...(xlsx ? (xlsx.kind === 'pdf' ? { pdfBase64: xlsx.b64 } : { xlsxBase64: xlsx.b64 }) : { csv }), filename: name, fileUrl,
       })
     },
     onSuccess: (r) => { setResult(r); onDone() },
   })
-  const missing = !xlsx && !csv.trim() ? 'Choose the statement file (CSV or Excel) or paste the CSV.' : !date ? 'Pick the statement date.' : null
+  const missing = !xlsx && !csv.trim() ? 'Choose the statement file (CSV, Excel or PDF) or paste the CSV.' : !date ? 'Pick the statement date.' : null
   const skipped = typeof result?.skippedDuplicates === 'number' ? (result.skippedDuplicates as number) : null
 
   return (
@@ -828,11 +834,11 @@ function ImportPanel({ rec, bankName, periodTo, bankClosing, onDone }: { rec: Br
               <Field label="Closing balance (PKR)"><MoneyInput allowNegative value={closing} onChange={setClosing} className="s-input w-full" /></Field>
             </div>
             <div className="mt-3">
-              <Field label="Statement file (CSV or Excel .xlsx)" hint="Columns: date, description, amount, reference. Lines already imported are skipped.">
-                <input type="file" accept=".csv,.txt,.xlsx" onChange={(e) => void pick(e.target.files?.[0])} className="s-input w-full" />
+              <Field label="Statement file (CSV, Excel .xlsx or PDF)" hint="Columns: date, description, amount (or debit and credit), reference. A PDF must be the one downloaded from internet banking, not a scan. Lines already imported are skipped.">
+                <input type="file" accept=".csv,.txt,.xlsx,.pdf,application/pdf" onChange={(e) => void pick(e.target.files?.[0])} className="s-input w-full" />
               </Field>
               {readErr && <p role="alert" className="text-xs text-s-red mt-1">{readErr}</p>}
-              {xlsx && <p className="text-xs text-success mt-1 break-words">Excel file ready: {xlsx.name}</p>}
+              {xlsx && <p className="text-xs text-success mt-1 break-words">{xlsx.kind === 'pdf' ? 'PDF' : 'Excel'} file ready: {xlsx.name}</p>}
             </div>
             {!xlsx && (
               <div className="mt-3">
