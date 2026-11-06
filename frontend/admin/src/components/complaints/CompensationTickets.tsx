@@ -12,6 +12,7 @@ import { fmtPkrWhole } from '../../lib/money'
 import { Select } from '@/components/ui/Select'
 import { Modal } from '../ui/Modal'
 import { CompactEmptyState } from '../ui/CompactEmptyState'
+import { useBrandFilter } from '../../store/brandFilter'
 
 type CompType = 'void' | 'comp' | 'refund' | 'discount' | 'price_override'
 interface Person { id: string; name: string; role: string | null }
@@ -50,11 +51,12 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : 'That did not work'
 }
 
-export function CompensationTickets({ conceptOptions }: { conceptOptions: Array<{ id: string; name: string }> }) {
+export function CompensationTickets() {
   const qc = useQueryClient()
   const [type, setType] = useState('')
   const [flagged, setFlagged] = useState('')
-  const [conceptId, setConceptId] = useState('')
+  // Brand = the scope bar at the top (owner, 2026-11-06); empty = All brands.
+  const conceptId = useBrandFilter((s) => s.brandId) ?? ''
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [flagging, setFlagging] = useState<Ticket | null>(null)
@@ -115,10 +117,6 @@ export function CompensationTickets({ conceptOptions }: { conceptOptions: Array<
           <option value="">Flagged or not</option>
           <option value="1">Flagged</option>
           <option value="0">Not flagged</option>
-        </Select>
-        <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={`${inp} w-auto`} aria-label="Brand">
-          <option value="">All brands</option>
-          {conceptOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
         <label className="flex items-center gap-1 text-xs text-s-muted">
           From <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={`${inp} w-auto`} />
