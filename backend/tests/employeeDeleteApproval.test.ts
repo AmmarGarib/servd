@@ -60,8 +60,8 @@ async function mkEmp(tenantId: string, extra: Record<string, unknown> = {}) {
   n += 1
   return prisma.hrEmployee.create({ data: { tenantId, employeeCode: `${P}-${n}`, fullName: `${P} Person ${n}`, ...extra } })
 }
-async function addPayslip(tenantId: string, employeeId: string) {
-  const run = await prisma.hrPayrollRun.create({ data: { tenantId, period: `20${10 + n}-01`, settings: {} } })
+async function addPayslip(tenantId: string, employeeId: string, status = 'approved') {
+  const run = await prisma.hrPayrollRun.create({ data: { tenantId, period: `20${10 + n}-01`, settings: {}, status } })
   await prisma.hrPayslip.create({
     data: { runId: run.id, tenantId, employeeId, inputs: {}, lines: [], grossCents: 0, earningsCents: 0, deductionsCents: 0, eobiEmployeeCents: 0, eobiEmployerCents: 0, netCents: 0 },
   })
@@ -226,6 +226,23 @@ describe('what blocks a delete', () => {
     expect(await prisma.hrEmployee.findUnique({ where: { id: e.id } })).not.toBeNull()
     expect((await prisma.employeeDeleteRequest.findUniqueOrThrow({ where: { id: reqId } })).status).toBe('pending')
     expect(await prisma.trashEntry.findFirst({ where: { entityType: 'hr_employee', entityId: e.id } })).toBeNull()
+  })
+
+  it('a payslip in a DRAFT run is not history: deleted with the employee, the run totals re-added (owner, 2026-11-06)', async () => {
+    const e = await mkEmp(T.A)
+    const keep = await mkEmp(T.A)
+    const run = await prisma.hrPayrollRun.create({ data: { tenantId: T.A, period: '2031-01', settings: {}, totals: { employees: 2 } } })
+    const slip = (employeeId: string, net: number) => prisma.hrPayslip.create({
+      data: { runId: run.id, tenantId: T.A, employeeId, inputs: {}, lines: [], grossCents: net, earningsCents: net, deductionsCents: 0, eobiEmployeeCents: 0, eobiEmployerCents: 0, netCents: net },
+    })
+    await slip(e.id, 0); await slip(keep.id, 500000)
+    const r = await ask('ceoA', e.id, 'Added by mistake, never paid')
+    expect(r.statusCode).toBe(200)
+    expect(await prisma.hrEmployee.findUnique({ where: { id: e.id } })).toBeNull()
+    expect(await prisma.hrPayslip.count({ where: { runId: run.id } })).toBe(1)
+    const totals = (await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: run.id } })).totals as { employees: number; netCents: number }
+    expect(totals.employees).toBe(1)
+    expect(totals.netCents).toBe(500000)
   })
 
   it('an approved pay record (a loan) is history', async () => {
