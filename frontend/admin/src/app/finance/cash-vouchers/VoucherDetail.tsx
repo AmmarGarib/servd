@@ -320,7 +320,7 @@ export function VoucherDetail({ id }: { id: string }) {
             <Fact label="In words" value={v.amountInWords || amountInWords(v.amountCents)} wide />
             <Fact label="Particulars" value={v.purpose} wide />
             {v.purchaseOrderId
-              ? <Fact label="For purchase order" value={`${v.purchaseOrder?.reference ?? 'PO'}${v.purchaseOrder ? ` — ${v.purchaseOrder.supplier.name}` : ''} · paid into the buyer's petty-cash box${v.toBoxName ? ` (${v.toBoxName})` : ''}, not an expense — the goods are booked when the PO is received`} wide />
+              ? <PoFact v={v} />
               : <Fact label={v.assetClassId ? 'Booked to' : 'Expense account'} value={categoryLabel} />}
             {v.assetClassId && <Fact label="Outlet" value={v.assetLocationName ?? (v.conceptName ? `— (brand ${v.conceptName})` : '—')} />}
             {v.capitalisation && (
@@ -370,6 +370,56 @@ export function VoucherDetail({ id }: { id: string }) {
       {editing && (
         <VoucherForm voucher={v} isKeeper={isKeeper} onClose={() => setEditing(false)}
           onSaved={() => { setEditing(false); toast.success('Saved.'); refresh() }} />
+      )}
+    </div>
+  )
+}
+
+/** A PO's cash: a link straight to the PO and the items it buys (owner, 2026-11-06). */
+function PoFact({ v }: { v: CashVoucher }) {
+  const po = v.purchaseOrder
+  const lines = po?.lines ?? []
+  return (
+    <div className="sm:col-span-2">
+      <dt className="text-xs uppercase tracking-wider text-white/40">For purchase order</dt>
+      <dd className="text-white/85 font-semibold break-words">
+        <Link href={`/procurement?po=${v.purchaseOrderId}`} className="underline underline-offset-2" style={{ color: 'var(--erp-primary)' }}>
+          {po?.reference ?? 'Open the purchase order'}
+        </Link>
+        {po ? ` — ${po.supplier.name}` : ''}
+        <span className="block text-xs font-normal text-white/55 mt-0.5">
+          Paid into the buyer&rsquo;s petty-cash box{v.toBoxName ? ` (${v.toBoxName})` : ''}, not an expense — the goods are booked when the PO is received.
+        </span>
+      </dd>
+      {lines.length > 0 && (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-white/10 text-white/45">
+                <th className="text-left py-1.5 font-semibold">Item</th>
+                <th className="text-right py-1.5 font-semibold">Qty</th>
+                <th className="text-right py-1.5 font-semibold">Rate</th>
+                <th className="text-right py-1.5 font-semibold">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.id} className="border-b border-white/5 last:border-0">
+                  <td className="py-1.5 text-white/85">{l.item}</td>
+                  <td className="py-1.5 text-right text-white/75 whitespace-nowrap">{l.quantity.toLocaleString('en-PK', { maximumFractionDigits: 3 })} {l.unit}</td>
+                  <td className="py-1.5 text-right text-white/75 whitespace-nowrap">PKR {formatPkr(l.rateCents, { decimals: true })} / {l.unit}</td>
+                  <td className="py-1.5 text-right text-white/85 font-semibold whitespace-nowrap">PKR {formatPkr(l.totalCents, { decimals: true })}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-white/10">
+                <td colSpan={3} className="py-1.5 text-right text-white/55 font-semibold">PO total</td>
+                <td className="py-1.5 text-right text-white/90 font-black whitespace-nowrap">PKR {formatPkr(po?.totalCents ?? lines.reduce((a, l) => a + l.totalCents, 0), { decimals: true })}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       )}
     </div>
   )

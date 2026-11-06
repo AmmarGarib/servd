@@ -92,6 +92,7 @@ import { assertNotEquipmentLine, getAssetClasses } from '../fixedAssets/classes.
 import { assertSharedHasLocation } from '../fixedAssets/events.js'
 import { recordEquipmentPurchaseTx } from '../financePlanning/capexPosting.js'
 import { prepareBill, insertBillTx, afterBillCreated } from '../procurement/service.js'
+import { lineDisplay, lineValueCents } from '../procurement/poUnits.js'
 import { ensureFifoReady } from '../../lib/stockLedger.js'
 import { equipmentLocationsOf } from '../../lib/generalLocation.js'
 import { cashVoucherExportRoutes } from './voucherExport.js'
@@ -553,8 +554,31 @@ export async function detailOf(id: string, viewer: Viewer) {
     purchaseOrder: v.purchaseOrderId
       ? await prisma.purchaseOrder.findFirst({
         where: { id: v.purchaseOrderId, supplier: { tenantId: v.tenantId } },
-        select: { id: true, reference: true, status: true, totalCents: true, supplier: { select: { name: true } } },
-      }).then((p) => (p ? { ...p, totalCents: Number(p.totalCents) } : null))
+        select: {
+          id: true, reference: true, status: true, totalCents: true, supplier: { select: { name: true } },
+          lines: {
+            orderBy: { id: 'asc' },
+            select: {
+              id: true, quantityOrdered: true, unitCostCents: true, orderUnit: true, orderUnitFactor: true, orderUnitCostCents: true,
+              inventoryItem: { select: { name: true, unit: true } },
+            },
+          },
+        },
+      }).then((p) => (p
+        ? {
+          ...p,
+          totalCents: Number(p.totalCents),
+          // Each line as it was ordered (owner, 2026-11-06: "mention details of PO items in PO related cash vouchers").
+          lines: p.lines.map((l) => {
+            const shown = lineDisplay({ ...l, quantityOrdered: Number(l.quantityOrdered) }, l.inventoryItem?.unit ?? '')
+            return {
+              id: l.id, item: l.inventoryItem?.name ?? 'Item',
+              quantity: shown.quantity, unit: shown.unit, rateCents: shown.rateCents,
+              totalCents: lineValueCents({ ...l, quantityOrdered: Number(l.quantityOrdered) }),
+            }
+          }),
+        }
+        : null))
       : null,
     toBoxName: v.purchaseOrderId && payMovement?.boxId
       ? (await prisma.pettyCashBox.findUnique({ where: { id: payMovement.boxId }, select: { name: true } }))?.name ?? null

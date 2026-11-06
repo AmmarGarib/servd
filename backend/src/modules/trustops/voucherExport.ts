@@ -23,6 +23,7 @@ import { PDFDocument, StandardFonts, degrees, rgb, type PDFFont, type PDFPage } 
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
 import { amountInWords, formatPkr } from '../../lib/amountInWords.js'
+import { lineDisplay, lineValueCents } from '../procurement/poUnits.js'
 import { buildXlsx, type XlsxCell } from '../../lib/xlsxWriter.js'
 import { categoryRefOf, paidFromLabel } from '../accounting/pettyCashPosting.js'
 import { payoutCategory } from '../accounting/expenseCategories.js'
@@ -50,6 +51,10 @@ interface VoucherDoc {
   payee: string
   particulars: string
   account: string
+  /** "Expense account", or "For purchase order" on a PO's cash (owner, 2026-11-06). */
+  accountLabel: string
+  /** A PO's cash: each item as ordered — "Mozzarella: 2.5 kg @ PKR 1,800.00/kg = PKR 4,500.00". */
+  poItems: string[]
   grossCents: number
   discountCents: number
   totalCents: number
@@ -107,6 +112,30 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
     account = `Fixed asset — ${cls?.label ?? 'equipment'} (1340 CapEx advances → ${cls?.costAccountCode ?? '15xx'})`
   }
 
+  // A PO's cash (owner, 2026-11-06: "mention details of PO items in PO related cash vouchers").
+  let accountLabel = 'Expense account'
+  let poItems: string[] = []
+  if (v.purchaseOrderId) {
+    const po = await prisma.purchaseOrder.findFirst({
+      where: { id: v.purchaseOrderId, supplier: { tenantId } },
+      select: {
+        reference: true, supplier: { select: { name: true } },
+        lines: {
+          orderBy: { id: 'asc' },
+          select: { quantityOrdered: true, unitCostCents: true, orderUnit: true, orderUnitFactor: true, orderUnitCostCents: true, inventoryItem: { select: { name: true, unit: true } } },
+        },
+      },
+    })
+    accountLabel = 'For purchase order'
+    account = `${po?.reference ?? 'Purchase order'}${po ? ` - ${po.supplier.name}` : ''} (cash into the buyer's petty-cash box, not an expense)`
+    poItems = (po?.lines ?? []).map((l) => {
+      const ln = { ...l, quantityOrdered: Number(l.quantityOrdered) }
+      const sh = lineDisplay(ln, l.inventoryItem?.unit ?? '')
+      const qty = sh.quantity.toLocaleString('en-PK', { maximumFractionDigits: 3 })
+      return `${l.inventoryItem?.name ?? 'Item'}: ${qty} ${sh.unit} @ PKR ${formatPkr(sh.rateCents, { decimals: true })}/${sh.unit} = PKR ${formatPkr(lineValueCents(ln), { decimals: true })}`
+    })
+  }
+
   const discountCents = v.discountCents ?? 0
   const totalCents = v.amountCents
   const grossCents = v.grossCents ?? totalCents + discountCents
@@ -158,6 +187,8 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
     payee: v.payeeName,
     particulars: v.purpose,
     account,
+    accountLabel,
+    poItems,
     grossCents, discountCents, totalCents,
     words: amountInWords(totalCents),
     approvals,
@@ -272,7 +303,8 @@ async function renderPdf(d: VoucherDoc, files: Map<string, Uint8Array> = new Map
   }
   row('Payee', d.payee)
   row('Particulars', d.particulars)
-  row('Expense account', d.account)
+  row(d.accountLabel, d.account)
+  d.poItems.forEach((it, i) => row(i === 0 ? 'PO items' : '', it))
   y -= 16
 
   // Amount table: Amount | Discount | Total
@@ -391,7 +423,8 @@ function renderXlsx(d: VoucherDoc): Buffer {
     [{ v: 'Status', s: 'bold' }, d.status],
     [{ v: 'Payee', s: 'bold' }, d.payee],
     [{ v: 'Particulars', s: 'bold' }, { v: d.particulars, s: 'wrap' }],
-    [{ v: 'Expense account', s: 'bold' }, d.account],
+    [{ v: d.accountLabel, s: 'bold' }, d.account],
+    ...d.poItems.map((it, i): XlsxCell[] => [{ v: i === 0 ? 'PO items' : '', s: 'bold' }, { v: it, s: 'wrap' }]),
     [],
     [{ v: 'Amount', s: 'header' }, { v: 'Discount', s: 'header' }, { v: 'Total', s: 'header' }],
     [{ v: rupees(d.grossCents), s: 'currency' }, { v: rupees(d.discountCents), s: 'currency' }, { v: rupees(d.totalCents), s: 'boldCurrency' }],

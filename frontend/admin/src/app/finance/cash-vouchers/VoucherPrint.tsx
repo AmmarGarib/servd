@@ -121,7 +121,23 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
         <FieldBox label="Payee" value={payee} size="11.5pt" />
         <FieldBox label="Particulars" value={v.purpose} minH="14mm"
           size={v.purpose.length > 320 ? '8.5pt' : v.purpose.length > 160 ? '9.5pt' : '11pt'} />
-        <FieldBox label="Expense account" value={categoryLabel} />
+        {v.purchaseOrderId ? (
+          <>
+            <FieldBox label="For purchase order" value={`${v.purchaseOrder?.reference ?? 'PO'}${v.purchaseOrder ? ` — ${v.purchaseOrder.supplier.name}` : ''} (cash into the buyer's petty-cash box, not an expense)`} />
+            {(v.purchaseOrder?.lines?.length ?? 0) > 0 && (
+              <FieldBox label="Items on the PO" size={(v.purchaseOrder!.lines!.length > 6 ? '8pt' : '9pt')} value={
+                <span style={{ display: 'block' }}>
+                  {v.purchaseOrder!.lines!.map((l) => (
+                    <span key={l.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '4mm' }}>
+                      <span>{l.item} — {l.quantity.toLocaleString('en-PK', { maximumFractionDigits: 3 })} {l.unit} @ {formatPkr(l.rateCents, { decimals: true })}/{l.unit}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{formatPkr(l.totalCents, { decimals: true })}</span>
+                    </span>
+                  ))}
+                </span>
+              } />
+            )}
+          </>
+        ) : <FieldBox label="Expense account" value={categoryLabel} />}
       </div>
 
       {/* Amounts */}

@@ -308,7 +308,10 @@ export default function ProcurementPage() {
   useEffect(() => { if (!pickedTab.current && nTasks > 0) { pickedTab.current = true; setTab('tasks') } }, [nTasks])
   const [grnOpen, setGrnOpen] = useState<string | null>(null)
   // Finance lands on Bills (the PO tab is not theirs).
-  useEffect(() => { if (apOnly && !AP_ONLY_TABS.includes(tab)) setTab('bills') }, [apOnly, tab])
+  // /procurement?po=<id> — the PO's detail opened straight away (the link on a PO's cash voucher). Finance reads a PO
+  // (readAnyOf accounting), so for them the Purchase Orders tab opens only through this link.
+  const [openPo, setOpenPo] = useState<string | null>(null)
+  useEffect(() => { if (apOnly && !AP_ONLY_TABS.includes(tab) && !(tab === 'pos' && openPo)) setTab('bills') }, [apOnly, tab, openPo])
   // /procurement?new=po[&item=<id>&qty=<n>] — opened from Inventory's
   // "Purchase order" button: lands on Purchase Orders with the new-PO form
   // open (and, when an item is given, that item as its first line).
@@ -327,6 +330,7 @@ export default function ProcurementPage() {
       const wanted = sp.get('tab')
       if (wanted && ['tasks', 'pos', 'grns', 'bills', 'payments', 'suppliers', 'aging', 'reorder', 'approvals', 'history'].includes(wanted)) { pickedTab.current = true; setTab(wanted as Tab) }
       if (sp.get('grn')) setGrnOpen(sp.get('grn'))
+      if (sp.get('po')) { pickedTab.current = true; setTab('pos'); setOpenPo(sp.get('po')) }
       if (sp.get('new') === 'po') { setTab('pos'); setNewPo({ item: sp.get('item'), qty: sp.get('qty') }) }
     } catch { /* no window */ }
   }, [])
@@ -343,7 +347,7 @@ export default function ProcurementPage() {
     { id: 'approvals', label: 'Approvals',        icon: '' },
     { id: 'history',   label: 'Price History',    icon: '' },
   ]
-  const tabs = apOnly ? allTabs.filter((t) => AP_ONLY_TABS.includes(t.id)) : allTabs
+  const tabs = apOnly ? allTabs.filter((t) => AP_ONLY_TABS.includes(t.id) || (t.id === 'pos' && openPo)) : allTabs
 
   return (
     <div className="min-h-screen bg-s-bg flex flex-col">
@@ -365,7 +369,7 @@ export default function ProcurementPage() {
 
       <div className="flex-1 overflow-y-auto">
         {tab === 'tasks'     && <MyTasksTab />}
-        {tab === 'pos'       && <PoTab       qc={qc} newPo={newPo} />}
+        {tab === 'pos'       && <PoTab       qc={qc} newPo={newPo} openPo={openPo} />}
         {tab === 'grns'      && <GrnsTab initialId={grnOpen} />}
         {tab === 'bills'     && <BillsTab    qc={qc} prefill={billPrefill} />}
         {tab === 'payments'  && <PaymentsTab qc={qc} prefill={paymentPrefill} />}
@@ -383,7 +387,7 @@ export default function ProcurementPage() {
 // PURCHASE ORDERS TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
-function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: { item: string | null; qty: string | null } | null }) {
+function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: { item: string | null; qty: string | null } | null; openPo?: string | null }) {
   const router = useRouter()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -436,6 +440,12 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
     queryFn: () => api.get<PurchaseOrder[]>(`/procurement/purchase-orders?${qs}`),
   })
 
+  useEffect(() => {
+    if (!openPo) return
+    setDetailId(openPo)
+    const t = setTimeout(() => document.getElementById('po-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 600)
+    return () => clearTimeout(t)
+  }, [openPo])
   const { data: detail } = useQuery({
     queryKey: ['procurement', 'po', detailId],
     queryFn: () => api.get<PurchaseOrder>(`/procurement/purchase-orders/${detailId}`),
@@ -579,7 +589,7 @@ function PoTab({ qc, newPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: {
 
       {/* Detail panel */}
       {detail && (
-        <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
+        <div id="po-detail" className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="font-bold text-s-text">PO Detail — {detail.reference ?? detail.id.slice(-8)}</p>
             <LinkButton tone="muted" type="button" onClick={() => setDetailId(null)} aria-label="Close PO detail"><FIcon name="x" size={14} /> Close</LinkButton>
