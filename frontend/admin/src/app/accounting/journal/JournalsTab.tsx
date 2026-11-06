@@ -3,15 +3,15 @@
 // Manual / Payment / Receipt / All — to find an entry in no time.
 // GET /accounting/journals (cursor paging, ?format= exports the same filter).
 import { useEffect, useMemo, useState } from 'react'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { fmtPkr } from '../../../lib/money'
 import { Button, CheckLabel, ErrorBanner, Input } from '@/components/finance/ui'
-import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 import { AccountPicker, StatusBadge, readableDescription } from './JournalBits'
-import { pktDate, rupeesToCents, type Brand, type RegRow } from './journalTypes'
+import { pktDate, rupeesToCents, type RegRow } from './journalTypes'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 type View = 'manual' | 'payment' | 'receipt' | 'all'
 const VIEWS: Array<[View, string]> = [['manual', 'Manual'], ['payment', 'Payment'], ['receipt', 'Receipt'], ['all', 'All']]
@@ -25,7 +25,8 @@ export function JournalsTab({ onOpen }: { onOpen: (row: RegRow) => void }) {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [accountCode, setAccountCode] = useState('')
-  const [brandId, setBrandId] = useState('')
+  // The brand comes from the scope bar at the top of the page.
+  const brandId = useBrandFilter((s) => s.brandId) ?? ''
   const [min, setMin] = useState('')
   const [max, setMax] = useState('')
   const [includeSales, setIncludeSales] = useState(false)
@@ -36,8 +37,6 @@ export function JournalsTab({ onOpen }: { onOpen: (row: RegRow) => void }) {
     const t = setTimeout(() => setQ(text.trim()), 350)
     return () => clearTimeout(t)
   }, [text])
-
-  const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ['concepts', 'picker'], queryFn: () => api.get('/concepts?view=picker') })
 
   const minC = rupeesToCents(min)
   const maxC = rupeesToCents(max)
@@ -98,13 +97,7 @@ export function JournalsTab({ onOpen }: { onOpen: (row: RegRow) => void }) {
             <AccountPicker value={accountCode} valueKey="code" onPick={(a) => setAccountCode(a?.code ?? '')} />
           </div>
         </div>
-        <label className="text-xs text-s-muted">Brand
-          <Select value={brandId} onChange={(e) => setBrandId(e.target.value)} className="s-select mt-1 py-1 text-sm">
-            <option value="">All brands</option>
-            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </Select>
-        </label>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:col-span-2">
           <label className="text-xs text-s-muted">Min PKR
             <Input inputMode="decimal" value={min} onChange={(e) => setMin(e.target.value)} className="mt-1 py-1 text-sm text-right font-mono" aria-invalid={minC === null || undefined} />
           </label>

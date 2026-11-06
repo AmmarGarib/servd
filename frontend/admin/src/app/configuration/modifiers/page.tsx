@@ -3,8 +3,9 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
-import { Select } from '@/components/ui/Select'
 import { NavIcon } from '../../../components/ui/NavIcon'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
+import { useActiveBrandId } from '../../../components/ui/BrandPicker'
 
 interface Option {
   id?: string
@@ -121,12 +122,8 @@ interface MenuTreeCategory { id: string; name: string; items: Array<{ id: string
 interface AddOnRecipe { id: string; kind: string; modifierId?: string | null; status: string }
 
 function AddOnIngredients() {
-  const { data: brands = [] } = useQuery<Array<{ id: string; name: string }>>({
-    queryKey: ['concepts', 'picker'],
-    queryFn: () => api.get('/concepts?view=picker'),
-  })
-  const [brandId, setBrandId] = useState('')
-  const activeBrand = brandId || brands[0]?.id || ''
+  // The brand comes from the scope bar at the top; add-ons are per brand.
+  const activeBrand = useActiveBrandId() ?? ''
   const { data: menu = [], isLoading } = useQuery<MenuTreeCategory[]>({
     queryKey: ['recipes', 'brand-menu', activeBrand],
     queryFn: () => api.get(`/menu/${activeBrand}`),
@@ -153,12 +150,8 @@ function AddOnIngredients() {
             What one of each add-on adds to the dish, or takes off it. Without it, an add-on sells with no stock or food cost.
           </p>
         </div>
-        {brands.length > 1 && (
-          <Select value={activeBrand} onChange={(e) => setBrandId(e.target.value)} className={fieldCls + ' w-auto'}>
-            {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </Select>
-        )}
       </div>
+      {!activeBrand && <CompactEmptyState message="Pick a brand in the bar at the top to see its add-on ingredients." />}
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}
       {!isLoading && activeBrand && dishes.length === 0 && (
         <Empty label="No add-ons on this brand's menu" hint="Add modifier groups to a dish in the menu editor first." />

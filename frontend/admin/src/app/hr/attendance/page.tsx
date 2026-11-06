@@ -17,7 +17,7 @@ import { api } from '../../../lib/api'
 import { card, inp, btnGhost, human, type PunchRow } from '../../../lib/hr'
 import { HrShell } from '../../../components/hr/HrShell'
 import { BulkAttendanceButtons } from '../../../components/hr/BulkAttendance'
-import { Select } from '@/components/ui/Select'
+import { useBranchFilter } from '../../../store/branchFilter'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 const STATUS_TONE: Record<string, string> = {
@@ -139,7 +139,6 @@ interface LogRow {
   type: 'in' | 'out'; at: string; source: string; location: string | null; distanceM: number | null; outOfArea: boolean; attendanceStatus: string | null
 }
 interface LogData { total: number; page: number; pageSize: number; rows: LogRow[] }
-interface LocationLite { id: string; name: string }
 
 const STATUS_LABEL: Record<TodayStatus, string> = { in: 'In', out: 'Out', not_in: 'Not in yet', missing_punch: 'Missing punch', on_leave: 'On leave', recorded: 'Recorded by HR' }
 const STATUS_COLOR_T: Record<TodayStatus, string> = {
@@ -153,9 +152,9 @@ function OutOfAreaBadge() {
 }
 
 function TodayTab() {
-  const [locationId, setLocationId] = useState('')
+  // The branch comes from the scope bar at the top (null = All branches).
+  const locationId = useBranchFilter((s) => s.locationId) ?? ''
   const [filter, setFilter] = useState<'all' | TodayStatus | 'out_of_area'>('all')
-  const { data: locations = [] } = useQuery({ queryKey: ['locations'], queryFn: () => api.get<LocationLite[]>('/locations') })
   const { data, error, isLoading, dataUpdatedAt, isFetching, refetch } = useQuery({
     queryKey: ['hr-tracking-today', locationId],
     queryFn: () => api.get<TodayData>(`/hr/attendance-tracking/today${locationId ? `?locationId=${encodeURIComponent(locationId)}` : ''}`),
@@ -175,10 +174,6 @@ function TodayTab() {
   return (
     <>
       <div className="flex flex-wrap items-center gap-3 mb-3">
-        <Select className={`${inp} max-w-[240px]`} value={locationId} onChange={(e) => setLocationId(e.target.value)} aria-label="Work location">
-          <option value="">All work locations</option>
-          {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-        </Select>
         <span className="text-xs text-white/40">{data ? `Today, ${data.date}` : ''}</span>
         <Refresh at={dataUpdatedAt} fetching={isFetching} onClick={() => void refetch()} />
         <Link href="/hr/reports" className="ml-auto text-xs text-primary-ink hover:underline">Month totals: Attendance &amp; Leaves report</Link>

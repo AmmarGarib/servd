@@ -111,3 +111,22 @@ export function BrandColumn({ concepts, brandId, onPick, scroll = true, notHere 
     </div>
   )
 }
+
+/**
+ * The ONE brand a single-brand page works on (a menu editor, hours, a floor plan): the scope bar's brand, or — when
+ * the companies in view have exactly one brand, so the bar shows no brand row — that brand. Null = pick one in the
+ * bar (only possible when there are two or more). Never auto-picks among several.
+ */
+export function useActiveBrandId(): string | null {
+  const brandId = useBrandFilter((s) => s.brandId)
+  const { data: concepts } = useQuery({
+    queryKey: ['concepts', 'brand-picker'],
+    queryFn: () => api.get<PickerConcept[]>('/concepts?view=picker'),
+    staleTime: 60_000,
+    meta: { background: true },
+    retry: (count, err) => !(err instanceof ApiError && err.status === 403) && count < 1,
+  })
+  if (brandId) return brandId
+  return concepts && concepts.length === 1 ? concepts[0]!.id : null
+}
+

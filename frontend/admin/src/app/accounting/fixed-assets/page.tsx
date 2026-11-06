@@ -26,6 +26,8 @@ import { AddExistingAssetForm } from '../../../components/fixedAssets/AddExistin
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
+import { useBrandFilter } from '../../../store/brandFilter'
+import { useBranchFilter } from '../../../store/branchFilter'
 
 interface CompanyTotals { tenantId: string; companyName: string; assets: number; costCents: number; accumulatedCents: number; nbvCents: number; monthlyCents: number }
 interface LastRun {
@@ -60,8 +62,9 @@ export default function FixedAssetsPage() {
 
   const [status, setStatus] = useState('active')
   const [classKey, setClassKey] = useState('')
-  const [conceptId, setConceptId] = useState('')
-  const [locationId, setLocationId] = useState('')
+  // Brand / outlet come from the scope bar at the top of the page.
+  const conceptId = useBrandFilter((s) => s.brandId) ?? ''
+  const locationId = useBranchFilter((s) => s.locationId) ?? ''
   const [asOf, setAsOf] = useState('')
   const [owedOnly, setOwedOnly] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'wait' | 'bad'; text: string } | null>(null)
@@ -101,16 +104,6 @@ export default function FixedAssetsPage() {
   const classOptions = useMemo(() => {
     const seen = new Map<string, string>()
     for (const c of lookups?.classes ?? []) if (!seen.has(c.key)) seen.set(c.key, c.label)
-    return [...seen.entries()]
-  }, [lookups])
-  const brandOptions = useMemo(() => {
-    const seen = new Map<string, string>()
-    for (const b of lookups?.brands ?? []) seen.set(b.id, b.name)
-    return [...seen.entries()]
-  }, [lookups])
-  const outletOptions = useMemo(() => {
-    const seen = new Map<string, string>()
-    for (const l of lookups?.locations ?? []) seen.set(l.id, l.name)
     return [...seen.entries()]
   }, [lookups])
 
@@ -246,7 +239,7 @@ export default function FixedAssetsPage() {
       )}
 
       {/* Filters */}
-      <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-6 gap-3 items-end" style={card}>
+      <div className="rounded-2xl p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end" style={card}>
         <Field label="Show">
           <Select className={inp} value={status} onChange={(e) => setStatus(e.target.value)}>
             {STATUS_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
@@ -255,16 +248,6 @@ export default function FixedAssetsPage() {
           <Select className={inp} value={classKey} onChange={(e) => setClassKey(e.target.value)}>
             <option value="">All classes</option>
             {classOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </Select></Field>
-        <Field label="Brand">
-          <Select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
-            <option value="">All brands</option>
-            {brandOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </Select></Field>
-        <Field label="Outlet">
-          <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-            <option value="">All outlets</option>
-            {outletOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </Select></Field>
         <Field label="Values as of">
           <Input type="date" className={inp} value={asOf} onChange={(e) => setAsOf(e.target.value)} /></Field>

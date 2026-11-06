@@ -21,6 +21,7 @@ import { fmtPkr, todayPktIso } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 // A pre-bill is priced for cash or the digital rate. 'card' is the digital tax
 // group — Card – Keenu and Raast QR share it (backend lib/pricing.ts).
@@ -172,7 +173,8 @@ function StatusPill({ status }: { status: Status }) {
 export default function VoidedPreBillsPage() {
   const [from, setFrom] = useState(() => daysAgoPktIso(29))
   const [to, setTo] = useState(() => todayPktIso())
-  const [conceptId, setConceptId] = useState('')
+  // The brand comes from the scope bar at the top of the page.
+  const conceptId = useBrandFilter((s) => s.brandId) ?? ''
   const [printedById, setPrintedById] = useState('')
   const [status, setStatus] = useState<'' | Status>('')
   const [flagged, setFlagged] = useState(false)
@@ -224,12 +226,6 @@ export default function VoidedPreBillsPage() {
           </Filter>
           <Filter label="To">
             <Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={fieldCls} />
-          </Filter>
-          <Filter label="Brand">
-            <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls}>
-              <option value="">All brands</option>
-              {(data?.facets.concepts ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
           </Filter>
           <Filter label="Printed by">
             <Select value={printedById} onChange={(e) => setPrintedById(e.target.value)} className={fieldCls}>

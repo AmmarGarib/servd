@@ -3,8 +3,8 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
-import { useBrandFilter } from '../../../store/brandFilter'
-import { Select } from '@/components/ui/Select'
+import { useActiveBrandId } from '../../../components/ui/BrandPicker'
+import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useAuthStore } from '../../../store/auth'
 
@@ -106,8 +106,8 @@ export default function HoursPage() {
   const qc = useQueryClient()
   const confirm = useConfirm()
   const { data: concepts = [] } = useQuery<Concept[]>({ queryKey: ['concepts'], queryFn: () => api.get('/concepts') })
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
-  useEffect(() => { if (!conceptId && concepts.length > 0) setConceptId(concepts[0]!.id) }, [concepts, conceptId])
+  // The brand comes from the scope bar at the top; hours need exactly one brand.
+  const conceptId = useActiveBrandId() ?? ''
 
   const { data: hours = [], isLoading } = useQuery<ServiceHour[]>({
     queryKey: ['hours', conceptId],
@@ -196,15 +196,10 @@ export default function HoursPage() {
               Hours attach to a brand. <Link href="/onboarding" className="text-amber-700 hover:underline">Run setup wizard</Link>.
             </p>
           </div>
+        ) : !conceptId ? (
+          <CompactEmptyState message="Pick a brand in the bar at the top to set its hours." />
         ) : (
           <>
-            <div>
-              <label className="text-xs text-white/55">Brand</label>
-              <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={fieldCls + ' mt-1 max-w-sm'}>
-                {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </Select>
-            </div>
-
             {isLoading && <p className="text-xs text-white/40">Loading hours…</p>}
 
             <div className="rounded-2xl p-5"

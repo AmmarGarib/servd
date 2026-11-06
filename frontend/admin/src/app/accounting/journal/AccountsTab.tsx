@@ -6,15 +6,15 @@
 // with sub-accounts shows its sub-ledger summary first; a click on one opens
 // that sub-account's own statement (subAccountId).
 import { useMemo, useState } from 'react'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { fmtPkr, startOfMonthPktIso, todayPktIso } from '../../../lib/money'
 import { Button, ErrorBanner, Input, LinkButton } from '@/components/finance/ui'
-import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 import { AccountPicker, StatusBadge, readableDescription } from './JournalBits'
-import { pktDate, type Brand, type ChartAccount, type EntryFlags } from './journalTypes'
+import { pktDate, type ChartAccount, type EntryFlags } from './journalTypes'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 interface StLine extends Partial<EntryFlags> {
   date: string
@@ -62,14 +62,13 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
   const [picked, setPicked] = useState<ChartAccount | null>(null)
   const [from, setFrom] = useState(startOfMonthPktIso())
   const [to, setTo] = useState(todayPktIso())
-  const [brandId, setBrandId] = useState('')
+  // The brand comes from the scope bar at the top of the page.
+  const brandId = useBrandFilter((s) => s.brandId) ?? ''
   const [subId, setSubId] = useState('')
   const [exportErr, setExportErr] = useState<string | null>(null)
   // Entries cancelled in the period and the entries that cancel them are hidden by the server — on screen and in
   // every export — unless shown here (owner, 2026-10-29: "give option to show or hide adjustment entries").
   const [showCancelled, setShowCancelled] = useState(false)
-
-  const { data: brands = [] } = useQuery<Brand[]>({ queryKey: ['concepts', 'picker'], queryFn: () => api.get('/concepts?view=picker') })
 
   const query = useMemo(() => {
     const sp = new URLSearchParams({ view: 'statement', accountId, from, to })
@@ -105,18 +104,12 @@ export function AccountsTab({ accountId, onAccountChange, onOpen }: {
       <div className="s-card p-3 space-y-2">
         <p className="text-xs text-s-muted">Search the chart, pick an account, and see every entry in it. Click an entry to open, edit or cancel it.</p>
         <AccountPicker value={accountId} onPick={pick} selected={selectedAccount} />
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
           <label className="text-xs text-s-muted">From
             <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="mt-1 py-1 text-sm" />
           </label>
           <label className="text-xs text-s-muted">To
             <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="mt-1 py-1 text-sm" />
-          </label>
-          <label className="text-xs text-s-muted">Brand
-            <Select value={brandId} onChange={(e) => setBrandId(e.target.value)} className="s-select mt-1 py-1 text-sm">
-              <option value="">All brands</option>
-              {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </Select>
           </label>
         </div>
       </div>

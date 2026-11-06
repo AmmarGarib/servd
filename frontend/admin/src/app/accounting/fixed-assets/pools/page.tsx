@@ -18,6 +18,8 @@ import {
 import { PoolRequestModal, type PoolRequestKind, type PoolRow } from '../../../../components/fixedAssets/RequestForms'
 import { Select } from '@/components/ui/Select'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
+import { useBrandFilter } from '../../../../store/brandFilter'
+import { useBranchFilter } from '../../../../store/branchFilter'
 
 interface Layer {
   id: string; assetTag: string | null; name: string; quantity: number; originalQuantity: number
@@ -40,8 +42,9 @@ interface Pool extends PoolRow {
 export default function PoolsPage() {
   const qc = useQueryClient()
   const { data: lookups } = useFaLookups()
-  const [conceptId, setConceptId] = useState('')
-  const [locationId, setLocationId] = useState('')
+  // Brand / outlet come from the scope bar at the top of the page.
+  const conceptId = useBrandFilter((s) => s.brandId) ?? ''
+  const locationId = useBranchFilter((s) => s.locationId) ?? ''
   const [typeKey, setTypeKey] = useState('')
   const [open, setOpen] = useState<string | null>(null)
   const [action, setAction] = useState<{ pool: Pool; kind: PoolRequestKind; units?: number } | null>(null)
@@ -65,9 +68,6 @@ export default function PoolsPage() {
   const isCeo = !!lookups?.capabilities.canApprove
   const pools = data?.pools ?? []
   const multi = new Set(pools.map((p) => p.tenantId)).size > 1
-
-  const brandOptions = useMemo(() => [...new Map((lookups?.brands ?? []).map((b) => [b.id, b.name])).entries()], [lookups])
-  const outletOptions = useMemo(() => [...new Map((lookups?.locations ?? []).map((l) => [l.id, l.name])).entries()], [lookups])
 
   const totalUnits = pools.reduce((s, p) => s + p.unitsOnHand, 0)
   const totalCost = pools.reduce((s, p) => s + p.costCents, 0)
@@ -104,12 +104,6 @@ export default function PoolsPage() {
       </div>
 
       <div className="rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-3" style={card}>
-        <Field label="Outlet">
-          <Select className={inp} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-            <option value="">All outlets</option>{outletOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
-        <Field label="Brand">
-          <Select className={inp} value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
-            <option value="">All brands</option>{brandOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</Select></Field>
         <Field label="Type">
           <Select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
             <option value="">All types</option>{(lookups?.smallwareTypes ?? []).map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</Select></Field>
