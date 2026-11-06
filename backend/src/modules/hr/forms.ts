@@ -485,6 +485,8 @@ export const HR_SECTIONS: HrSection[] = [
 
   { key: 'performance_review', specNo: 17, title: 'Performance reviews', group: 'People', kind: 'record',
     workflow: [HOD, HR],
+    // Replaced by the self-evaluation & appraisal system (owner, 2026-11-06: "Replace it"); old reviews stay readable.
+    movedTo: { path: '/hr/performance', label: 'Performance evaluations', message: 'Performance reviews now run through Performance evaluations (My HR → My Performance Evaluation; HR → Performance).' },
     fields: [
       emp(),
       t('period', 'Review period', { required: true }),

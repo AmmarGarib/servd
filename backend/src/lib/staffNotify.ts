@@ -69,6 +69,7 @@ export type NotificationKind =
   | 'marketing.card'          // you were put on a marketing board card, or a card you work on moved stage (owner, 2026-11-03)
   | 'marketing.task'          // a task of yours: put on it, marked done (to the approvers) or approved / reopened by leadership (owner, 2026-11-04)
   | 'bank_reconciliation.reopened' // finance reopened an approved bank reconciliation — the company's CEO(s) (owner, 2026-11-05)
+  | 'hr.performance'          // a performance evaluation was assigned / submitted / returned / finalized / reopened (owner, 2026-11-06)
   | 'marketing.weekly'        // Monday: last week's published vs slipped per board — marketing leads + the CEO (owner, 2026-11-03)
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical'

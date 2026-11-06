@@ -509,6 +509,91 @@ model EmployeeDeleteRequest {
   @@map("employee_delete_requests")
 }
 
+// Employee self-evaluation & performance appraisal (owner, 2026-11-06; contract in the header of
+// src/modules/hr/performance.ts). REPLACES the old "Performance reviews" HR section (now movedTo). All three are
+// company data (tenantId, RLS, company-merge repoint; migration 20261106120000_performance_evaluations).
+// A cycle = one review period with its performance areas + weights (basis points, sum 10000) and the
+// self / manager split of the final score.
+model PerformanceCycle {
+  id           String    @id @default(uuid())
+  tenantId     String
+  name         String
+  periodFrom   DateTime  @db.Date
+  periodTo     DateTime  @db.Date
+  dueDate      DateTime? @db.Date
+  areas        Json // [{ key, label, weightBp }]
+  selfWeightBp Int       @default(3000) // the manager's share is 10000 − this
+  status       String    @default("open") // open | closed
+  createdById  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  evaluations PerformanceEvaluation[]
+
+  @@index([tenantId, status])
+  @@map("performance_cycles")
+}
+
+// Question sets: a company standard (ownerUserId null, HR's) or a manager's own. questions = { areaKey: string[] }.
+model PerformanceTemplate {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  questions   Json
+  ownerUserId String?
+  active      Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, active])
+  @@map("performance_templates")
+}
+
+// One employee's evaluation in a cycle. tenantId = the employee's company. Scores are hundredths of a percent
+// (9250 = 92.50%). The employee's part (self) is never changed by the manager; the manager's part (manager) is
+// hidden from the employee until finalized.
+model PerformanceEvaluation {
+  id                String    @id @default(uuid())
+  tenantId          String
+  cycleId           String
+  employeeId        String
+  managerEmployeeId String?
+  managerUserId     String
+  assignedById      String
+  dueDate           DateTime? @db.Date
+  // pending_employee | draft | submitted | resubmitted | manager_in_progress | returned | finalized
+  status            String    @default("pending_employee")
+  areas             Json // the cycle's areas when assigned
+  questions         Json // { areaKey: [{ id, text }] }
+  selfWeightBp      Int
+  self              Json      @default("{}")
+  manager           Json      @default("{}")
+  selfScore         Int?
+  managerScore      Int?
+  finalScore        Int?
+  category          String?
+  returnNote        String?
+  returnCount       Int       @default(0)
+  history           Json      @default("[]")
+  submittedAt       DateTime?
+  managerStartedAt  DateTime?
+  finalizedAt       DateTime?
+  employeeAckAt     DateTime?
+  reopenedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  cycle    PerformanceCycle @relation(fields: [cycleId], references: [id], onDelete: Restrict)
+  employee HrEmployee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([cycleId, employeeId])
+  @@index([tenantId, status])
+  @@index([managerUserId])
+  @@index([employeeId])
+  @@map("performance_evaluations")
+}
+
 // A guest-list download (phones / emails) a non-CEO asked for (owner, 2026-10-27: customer exports go to the CEO).
 // modules/crm/customerExports.ts is the contract. tenantId = the requester's ACTIVE company (whose guests are
 // exported; a 'waitlist' export is the servd-wide new-brand list, filed in that company). Approved = ONE download
@@ -8145,6 +8230,7 @@ model HrEmployee {
   // Where this person works (owner, 2026-10-15): one or more of the company's Locations; the time clock checks a
   // punch against the nearest of them.
   workLocations      HrWorkLocation[]
+  performanceEvaluations PerformanceEvaluation[]
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, userId])

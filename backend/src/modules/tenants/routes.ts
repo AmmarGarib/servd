@@ -778,6 +778,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.loginOffboardRequest,
     // Employee deletes waiting for the CEO (owner, 2026-11-05): follow the employee's company.
     tx.employeeDeleteRequest,
+    // Performance appraisal (owner, 2026-11-06): cycles, templates and evaluations follow their company.
+    tx.performanceCycle, tx.performanceTemplate, tx.performanceEvaluation,
     // Cook timers on the station screen (owner B12, 2026-10-26): follow the order's company.
     tx.kitchenTimer,
     // Sales sessions (2026-10-22): per brand, follow the brand's company.

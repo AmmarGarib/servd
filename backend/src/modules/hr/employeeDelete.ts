@@ -110,6 +110,8 @@ export async function employeeHistory(db: Db, emp: Pick<HrEmployee, 'id' | 'stat
     db.marketingTrackee.count({ where: { employeeId: id } }),
     db.hrEmployee.count({ where: { managerId: id, NOT: { id } } }),
   ])
+  // A finalized performance evaluation is history (owner, 2026-11-06); unfinished ones go with the employee.
+  const appraisals = await db.performanceEvaluation.count({ where: { employeeId: id, status: 'finalized' } })
   const out: string[] = []
   if (payslips) out.push(plural(payslips, 'payslip'))
   for (const r of records) out.push(`${plural(r._count._all, 'approved record')} in ${sectionByKey(r.section)?.title ?? r.section.replace(/_/g, ' ')}`)
@@ -117,6 +119,7 @@ export async function employeeHistory(db: Db, emp: Pick<HrEmployee, 'id' | 'stat
   if (waited) out.push(plural(waited, 'till ticket') + ' they waited')
   if (tags) out.push(plural(tags, 'journal line') + ' tagged to their sub-account')
   if (tracker) out.push('on the marketing tracker')
+  if (appraisals) out.push(plural(appraisals, 'finalized performance evaluation'))
   if (reports) out.push(plural(reports, 'person reports', 'people report') + ' to them')
   if (emp.status === TRANSFERRED_STATUS) out.push('moved to a head office')
   return out

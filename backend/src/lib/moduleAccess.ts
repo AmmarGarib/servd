@@ -699,6 +699,9 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // only when the CEO gives it staff_hr (the role array is HR team + managers).
   { prefix: '/hr/attendance-tracking', anyOf: ['staff_hr'] },
   { prefix: '/hr/work-pins',        anyOf: ['staff_hr'] },
+  // Performance appraisal (owner, 2026-11-06): cycles, reopen and the Results dashboard are HR's; the rest of
+  // /hr/performance is self-service (employee / reporting manager, checked in performance.ts).
+  { prefix: '/hr/performance/admin', anyOf: ['staff_hr'] },
 
   // ── Live operations (wave 3, UI-12) ──────────────────────────────────────
   // Their role arrays are ALL_STAFF (every floor role works them), so before
