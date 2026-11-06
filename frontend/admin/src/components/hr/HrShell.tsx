@@ -15,6 +15,7 @@ import { HR_ADMIN_ROLES, PAYROLL_APPROVER_ROLES, PAYROLL_PAYER_ROLES, PAYROLL_FI
 const NAV: Array<{ href: string; label: string; staff?: boolean }> = [
   { href: '/dashboard/hr', label: 'Dashboard' },
   { href: '/hr/employees', label: 'Employees' },
+  { href: '/hr/interns', label: 'Interns' },
   { href: '/hr/attendance', label: 'Attendance' },
   { href: '/hr/sections', label: 'All sections' },
   { href: '/hr/documents', label: 'Documents' },

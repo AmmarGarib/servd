@@ -179,6 +179,7 @@ function AddEmployee({ onClose }: { onClose: () => void }) {
   }
   return (
     <Modal title="Add employee" wide onClose={onClose} dirty={value !== null}>
+      <p className="text-xs text-white/60 mb-3">Interns are not employees — they are enrolled in <Link href="/hr/interns" className="font-bold text-primary-ink underline">HR → Interns</Link>.</p>
       <form ref={formRef} onSubmit={submit} noValidate>
         {form ? <FormRenderer fields={fields} value={v} errors={errors}
           onChange={(nv) => { setValue(nv); if (Object.keys(errors).length) setErrors(validate(fields, nv)) }} ctx={{ lookups, org }} />

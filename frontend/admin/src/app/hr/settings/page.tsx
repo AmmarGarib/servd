@@ -149,8 +149,8 @@ const WEEKDAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 's
 /** Gratuity at exit (backend hr/logic.ts GratuitySettings, accountant default H6). */
 interface Gratuity { enabled: boolean; eligibleTypes: string[]; minServiceMonths: number; partYearOverMonths: number; daysPerYear: number }
 const DEFAULT_GRATUITY: Gratuity = { enabled: true, eligibleTypes: ['permanent'], minServiceMonths: 12, partYearOverMonths: 6, daysPerYear: 30 }
-/** The employment types the Employee Master offers by default; a type HR added shows once it is ticked. */
-const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'temporary', 'intern']
+/** The employment types the Employee Master offers by default; a type HR added shows once it is ticked. Interns are not employees (HR → Interns). */
+const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'temporary']
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 

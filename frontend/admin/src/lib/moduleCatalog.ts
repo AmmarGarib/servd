@@ -164,6 +164,8 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   ],
   accounting:     [
     { label: 'Accounting', href: '/accounting', icon: 'chart' },
+    // Finance reviews and pays the intern stipend payroll (backend GATED_PREFIXES: /hr/interns/payroll = staff_hr | accounting).
+    { label: 'Intern stipends', href: '/hr/interns/payroll', sub: true, hint: 'Review and pay the monthly intern stipends' },
     { label: 'Ledger', href: '/accounting/ledger', sub: true },
     { label: 'Journals', href: '/accounting/journal', sub: true },
     { label: 'Journal requests', href: '/accounting/journal?tab=requests', sub: true },
@@ -274,9 +276,11 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
   staff_hr:       [
     { label: 'HR dashboard', href: '/dashboard/hr', icon: 'dashboard', lead: true },
     { label: 'Employees', href: '/hr/employees', icon: 'idcard' },
+    { label: 'Interns', href: '/hr/interns', sub: true, hint: 'Intern register, attendance, stipends, certificates' },
     { label: 'Attendance', href: '/hr/attendance', sub: true },
     { label: 'All sections', href: '/hr/sections', sub: true },
     { label: 'HR payroll', href: '/hr/payroll', sub: true },
+    { label: 'Intern stipends', href: '/hr/interns/payroll', sub: true, hint: 'Monthly stipends for paid interns' },
     { label: 'Documents', href: '/hr/documents', sub: true },
     { label: 'Letters', href: '/hr/letters', sub: true },
     { label: 'Performance', href: '/hr/performance', sub: true, hint: 'Evaluation cycles and results' },

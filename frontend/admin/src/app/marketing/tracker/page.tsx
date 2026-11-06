@@ -32,22 +32,22 @@ export default function TrackerPage() {
         </div>
       </div>
       {isLoading && <p className="text-sm text-s-muted">Loading…</p>}
-      {!isLoading && rows.length === 0 && <CompactEmptyState message="No interns or designers tracked yet." detail="Add one from their HR record." />}
+      {!isLoading && rows.length === 0 && <CompactEmptyState message="No interns or designers tracked yet." detail="Add an intern from HR → Interns." />}
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {rows.map((t) => (
           <li key={t.id}>
             <Link href={`/marketing/tracker/${t.id}`} className="block rounded-xl border border-s-border bg-s-surface p-4 hover:border-primary/50">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="truncate font-bold">{t.employee.fullName}</p>
-                  <p className="text-xs text-s-muted">{t.roleLabel} · {t.employee.employeeCode}{!t.active ? ' · past' : ''}</p>
+                  <p className="truncate font-bold">{t.person.fullName}</p>
+                  <p className="text-xs text-s-muted">{t.roleLabel} · {t.person.code}{!t.active ? ' · past' : ''}</p>
                 </div>
                 <span className="shrink-0 text-lg font-black text-success">{onTimeRate(t.stats)}</span>
               </div>
               <p className="mt-2 text-xs text-s-muted">
                 {t.stats?.total ?? 0} cards · {t.stats?.onTime ?? 0} on time · <span className={t.stats?.late ? 'text-s-red' : ''}>{t.stats?.late ?? 0} late</span> · {t.stats?.revisions ?? 0} revisions
               </p>
-              {!t.loginLinked && <p className="mt-1 text-xs font-semibold text-s-amber">No login linked to this HR record</p>}
+              {!t.loginLinked && <p className="mt-1 text-xs font-semibold text-s-amber">No login linked to this {t.person.kind === 'intern' ? 'intern' : 'HR'} record</p>}
             </Link>
           </li>
         ))}
@@ -58,31 +58,45 @@ export default function TrackerPage() {
 }
 
 function AddDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const { data: emps = [] } = useQuery<Array<{ id: string; fullName: string; employeeCode: string; userId: string | null }>>({
-    queryKey: ['mkt-tracker', 'employees'], queryFn: () => api.get('/marketing-tracker/employees'),
+  // Interns of the HR → Interns register are the default; an HR employee is still possible (older records).
+  const [kind, setKind] = useState<'intern' | 'employee'>('intern')
+  const { data: interns = [] } = useQuery<Array<{ id: string; fullName: string; internCode: string; userId: string | null; status: string }>>({
+    queryKey: ['mkt-tracker', 'interns'], queryFn: () => api.get('/marketing-tracker/interns'),
   })
-  const [employeeId, setEmployeeId] = useState('')
+  const { data: emps = [] } = useQuery<Array<{ id: string; fullName: string; employeeCode: string; userId: string | null }>>({
+    queryKey: ['mkt-tracker', 'employees'], queryFn: () => api.get('/marketing-tracker/employees'), enabled: kind === 'employee',
+  })
+  const [personId, setPersonId] = useState('')
   const [roleLabel, setRoleLabel] = useState('Marketing intern')
   const [startDate, setStartDate] = useState(new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10))
   const [endDate, setEndDate] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   async function save() {
-    if (!employeeId) { setErr('Pick the person from HR.'); return }
+    if (!personId) { setErr(kind === 'intern' ? 'Pick the intern.' : 'Pick the person from HR.'); return }
     setBusy(true); setErr(null)
-    try { await api.post('/marketing-tracker', { employeeId, roleLabel, startDate, endDate: endDate || null }); onSaved() }
+    try { await api.post('/marketing-tracker', { ...(kind === 'intern' ? { internId: personId } : { employeeId: personId }), roleLabel, startDate, endDate: endDate || null }); onSaved() }
     catch (e) { setErr(e instanceof ApiError ? e.message : 'Could not add them') } finally { setBusy(false) }
   }
   return (
     <Dialog title="Track an intern or designer" onClose={onClose}>
       <div className="space-y-3">
         {err && <ErrorBanner message={err} />}
-        <Field label="Person (HR record)">
-          <Select className={fieldCls} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+        <div role="group" aria-label="Who to track" className="flex flex-wrap gap-2">
+          {([['intern', 'Intern (HR → Interns)'], ['employee', 'HR employee']] as const).map(([k, l]) => (
+            <button key={k} type="button" aria-pressed={kind === k} onClick={() => { setKind(k); setPersonId('') }}
+              className={`rounded-full px-3 py-1 text-xs font-bold border [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:px-4 ${kind === k ? 'bg-primary text-primary-on border-primary' : 'border-s-border text-s-muted'}`}>{l}</button>
+          ))}
+        </div>
+        <Field label={kind === 'intern' ? 'Intern' : 'Person (HR record)'}>
+          <Select className={fieldCls} value={personId} onChange={(e) => setPersonId(e.target.value)}>
             <option value="">Pick…</option>
-            {emps.map((e) => <option key={e.id} value={e.id}>{e.fullName} · {e.employeeCode}{e.userId ? '' : ' (no login)'}</option>)}
+            {kind === 'intern'
+              ? interns.map((i) => <option key={i.id} value={i.id}>{i.fullName} · {i.internCode}{i.userId ? '' : ' (no login)'}{i.status === 'pending_approval' ? ' (pending approval)' : ''}</option>)
+              : emps.map((e) => <option key={e.id} value={e.id}>{e.fullName} · {e.employeeCode}{e.userId ? '' : ' (no login)'}</option>)}
           </Select>
         </Field>
+        {kind === 'intern' && interns.length === 0 && <p className="text-xs text-s-muted">No interns are enrolled yet — enroll them in HR → Interns first.</p>}
         <Field label="Role"><Input value={roleLabel} onChange={(e) => setRoleLabel(e.target.value)} maxLength={80} /></Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Start date"><Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} /></Field>

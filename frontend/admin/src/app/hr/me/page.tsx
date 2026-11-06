@@ -35,6 +35,8 @@ interface PerfMine { id: string; cycle: { name: string; periodFrom: string; peri
 
 export default function MyHrPage() {
   const { data: me, error, isLoading } = useQuery({ queryKey: ['hr-me'], queryFn: () => api.get<Me>('/hr/me'), retry: false })
+  // Interns this person supervises (owner, 2026-11-06) — shown only when there are any.
+  const { data: myInterns } = useQuery({ queryKey: ['my-interns'], queryFn: () => api.get<{ items: Array<{ id: string; status: string }> }>('/hr/my-interns'), retry: false })
   const { data: mine } = useQuery({ queryKey: ['perf-mine'], queryFn: () => api.get<PerfMine[]>('/hr/performance/mine'), retry: false })
   const { data: team } = useQuery({ queryKey: ['perf-team', 'all'], queryFn: () => api.get<TeamData>('/hr/performance/team'), retry: false })
   const [requesting, setRequesting] = useState<string | null>(null)
@@ -94,6 +96,16 @@ export default function MyHrPage() {
               <p className="text-xs text-white/65 mt-1">
                 {team.reports.length} direct report{team.reports.length === 1 ? '' : 's'} · {team.evaluations.length} evaluation{team.evaluations.length === 1 ? '' : 's'}
                 {(() => { const n = team.evaluations.filter((e) => ['submitted', 'resubmitted', 'manager_in_progress'].includes(e.status)).length; return n > 0 ? <b className="ml-2" style={{ color: 'var(--erp-warning)' }}>{n} waiting for your review</b> : null })()}
+              </p>
+            </Link>
+          )}
+
+          {myInterns && myInterns.items.length > 0 && (
+            <Link href="/hr/me/interns" className="block rounded-2xl p-4 hover:opacity-90" style={card}>
+              <p className="text-sm font-black text-white/85">My interns <span aria-hidden="true" className="text-white/40">›</span></p>
+              <p className="text-xs text-white/65 mt-1">
+                {myInterns.items.length} intern{myInterns.items.length === 1 ? '' : 's'} you supervise
+                {(() => { const n = myInterns.items.filter((x) => x.status === 'active').length; return n > 0 ? ` · ${n} active — mark attendance and add remarks` : '' })()}
               </p>
             </Link>
           )}

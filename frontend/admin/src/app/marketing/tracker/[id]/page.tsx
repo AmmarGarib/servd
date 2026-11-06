@@ -42,8 +42,8 @@ export default function TrackeePage({ params }: { params: Promise<{ id: string }
     <div className="mx-auto max-w-5xl space-y-5 px-4 py-5 sm:px-6">
       <div>
         <Link href="/marketing/tracker" className="text-xs font-semibold text-primary-ink hover:underline">Intern tracker</Link>
-        <h1 className="mt-1 text-xl font-black">{rec.employee.fullName}</h1>
-        <p className="text-sm text-s-muted">{rec.roleLabel} · {rec.employee.employeeCode} · from {rec.startDate.slice(0, 10)}{rec.endDate ? ` to ${rec.endDate.slice(0, 10)}` : ''}</p>
+        <h1 className="mt-1 text-xl font-black">{rec.person.fullName}</h1>
+        <p className="text-sm text-s-muted">{rec.roleLabel} · {rec.person.code} · from {rec.startDate.slice(0, 10)}{rec.endDate ? ` to ${rec.endDate.slice(0, 10)}` : ''}</p>
         {rec.warnings.map((w) => <p key={w} className="mt-1 text-sm font-semibold text-s-amber">{w}</p>)}
       </div>
       {err && <ErrorBanner message={err} />}
@@ -74,7 +74,7 @@ export default function TrackeePage({ params }: { params: Promise<{ id: string }
 
       <section className="space-y-2">
         <h2 className="font-bold">Weekly check-ins</h2>
-        <p className="text-xs text-s-muted">{rec.employee.fullName.split(' ')[0]} sees these notes as soon as you add them.</p>
+        <p className="text-xs text-s-muted">{rec.person.fullName.split(' ')[0]} sees these notes as soon as you add them.</p>
         <Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="This week…" aria-label="New weekly note" maxLength={4000} />
         <Button variant="secondary" disabled={!note.trim() || busy} onClick={() => void run(async () => { await api.post(`/marketing-tracker/${id}/check-ins`, { note: note.trim() }); setNote('') })}>Add note</Button>
         <NotesList notes={rec.checkIns} />
