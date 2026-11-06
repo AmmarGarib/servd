@@ -651,21 +651,20 @@ export async function brsRoutes(fastify: FastifyInstance) {
       const SUM = `Summary as at ${day(s.periodTo)}`
       const line = (label: string, cents: number | null) => ({ section: SUM, date: '', voucher: '', reference: '', particulars: label, amount: cents })
       const ifAny = (cents: number, label: string, signed: number) => (cents ? [line(label, signed)] : [])
-      const bookSideItems = T.bankCreditsCents !== 0 || T.bankDebitsCents !== 0 || T.bookAdjustmentsCents !== 0
       const diff = T.differenceCents
       const rows: ReportRow[] = [
         line('Balance as per bank statement', s.bankClosingCents),
-        // The bank side always shows both standard lines, even at 0 (owner, 2026-11-06: "Keep old wording, unpresented
-        // cheques, and add line of Add: Uncredited amounts … even if it's balance is 0").
-        line('Add: Uncredited deposits', T.depositsCents),
+        // Old wording (owner, 2026-11-06: "Keep old wording, unpresented cheques"); unpresented cheques always shown.
         line('Less: Unpresented cheques', -T.chequesCents),
+        ...ifAny(T.depositsCents, 'Add: Uncredited deposits', T.depositsCents),
         ...ifAny(T.bankAdjustmentsCents, 'Add / (less): corrections to the bank side', T.bankAdjustmentsCents),
         line('BANK BALANCE AFTER THESE ITEMS', T.adjustedBankCents),
         line('Balance as per our books', s.book.closingCents),
-        ...ifAny(T.bankCreditsCents, 'Add: received in the bank, not yet entered in our books', T.bankCreditsCents),
+        // Owner, 2026-11-06 ("Put Add: line down there"): the books side always shows the Add line, even at 0.
+        line('Add: Uncredited amounts (received in the bank, not yet in our books)', T.bankCreditsCents),
         ...ifAny(T.bankDebitsCents, 'Less: deducted by the bank, not yet entered in our books', -T.bankDebitsCents),
         ...ifAny(T.bookAdjustmentsCents, 'Add / (less): corrections to our books', T.bookAdjustmentsCents),
-        ...(bookSideItems ? [line('BOOKS BALANCE AFTER THESE ITEMS', T.adjustedBookCents)] : []),
+        line('BOOKS BALANCE AFTER THESE ITEMS', T.adjustedBookCents),
         line(diff === 0 ? 'DIFFERENCE — NONE, RECONCILED' : diff == null ? 'DIFFERENCE — BANK BALANCE NOT ENTERED' : 'DIFFERENCE — TO BE EXPLAINED', diff),
       ]
       const list = (section: string, xs: Statement['deposits'], extra?: (i: Statement['deposits'][number]) => string) => xs.map((i) => ({
