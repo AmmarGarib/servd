@@ -18,7 +18,7 @@ interface Tile {
 }
 
 // Cash tiles show the exact rupee (owner, 2026-11-06: cash in front of me), never "87K".
-const EXACT_KEYS = new Set(['cash_in_safe', 'cash_in_bank'])
+const EXACT_KEYS = new Set(['cash_in_safe', 'petty_cash', 'cash_in_bank'])
 
 function show(unit: Tile['unit'], v: number | null | undefined, exact = false): string {
   if (v == null) return '—'

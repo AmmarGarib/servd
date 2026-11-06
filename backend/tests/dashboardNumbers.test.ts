@@ -91,7 +91,7 @@ describe('dashboard numbers', () => {
   it('a failing source never fails the call; marketing and CEO sets answer', async () => {
     const r = await get('ceoA', '/dashboards/ceo/numbers')
     expect(r.statusCode).toBe(200)
-    expect((r.json() as { numbers: N[] }).numbers.map((n) => n.key)).toEqual(['cash_in_safe', 'cash_in_bank', 'approvals_waiting'])
+    expect((r.json() as { numbers: N[] }).numbers.map((n) => n.key)).toEqual(['cash_in_safe', 'petty_cash', 'cash_in_bank', 'approvals_waiting'])
     const m = numbers(await get('ceoA', '/dashboards/marketing/numbers'))
     expect(m.orders_by_channel!.value).toBe(2)
   })
@@ -120,11 +120,9 @@ describe('dashboard numbers', () => {
     await post(T.A!, 'a-petty', '1011', 3_000_00)
     await post(T.B!, 'b-safe', '1010', 7_000_00)
     const a = numbers(await get('ceoA', `/dashboards/ceo/numbers?tenantId=${T.A}`))
-    // Cash in hand = safe + petty cash + till drawers; the bank is apart.
-    expect(a.cash_in_safe!.value).toBe(53_000_00)
-    expect(a.cash_in_safe!.breakdown).toEqual([
-      { label: 'Safe / cash on hand', value: 50_000_00 }, { label: 'Petty cash boxes', value: 3_000_00 }, { label: 'Till drawers', value: 0 },
-    ])
+    // Three tiles: the safe (1010), petty cash (1011), the bank — each its own figure.
+    expect(a.cash_in_safe!.value).toBe(50_000_00)
+    expect(a.petty_cash!.value).toBe(3_000_00)
     expect(a.cash_in_bank!.value).toBe(120_000_00)
     const b = numbers(await get('ceoA', `/dashboards/ceo/numbers?tenantId=${T.B}`))
     expect(b.cash_in_safe!.value).toBe(7_000_00)

@@ -135,8 +135,8 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         const value = tb.rows.filter((r) => codes.has(r.code)).reduce((s, r) => s + Number(r.debitCents) - Number(r.creditCents), 0)
         return { value }
       })
-      // Cash in hand = every pot of physical cash (owner, 2026-11-06: "the previous number was cash"): 1010 the safe /
-      // cash on hand, 1011 petty-cash boxes, 1015 open till drawers — one line each. Cash in the bank (1020 + every bank account's own code, one line per bank). Ledger balances as of
+      // Three tiles (owner, 2026-11-06: "I need three … Safe is with me. Cash with Hasnain is petty cash, and then
+      // bank"): Cash in safe = 1010 (the CEO's safe), Petty cash = 1011 (finance's boxes), Cash in bank (1020 + every bank account's own code, one line per bank). Ledger balances as of
       // now, from the trial balance — the same figures as the books.
       const cashSplit = async () => {
         const banks = await prisma.bankAccount.findMany({
@@ -149,19 +149,16 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         for (const b of banks) if (b.accountCode && !bankCodes.has(b.accountCode)) bankCodes.set(b.accountCode, b.name || b.bankName || b.accountCode)
         if (!bankCodes.has('1020') && bal('1020') !== 0) bankCodes.set('1020', 'Bank — Operating Account')
         const bankLines = [...bankCodes].map(([code, label]) => ({ label, value: bal(code) }))
-        const cashLines = [
-          { label: 'Safe / cash on hand', value: bal('1010') },
-          { label: 'Petty cash boxes', value: bal('1011') },
-          { label: 'Till drawers', value: bal('1015') },
-        ]
-        return { safe: cashLines.reduce((s, l) => s + l.value, 0), cashLines, bank: bankLines.reduce((s, l) => s + l.value, 0), bankLines }
+        return { safe: bal('1010'), petty: bal('1011'), bank: bankLines.reduce((s, l) => s + l.value, 0), bankLines }
       }
       let cashSplitP: ReturnType<typeof cashSplit> | null = null
       const cashOnce = () => (cashSplitP ??= cashSplit())
-      const safeN = () => num({ key: 'cash_in_safe', label: 'Cash in hand', unit: 'pkr', href: '/accounting/ledger' }, true, async () => {
-        const c = await cashOnce()
-        return { value: c.safe, breakdown: c.cashLines }
-      })
+      const safeN = () => num({ key: 'cash_in_safe', label: 'Cash in safe', unit: 'pkr', href: '/accounting/ledger' }, true, async () => ({
+        value: (await cashOnce()).safe,
+      }))
+      const pettyN = () => num({ key: 'petty_cash', label: 'Petty cash', unit: 'pkr', href: '/finance/petty-cash' }, true, async () => ({
+        value: (await cashOnce()).petty,
+      }))
       const bankN = () => num({ key: 'cash_in_bank', label: 'Cash in bank', unit: 'pkr', href: '/configuration/bank-accounts' }, true, async () => {
         const c = await cashOnce()
         return { value: c.bank, ...(c.bankLines.length > 1 && { breakdown: c.bankLines }) }
@@ -241,7 +238,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
 
       const sets: Record<DashboardId, Array<() => Promise<DashboardNumber>>> = {
         // CEO home (owner, 2026-11-06: "add cash in safe and cash in bank … remove food cost and sales").
-        ceo: [() => safeN(), () => bankN(), () => approvalsN()],
+        ceo: [() => safeN(), () => pettyN(), () => bankN(), () => approvalsN()],
         operations: [() => salesN('sales_by_brand', 'Sales by brand (today)', 'brand'), () => openTicketsN(), () => ticketTimeN(), () => lowStockN(), () => coversN()],
         finance: [() => salesN('sales', 'Sales (today)', 'none'), () => foodCostN(), () => cashN(), () => billsDueN(), () => heldFiscalN()],
         hr: [() => headcountN(), () => attendanceN(), () => leaveN(), () => payrollN(), () => docsN()],
