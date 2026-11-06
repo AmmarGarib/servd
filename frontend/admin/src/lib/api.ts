@@ -425,7 +425,8 @@ async function fetchBlob(path: string, retry = true): Promise<Blob> {
 export const api = {
   download,
   fetchBlob,
-  get:    <T>(path: string) => request<T>(path),
+  // `options.headers` override the defaults (e.g. `{ 'x-servd-brand': '' }` = no global brand filter on this read).
+  get:    <T>(path: string, options?: { headers?: Record<string, string> }) => request<T>(path, options ? { headers: options.headers } : {}),
   // Mutations accept an optional second arg shape: either the body alone
   // (legacy callers) or `{ tenantId }` to pin the write to a specific company
   // — used by inline pickers in /workforce, /procurement, /settings etc. so

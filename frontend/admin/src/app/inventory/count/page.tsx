@@ -35,6 +35,7 @@ import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { useAuthStore } from '../../../store/auth'
 import { readLensTenant } from '../../../lib/api'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
+import { useBranchFilter } from '../../../store/branchFilter'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number
@@ -86,7 +87,8 @@ export default function PhysicalCountPage() {
 
   const [mode, setMode] = useState<Mode>('spot')
   const [search, setSearch] = useState('')
-  const [locationId, setLocationId] = useState('')
+  // The outlet counted is part of the count (a form field); a new count starts at the scope bar's branch when one is picked.
+  const [locationId, setLocationId] = useState(() => useBranchFilter.getState().locationId ?? '')
   // Brand stock (owner B13 (a)): count ONE brand's stock ('' = the outlet's whole stock). Shared stock the brand finds
   // on its shelf becomes the brand's (no variance); a shortfall comes off the brand's own stock only.
   const [countBrand, setCountBrand] = useState('')

@@ -20,6 +20,7 @@ import { NumberField } from '../../components/ui/NumberField'
 import { MoneyInput } from '../../components/ui/MoneyInput'
 import { ExpiringLots, type ExpiringRow } from '../../components/inventory/ExpiringLots'
 import { ItemStockHistory } from '../../components/kitchen/ItemStockHistory'
+import { useBranchFilter } from '../../store/branchFilter'
 
 interface InventoryItem {
   id: string; name: string; unit: string; currentStock: number; parLevel: number
@@ -159,6 +160,8 @@ export default function InventoryPage() {
   const [tab, setTab] = useState<Tab>('stock')
   // The bell's use-by notice links to /inventory?tab=expiring[&locationId=] (owner B6, 2026-10-26).
   const [expiringSite, setExpiringSite] = useState<string | undefined>(undefined)
+  // The scope bar's branch starts the use-by list at that outlet (owner, 2026-11-06).
+  const barLocationId = useBranchFilter((s) => s.locationId)
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search)
@@ -1021,8 +1024,9 @@ export default function InventoryPage() {
           {/* ════ USE-BY (owner B6, 2026-10-26) ════ */}
           {tab === 'expiring' && (
             <ExpiringLots
+              key={barLocationId ?? 'all'}
               outlets={outlets.filter((o) => (o as { isActive?: boolean }).isActive !== false)}
-              initialLocationId={expiringSite}
+              initialLocationId={expiringSite ?? barLocationId ?? undefined}
               canWaste={canWaste}
               onWaste={(r: ExpiringRow) => {
                 const item = items.find((i) => i.id === r.inventoryItemId)

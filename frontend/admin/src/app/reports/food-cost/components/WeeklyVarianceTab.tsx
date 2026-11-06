@@ -6,13 +6,14 @@
 // dishes sold say; waste, staff meals, comps and prep draws explained; the
 // gap in quantity and PKR, worst first. GET /reports/food-cost/variance.
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { todayPktIso } from '../../../../lib/money'
 import { ErrorNote, Section, pkr, qtyText } from './ui'
-import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { CompactEmptyState } from '../../../../components/ui/CompactEmptyState'
+import { useBranchFilter } from '../../../../store/branchFilter'
+import { useScopeBranches } from '../../../../components/ui/BrandPicker'
 
 interface QC { qty: number; cents: number }
 interface VarianceRow {
@@ -28,7 +29,6 @@ interface VarianceResponse {
   totals: { actualCents: number; recipeCents: number; explainedCents: number; gapCents: number }
   sites: Array<{ locationId: string; name: string; totals: { gapCents: number; actualCents: number; recipeCents: number } }>
 }
-interface LocationLite { id: string; name: string; tenantId?: string | null }
 
 function QtyCell({ v, unit }: { v: QC; unit: string }) {
   if (Math.abs(v.qty) < 1e-9 && v.cents === 0) return <td className="text-right text-s-dim">—</td>
@@ -44,11 +44,14 @@ function gapColor(cents: number): string {
 
 export function WeeklyVarianceTab({ tenantId }: { tenantId: string }) {
   const [weekOf, setWeekOf] = useState(() => todayPktIso())
-  const [locationId, setLocationId] = useState('')
+  // Outlet = the scope bar's Branch row (owner, 2026-11-06); All branches = the whole company.
+  const locationId = useBranchFilter((s) => s.locationId) ?? ''
+  const setLocation = useBranchFilter((s) => s.setLocation)
+  const qc = useQueryClient()
+  // A "By outlet" figure is a shortcut to the bar's Branch row, so only outlets the bar lists are clickable.
+  const barBranches = useScopeBranches()
+  const pickable = new Set((barBranches ?? []).map((b) => b.id))
   const [exportErr, setExportErr] = useState('')
-
-  const { data: locations = [] } = useQuery({ queryKey: ['locations'], queryFn: () => api.get<LocationLite[]>('/locations') })
-  const sites = locations.filter((l) => !l.tenantId || l.tenantId === tenantId)
 
   const qs = new URLSearchParams({ weekOf, ...(locationId ? { locationId } : { tenantId }) }).toString()
   const { data, error, isLoading } = useQuery<VarianceResponse>({
@@ -62,13 +65,6 @@ export function WeeklyVarianceTab({ tenantId }: { tenantId: string }) {
         <label className="text-xs text-s-muted">
           <span className="block">Week of</span>
           <input type="date" className="s-input w-auto" value={weekOf} max={todayPktIso()} onChange={(e) => e.target.value && setWeekOf(e.target.value)} />
-        </label>
-        <label className="text-xs text-s-muted">
-          <span className="block">Outlet</span>
-          <Select className="s-select w-auto" value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-            <option value="">Whole company</option>
-            {sites.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </Select>
         </label>
         <ExportMenu className="s-btn-secondary text-sm" path={`/reports/food-cost/variance?${qs}`}
           filename={`weekly-variance-${data?.week.startDate ?? weekOf}`} onError={(m) => setExportErr(m)} />
@@ -90,9 +86,15 @@ export function WeeklyVarianceTab({ tenantId }: { tenantId: string }) {
             <Section title="By outlet" hint="Each outlet's gap for the week, from its own stock.">
               <div className="flex flex-wrap gap-2">
                 {data.sites.map((s) => (
-                  <button key={s.locationId} className="s-btn-ghost text-xs" onClick={() => setLocationId(s.locationId)}>
-                    {s.name}: <span className="ml-1 font-mono" style={{ color: gapColor(s.totals.gapCents) }}>{pkr(s.totals.gapCents)}</span>
-                  </button>
+                  pickable.has(s.locationId) && barBranches!.length > 1 ? (
+                    <button key={s.locationId} className="s-btn-ghost text-xs" onClick={() => { setLocation(s.locationId); void qc.invalidateQueries() }}>
+                      {s.name}: <span className="ml-1 font-mono" style={{ color: gapColor(s.totals.gapCents) }}>{pkr(s.totals.gapCents)}</span>
+                    </button>
+                  ) : (
+                    <span key={s.locationId} className="px-3 py-1.5 text-xs text-s-muted">
+                      {s.name}: <span className="ml-1 font-mono" style={{ color: gapColor(s.totals.gapCents) }}>{pkr(s.totals.gapCents)}</span>
+                    </span>
+                  )
                 ))}
               </div>
             </Section>

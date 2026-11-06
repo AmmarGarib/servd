@@ -9,7 +9,8 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { stockErrorText } from '../../../lib/stockUi'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
-import { OutletPicker, todayIso, useOutlet } from '../../../components/kitchen/useOutlet'
+import { todayIso } from '../../../components/kitchen/useOutlet'
+import { useActiveBranchId, useScopeBranches } from '../../../components/ui/BrandPicker'
 
 interface Plan {
   date: string
@@ -26,7 +27,9 @@ interface Plan {
 const n = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleString('en', { maximumFractionDigits: 2 }))
 
 export default function PrepListPage() {
-  const { outlets, locationId, setLocationId } = useOutlet()
+  // The outlet = the scope bar's Branch row (owner, 2026-11-06), or the only outlet the bar lists.
+  const locationId = useActiveBranchId() ?? ''
+  const branches = useScopeBranches()
   const [date, setDate] = useState(todayIso())
   const { data, isLoading, error } = useQuery<Plan>({
     queryKey: ['kitchen', 'prep-list', locationId, date],
@@ -42,13 +45,12 @@ export default function PrepListPage() {
           <p className="text-xs text-s-muted">From the forecast and the par. Log what you made on the <Link href="/par-sheet" className="text-primary-ink underline">par board</Link>; buy what is short from the <Link href="/kitchen/shopping-list" className="text-primary-ink underline">shopping list</Link>.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 print:hidden">
-          <OutletPicker outlets={outlets} value={locationId} onChange={setLocationId} />
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="s-input w-auto" aria-label="Date" />
           <button type="button" onClick={() => window.print()} className="s-btn-secondary px-3 py-1.5 text-xs">Print</button>
         </div>
       </header>
       <div className="p-6 max-w-6xl mx-auto space-y-5">
-        {!locationId ? <CompactEmptyState message="No outlet yet. Add one under Locations." />
+        {!locationId ? <CompactEmptyState message={branches && branches.length === 0 ? 'No outlet yet. Add one under Locations.' : 'Pick a branch in the bar at the top to see its prep list.'} />
           : isLoading ? <p className="text-sm text-s-muted">Loading…</p>
           : error ? <p className="text-sm text-s-red">{stockErrorText(error)}</p>
           : data && (

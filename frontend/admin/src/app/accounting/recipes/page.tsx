@@ -25,7 +25,6 @@ const Q_FACTOR = 0.05
 
 // (Food-cost % helpers removed — pricing and margin health moved to /menu-engineering.)
 
-interface Concept       { id: string; name: string }
 interface MenuItem      { id: string; name: string; priceCents: number; concept: { name: string } }
 interface InventoryItem { id: string; name: string; unit: string; unitCostCents: number | null }
 
@@ -154,7 +153,8 @@ export default function RecipesPage() {
   // Executive tier: the CEO and co-owners can both act on approvals. The
   // backend still blocks an owner from approving their OWN submission.
   const isCeo = isExecutive(me?.role)
-  const [conceptFilter, setConceptFilter] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // Brand = the scope bar's Brand row (owner, 2026-11-06); All brands = every recipe.
+  const conceptFilter = useBrandFilter((s) => s.brandId) ?? ''
   const [kindFilter,    setKindFilter]    = useState<'' | 'plate' | 'component' | 'modifier'>('')
   // Only dishes of a packaging-vessel brand with no Packaging line.
   const [noPackagingOnly, setNoPackagingOnly] = useState(false)
@@ -185,13 +185,6 @@ export default function RecipesPage() {
   const [ings,         setIngs]         = useState<IngRow[]>([{ ...BLANK_ING }])
   const [formErr,      setFormErr]      = useState('')
 
-  // The brand filter needs id + name only: the picker view, which every
-  // recipe reader may open (the full list is managers / till only and 403s —
-  // with a toast — for the line cook and finance).
-  const { data: concepts } = useQuery({
-    queryKey: ['concepts', 'picker'],
-    queryFn:  () => api.get<Concept[]>('/concepts?view=picker'),
-  })
   const queryString = (() => {
     const params = new URLSearchParams()
     if (seasonFilter) params.set('season', seasonFilter)

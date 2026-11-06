@@ -103,10 +103,12 @@ export default function PoolsPage() {
         <Stat label="Book value" value={money(totalNbv)} />
       </div>
 
-      <div className="rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-3" style={card}>
+      <div className="rounded-2xl p-4" style={card}>
+        <div className="sm:max-w-xs">
         <Field label="Type">
           <Select className={inp} value={typeKey} onChange={(e) => setTypeKey(e.target.value)}>
             <option value="">All types</option>{(lookups?.smallwareTypes ?? []).map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</Select></Field>
+        </div>
       </div>
 
       {error && <Notice tone="bad">{errorWords(error)}</Notice>}

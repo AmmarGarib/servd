@@ -23,6 +23,7 @@ import type { SummaryResponse } from './components/types'
 import { Select } from '@/components/ui/Select'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
+import { useBrandFilter } from '../../../store/brandFilter'
 
 type Tab = 'summary' | 'ingredients' | 'variance' | 'valuation' | 'flags'
 const TABS: Array<{ key: Tab; label: string }> = [
@@ -42,7 +43,8 @@ const PRESETS: Array<{ label: string; range: () => { from: string; to: string } 
 export default function FoodCostReportPage() {
   const [tab, setTab] = useState<Tab>('summary')
   const [range, setRange] = useState(() => PRESETS[1]!.range())
-  const [conceptId, setConceptId] = useState('')
+  // Brand = the scope bar's Brand row (owner, 2026-11-06), never a picker on this page.
+  const conceptId = useBrandFilter((s) => s.brandId) ?? ''
   const [companyId, setCompanyId] = useState('')
   const [csvErr, setCsvErr] = useState('')
   const { data: me } = usePermissions()
@@ -59,11 +61,10 @@ export default function FoodCostReportPage() {
   })
 
   const companies = data?.companies ?? []
-  const company = companies.find((c) => c.tenantId === companyId) ?? companies[0]
-  const brands = useMemo(
-    () => companies.flatMap((c) => c.brands.filter((b) => b.conceptId).map((b) => ({ id: b.conceptId!, name: companies.length > 1 ? `${b.name} (${c.companyName})` : b.name }))),
-    [companies],
-  )
+  // With a brand picked in the bar, the per-company tabs open on that brand's company.
+  const company = companies.find((c) => c.tenantId === companyId)
+    ?? (conceptId ? companies.find((c) => c.brands.some((b) => b.conceptId === conceptId)) : undefined)
+    ?? companies[0]
   const companyBrands = company ? company.brands.filter((b) => b.conceptId).map((b) => ({ id: b.conceptId!, name: b.name })) : []
 
   const exportView = tab === 'ingredients' || tab === 'valuation' ? tab : 'summary'
@@ -103,15 +104,6 @@ export default function FoodCostReportPage() {
             <span className="block">To</span>
             <input type="date" className="s-input w-auto" value={range.to} min={range.from} onChange={(e) => e.target.value && setRange((r) => ({ ...r, to: e.target.value }))} />
           </label>
-          {tab === 'summary' && (
-            <label className="text-xs text-s-muted">
-              <span className="block">Brand</span>
-              <Select className="s-select w-auto" value={conceptId} onChange={(e) => setConceptId(e.target.value)}>
-                <option value="">All brands</option>
-                {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </Select>
-            </label>
-          )}
           {tab !== 'summary' && companies.length > 1 && (
             <label className="text-xs text-s-muted">
               <span className="block">Company</span>

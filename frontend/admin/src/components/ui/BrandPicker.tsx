@@ -12,6 +12,7 @@ import { usePathname } from 'next/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { useBrandFilter } from '../../store/brandFilter'
+import { useBranchFilter } from '../../store/branchFilter'
 import { formatBrandName } from '../../lib/brandName'
 
 export interface PickerConcept { id: string; name: string }
@@ -130,3 +131,39 @@ export function useActiveBrandId(): string | null {
   return concepts && concepts.length === 1 ? concepts[0]!.id : null
 }
 
+
+export interface ScopeBranch {
+  id: string; name: string; slug?: string; isActive?: boolean; deletedAt?: string | null
+  concepts?: Array<{ concept?: { id: string } | null; conceptId?: string }>
+}
+
+/**
+ * The outlets the scope bar's Branch row lists: the same `/locations` read (same cache key) and the same filter as
+ * ScopeBar — trading outlets only (live, switched on, never the "General — to be assigned" holding place), narrowed
+ * to the picked brand's outlets. Undefined while loading.
+ */
+export function useScopeBranches(): ScopeBranch[] | undefined {
+  const brandId = useBrandFilter((s) => s.brandId)
+  const { data: locations } = useQuery<ScopeBranch[]>({
+    queryKey: ['locations', 'scope-bar'],
+    queryFn: () => api.get<ScopeBranch[]>('/locations'),
+    staleTime: 60_000,
+    meta: { background: true },
+    retry: (count, err) => !(err instanceof ApiError && err.status === 403) && count < 1,
+  })
+  if (!locations) return undefined
+  return locations.filter((l) => !l.deletedAt && l.isActive !== false && !(l.slug ?? '').startsWith('general-'))
+    .filter((l) => !brandId || (l.concepts ?? []).some((c) => (c.concept?.id ?? c.conceptId) === brandId))
+}
+
+/**
+ * The ONE outlet a single-branch page works on (prep list, par board, shopping list): the scope bar's branch, or —
+ * when the bar lists exactly one outlet, so it shows no Branch row — that outlet. Null = pick one in the bar (only
+ * possible when it lists two or more). Never auto-picks among several.
+ */
+export function useActiveBranchId(): string | null {
+  const locationId = useBranchFilter((s) => s.locationId)
+  const branches = useScopeBranches()
+  if (locationId) return locationId
+  return branches && branches.length === 1 ? branches[0]!.id : null
+}

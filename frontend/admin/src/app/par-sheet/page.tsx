@@ -13,7 +13,8 @@ import { useManagerRoles } from '../../lib/roles'
 import { useAuthStore } from '../../store/auth'
 import { stockErrorText } from '../../lib/stockUi'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
-import { OutletPicker, todayIso, useOutlet } from '../../components/kitchen/useOutlet'
+import { todayIso } from '../../components/kitchen/useOutlet'
+import { useActiveBranchId, useScopeBranches } from '../../components/ui/BrandPicker'
 
 interface BoardRow {
   recipeId: string; name: string; unit: string; portionLabel: string | null; portionSize: number | null
@@ -30,7 +31,9 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const n = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleString('en', { maximumFractionDigits: 1 }))
 
 export default function ParBoardPage() {
-  const { outlets, locationId, setLocationId } = useOutlet()
+  // The outlet = the scope bar's Branch row (owner, 2026-11-06), or the only outlet the bar lists.
+  const locationId = useActiveBranchId() ?? ''
+  const branches = useScopeBranches()
   const [date, setDate] = useState(todayIso())
   const [tab, setTab] = useState<'board' | 'par'>('board')
   const role = useAuthStore((s) => s.user?.role) ?? ''
@@ -45,7 +48,6 @@ export default function ParBoardPage() {
           <p className="text-xs text-s-muted">Preps in portions — what to have, what is on hand, what is still to prep. See also the <Link href="/kitchen/prep-list" className="text-primary-ink underline">prep list</Link>.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <OutletPicker outlets={outlets} value={locationId} onChange={setLocationId} />
           {tab === 'board' && <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="s-input w-auto" aria-label="Date" />}
         </div>
       </header>
@@ -58,7 +60,7 @@ export default function ParBoardPage() {
         ))}
       </div>
       <div className="p-6 max-w-6xl mx-auto">
-        {!locationId ? <CompactEmptyState message="No outlet yet. Add one under Locations." />
+        {!locationId ? <CompactEmptyState message={branches && branches.length === 0 ? 'No outlet yet. Add one under Locations.' : 'Pick a branch in the bar at the top to see its par board.'} />
           : tab === 'board' ? <Board locationId={locationId} date={date} /> : <ParTargets locationId={locationId} canEdit={canSetPar} />}
       </div>
     </div>

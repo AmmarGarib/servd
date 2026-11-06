@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
 import { ErrorNote, Section, pkr, qtyText } from './ui'
 import type { IngredientRow, IngredientsResponse, MovementsResponse } from './types'
+import { useBrandFilter } from '../../../../store/brandFilter'
 import { Select } from '@/components/ui/Select'
 
 const CLASSES: Array<{ key: string; label: string }> = [
@@ -92,7 +93,11 @@ export function IngredientsTab({ tenantId, range, brands, locationId }: {
   tenantId: string; range: { from: string; to: string }; brands: Array<{ id: string; name: string }>; locationId?: string
 }) {
   const [costClass, setCostClass] = useState('')
-  const [conceptId, setConceptId] = useState('')
+  // Brand = the scope bar's pick (owner, 2026-11-06), applied when it is one of this company's brands.
+  const barBrandId = useBrandFilter((s) => s.brandId)
+  const conceptId = barBrandId && brands.some((b) => b.id === barBrandId) ? barBrandId : ''
+  // The bar's brand belongs to another company: read this company unfiltered (the header would otherwise re-apply it).
+  const noBarBrand = barBrandId && !conceptId ? { headers: { 'x-servd-brand': '' } } : undefined
   const [sort, setSort] = useState('unexplained')
   const [open, setOpen] = useState<string | null>(null)
   const p = new URLSearchParams({ tenantId, from: range.from, to: range.to, sort })
@@ -102,7 +107,7 @@ export function IngredientsTab({ tenantId, range, brands, locationId }: {
   const qs = p.toString()
   const { data, error, isLoading } = useQuery<IngredientsResponse>({
     queryKey: ['food-cost', 'ingredients', qs],
-    queryFn: () => api.get(`/reports/food-cost/ingredients?${qs}`),
+    queryFn: () => api.get(`/reports/food-cost/ingredients?${qs}`, noBarBrand),
   })
   const rangeQs = new URLSearchParams({ from: range.from, to: range.to }).toString()
 
@@ -111,10 +116,6 @@ export function IngredientsTab({ tenantId, range, brands, locationId }: {
       <div className="mb-3 flex flex-wrap gap-2">
         <Select className="s-select w-auto" value={costClass} onChange={(e) => setCostClass(e.target.value)} aria-label="Class">
           {CLASSES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-        </Select>
-        <Select className="s-select w-auto" value={conceptId} onChange={(e) => setConceptId(e.target.value)} aria-label="Brand">
-          <option value="">All brands</option>
-          {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </Select>
         <Select className="s-select w-auto" value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort">
           {SORTS.map((s) => <option key={s.key} value={s.key}>Sort: {s.label}</option>)}

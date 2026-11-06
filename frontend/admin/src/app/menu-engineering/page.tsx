@@ -19,7 +19,6 @@ import { recipeStatusMeta } from '../accounting/recipes/RecipeForm'
 import { useBrandFilter } from '../../store/brandFilter'
 import { fmtPkrWhole } from '../../lib/money'
 import { useKitchenView } from '../inventory/kitchenView'
-import { Select } from '@/components/ui/Select'
 
 interface Concept { id: string; name: string }
 interface EngRecipe {
@@ -47,7 +46,8 @@ function fcColor(pct: number | null) {
 export default function MenuEngineeringPage() {
   const qc = useQueryClient()
   const router = useRouter()
-  const [conceptFilter, setConceptFilter] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // Brand = the scope bar's Brand row (owner, 2026-11-06); All brands = every plate.
+  const conceptFilter = useBrandFilter((s) => s.brandId) ?? ''
   const [search, setSearch] = useState('')
   // Local edit buffer: recipeId → price string being typed. Committed on blur/Enter.
   const [draftPrice, setDraftPrice] = useState<Record<string, string>>({})
@@ -144,11 +144,6 @@ export default function MenuEngineeringPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <input value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Search plates…" className="s-input text-sm h-9 w-52" />
-            <Select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)}
-              className="s-select text-sm h-9 w-44">
-              <option value="">All Concepts</option>
-              {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </Select>
           </div>
         </div>
       </header>

@@ -6,8 +6,7 @@ import { menuApi, api, deleteWithUndo, type Category, type MenuItem } from '../.
 import { useAuthStore } from '../../store/auth'
 import Link from 'next/link'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
-import { TenantChip, useMyTenants } from '../../components/ui/TenantPicker'
-import { useViewAllTenants } from '../../components/ui/TenantSwitcher'
+import { useActiveBrandId } from '../../components/ui/BrandPicker'
 import { fmtPkrWhole } from '../../lib/money'
 import { toast } from 'sonner'
 import { useConfirm } from '../../components/ui/ConfirmDialog'
@@ -15,7 +14,6 @@ import { Modal } from '../../components/ui/Modal'
 import { FormField } from '../../components/ui/FormField'
 import { MoneyInput } from '../../components/ui/MoneyInput'
 
-interface ConceptTab { id: string; name: string; tenantId?: string | null; tenant?: { id: string; name: string } | null }
 
 // Categories as GET /menu/:conceptId returns them — the shared Category type
 // does not carry the storefront time window.
@@ -33,22 +31,14 @@ function withSubsAfterParent<T extends { id: string; parentId?: string | null }>
 
 export default function MenuPage() {
   const [view, setView] = useState<MenuView>('items')
-  const [selectedConceptId, setSelectedConceptId] = useState<string>('')
   const [editItem, setEditItem] = useState<MenuItem | null>(null)
   const [addingItemToCat, setAddingItemToCat] = useState<string | null>(null)
   const [addingCategory, setAddingCategory] = useState(false)
   const qc = useQueryClient()
   const confirm = useConfirm()
 
-  const viewAll = useViewAllTenants()
-  const { data: tenants = [] } = useMyTenants()
-  const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<ConceptTab[]>('/concepts'),
-  })
-
-  // Derive conceptId — no useEffect needed
-  const conceptId = selectedConceptId || concepts[0]?.id || ''
+  // The brand = the scope bar's Brand row (owner, 2026-11-06), or the company's only brand. None → a prompt below.
+  const conceptId = useActiveBrandId() ?? ''
 
   const { data: categories = [], isLoading } = useQuery<Category[]>({
     queryKey: ['menu', conceptId],
@@ -137,26 +127,9 @@ export default function MenuPage() {
         </button>
       </header>
 
-      {/* Concept tabs — each tab shows its brand-chip in portfolio view so the
-          operator can tell which company they're editing the menu for. */}
-      <div className="mb-6 flex gap-2 overflow-x-auto pb-1">
-        {concepts.map((c) => (
-          <button
-            key={c.id}
-            onClick={() => setSelectedConceptId(c.id)}
-            className={`shrink-0 rounded-lg px-4 py-2 font-semibold text-sm transition-colors flex items-center gap-2 ${
-              c.id === conceptId ? 'bg-primary text-primary-on' : 'bg-s-surface text-s-muted hover:text-s-text'
-            }`}
-          >
-            <span>{c.name}</span>
-            {viewAll && (
-              <TenantChip tenant={c.tenant} tenantId={c.tenantId} tenants={tenants} />
-            )}
-          </button>
-        ))}
-        {concepts.length === 0 && <p className="text-s-muted text-sm">Loading concepts…</p>}
-      </div>
-
+      {!conceptId ? (
+        <CompactEmptyState message="Pick a brand in the bar at the top to edit its menu." />
+      ) : (<>
       {/* Views — the item editor, the quick 86 board and the storefront time
           windows (the last two moved here from the retired Visual Layout page). */}
       <div className="mb-6 flex gap-1 border-b border-s-border">
@@ -383,6 +356,7 @@ export default function MenuPage() {
           />
         )}
       </div>
+      </>)}
       </>)}
 
       {editItem && (

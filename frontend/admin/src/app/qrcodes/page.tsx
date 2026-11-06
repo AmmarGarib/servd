@@ -27,7 +27,8 @@ const inp = 'rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-
 export default function QrCodesPage() {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
-  const [conceptFilter, setConceptFilter] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // Brand = the scope bar's Brand row (owner, 2026-11-06); All brands = every QR code.
+  const conceptFilter = useBrandFilter((s) => s.brandId) ?? ''
   const [form, setForm] = useState({ conceptId: '', tableId: '', orderType: 'dine-in' as 'dine-in' | 'pickup', label: '' })
 
   const { data: qrCodes = [], isLoading } = useQuery({
@@ -81,7 +82,7 @@ export default function QrCodesPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={() => { setShowForm(true); if (!form.conceptId && conceptFilter) setForm((f) => ({ ...f, conceptId: conceptFilter, tableId: '' })) }}
           className="rounded-xl bg-primary text-primary-on text-sm font-bold px-4 py-2 hover:opacity-90">
           + Generate QR
         </button>
@@ -145,20 +146,6 @@ export default function QrCodesPage() {
             </div>
           </form>
         )}
-
-        {/* Concept filter */}
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={() => setConceptFilter('')}
-            className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${!conceptFilter ? 'bg-primary text-primary-on' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
-            All concepts
-          </button>
-          {concepts.map((c) => (
-            <button key={c.id} onClick={() => setConceptFilter(c.id)}
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${conceptFilter === c.id ? 'bg-primary text-primary-on' : 'bg-s-surface border border-s-border text-s-muted hover:text-s-text'}`}>
-              {c.name}
-            </button>
-          ))}
-        </div>
 
         {isLoading ? (
           <p className="text-s-muted text-sm">Loading…</p>

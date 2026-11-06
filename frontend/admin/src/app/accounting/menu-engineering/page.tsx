@@ -3,10 +3,9 @@ import { Input } from '@/components/finance/ui'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
-import { useBrandFilter } from '../../../store/brandFilter'
-import { Select } from '@/components/ui/Select'
+import { useActiveBrandId } from '../../../components/ui/BrandPicker'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
-interface Concept { id: string; name: string }
 // The shape GET /reports/menu-engineering returns (backend
 // reports/menu-engineering.ts): a bare array, one row per item sold.
 interface MenuEngineeringItem {
@@ -35,17 +34,9 @@ export default function MenuEngineeringPage() {
   const today = new Date()
   const [dateFrom, setDateFrom] = useState(toDateInput(new Date(today.getFullYear(), today.getMonth(), 1)))
   const [dateTo,   setDateTo]   = useState(toDateInput(today))
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // One brand at a time: the scope bar's Brand row (owner, 2026-11-06), or the company's only brand.
+  const conceptId = useActiveBrandId() ?? ''
   const [activeQ, setActiveQ] = useState<string | null>(null)
-
-  // The picker list (every staff role, id + name): the plain /concepts list
-  // is managers / till only and 403'd for finance. Shares the shell
-  // BrandPicker's cache key and shape.
-  const { data: concepts } = useQuery({
-    queryKey: ['concepts', 'brand-picker'],
-    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
-    staleTime: 60_000,
-  })
 
   const qs = new URLSearchParams({
     dateFrom: `${dateFrom}T00:00:00Z`,
@@ -77,20 +68,14 @@ export default function MenuEngineeringPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3">
-        <Select value={conceptId} onChange={e => setConceptId(e.target.value)}
-          className="s-input text-sm px-3 py-2 rounded-xl min-w-[180px]">
-          <option value="">Select concept…</option>
-          {concepts?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
         <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="text-sm px-3 py-2 rounded-xl" />
         <Input type="date" value={dateTo}   onChange={e => setDateTo(e.target.value)}   className="text-sm px-3 py-2 rounded-xl" />
       </div>
 
       {!conceptId && (
-        <div className="flex items-center justify-center h-48 rounded-2xl" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Select a concept to view menu engineering analysis</p>
-        </div>
+        <CompactEmptyState message="Pick a brand in the bar at the top to see its menu engineering." />
       )}
+
 
       {conceptId && isLoading && (
         <div className="flex items-center justify-center h-48">

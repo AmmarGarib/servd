@@ -10,7 +10,8 @@ import { api } from '../../../lib/api'
 import { stockErrorText } from '../../../lib/stockUi'
 import { fmtUnitCost } from '../../../lib/unitCost'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
-import { OutletPicker, todayIso, useOutlet } from '../../../components/kitchen/useOutlet'
+import { todayIso } from '../../../components/kitchen/useOutlet'
+import { useActiveBranchId, useScopeBranches } from '../../../components/ui/BrandPicker'
 
 interface Group {
   supplierId: string | null; supplierName: string; estimatedTotalCents: number | null
@@ -21,7 +22,9 @@ const n = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleStrin
 
 export default function ShoppingListPage() {
   const qc = useQueryClient()
-  const { outlets, locationId, setLocationId } = useOutlet()
+  // The outlet = the scope bar's Branch row (owner, 2026-11-06), or the only outlet the bar lists. None → a prompt below.
+  const locationId = useActiveBranchId() ?? ''
+  const branches = useScopeBranches()
   const [date, setDate] = useState(todayIso())
   const [days, setDays] = useState(1)
   const { data, isLoading, error } = useQuery<{ groups: Group[]; notStocked: NotStocked[] }>({
@@ -49,7 +52,6 @@ export default function ShoppingListPage() {
           <p className="text-xs text-s-muted">What the <Link href="/kitchen/prep-list" className="text-primary-ink underline">prep list</Link> and the expected dishes need, less what is here and on order — with the <Link href="/kitchen/spec-list" className="text-primary-ink underline">spec</Link> of each.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <OutletPicker outlets={outlets} value={locationId} onChange={setLocationId} />
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="s-input w-auto" aria-label="From" />
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="s-input w-auto" aria-label="Days">
             {[1, 2, 3, 4, 5, 6, 7].map((d) => <option key={d} value={d}>{d} day{d > 1 ? 's' : ''}</option>)}
@@ -82,7 +84,7 @@ export default function ShoppingListPage() {
             {createItem.error && <p role="alert" className="text-xs text-s-red">{stockErrorText(createItem.error)}</p>}
           </section>
         )}
-        {!locationId ? <CompactEmptyState message="No outlet yet." />
+        {!locationId ? <CompactEmptyState message={branches && branches.length === 0 ? 'No outlet yet.' : 'Pick a branch in the bar at the top to see its shopping list.'} />
           : isLoading ? <p className="text-sm text-s-muted">Loading…</p>
           : error ? <p className="text-sm text-s-red">{stockErrorText(error)}</p>
           : groups.length === 0 ? (notStocked.length === 0 ? <CompactEmptyState message="Nothing to buy — stock covers the prep list." /> : null)

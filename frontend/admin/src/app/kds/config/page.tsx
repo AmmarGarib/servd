@@ -4,7 +4,7 @@ import { ArrowLeft, ChevronDown, Maximize2, Plus } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../lib/api'
 import Link from 'next/link'
-import { Select } from '@/components/ui/Select'
+import { useBrandFilter } from '../../../store/brandFilter'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 import { usePermissions } from '../../../hooks/useCan'
 import { useAuthStore } from '../../../store/auth'
@@ -55,8 +55,6 @@ function requestSummary(r: StationRequest): string {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const sel =
-  'rounded-lg border border-kds-border bg-kds-card px-3 py-2 text-sm text-kds-text focus:border-kds-green focus:outline-none'
 
 // ─── Stations Tab ─────────────────────────────────────────────────────────────
 //
@@ -67,7 +65,8 @@ const sel =
 
 function StationsTab() {
   const qc = useQueryClient()
-  const [conceptId, setConceptId] = useState<string>('all')
+  // Brand = the scope bar's Brand row (owner, 2026-11-06); All brands shows every brand's stations, grouped.
+  const conceptId = useBrandFilter((s) => s.brandId) ?? 'all'
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
   const [draftOrder, setDraftOrder] = useState<number>(0)
@@ -221,23 +220,6 @@ function StationsTab() {
           ))}
         </div>
       )}
-      {/* Concept filter */}
-      <div className="flex items-center gap-3">
-        <label className="text-sm text-kds-subtext">Concept</label>
-        <Select
-          value={conceptId}
-          onChange={(e) => setConceptId(e.target.value)}
-          className={sel}
-        >
-          <option value="all">All concepts</option>
-          {concepts.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
-      </div>
-
       {isLoading ? (
         <p className="rounded-xl border border-kds-border bg-kds-card px-4 py-10 text-center text-sm text-kds-subtext">
           Loading stations…
