@@ -655,10 +655,12 @@ export async function brsRoutes(fastify: FastifyInstance) {
       const diff = T.differenceCents
       const rows: ReportRow[] = [
         line('Balance as per bank statement', s.bankClosingCents),
-        ...ifAny(T.depositsCents, 'Add: deposits made, not yet shown by the bank', T.depositsCents),
-        ...ifAny(T.chequesCents, 'Less: cheques issued, not yet paid by the bank', -T.chequesCents),
+        // The bank side always shows both standard lines, even at 0 (owner, 2026-11-06: "Keep old wording, unpresented
+        // cheques, and add line of Add: Uncredited amounts … even if it's balance is 0").
+        line('Add: Uncredited deposits', T.depositsCents),
+        line('Less: Unpresented cheques', -T.chequesCents),
         ...ifAny(T.bankAdjustmentsCents, 'Add / (less): corrections to the bank side', T.bankAdjustmentsCents),
-        ...(T.depositsCents || T.chequesCents || T.bankAdjustmentsCents ? [line('BANK BALANCE AFTER THESE ITEMS', T.adjustedBankCents)] : []),
+        line('BANK BALANCE AFTER THESE ITEMS', T.adjustedBankCents),
         line('Balance as per our books', s.book.closingCents),
         ...ifAny(T.bankCreditsCents, 'Add: received in the bank, not yet entered in our books', T.bankCreditsCents),
         ...ifAny(T.bankDebitsCents, 'Less: deducted by the bank, not yet entered in our books', -T.bankDebitsCents),
@@ -674,8 +676,8 @@ export async function brsRoutes(fastify: FastifyInstance) {
         section, date: i.date, voucher: '', reference: i.reference ?? '', particulars: i.description, amount: i.amountCents,
       }))
       rows.push(
-        ...list('Cheques issued, not yet paid by the bank', s.cheques),
-        ...list('Deposits made, not yet shown by the bank', s.deposits),
+        ...list('Unpresented cheques', s.cheques),
+        ...list('Uncredited deposits', s.deposits),
         ...bankList('Received in the bank, not yet entered in our books', s.bankCredits),
         ...bankList('Deducted by the bank, not yet entered in our books', s.bankDebits),
         ...s.adjustments.map((a) => ({ section: 'Corrections', date: a.createdAt.slice(0, 10), voucher: a.side === 'bank' ? 'Bank side' : 'Our books', reference: a.reference, particulars: `${a.kindLabel} — ${a.narration}`, amount: a.amountCents })),
