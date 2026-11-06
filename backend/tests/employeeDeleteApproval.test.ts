@@ -63,7 +63,7 @@ async function mkEmp(tenantId: string, extra: Record<string, unknown> = {}) {
 async function addPayslip(tenantId: string, employeeId: string, status = 'approved') {
   const run = await prisma.hrPayrollRun.create({ data: { tenantId, period: `20${10 + n}-01`, settings: {}, status } })
   await prisma.hrPayslip.create({
-    data: { runId: run.id, tenantId, employeeId, inputs: {}, lines: [], grossCents: 0, earningsCents: 0, deductionsCents: 0, eobiEmployeeCents: 0, eobiEmployerCents: 0, netCents: 0 },
+    data: { runId: run.id, tenantId, employeeId, inputs: {}, lines: [], grossCents: 100000, earningsCents: 100000, deductionsCents: 0, eobiEmployeeCents: 0, eobiEmployerCents: 0, netCents: 100000 },
   })
 }
 
@@ -243,6 +243,15 @@ describe('what blocks a delete', () => {
     const totals = (await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: run.id } })).totals as { employees: number; netCents: number }
     expect(totals.employees).toBe(1)
     expect(totals.netCents).toBe(500000)
+  })
+
+  it('an all-zero payslip in an APPROVED run is not history either', async () => {
+    const e = await mkEmp(T.A)
+    const run = await prisma.hrPayrollRun.create({ data: { tenantId: T.A, period: '2032-01', settings: {}, status: 'approved' } })
+    await prisma.hrPayslip.create({ data: { runId: run.id, tenantId: T.A, employeeId: e.id, inputs: {}, lines: [], grossCents: 0, earningsCents: 0, deductionsCents: 0, eobiEmployeeCents: 0, eobiEmployerCents: 0, netCents: 0 } })
+    expect((await ask('ceoA', e.id, 'Zero payslip only, remove')).statusCode).toBe(200)
+    expect(await prisma.hrPayslip.count({ where: { runId: run.id } })).toBe(0)
+    expect((await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe('approved')
   })
 
   it('an approved pay record (a loan) is history', async () => {

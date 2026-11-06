@@ -23,12 +23,13 @@
 //   409 EMPLOYEE_HAS_LOGIN    a servd login is linked (HrEmployee.userId), or a
 //                             login invite waiting for the CEO names them
 //                             (User.inviteEmployeeId) — offboard / unlink first.
-//   409 EMPLOYEE_HAS_HISTORY  (details.history lists each) — a payslip in a run
-//                             that has left draft (sent to finance, checked,
-//                             approved, locked, paid — owner, 2026-11-06: a
-//                             payslip in a DRAFT run is not history; it is
-//                             removed with the employee and the draft run's
-//                             totals re-added); an APPROVED record of a pay /
+//   409 EMPLOYEE_HAS_HISTORY  (details.history lists each) — a payslip carrying
+//                             money in a run that has left draft (sent to
+//                             finance, checked, approved, locked, paid). Owner,
+//                             2026-11-06: a payslip in a DRAFT run, or one whose
+//                             every amount is 0 (nothing paid or booked for
+//                             them), is not history — it is removed with the
+//                             employee and its run's totals re-added; an APPROVED record of a pay /
 //                             movement / separation section (HISTORY_SECTIONS:
 //                             loans & advances, overtime, salary revisions,
 //                             promotions, transfers, bonuses, benefits, assets,
@@ -86,13 +87,18 @@ export const HISTORY_SECTIONS = [
 
 const STATUSES = ['pending', 'approved', 'rejected', 'withdrawn'] as const
 
+/** A payslip with no money on it (nothing paid or booked for the person). */
+const ZERO_SLIP = { grossCents: 0, earningsCents: 0, deductionsCents: 0, eobiEmployeeCents: 0, eobiEmployerCents: 0, netCents: 0 } as const
+/** Payslips that go with the employee: any in a draft run, or all-zero ones. */
+const removableSlips = (employeeId: string) => ({ employeeId, OR: [{ run: { status: 'draft' } }, ZERO_SLIP] })
+
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 /** What stops this employee from being deleted (empty = nothing). Plain words for the screen. */
 export async function employeeHistory(db: Db, emp: Pick<HrEmployee, 'id' | 'status'>): Promise<string[]> {
   const id = emp.id
   const [payslips, records, tipPools, waited, tags, tracker, reports] = await Promise.all([
-    db.hrPayslip.count({ where: { employeeId: id, run: { status: { not: 'draft' } } } }),
+    db.hrPayslip.count({ where: { employeeId: id, run: { status: { not: 'draft' } }, NOT: ZERO_SLIP } }),
     db.hrRecord.groupBy({
       by: ['section'],
       where: { employeeId: id, OR: [{ status: 'approved', section: { in: [...HISTORY_SECTIONS] } }, { appliedAt: { not: null } }] },
@@ -166,11 +172,12 @@ export async function deleteEmployeeTx(
     title: `${emp.fullName} (${emp.employeeCode})`,
     subtitle: [documents.length && plural(documents.length, 'document'), records.length && plural(records.length, 'HR record')].filter(Boolean).join(', ') || null,
     reason, snapshot,
-    meta: { employeeCode: emp.employeeCode, documents: documents.length, workLocations: workLocations.length, records: records.length, draftPayslipsRemoved: await tx.hrPayslip.count({ where: { employeeId, run: { status: 'draft' } } }) },
+    meta: { employeeCode: emp.employeeCode, documents: documents.length, workLocations: workLocations.length, records: records.length, payslipsRemoved: await tx.hrPayslip.count({ where: removableSlips(employeeId) }) },
   })
-  // Draft payslips go with them (not history — assertDeletable refused any other); the draft runs' totals are
-  // re-added. Not in the snapshot: a restored employee is picked up by the run's next Recalculate.
-  const draftSlips = await tx.hrPayslip.findMany({ where: { employeeId, run: { status: 'draft' } }, select: { id: true, runId: true } })
+  // Draft / all-zero payslips go with them (not history — assertDeletable refused any other); their runs' totals are
+  // re-added (an all-zero slip changes only the head count). Not in the snapshot: a restored employee is picked up by
+  // a draft run's next Recalculate.
+  const draftSlips = await tx.hrPayslip.findMany({ where: removableSlips(employeeId), select: { id: true, runId: true } })
   if (draftSlips.length) {
     await tx.hrPayslip.deleteMany({ where: { id: { in: draftSlips.map((x) => x.id) } } })
     for (const runId of new Set(draftSlips.map((x) => x.runId))) await refreshRunTotals(runId, undefined, tx)

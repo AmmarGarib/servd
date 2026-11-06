@@ -335,7 +335,7 @@ module id must be placed in a workspace in the same change.
   (ADMIN_ONLY), `/reject {note ≥10}` (ADMIN_ONLY), `/withdraw` (requester or CEO); claims 409 `REQUEST_NOT_PENDING`.
   **Only an entry with no history**, checked at the ask AND inside the delete's transaction (employee row FOR UPDATE):
   409 `EMPLOYEE_HAS_LOGIN` (a linked login or a pending invite naming them — offboard / unlink first); 409
-  `EMPLOYEE_HAS_HISTORY` (`details.history`): a payslip in a run past draft (a draft run's payslip is deleted with them, run totals re-added — owner 2026-11-06), an APPROVED record of a pay / movement / separation section
+  `EMPLOYEE_HAS_HISTORY` (`details.history`): a payslip carrying money in a run past draft (a draft run's payslip or an all-zero one is deleted with them, run totals re-added — owner 2026-11-06), an APPROVED record of a pay / movement / separation section
   (`HISTORY_SECTIONS`) or any applied record, tip-pool membership, till tickets waited, journal lines tagged to their
   sub-account, the marketing tracker, people reporting to them, moved to a head office. Deleted WITH it (Trash
   snapshot, same ids): documents (files stay until the CEO empties the Trash), work locations, every other HR record
