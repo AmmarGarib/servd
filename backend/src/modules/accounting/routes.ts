@@ -1,4 +1,5 @@
-import { readableDescription } from './particulars.js'
+import { particularsOf, readableDescription } from './particulars.js'
+import { ledgerSourceLabel } from './ledgerSource.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { forgetReopened, rememberReopened, reopenedThrough } from './closedBooks.js'
 import { classificationOf, classifyingTx, classifyPaymentTx, type ClassificationInput } from './paymentsRegister.js'
@@ -219,8 +220,19 @@ export async function accountingRoutes(fastify: FastifyInstance) {
         select: { id: true, tenantId: true, reference: true, entryDate: true },
       })
       const reversalOf = new Map(reversals.map((r) => [`${r.tenantId}|${r.reference}`, { id: r.id, entryDate: r.entryDate }]))
+      // Plain details for the screen (owner, 2026-11-06: "keep the ledger clean and understandable for non accounting
+      // person … mention required details … as per IFRS"): the narration, the source document, the cheque / bank
+      // reference typed on a manual entry and who prepared it by NAME — never the system key or a user id.
+      const narrate = await particularsOf(scope.tenantIds, entries)
+      const posterIds = [...new Set(entries.map((e) => e.postedBy).filter((x): x is string => !!x && x !== 'system'))]
+      const posters = posterIds.length ? await prisma.user.findMany({ where: { id: { in: posterIds } }, select: { id: true, name: true } }) : []
+      const posterName = new Map(posters.map((u) => [u.id, u.name]))
       const data = entries.map((e) => ({
         ...e,
+        particulars: narrate(e),
+        sourceLabel: ledgerSourceLabel(e.reference),
+        chequeReference: e.reference?.startsWith(MANUAL_PREFIX) ? splitDescription(e.description).reference : null,
+        preparedBy: !e.postedBy || e.postedBy === 'system' ? null : (posterName.get(e.postedBy) ?? null),
         reversedBy: e.tenantId && e.reference?.startsWith(MANUAL_PREFIX)
           ? (reversalOf.get(`${e.tenantId}|${MANUAL_REVERSAL_PREFIX}${e.reference.slice(MANUAL_PREFIX.length)}`) ?? null)
           : null,

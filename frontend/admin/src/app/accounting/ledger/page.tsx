@@ -33,6 +33,11 @@ interface LedgerEntry {
   description: string
   entryDate: string
   postedBy: string | null
+  /** Plain details (owner, 2026-11-06): the narration, the source document, the typed cheque reference, the preparer's name. */
+  particulars?: string
+  sourceLabel?: string
+  chequeReference?: string | null
+  preparedBy?: string | null
   lines: LedgerLine[]
   // Manual entries only: the reversing entry, when there is one.
   reversedBy?: { id: string; entryDate: string } | null
@@ -44,28 +49,52 @@ function pktDate(iso: string): string {
   return new Date(new Date(iso).getTime() + 5 * 3600_000).toISOString().slice(0, 10)
 }
 
+/** "Cash in hand" / "Cash in hand and 2 more" — the accounts on one side of an entry, by name. */
+function sideNames(lines: LedgerLine[], type: 'debit' | 'credit'): string {
+  const names = [...new Set(lines.filter((l) => l.type === type).map((l) => l.account.name))]
+  if (names.length === 0) return '—'
+  return names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`
+}
+
+// One entry, kept readable for someone who is not an accountant (owner, 2026-11-06): what it was for, the document
+// it came from, which accounts went up / down (debit / credit, by name), the amount and who prepared it — never the
+// system key or a user id. Open it for every line.
 function EntryCard({ e, open, onToggle }: { e: LedgerEntry; open: boolean; onToggle: () => void }) {
   const total = e.lines.filter((l) => l.type === 'debit').reduce((s, l) => s + l.amountCents, 0)
+  const credits = e.lines.filter((l) => l.type === 'credit').reduce((s, l) => s + l.amountCents, 0)
+  const details = [
+    e.sourceLabel,
+    e.chequeReference ? `Ref ${e.chequeReference}` : null,
+    e.preparedBy ? `Prepared by ${e.preparedBy}` : 'Posted automatically by servd',
+  ].filter(Boolean).join(' · ')
   return (
     <div className="border-b border-s-border last:border-0">
-      <button onClick={onToggle} className="w-full text-left px-4 py-3 hover:bg-s-bg-soft flex items-start gap-3">
+      <button onClick={onToggle} aria-expanded={open} className="w-full text-left px-4 py-3 hover:bg-s-bg-soft flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-1">
         <span className="font-mono text-xs font-semibold text-s-text w-20 shrink-0">{e.voucherNo ?? '—'}</span>
         <span className="font-mono text-xs text-s-muted w-24 shrink-0">{pktDate(e.entryDate)}</span>
-        <span className="flex-1 min-w-0">
-          <span className="block text-sm text-s-text truncate">{e.description}</span>
-          <span className="block text-xs text-s-muted font-mono truncate">{e.reference ?? `#${e.id.slice(0, 8)}`} · by {e.postedBy ?? 'system'}</span>
+        <span className="order-last sm:order-none basis-full sm:basis-auto flex-1 min-w-0">
+          <span className="block text-sm text-s-text sm:truncate">{e.particulars || e.description}</span>
+          <span className="block text-xs text-s-muted sm:truncate">
+            <span className="text-s-text/80">Debit:</span> {sideNames(e.lines, 'debit')}
+            <span className="mx-1.5">→</span>
+            <span className="text-s-text/80">Credit:</span> {sideNames(e.lines, 'credit')}
+          </span>
+          <span className="block text-xs text-s-muted sm:truncate">{details}</span>
         </span>
         {e.reference?.startsWith('manual.reversal:') && <span className="s-badge-muted shrink-0">Reversal</span>}
         {e.reversedBy && <span className="s-badge-amber shrink-0">Reversed {pktDate(e.reversedBy.entryDate)}</span>}
-        <span className="font-mono text-xs text-s-text shrink-0">{fmtPkr(total)}</span>
+        <span className="font-mono text-xs text-s-text shrink-0 ml-auto sm:ml-0">{fmtPkr(total)}</span>
       </button>
       {open && (
         <div className="px-4 pb-3 overflow-x-auto">
-          <table className="w-full text-xs">
+          {e.particulars && e.particulars !== e.description && (
+            <p className="text-xs text-s-muted mb-2 break-words">{e.description}</p>
+          )}
+          <table className="w-full min-w-[520px] text-xs">
             <thead className="text-s-muted">
               <tr>
                 <th className="text-left py-1 pr-3">Account</th>
-                <th className="text-left py-1 pr-3">Memo</th>
+                <th className="text-left py-1 pr-3">Line description</th>
                 <th className="text-right py-1 pr-3">Debit</th>
                 <th className="text-right py-1">Credit</th>
               </tr>
@@ -79,6 +108,11 @@ function EntryCard({ e, open, onToggle }: { e: LedgerEntry; open: boolean; onTog
                   <td className="py-1 text-right font-mono">{l.type === 'credit' ? fmtPkr(l.amountCents) : ''}</td>
                 </tr>
               ))}
+              <tr className="border-t border-s-border font-semibold">
+                <td className="py-1 pr-3 text-s-text" colSpan={2}>Total</td>
+                <td className="py-1 pr-3 text-right font-mono">{fmtPkr(total)}</td>
+                <td className="py-1 text-right font-mono">{fmtPkr(credits)}</td>
+              </tr>
             </tbody>
           </table>
         </div>
