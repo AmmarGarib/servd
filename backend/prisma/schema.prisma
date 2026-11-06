@@ -5216,8 +5216,11 @@ model BankReconciliation {
   periodTo         DateTime  @db.Date
   periodKind       String    @default("month") // month | quarter | custom
   bankClosingCents BigInt? // closing balance as per the bank statement (typed, or from the statement import)
-  status           String    @default("draft") // draft | submitted | approved
-  snapshot         Json? // the statement as submitted / approved
+  status           String    @default("draft") // draft | submitted | approved | superseded | cancelled
+  snapshot         Json? // the statement as submitted / approved (kept frozen once superseded)
+  // Replaced by a newer APPROVED reconciliation of an overlapping period (owner, 2026-11-06): the record stays.
+  supersededById   String?
+  supersededAt     DateTime?
   preparedById     String
   preparedAt       DateTime  @default(now())
   submittedById    String?

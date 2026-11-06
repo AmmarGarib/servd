@@ -59,6 +59,11 @@ function NewReconciliation({ presetBankId, onClose }: { presetBankId?: string; o
   const bank = banks.find((b) => b.id === (bankId || banks[0]?.id))
   const picked = bank?.id ?? ''
   const fyLabel = range ? financialYearOf(range.from) : ''
+  // Several reconciliations per period are allowed (owner, 2026-11-06): say so when this one reworks an approved period.
+  const existing = useBrsList({ bankAccountId: picked || undefined }).data ?? []
+  const overlaps = (r: { periodFrom: string; periodTo: string }) => !!range?.from && !!range?.to && r.periodFrom <= range.to && r.periodTo >= range.from
+  const approvedHere = existing.find((r) => r.status === 'approved' && overlaps(r))
+  const openHere = existing.filter((r) => (r.status === 'draft' || r.status === 'submitted') && overlaps(r)).length
   const missing = !picked ? 'Pick the bank account.'
     : !range || !range.from || !range.to ? 'Pick the period.'
     : range.from > range.to ? 'The period must start before it ends.'
@@ -123,6 +128,14 @@ function NewReconciliation({ presetBankId, onClose }: { presetBankId?: string; o
             <p className="text-xs text-s-muted">
               {periodLabel(range.from, range.to)} · financial year {fyLabel} (1 July – 30 June)
             </p>
+          )}
+          {approvedHere && (
+            <p className="rounded-lg border border-s-border bg-s-bg-soft px-3 py-2 text-xs text-s-text">
+              {periodLabel(approvedHere.periodFrom, approvedHere.periodTo)} is already approved. A new one reworks it: the period opens for changes while it is worked, and once the CEO approves the new one it becomes the record — the old one is kept as “Replaced”.
+            </p>
+          )}
+          {!approvedHere && openHere > 0 && (
+            <p className="text-xs text-s-muted">{openHere} other reconciliation{openHere === 1 ? ' is' : 's are'} already being worked for this period.</p>
           )}
           <div>
             <label className="inline-flex items-center gap-2 text-sm text-s-text">

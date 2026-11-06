@@ -235,7 +235,7 @@ export default function BankReconciliationWorkspace() {
             ['Financial year', st.financialYear],
             ['Prepared by', rec.preparedBy ? `${rec.preparedBy}${rec.preparedAt ? ` · ${fmtStamp(rec.preparedAt)}` : ''}` : '—'],
             ['Submitted by', rec.submittedBy ? `${rec.submittedBy}${rec.submittedAt ? ` · ${fmtStamp(rec.submittedAt)}` : ''}` : '—'],
-            ['Approved by', rec.status === 'approved' && rec.approvedBy ? `${rec.approvedBy}${rec.approvedAt ? ` · ${fmtStamp(rec.approvedAt)}` : ''}` : '—'],
+            ['Approved by', (rec.status === 'approved' || rec.status === 'superseded') && rec.approvedBy ? `${rec.approvedBy}${rec.approvedAt ? ` · ${fmtStamp(rec.approvedAt)}` : ''}` : '—'],
           ].map(([k, v]) => (
             <div key={k} className="min-w-0"><dt className="text-xs text-s-muted">{k}</dt><dd className="text-s-text break-words">{v}</dd></div>
           ))}
@@ -263,7 +263,13 @@ export default function BankReconciliationWorkspace() {
           </div>
         )}
         {status === 'submitted' && <div className="rounded-lg border border-s-border px-4 py-3 text-sm text-s-text bg-s-bg-soft">Submitted — waiting for the CEO to approve or return it.</div>}
-        {rec.reopenReason && status !== 'approved' && <p className="text-xs text-s-muted">Reopened: {rec.reopenReason}</p>}
+        {status === 'superseded' && (
+          <div className="rounded-lg border border-s-border px-4 py-3 text-sm text-s-text bg-s-bg-soft">
+            Replaced by a newer approved reconciliation{q.data!.supersededBy ? <> ({fmtDay(q.data!.supersededBy.periodFrom)} to {fmtDay(q.data!.supersededBy.periodTo)}) — <Link className="font-semibold text-primary underline" href={`/finance/bank-reconciliation/${q.data!.supersededBy.id}`}>open the current one</Link></> : ''}.
+            {' '}Kept for the record: the figures below are what was approved.
+          </div>
+        )}
+        {rec.reopenReason && status !== 'approved' && status !== 'superseded' && <p className="text-xs text-s-muted">Reopened: {rec.reopenReason}</p>}
 
         {/* Workflow */}
         <div className="flex flex-wrap items-center gap-2">

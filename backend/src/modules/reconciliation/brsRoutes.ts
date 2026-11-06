@@ -22,7 +22,7 @@ import { notifyStaffMany, queueStaffNotify } from '../../lib/staffNotify.js'
 import { exportFormatOf, sendReportFor, type ReportRow, type ReportTable } from '../../lib/reportExport.js'
 import {
   ADJ_KINDS, ADJ_KIND_LABEL, MIN_TEXT, assertDay, computeStatement, fingerprintOf, isoDay, loadBank, recordOf,
-  suggestMatches, approvedPeriodHolding, type Statement,
+  suggestMatches, approvedPeriodHolding, frozenStatementOf, type Statement,
 } from './brs.js'
 import { manualMatchStatementLine } from './service.js'
 
@@ -74,6 +74,7 @@ function view(r: Rec, who: Map<string, string>) {
     returnedBy: r.returnedById ? who.get(r.returnedById) ?? null : null, returnedAt: r.returnedAt?.toISOString() ?? null, returnNote: r.returnNote,
     reopenedBy: r.reopenedById ? who.get(r.reopenedById) ?? null : null, reopenedAt: r.reopenedAt?.toISOString() ?? null,
     reopenReason: r.reopenReason, reopenCount: r.reopenCount,
+    supersededById: r.supersededById, supersededAt: r.supersededAt?.toISOString() ?? null,
   }
 }
 const whoOf = (r: Rec) => names([r.preparedById, r.submittedById, r.approvedById, r.returnedById, r.reopenedById])
@@ -141,7 +142,7 @@ export async function brsRoutes(fastify: FastifyInstance) {
     return banks.map((b) => {
       const mine = recs.filter((r) => r.bankAccountId === b.id)
       const approved = mine.find((r) => r.status === 'approved')
-      const open = mine.find((r) => r.status !== 'approved')
+      const open = mine.find((r) => r.status === 'draft' || r.status === 'submitted')
       const snap = approved?.snapshot as unknown as Statement | null
       return {
         bankAccountId: b.id, companyName: b.tenantId ? tenants.get(b.tenantId) ?? null : null, name: b.name, bankName: b.bankName,
@@ -198,11 +199,9 @@ export async function brsRoutes(fastify: FastifyInstance) {
     const bank = await loadBank(prisma, body.bankAccountId, await idsOf(req, 'create'))
     const rec = await prisma.$transaction(async (tx) => {
       await lockBank(tx, bank.id)
-      const clash = await tx.bankReconciliation.findFirst({
-        where: { bankAccountId: bank.id, status: { not: 'cancelled' }, periodFrom: { lte: new Date(`${to}T00:00:00Z`) }, periodTo: { gte: new Date(`${from}T00:00:00Z`) } },
-        select: { id: true, periodFrom: true, periodTo: true },
-      })
-      if (clash) throw new AppError('PERIOD_OVERLAPS', `This bank already has a reconciliation for ${isoDay(clash.periodFrom)} to ${isoDay(clash.periodTo)} — periods of one bank never overlap`, 409, { reconciliationId: clash.id })
+      // Several reconciliations may cover one period (owner, 2026-11-06); only an approved one is the record, and the
+      // newest approval replaces an older approved one (see /:id/approve). Starting one over an APPROVED period opens
+      // that period's bank lines for this rework until it is approved or cancelled (brs.ts approvedPeriodHolding).
       // Default closing balance: the statement import of this bank dated the period end.
       let closing = body.bankClosingCents ?? null
       if (closing == null) {
@@ -228,7 +227,7 @@ export async function brsRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...RECONCILERS) }, async (req) => {
     const r = await loadRec(req, req.params.id, 'read')
     const live = await liveStatement(prisma, r)
-    const snap = r.status === 'approved' ? (r.snapshot as unknown as Statement | null) : null
+    const snap = frozenStatementOf(r)
     const history = await prisma.auditLog.findMany({
       where: { entity: 'BankReconciliation', entityId: r.id }, orderBy: { createdAt: 'asc' },
       select: { action: true, userEmail: true, createdAt: true, metadata: true, userId: true },
@@ -240,7 +239,8 @@ export async function brsRoutes(fastify: FastifyInstance) {
       reconciliation: { ...view(r, who), bank: bankRow, totals: (snap ?? live).totals, bookClosingCents: (snap ?? live).book.closingCents },
       statement: snap ?? live,
       /** An approved statement whose live figures no longer agree (a back-dated entry, a reopened match): shown, never hidden. */
-      changedSinceApproval: snap ? fingerprintOf(snap) !== fingerprintOf(live) : false,
+      changedSinceApproval: snap && r.status === 'approved' ? fingerprintOf(snap) !== fingerprintOf(live) : false,
+      supersededBy: r.supersededById ? await prisma.bankReconciliation.findUnique({ where: { id: r.supersededById }, select: { id: true, periodFrom: true, periodTo: true, approvedAt: true } }).then((x) => x && { id: x.id, periodFrom: isoDay(x.periodFrom), periodTo: isoDay(x.periodTo), approvedAt: x.approvedAt?.toISOString() ?? null }) : null,
       live: snap ? live.totals : null,
       history: history.map((h) => ({ action: h.action.replace('bank_reconciliation.', ''), by: (h.userId && people.get(h.userId)) ?? h.userEmail, at: h.createdAt.toISOString(), metadata: h.metadata })),
     }
@@ -529,10 +529,15 @@ export async function brsRoutes(fastify: FastifyInstance) {
     const grant = await grantFor(req, r.id)
     if (r.status !== 'submitted') throw new AppError('RECONCILIATION_NOT_SUBMITTED', `This reconciliation is ${r.status} — only a submitted one can be approved`, 409)
     const at = new Date()
+    let replacedIds: string[] = []
     const snap = await prisma.$transaction(async (tx) => {
       await lockBank(tx, r.bankAccountId)
-      const earlier = await tx.bankReconciliation.findFirst({ where: { bankAccountId: r.bankAccountId, status: { in: ['draft', 'submitted'] }, periodTo: { lt: r.periodFrom } }, select: { periodFrom: true, periodTo: true } })
-      if (earlier) throw new AppError('EARLIER_NOT_APPROVED', `Approve the earlier reconciliation of this bank (${isoDay(earlier.periodFrom)} to ${isoDay(earlier.periodTo)}) first`, 409)
+      // An earlier period still being worked blocks only when no approved reconciliation already covers it (a rework of
+      // an approved period does not hold the later ones up).
+      for (const e of await tx.bankReconciliation.findMany({ where: { bankAccountId: r.bankAccountId, status: { in: ['draft', 'submitted'] }, periodTo: { lt: r.periodFrom } }, select: { periodFrom: true, periodTo: true } })) {
+        const covered = await tx.bankReconciliation.count({ where: { bankAccountId: r.bankAccountId, status: 'approved', periodFrom: { lte: e.periodTo }, periodTo: { gte: e.periodFrom } } })
+        if (!covered) throw new AppError('EARLIER_NOT_APPROVED', `Approve the earlier reconciliation of this bank (${isoDay(e.periodFrom)} to ${isoDay(e.periodTo)}) first`, 409)
+      }
       const live = await liveStatement(tx, r)
       const submitted = r.snapshot as unknown as Statement | null
       if (!submitted || fingerprintOf(submitted) !== fingerprintOf(live) || live.totals.differenceCents !== 0) {
@@ -540,10 +545,24 @@ export async function brsRoutes(fastify: FastifyInstance) {
       }
       const n = await tx.bankReconciliation.updateMany({ where: { id: r.id, status: 'submitted' }, data: { status: 'approved', approvedById: req.staffUser!.id, approvedAt: at, snapshot: live as never } })
       if (n.count === 0) throw new AppError('RECONCILIATION_NOT_SUBMITTED', 'This reconciliation is no longer waiting — reload it', 409)
+      // The newest approval is the record: an older APPROVED reconciliation of an overlapping period is replaced — kept
+      // with its frozen approved statement and a link to this one (owner, 2026-11-06).
+      const replaced = await tx.bankReconciliation.findMany({
+        where: { bankAccountId: r.bankAccountId, id: { not: r.id }, status: 'approved', periodFrom: { lte: r.periodTo }, periodTo: { gte: r.periodFrom } },
+        select: { id: true, periodFrom: true, periodTo: true },
+      })
+      if (replaced.length) {
+        await tx.bankReconciliation.updateMany({ where: { id: { in: replaced.map((x) => x.id) }, status: 'approved' }, data: { status: 'superseded', supersededById: r.id, supersededAt: at } })
+      }
+      replacedIds = replaced.map((x) => x.id)
       return live
     }, TX)
+    for (const id of replacedIds) {
+      const old = await prisma.bankReconciliation.findUniqueOrThrow({ where: { id } })
+      await auditRec(req, old, 'superseded', { supersededById: r.id, replacedBy: `${isoDay(r.periodFrom)} to ${isoDay(r.periodTo)}` })
+    }
     await auditApproval(req, { type: 'bank_reconciliation', id: r.id, tenantId: r.tenantId, decision: 'approve', grant, entity: 'BankReconciliation', metadata: { decidedAt: at.toISOString(), totals: snap.totals } })
-    await auditRec(req, r, 'approve', { totals: snap.totals })
+    await auditRec(req, r, 'approve', { totals: snap.totals, replaced: replacedIds })
     return { ok: true }
   })
 
@@ -593,7 +612,7 @@ export async function brsRoutes(fastify: FastifyInstance) {
   // GET /:id/report?kind=statement|cheques|deposits|unmatched&format=pdf|xlsx|csv
   fastify.get<{ Params: { id: string }; Querystring: { kind?: string; format?: string } }>('/:id/report', { preHandler: requireAuth(...RECONCILERS) }, async (req, reply) => {
     const r = await loadRec(req, req.params.id, 'read')
-    const s = (r.status === 'approved' ? (r.snapshot as unknown as Statement | null) : null) ?? await liveStatement(prisma, r)
+    const s = frozenStatementOf(r) ?? await liveStatement(prisma, r)
     const format = exportFormatOf(req.query.format, 'pdf')!
     const kind = req.query.kind ?? 'statement'
     const who = await whoOf(r)
@@ -727,13 +746,13 @@ export async function brsRoutes(fastify: FastifyInstance) {
   fastify.get<{ Querystring: { from?: string; to?: string; format?: string } }>('/reports/monthly', { preHandler: requireAuth(...RECONCILERS) }, async (req, reply) => {
     const from = assertDay(req.query.from ?? '', 'From'), to = assertDay(req.query.to ?? '', 'To')
     const recs = await prisma.bankReconciliation.findMany({
-      where: { tenantId: { in: await idsOf(req, 'read') }, status: { not: 'cancelled' }, periodTo: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T00:00:00Z`) } },
+      where: { tenantId: { in: await idsOf(req, 'read') }, status: { notIn: ['cancelled', 'superseded'] }, periodTo: { gte: new Date(`${from}T00:00:00Z`), lte: new Date(`${to}T00:00:00Z`) } },
       orderBy: [{ periodTo: 'asc' }, { bankAccountId: 'asc' }],
     })
     const banks = new Map((await prisma.bankAccount.findMany({ where: { id: { in: [...new Set(recs.map((r) => r.bankAccountId))] } }, select: { id: true, name: true } })).map((b) => [b.id, b.name]))
     const rows: ReportRow[] = []
     for (const r of recs) {
-      const s = (r.status === 'approved' ? r.snapshot as unknown as Statement | null : null) ?? await liveStatement(prisma, r)
+      const s = frozenStatementOf(r) ?? await liveStatement(prisma, r)
       rows.push({
         month: isoDay(r.periodTo).slice(0, 7), bank: banks.get(r.bankAccountId) ?? '', period: `${isoDay(r.periodFrom)} to ${isoDay(r.periodTo)}`, status: r.status,
         book_closing: s.book.closingCents, bank_closing: s.bankClosingCents, uncredited_deposits: s.totals.depositsCents, unpresented_cheques: s.totals.chequesCents,

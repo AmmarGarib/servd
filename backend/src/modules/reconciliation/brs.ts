@@ -94,11 +94,22 @@ export async function loadBank(db: Db, bankAccountId: string, tenantIds: string[
 /** The approved reconciliation of this bank whose period holds `day`, if any. */
 export async function approvedPeriodHolding(db: Db, bank: { id: string }, day: string) {
   const d = new Date(`${day}T00:00:00Z`)
-  return db.bankReconciliation.findFirst({
+  const held = await db.bankReconciliation.findFirst({
     where: { bankAccountId: bank.id, status: 'approved', periodFrom: { lte: d }, periodTo: { gte: d } },
     select: { id: true, periodFrom: true, periodTo: true },
   })
+  if (!held) return null
+  // A NEW reconciliation being worked over that day (draft / submitted) opens it for edits (owner, 2026-11-06: several
+  // reconciliations per period; the newest approved one replaces the old, whose approved statement stays frozen).
+  const reworking = await db.bankReconciliation.count({
+    where: { bankAccountId: bank.id, status: { in: ['draft', 'submitted'] }, periodFrom: { lte: d }, periodTo: { gte: d } },
+  })
+  return reworking > 0 ? null : held
 }
+
+/** The statement a reconciliation shows: frozen once approved (and kept so when replaced), else live. */
+export const frozenStatementOf = (r: { status: string; snapshot: unknown }): Statement | null =>
+  r.status === 'approved' || r.status === 'superseded' ? (r.snapshot as Statement | null) : null
 
 const lockedError = (r: { id: string; periodFrom: Date; periodTo: Date }) => new AppError(
   'RECONCILIATION_LOCKED',

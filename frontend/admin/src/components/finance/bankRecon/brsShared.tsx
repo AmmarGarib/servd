@@ -8,7 +8,7 @@ import { api, ApiError } from '../../../lib/api'
 
 export const BRS = '/reconciliation/brs'
 
-export type BrsStatus = 'draft' | 'submitted' | 'approved'
+export type BrsStatus = 'draft' | 'submitted' | 'approved' | 'superseded'
 export type PeriodKind = 'month' | 'quarter' | 'custom'
 
 export interface BrsTotals {
@@ -27,6 +27,7 @@ export interface BrsRow {
   approvedBy: string | null; approvedAt: string | null
   returnedBy: string | null; returnNote: string | null
   reopenedBy: string | null; reopenReason: string | null; reopenCount: number
+  supersededById?: string | null; supersededAt?: string | null
   bank: { name: string; bankName: string | null; accountNumber: string | null }
   totals: BrsTotals | null
   bookClosingCents: number | null
@@ -61,12 +62,14 @@ export interface BrsDetail {
   reconciliation: BrsRow
   statement: BrsStatement
   changedSinceApproval: boolean
+  /** The newer approved reconciliation that replaced this one (owner, 2026-11-06). */
+  supersededBy?: { id: string; periodFrom: string; periodTo: string; approvedAt: string | null } | null
   live: BrsTotals | null
   history: BrsHistory[]
 }
 
-export const STATUS_LABEL: Record<BrsStatus, string> = { draft: 'Draft', submitted: 'Awaiting approval', approved: 'Approved' }
-const STATUS_CLASS: Record<BrsStatus, string> = { draft: 's-badge-amber', submitted: 's-badge-blue', approved: 's-badge-green' }
+export const STATUS_LABEL: Record<BrsStatus, string> = { draft: 'Draft', submitted: 'Awaiting approval', approved: 'Approved', superseded: 'Replaced' }
+const STATUS_CLASS: Record<BrsStatus, string> = { draft: 's-badge-amber', submitted: 's-badge-blue', approved: 's-badge-green', superseded: 's-badge-muted' }
 
 export function StatusChip({ status }: { status: BrsStatus }) {
   return <span className={STATUS_CLASS[status]}>{STATUS_LABEL[status]}</span>

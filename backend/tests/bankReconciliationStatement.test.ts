@@ -129,8 +129,10 @@ describe('the August statement', () => {
     const r = await call('finA', 'POST', '/reconciliation/brs', { bankAccountId: bank.A!.id, periodFrom: '2026-08-01', periodTo: '2026-08-31', periodKind: 'month' })
     expect(r.statusCode, r.body).toBe(201)
     aug = r.json().id
+    // Several per period are allowed (owner, 2026-11-06) — this one is a false start, cancelled.
     const dup = await call('finA', 'POST', '/reconciliation/brs', { bankAccountId: bank.A!.id, periodFrom: '2026-08-15', periodTo: '2026-09-10' })
-    expect(code(dup)).toBe('PERIOD_OVERLAPS')
+    expect(dup.statusCode, dup.body).toBe(201)
+    expect((await call('finA', 'POST', `/reconciliation/brs/${dup.json().id}/cancel`, { reason: 'Started with the wrong dates' })).statusCode).toBe(200)
     expect((await call('finB', 'POST', '/reconciliation/brs', { bankAccountId: bank.A!.id, periodFrom: '2026-07-01', periodTo: '2026-07-31' })).statusCode).toBe(404)
     expect((await call('finB', 'GET', `/reconciliation/brs/${aug}`)).statusCode).toBe(404)
     expect((await call('mgrA', 'POST', '/reconciliation/brs', { bankAccountId: bank.A!.id, periodFrom: '2026-06-01', periodTo: '2026-06-30' })).statusCode).toBe(403)
@@ -367,3 +369,34 @@ describe('match a deposit to its bank line from the book side', () => {
     expect(s2.cheques.some((d) => d.journalLineId === chq.journalLineId)).toBe(true)
   })
 })
+
+// Owner, 2026-11-06: "Make option to make multiple recons, but record completed only (Approved by CEO), new Completed
+// Bank recon should replace old one but keep the record".
+describe('a second reconciliation of an approved period', () => {
+  it('reworks August: the approved one stays locked until the rework starts; the new approval replaces it and keeps it', async () => {
+    const old = await getRec('finA', aug)
+    expect(old.reconciliation.status).toBe('approved')
+    const c = await call('finA', 'POST', '/reconciliation/brs', { bankAccountId: bank.A!.id, periodFrom: '2026-08-01', periodTo: '2026-08-31', periodKind: 'month', bankClosingCents: old.statement.bankClosingCents })
+    expect(c.statusCode, c.body).toBe(201)
+    const redo = c.json().id as string
+    const s = (await getRec('finA', redo)).statement
+    expect(s.totals.differenceCents).toBe(0)
+    expect((await call('finA', 'POST', `/reconciliation/brs/${redo}/submit`)).statusCode).toBe(200)
+    const ok = await call('ceoA', 'POST', `/reconciliation/brs/${redo}/approve`)
+    expect(ok.statusCode, ok.body).toBe(200)
+    // The old one is kept, frozen, and points at its replacement.
+    const before = await call('finA', 'GET', `/reconciliation/brs/${aug}`)
+    const b = before.json() as { reconciliation: { status: string; supersededById: string }; supersededBy: { id: string }; statement: St }
+    expect([b.reconciliation.status, b.reconciliation.supersededById, b.supersededBy.id]).toEqual(['superseded', redo, redo])
+    expect(b.statement.totals.depositsCents).toBe(old.statement.totals.depositsCents)
+    expect((await getRec('finA', redo)).reconciliation.status).toBe('approved')
+    // Only the new one locks August again; the old one cannot be reopened.
+    const profit = s.bankCredits[0]!.statementLineId
+    expect(code(await call('finA', 'POST', `/reconciliation/bank/lines/${profit}/ignore`, { reason: 'trying to hide it' }))).toBe('RECONCILIATION_LOCKED')
+    expect(code(await call('finA', 'POST', `/reconciliation/brs/${aug}/reopen`, { reason: 'Reopen the replaced one' }))).toBe('RECONCILIATION_NOT_APPROVED')
+    // The list still has both (the record and the history).
+    const list = (await call('finA', 'GET', `/reconciliation/brs?bankAccountId=${bank.A!.id}`)).json() as Array<{ id: string; status: string }>
+    expect(list.filter((x) => x.id === aug || x.id === redo).map((x) => x.status).sort()).toEqual(['approved', 'superseded'])
+  })
+})
+
