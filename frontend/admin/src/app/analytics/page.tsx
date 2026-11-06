@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { todayPktIso } from '../../lib/money'
-import { Select } from '@/components/ui/Select'
+import { useBrandFilter } from '../../store/brandFilter'
 import { NavIcon } from '../../components/ui/NavIcon'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 
@@ -43,12 +43,6 @@ interface SearchData {
   noResultRate: number
 }
 
-interface Concept {
-  id: string
-  name: string
-  slug: string
-}
-
 const EVENT_LABELS: Record<string, string> = {
   page_view: 'Page views',
   concept_view: 'Brand views',
@@ -76,18 +70,12 @@ function isoFrom(days: number) {
 
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30)
-  const [conceptId, setConceptId] = useState('')
+  // Brand = the scope bar at the top (owner, 2026-11-06); empty = All brands.
+  const conceptId = useBrandFilter((s) => s.brandId) ?? ''
 
   const dateFrom = isoFrom(days)
   const dateTo = todayPktIso()
   const params = `?dateFrom=${dateFrom}&dateTo=${dateTo}${conceptId ? `&conceptId=${conceptId}` : ''}`
-
-  const { data: concepts = [] } = useQuery<Concept[]>({
-    // The brand picker view (id + name, own companies, any staff role): the
-    // full brand row is managers-only and this page only needs the names.
-    queryKey: ['concepts', 'picker'],
-    queryFn: () => api.get('/concepts?view=picker'),
-  })
 
   const { data: overview } = useQuery<OverviewData>({
     queryKey: ['analytics-overview', params],
@@ -132,17 +120,6 @@ export default function AnalyticsPage() {
               </button>
             ))}
           </div>
-          {/* Concept filter */}
-          <Select
-            value={conceptId}
-            onChange={(e) => setConceptId(e.target.value)}
-            className="border border-s-border rounded-lg px-3 py-1.5 text-sm bg-s-surface text-s-text"
-          >
-            <option value="">All brands</option>
-            {concepts.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </Select>
         </div>
       </div>
 

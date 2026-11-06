@@ -4,6 +4,7 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ordersApi, api, type Order } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
+import { useBrandFilter } from '../../store/brandFilter'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
 import { formatDistanceToNowStrict } from 'date-fns'
@@ -87,7 +88,6 @@ const STATUS_NEXT:  Record<string, string> = { received: 'preparing' }
 const STATUS_CTA:   Record<string, string> = { received: 'Fire' }
 
 type Tab = 'live' | 'history'
-interface Concept { id: string; name: string; primaryColor: string | null }
 
 export default function OrdersPage() {
   return (
@@ -106,7 +106,8 @@ function OrdersBoard() {
   // Tab and filters live in the URL, so opening an order and pressing Back
   // restores them (ERP-FOH-9).
   const tab: Tab = params?.get('tab') === 'history' ? 'history' : 'live'
-  const conceptFilter = params?.get('brand') ?? 'all'
+  // Brand = the scope bar at the top (owner, 2026-11-06); null = All brands.
+  const brandId = useBrandFilter((s) => s.brandId)
   const source = params?.get('source') ?? ''
   const status = params?.get('status') ?? ''
   const dateFrom = params?.get('from') ?? ''
@@ -122,7 +123,6 @@ function OrdersBoard() {
     if (clearSelection) setSelected(new Set())
   }
   const setTab = (t: Tab) => setParams({ tab: t === 'history' ? 'history' : '' })
-  const setConceptFilter = (id: string) => setParams({ brand: id === 'all' ? '' : id })
   const setSource = (v: string) => setParams({ source: v })
   const setStatus = (v: string) => setParams({ status: v })
   const setDateFrom = (v: string) => setParams({ from: v })
@@ -142,21 +142,11 @@ function OrdersBoard() {
   // Per-order note state: { [orderId]: { open, draft } }
   const [notes, setNotes] = useState<Record<string, { open: boolean; draft: string }>>({})
 
-  // The brand filter reads the picker list (every staff role; id, name,
-  // colour) — the plain /concepts list is managers / till only, so it 403'd
-  // for expediter and finance, who hold 'orders'. Shares the shell
-  // BrandPicker's cache key and shape.
-  const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts', 'brand-picker'],
-    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
-    staleTime: 60_000,
-  })
-
   const { data: liveData } = useQuery({
-    queryKey: ['orders', 'live', conceptFilter],
+    queryKey: ['orders', 'live', brandId],
     queryFn: () => ordersApi.list({
       status: 'received,confirmed,preparing,ready',
-      ...(conceptFilter !== 'all' && { conceptId: conceptFilter }),
+      ...(brandId && { conceptId: brandId }),
     }),
     refetchInterval: 8_000,
     enabled: tab === 'live',
@@ -166,14 +156,14 @@ function OrdersBoard() {
   // before the oldest one shown (the list is newest-first), and a row seen
   // twice at the boundary is dropped below.
   const { data: historyData, isLoading: histLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useInfiniteQuery({
-    queryKey: ['orders', 'history', conceptFilter, source, status, dateFrom],
+    queryKey: ['orders', 'history', brandId, source, status, dateFrom],
     initialPageParam: '' as string,
     queryFn: ({ pageParam }) => ordersApi.list({
       ...(source && { source }),
       ...(status && { status }),
       ...(dateFrom && { dateFrom: `${dateFrom}T00:00:00Z` }),
       ...(pageParam && { dateTo: pageParam }),
-      ...(conceptFilter !== 'all' && { conceptId: conceptFilter }),
+      ...(brandId && { conceptId: brandId }),
       limit: '50',
     }),
     getNextPageParam: (last) => (last.hasMore ? (last.data[last.data.length - 1]?.placedAt ?? undefined) : undefined),
@@ -296,37 +286,10 @@ function OrdersBoard() {
         )}
       </header>
 
-      {/* ── Mobile concept filter strip ── */}
-      <div className="lg:hidden flex gap-2 overflow-x-auto px-4 py-2.5 border-b border-s-border scrollbar-hide">
-        {[{ id: 'all', name: 'All', primaryColor: null }, ...concepts].map((c) => (
-          <button key={c.id} onClick={() => setConceptFilter(c.id)}
-            className={`shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-              conceptFilter === c.id
-                ? 'bg-primary text-primary-on'
-                : 'bg-s-surface border border-s-border text-s-muted'
-            }`}>
-            {c.primaryColor && <div className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: c.primaryColor }} />}
-            {c.name}
-          </button>
-        ))}
-      </div>
-
       <div className="flex flex-1 overflow-hidden">
-        {/* ── Concept sidebar (desktop only) ── */}
-        <aside className="hidden lg:block w-52 shrink-0 border-r border-s-border overflow-y-auto">
-          <p className="px-4 pt-4 pb-2 text-xs font-bold text-s-muted uppercase tracking-widest">Concept</p>
-          {[{ id: 'all', name: 'All concepts', primaryColor: null }, ...concepts].map((c) => (
-            <button key={c.id} onClick={() => setConceptFilter(c.id)}
-              className={`w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm transition-colors border-b border-s-border/40 ${
-                conceptFilter === c.id
-                  ? 'bg-s-surface border-l-2 border-l-primary font-semibold text-s-text'
-                  : 'text-s-muted hover:bg-s-surface/50'
-              }`}>
-              {c.primaryColor && <div className="h-4 w-4 rounded-full shrink-0" style={{ background: c.primaryColor }} />}
-              {c.name}
-            </button>
-          ))}
-          {tab === 'live' && liveOrders.length > 0 && (
+        {/* ── Queue counts (desktop only; the brand is picked in the scope bar) ── */}
+        {tab === 'live' && liveOrders.length > 0 && (
+          <aside className="hidden lg:block w-52 shrink-0 border-r border-s-border overflow-y-auto">
             <div className="px-4 pt-4 space-y-1">
               <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">Queue</p>
               {LIVE_STATUSES.map((s) => (grouped[s]?.length ?? 0) > 0 && (
@@ -338,8 +301,8 @@ function OrdersBoard() {
                 </div>
               ))}
             </div>
-          )}
-        </aside>
+          </aside>
+        )}
 
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           {/* ── Tabs ── */}

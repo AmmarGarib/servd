@@ -10,10 +10,9 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { api } from '../../../lib/api'
 import { todayPktIso } from '../../../lib/money'
-import { useBrandFilter } from '../../../store/brandFilter'
-import { Select } from '@/components/ui/Select'
+import { useActiveBrandId } from '../../../components/ui/BrandPicker'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
-interface Concept { id: string; name: string }
 interface Reservation {
   id: string; partySize: number; startTime: string; status: string
   guestName: string; isVip: boolean
@@ -48,12 +47,9 @@ const STATUS_DOT: Record<string, string> = {
 
 export default function ReservationsWeekPage() {
   const router = useRouter()
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // The brand is the scope bar's pick (owner, 2026-11-06); the week grid is one brand's bookings.
+  const conceptId = useActiveBrandId() ?? ''
   const [anchor,    setAnchor]    = useState(todayPktIso())
-
-  const concepts = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
-
-  if (!conceptId && concepts.data && concepts.data.length > 0) setConceptId(concepts.data[0]!.id)
 
   const weekStart = useMemo(() => startOfWeek(anchor), [anchor])
   const days = useMemo(
@@ -84,10 +80,6 @@ export default function ReservationsWeekPage() {
           <h1 className="text-xl font-bold text-s-text">Reservations · week</h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
-            className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
-            {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
           <button onClick={() => setAnchor(pktYmd(new Date(weekStart.getTime() - 7 * 86_400_000)))}
             className="min-h-11 s-btn-secondary text-xs"><ArrowLeft size={14} aria-hidden="true" /> Prev</button>
           <span className="text-xs text-s-muted whitespace-nowrap">
@@ -100,6 +92,9 @@ export default function ReservationsWeekPage() {
       </header>
 
       <div className="p-4 max-w-7xl mx-auto">
+        {!conceptId ? (
+          <CompactEmptyState message="Pick a brand in the bar at the top to see its week of bookings." />
+        ) : (<>
         <div className="s-card overflow-hidden">
           <div className="grid grid-cols-[60px_repeat(7,minmax(0,1fr))] border-b border-s-border bg-s-bg-soft">
             <div></div>
@@ -151,6 +146,7 @@ export default function ReservationsWeekPage() {
             </span>
           ))}
         </div>
+        </>)}
       </div>
     </div>
   )

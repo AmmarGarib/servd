@@ -27,7 +27,6 @@ interface FeedbackRow {
   concept: { name: string; slug: string } | null
 }
 
-interface Concept { id: string; name: string }
 
 const TOPICS: Array<{ value: string; label: string }> = [
   { value: 'catering', label: 'Catering and events' },
@@ -42,13 +41,8 @@ const KIND_LABEL: Record<FeedbackRow['kind'], string> = { contact: 'Contact mess
 export default function MessagesPage() {
   const [kind, setKind] = useState<string>('contact')
   const [topic, setTopic] = useState('')
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
-
-  const { data: concepts = [] } = useQuery({
-    queryKey: ['concepts', 'brand-picker'],
-    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
-    staleTime: 60_000,
-  })
+  // Brand = the scope bar at the top (owner, 2026-11-06); empty = All brands.
+  const conceptId = useBrandFilter((s) => s.brandId) ?? ''
 
   const { data: rows = [], isLoading, isError } = useQuery({
     queryKey: ['feedback-inbox', kind, topic, conceptId],
@@ -88,10 +82,6 @@ export default function MessagesPage() {
             {TOPICS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
           </Select>
         )}
-        <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={`${inp} w-auto`} aria-label="Brand">
-          <option value="">All brands</option>
-          {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
       </div>
 
       <div className="rounded-xl border border-s-border overflow-hidden">

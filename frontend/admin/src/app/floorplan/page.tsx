@@ -19,11 +19,9 @@ import { FloorPlanEditor } from '../../components/floorplan/FloorPlanEditor'
 import type { FloorTable } from '../../components/floorplan/FloorCanvas'
 import { LiveFloor } from './LiveFloor'
 import { LayoutsGallery } from '../../components/floorplan/LayoutsGallery'
-import { useBrandFilter } from '../../store/brandFilter'
-import { Select } from '@/components/ui/Select'
+import { useActiveBrandId } from '../../components/ui/BrandPicker'
 import { NavIcon } from '../../components/ui/NavIcon'
 
-interface Concept { id: string; name: string; slug: string }
 interface BrandTable { id: string; label: string; capacity: number | null; floorId: string | null }
 
 interface Floor {
@@ -38,22 +36,12 @@ interface Floor {
 
 export default function FloorplanPage() {
   const qc = useQueryClient()
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // The floor plan is one brand's — the scope bar's brand (owner, 2026-11-06); All brands asks for one.
+  const conceptId = useActiveBrandId() ?? ''
   const [floorId,   setFloorId]   = useState<string>('')
   const [mode,      setMode]      = useState<'edit' | 'live'>('live')
   const [showNewFloor, setShowNewFloor] = useState(false)
   const [showLayouts,  setShowLayouts]  = useState(false)
-
-  const concepts = useQuery({
-    queryKey: ['concepts'],
-    queryFn: () => api.get<Concept[]>('/concepts'),
-  })
-
-  useEffect(() => {
-    if (!conceptId && concepts.data && concepts.data.length > 0) {
-      setConceptId(concepts.data[0]!.id)
-    }
-  }, [concepts.data, conceptId])
 
   const floors = useQuery({
     queryKey: ['floors', conceptId],
@@ -143,11 +131,6 @@ export default function FloorplanPage() {
           <h1 className="text-xl font-bold text-s-text">Floor plan</h1>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
-          <Select value={conceptId} onChange={(e) => { setConceptId(e.target.value); setFloorId('') }}
-            className="bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
-            {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
-
           <div className="rounded-full border border-s-border bg-s-surface p-0.5 flex">
             <button onClick={() => setMode('live')}  aria-pressed={mode === 'live'}
               className={`px-3 py-1 rounded-full text-xs font-bold ${mode === 'live' ? 'bg-primary text-primary-on' : 'text-s-text'}`}>
@@ -162,6 +145,9 @@ export default function FloorplanPage() {
       </header>
 
       <div className="p-6 max-w-7xl mx-auto">
+        {!conceptId ? (
+          <CompactEmptyState message="Pick a brand in the bar at the top to see and edit its floor plan." />
+        ) : (<>
         {/* Floor tabs */}
         <div className="flex items-center gap-1.5 mb-4 flex-wrap">
           {floors.data?.map((f) => (
@@ -266,6 +252,8 @@ export default function FloorplanPage() {
         {currentFloor && mode === 'live' && (
           <LiveFloor floor={currentFloor} conceptId={conceptId} />
         )}
+
+        </>)}
 
         <p className="text-xs text-s-muted mt-6">
           See reservations on the <Link href="/reservations" className="text-primary-ink hover:underline">reservations page</Link>.

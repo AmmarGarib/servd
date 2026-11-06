@@ -4,8 +4,9 @@ import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
+import { useActiveBrandId } from '../../../components/ui/BrandPicker'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
-interface Concept { id: string; name: string }
 interface ForecastPoint { date: string; predictedQty: number }
 interface ForecastItem { menuItemId: string | null; name: string; confidence: 'high' | 'medium' | 'low'; forecasts: ForecastPoint[] }
 interface ForecastData { conceptId: string; generatedAt: string; items: ForecastItem[] }
@@ -18,18 +19,10 @@ function fmtDate(iso: string) {
 }
 
 export default function ForecastPage() {
-  const [conceptId, setConceptId] = useState('')
+  // One brand's forecast — the scope bar's brand (owner, 2026-11-06); All brands asks for one.
+  const conceptId = useActiveBrandId() ?? ''
   const [days, setDays] = useState(7)
   const [sortBy, setSortBy] = useState<'total' | 'name'>('total')
-
-  // The picker list (every staff role, id + name): the plain /concepts list
-  // is managers / till only and 403'd for finance. Shares the shell
-  // BrandPicker's cache key and shape.
-  const { data: concepts } = useQuery({
-    queryKey: ['concepts', 'brand-picker'],
-    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
-    staleTime: 60_000,
-  })
 
   const { data, isLoading } = useQuery({
     queryKey: ['demand-forecast', conceptId, days],
@@ -57,11 +50,6 @@ export default function ForecastPage() {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <Select value={conceptId} onChange={e => setConceptId(e.target.value)}
-          className="s-input text-sm px-3 py-2 rounded-xl min-w-[180px]">
-          <option value="">Select concept…</option>
-          {concepts?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
         <Select value={days} onChange={e => setDays(Number(e.target.value))}
           className="s-input text-sm px-3 py-2 rounded-xl">
           <option value={7}>7-day forecast</option>
@@ -75,9 +63,7 @@ export default function ForecastPage() {
       </div>
 
       {!conceptId && (
-        <div className="flex items-center justify-center h-48 rounded-2xl" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Select a concept to view demand forecast</p>
-        </div>
+        <CompactEmptyState message="Pick a brand in the bar at the top to see its demand forecast." />
       )}
 
       {conceptId && isLoading && (

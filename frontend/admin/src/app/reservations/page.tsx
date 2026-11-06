@@ -20,7 +20,7 @@ import { api } from '../../lib/api'
 import { todayPktIso, fmtPkrShort } from '../../lib/money'
 import { useReservationSocket } from '../../hooks/useReservationSocket'
 import { CustomerContextSidebar } from '../../components/customer/CustomerContextSidebar'
-import { useBrandFilter } from '../../store/brandFilter'
+import { useActiveBrandId } from '../../components/ui/BrandPicker'
 import {
   bookedLine, overbookFields, overbookReady, overbookRefusalText, policyRefusalText, slotFullPrompt,
   OVERBOOK_REASON_MAX, type CreatedBooking, type SlotFull,
@@ -91,7 +91,9 @@ const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
 
 export default function ReservationsPage() {
   const qc = useQueryClient()
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // The brand is the scope bar's pick (owner, 2026-11-06). The day board is one brand's host stand, so with
+  // All brands it asks for a brand instead of guessing one.
+  const conceptId = useActiveBrandId() ?? ''
   const [date,      setDate]      = useState(todayPktIso())
   const [showNew,   setShowNew]   = useState(false)
   // Customer context drawer: when set, the right-side drawer shows that
@@ -107,16 +109,8 @@ export default function ReservationsPage() {
   useEffect(() => {
     if (!trashPrefill) return
     setPrefill(trashPrefill)
-    const c = pStr(trashPrefill, 'conceptId', 'brandId')
-    if (c) setConceptId(c)
     setShowNew(true)
   }, [trashPrefill])
-
-  useEffect(() => {
-    if (!conceptId && concepts.data && concepts.data.length > 0) {
-      setConceptId(concepts.data[0]!.id)
-    }
-  }, [concepts.data, conceptId])
 
   const reservations = useQuery({
     queryKey: ['reservations', conceptId, date],
@@ -184,10 +178,6 @@ export default function ReservationsPage() {
           <h1 className="text-xl font-bold text-s-text">Reservations</h1>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)}
-            className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
-            {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
             className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           <button onClick={() => setDate(todayPktIso())} className="min-h-11 s-btn-secondary text-xs">Today</button>
@@ -195,6 +185,13 @@ export default function ReservationsPage() {
         </div>
       </header>
 
+      {!conceptId && (
+        <div className="p-6 max-w-7xl mx-auto">
+          <CompactEmptyState message="Pick a brand in the bar at the top to see its bookings and waitlist." />
+        </div>
+      )}
+
+      {conceptId && (
       <div className="p-6 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
         {/* Day view */}
         <div className="space-y-3">
@@ -255,11 +252,12 @@ export default function ReservationsPage() {
           </div>
         </aside>
       </div>
+      )}
 
-      {showNew && conceptId && (
+      {showNew && (
         <NewReservationModal
-          conceptId={conceptId}
-          tables={allTables}
+          concepts={concepts.data ?? []}
+          defaultConceptId={pStr(prefill ?? null, 'conceptId', 'brandId') ?? conceptId}
           defaultDate={date}
           prefill={prefill}
           onClose={() => setShowNew(false)}
@@ -418,15 +416,26 @@ function SeatButton({
 // ─── New reservation modal ────────────────────────────────────────────────
 
 function NewReservationModal({
-  conceptId, tables, defaultDate, prefill, onClose, onCreated,
+  concepts, defaultConceptId, defaultDate, prefill, onClose, onCreated,
 }: {
   prefill?: ReturnType<typeof unwrapPrefill>
-  conceptId: string
-  tables: Array<{ id: string; label: string; capacity: number; floorName: string }>
+  concepts: Concept[]
+  /** The bar's brand (or the Trash original's); the booking's brand is a field of this form. */
+  defaultConceptId: string
   defaultDate: string
   onClose: () => void
   onCreated: () => void
 }) {
+  const [conceptId, setConceptId] = useState(defaultConceptId)
+  const brandFloors = useQuery({
+    queryKey: ['floors-for-res', conceptId],
+    queryFn: () => api.get<Floor[]>(`/floors?conceptId=${conceptId}`),
+    enabled: !!conceptId,
+  })
+  const tables = useMemo(
+    () => (brandFloors.data ?? []).flatMap((f) => f.tables.map((t) => ({ ...t, floorName: f.name }))),
+    [brandFloors.data],
+  )
   const [partySize, setPartySize] = useState<number | null>(() => {
     const n = pNum(prefill ?? null, 'partySize', 'party')
     return n && n >= 1 && n <= 50 ? Math.round(n) : 2
@@ -454,7 +463,7 @@ function NewReservationModal({
   const sizeOk = partySize != null && partySize >= 1 && partySize <= 50
   const durOk = durationMin != null && durationMin >= 15 && durationMin <= 480
   const dateOk = startDate >= today
-  const formOk = !!guestName.trim() && sizeOk && durOk && dateOk
+  const formOk = !!conceptId && !!guestName.trim() && sizeOk && durOk && dateOk
   const dirty = !!(guestName || guestPhone || guestEmail || notes || tableId || isVip || waitlist)
     || partySize !== 2 || durationMin !== 90 || startTime !== '19:00' || startDate !== defaultDate
 
@@ -486,7 +495,7 @@ function NewReservationModal({
   })
 
   // Any change to when / who / which table is a new question: drop the prompt.
-  useEffect(() => { setSlotFull(null) }, [partySize, startDate, startTime, durationMin, tableId, waitlist])
+  useEffect(() => { setSlotFull(null) }, [conceptId, partySize, startDate, startTime, durationMin, tableId, waitlist])
 
   if (booked) {
     return (
@@ -525,6 +534,13 @@ function NewReservationModal({
         </div>
       }>
       <form id="new-reservation-form" className="space-y-3 text-sm" onSubmit={(e) => { e.preventDefault(); submit() }}>
+          <Field label="Brand *">
+            <Select value={conceptId} onChange={(e) => { setConceptId(e.target.value); setTableId('') }}
+              className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5">
+              <option value="">Choose a brand…</option>
+              {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+          </Field>
           <Field label="Guest name *">
             <input autoFocus required autoComplete="name" value={guestName} onChange={(e) => setGuestName(e.target.value)} className="min-h-11 w-full bg-s-surface border border-s-border rounded px-2 py-1.5" />
           </Field>

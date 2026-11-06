@@ -10,10 +10,11 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
 import { todayPktIso } from '../../../lib/money'
-import { useBrandFilter } from '../../../store/brandFilter'
+import { useActiveBrandId } from '../../../components/ui/BrandPicker'
 import { Select } from '@/components/ui/Select'
 import { NumberField } from '@/components/ui/NumberField'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
 interface Concept { id: string; name: string }
 interface Blockout {
@@ -24,11 +25,12 @@ interface Blockout {
 export default function BlockoutsPage() {
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // The list is one brand's blockouts — the scope bar's brand (owner, 2026-11-06). A new blockout picks its brand
+  // in its own form.
+  const conceptId = useActiveBrandId() ?? ''
   const [showNew, setShowNew] = useState(false)
 
   const concepts = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
-  if (!conceptId && concepts.data && concepts.data.length > 0) setConceptId(concepts.data[0]!.id)
 
   const list = useQuery({
     queryKey: ['blockouts', conceptId],
@@ -56,14 +58,14 @@ export default function BlockoutsPage() {
           <h1 className="text-xl font-bold text-s-text">Closures & blockouts</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
-            {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
           <button onClick={() => setShowNew(true)} className="min-h-11 s-btn-primary text-xs">+ New blockout</button>
         </div>
       </header>
 
       <div className="p-6 max-w-3xl mx-auto space-y-3">
+        {!conceptId ? (
+          <CompactEmptyState message="Pick a brand in the bar at the top to see its closures and blockouts." />
+        ) : (
         <div className="s-card overflow-hidden">
           <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -104,11 +106,12 @@ export default function BlockoutsPage() {
           </table>
           </div>
         </div>
+        )}
       </div>
 
-      {showNew && conceptId && (
-        <NewBlockoutModal conceptId={conceptId} onClose={() => setShowNew(false)} onCreated={() => {
-          void qc.invalidateQueries({ queryKey: ['blockouts', conceptId] })
+      {showNew && (
+        <NewBlockoutModal concepts={concepts.data ?? []} defaultConceptId={conceptId} onClose={() => setShowNew(false)} onCreated={() => {
+          void qc.invalidateQueries({ queryKey: ['blockouts'] })
           setShowNew(false)
         }} />
       )}
@@ -116,7 +119,10 @@ export default function BlockoutsPage() {
   )
 }
 
-function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string; onClose: () => void; onCreated: () => void }) {
+function NewBlockoutModal({ concepts, defaultConceptId, onClose, onCreated }: {
+  concepts: Concept[]; defaultConceptId: string; onClose: () => void; onCreated: () => void
+}) {
+  const [conceptId, setConceptId] = useState(defaultConceptId)
   const [kind, setKind] = useState<'closure' | 'private_event' | 'reduced_capacity' | 'custom'>('closure')
   const [startTime, setStartTime] = useState(`${todayPktIso()}T18:00`)
   const [endTime, setEndTime] = useState(`${todayPktIso()}T23:00`)
@@ -144,6 +150,13 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
           <button onClick={onClose} className="text-2xl leading-none text-s-muted">×</button>
         </div>
         <div className="p-5 space-y-3 text-sm">
+          <label className="block">
+            <span className="text-xs text-s-muted">Brand</span>
+            <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="min-h-11 w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
+              <option value="">Choose a brand…</option>
+              {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </Select>
+          </label>
           <label className="block">
             <span className="text-xs text-s-muted">Kind</span>
             <Select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)} className="min-h-11 w-full mt-1 bg-s-surface border border-s-border rounded px-2 py-1.5">
@@ -177,7 +190,7 @@ function NewBlockoutModal({ conceptId, onClose, onCreated }: { conceptId: string
         </div>
         <div className="px-5 py-3 border-t border-s-border flex justify-end gap-2">
           <button onClick={onClose} className="min-h-11 s-btn-secondary text-sm">Cancel</button>
-          <button onClick={() => create.mutate()} disabled={create.isPending} className="min-h-11 s-btn-primary text-sm">
+          <button onClick={() => create.mutate()} disabled={create.isPending || !conceptId} className="min-h-11 s-btn-primary text-sm">
             {create.isPending ? 'Saving…' : 'Block these dates'}
           </button>
         </div>

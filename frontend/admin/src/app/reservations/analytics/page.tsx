@@ -6,10 +6,9 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
 import { todayPktIso, startOfMonthPktIso } from '../../../lib/money'
-import { useBrandFilter } from '../../../store/brandFilter'
-import { Select } from '@/components/ui/Select'
+import { useActiveBrandId } from '../../../components/ui/BrandPicker'
+import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
 
-interface Concept { id: string; name: string }
 interface Analytics {
   period: { from: string; to: string }
   totals: { bookings: number; completed: number; noShow: number; cancelled: number; covers: number }
@@ -18,12 +17,10 @@ interface Analytics {
 }
 
 export default function ReservationAnalyticsPage() {
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // One brand's figures — the scope bar's brand (owner, 2026-11-06).
+  const conceptId = useActiveBrandId() ?? ''
   const [from, setFrom] = useState(startOfMonthPktIso())
   const [to,   setTo]   = useState(todayPktIso())
-
-  const concepts = useQuery({ queryKey: ['concepts'], queryFn: () => api.get<Concept[]>('/concepts') })
-  if (!conceptId && concepts.data && concepts.data.length > 0) setConceptId(concepts.data[0]!.id)
 
   const a = useQuery({
     queryKey: ['res-analytics', conceptId, from, to],
@@ -39,9 +36,6 @@ export default function ReservationAnalyticsPage() {
           <h1 className="text-xl font-bold text-s-text">Reservation analytics</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm">
-            {concepts.data?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </Select>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
           <ArrowRight size={14} aria-hidden="true" className="text-s-muted" />
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="min-h-11 bg-s-surface border border-s-border rounded px-2 py-1 text-sm" />
@@ -49,6 +43,7 @@ export default function ReservationAnalyticsPage() {
       </header>
 
       <div className="p-6 max-w-5xl mx-auto space-y-4">
+        {!conceptId && <CompactEmptyState message="Pick a brand in the bar at the top to see its reservation figures." />}
         {a.isLoading && <p className="text-s-muted text-sm">Loading…</p>}
         {a.data && (
           <>

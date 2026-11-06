@@ -53,7 +53,8 @@ function StarRating({ rating }: { rating: number }) {
 export default function ReviewsPage() {
   const qc = useQueryClient()
   const { data: tenants = [] } = useMyTenants()
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // Brand = the scope bar at the top (owner, 2026-11-06); empty = All brands.
+  const conceptId = useBrandFilter((s) => s.brandId) ?? ''
   const [ratingFilter, setRatingFilter] = useState('')
   const [showManual, setShowManual] = useState(false)
   const [manualForm, setManualForm] = useState({ conceptId: '', rating: 5, comment: '', source: 'manual' })
@@ -106,7 +107,7 @@ export default function ReviewsPage() {
           className="rounded-xl border border-s-border text-s-text font-bold px-4 py-2 text-sm hover:bg-s-surface">
           Messages
         </Link>
-        <button onClick={() => setShowManual(true)}
+        <button onClick={() => { setManualForm((f) => ({ ...f, conceptId: f.conceptId || conceptId })); setShowManual(true) }}
           className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
           + Log manual review
         </button>
@@ -182,10 +183,6 @@ export default function ReviewsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
-        <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className={`${inp} w-auto`}>
-          <option value="">All concepts</option>
-          {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
         <Select value={ratingFilter} onChange={(e) => setRatingFilter(e.target.value)} className={`${inp} w-auto`}>
           <option value="">All ratings</option>
           {STARS.map((s) => <option key={s} value={s}>{s} star{s > 1 ? 's' : ''}</option>)}

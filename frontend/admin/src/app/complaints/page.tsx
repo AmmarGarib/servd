@@ -14,6 +14,7 @@ import { NavIcon } from '../../components/ui/NavIcon'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { AnchoredMenu } from '../../components/ui/AnchoredMenu'
 import { CompensationTickets } from '../../components/complaints/CompensationTickets'
+import { useBrandFilter } from '../../store/brandFilter'
 
 interface Complaint {
   id: string
@@ -254,7 +255,8 @@ export default function ComplaintsPage() {
   const [kindFilter, setKindFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
-  const [conceptFilter, setConceptFilter] = useState('')
+  // Brand = the scope bar at the top (owner, 2026-11-06); empty = All brands.
+  const conceptFilter = useBrandFilter((s) => s.brandId) ?? ''
   const [showNew, setShowNew] = useState(false)
   const [resolving, setResolving] = useState<string | null>(null)
   const [resolution, setResolution] = useState('')
@@ -353,7 +355,7 @@ export default function ComplaintsPage() {
           <h1 className="text-2xl font-black text-s-text mt-1">Order Complaints</h1>
         </header>
         {tabs}
-        <CompensationTickets conceptOptions={concepts} />
+        <CompensationTickets />
       </div>
     )
   }
@@ -364,7 +366,7 @@ export default function ComplaintsPage() {
         <div>
           <h1 className="text-2xl font-black text-s-text mt-1">Order Complaints</h1>
         </div>
-        <button onClick={() => setShowNew(true)}
+        <button onClick={() => { setNewForm((f) => ({ ...f, conceptId: f.conceptId || conceptFilter })); setShowNew(true) }}
           className="rounded-xl bg-primary text-primary-on font-bold px-4 py-2 text-sm hover:opacity-90">
           + New complaint
         </button>
@@ -447,10 +449,6 @@ export default function ComplaintsPage() {
         <Select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)} className={`${inp} w-auto`}>
           <option value="">All requests</option>
           <option value="ban_appeal">Ban appeals</option>
-        </Select>
-        <Select value={conceptFilter} onChange={(e) => setConceptFilter(e.target.value)} className={`${inp} w-auto`}>
-          <option value="">All concepts</option>
-          {concepts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
         <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={`${inp} w-auto`}>
           <option value="">All statuses</option>

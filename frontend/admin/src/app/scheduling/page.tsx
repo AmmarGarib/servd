@@ -12,13 +12,13 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
-import { useBrandFilter } from '../../store/brandFilter'
+import { useActiveBrandId } from '../../components/ui/BrandPicker'
+import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useAuthStore } from '../../store/auth'
 import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { useManagerRoles } from '../../lib/roles'
 import { Select } from '@/components/ui/Select'
 
-interface Concept { id: string; name: string }
 interface StaffMember { id: string; name: string; employeeCode: string; designation: string | null; canHaveExceptions: boolean }
 interface Segment { start: string; end: string; shiftId: string | null; shiftName: string | null; exceptionId: string | null; role: string | null; notes: string | null }
 // The shape of GET /scheduling cells (backend hr/rota.ts RotaCell).
@@ -56,19 +56,11 @@ export default function SchedulingPage() {
   // Who plans the rota: the API's MANAGERS (lib/roles.ts) + hr.
   const planner = useManagerRoles('hr').has(role)
   const [weekStart, setWeekStart] = useState(ymd(mondayOf()))
-  const [conceptId, setConceptId] = useState<string>(() => useBrandFilter.getState().brandId ?? '')
+  // One brand's rota — the scope bar's brand (owner, 2026-11-06); All brands asks for one.
+  const conceptId = useActiveBrandId() ?? ''
   const [editing, setEditing] = useState<{ member: StaffMember; cell: Cell } | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
-  // Brand list from GET /concepts?view=picker (every staff role, the active
-  // brands of its own companies, id + name) — plain /concepts is managers /
-  // till only and 403'd for the roles that hold this page (R2-UI-03).
-  // Shares the shell BrandPicker's cache key and shape.
-  const { data: concepts } = useQuery({
-    queryKey: ['concepts', 'brand-picker'],
-    queryFn: () => api.get<Concept[]>('/concepts?view=picker'),
-    staleTime: 60_000,
-  })
   const week = useQuery({
     queryKey: ['scheduling', conceptId, weekStart],
     queryFn: () => api.get<WeekView>(`/scheduling?conceptId=${conceptId}&weekStart=${weekStart}`),
@@ -103,10 +95,6 @@ export default function SchedulingPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="s-input text-sm px-3 py-2 rounded-xl min-w-[180px]" aria-label="Brand">
-          <option value="">Select brand…</option>
-          {concepts?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </Select>
         <button onClick={() => setWeekStart(addDays(weekStart, -7))} className="p-2 rounded-xl" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.5)' }} aria-label="Previous week">‹</button>
         <span className="text-sm font-semibold px-2" style={{ color: 'rgb(var(--fg-rgb) / 0.7)' }}>{fmtDay(dates[0]!)} – {fmtDay(dates[6]!)}</span>
         <button onClick={() => setWeekStart(addDays(weekStart, 7))} className="p-2 rounded-xl" style={{ background: 'rgb(var(--fg-rgb) / 0.04)', border: '1px solid rgb(var(--fg-rgb) / 0.07)', color: 'rgb(var(--fg-rgb) / 0.5)' }} aria-label="Next week">›</button>
@@ -130,9 +118,7 @@ export default function SchedulingPage() {
       )}
 
       {!conceptId && (
-        <div className="flex items-center justify-center h-48 rounded-2xl" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-          <p className="text-sm" style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>Select a brand to see its rota</p>
-        </div>
+        <CompactEmptyState message="Pick a brand in the bar at the top to see its rota." />
       )}
       {conceptId && week.error && <p className="text-sm text-red-700">{(week.error as Error).message}</p>}
 
