@@ -335,15 +335,15 @@ async function viewOf(ev: PerformanceEvaluation, roles: Set<Role>) {
 function assertSelfComplete(ev: PerformanceEvaluation, self: Self) {
   const areas = ev.areas as unknown as Area[]
   const questions = ev.questions as unknown as Questions
-  const missing = areas.filter((a) => selfAreaRating(a.key, questions, self) == null).map((a) => a.label)
-  if (missing.length) throw new AppError('RATINGS_MISSING', `Rate every question in: ${missing.join(', ')}`, 422, { missing })
+  const gaps = areas.filter((a) => selfAreaRating(a.key, questions, self) == null)
+  if (gaps.length) throw new AppError('RATINGS_MISSING', `Rate every question in: ${gaps.map((a) => a.label).join(', ')}`, 422, { missing: gaps.map((a) => a.label), missingKeys: gaps.map((a) => a.key) })
   if (!self.overallRating) throw new AppError('OVERALL_MISSING', 'Pick your overall self-rating', 422)
   if (!self.overallWhy?.trim()) throw new AppError('OVERALL_WHY_MISSING', 'Say why you chose your overall rating', 422)
 }
 function assertManagerComplete(ev: PerformanceEvaluation, m: Manager) {
   const areas = ev.areas as unknown as Area[]
-  const missing = areas.filter((a) => !m.areas?.[a.key]?.rating).map((a) => a.label)
-  if (missing.length) throw new AppError('RATINGS_MISSING', `Give your rating for: ${missing.join(', ')}`, 422, { missing })
+  const gaps = areas.filter((a) => !m.areas?.[a.key]?.rating)
+  if (gaps.length) throw new AppError('RATINGS_MISSING', `Give your rating for: ${gaps.map((a) => a.label).join(', ')}`, 422, { missing: gaps.map((a) => a.label), missingKeys: gaps.map((a) => a.key) })
   if (!m.overall?.trim()) throw new AppError('OVERALL_MISSING', 'Write your overall assessment', 422)
 }
 
@@ -487,6 +487,7 @@ export async function buildResults(tenantIds: string[], q: z.infer<typeof result
       const e = empById.get(ev.employeeId)!
       return {
         evaluationId: ev.id, employeeId: e.id, code: e.employeeCode, name: e.fullName,
+        departmentId: e.departmentId, designationId: e.designationId, locationId: e.locationId, managerUserId: ev.managerUserId,
         department: label(e.departmentId), designation: label(e.designationId), branch: label(e.locationId),
         manager: managers.get(ev.managerUserId) ?? null, status: ev.status, statusLabel: STATUS_LABEL[ev.status],
         selfScore: ev.selfScore, managerScore: ev.managerScore, finalScore: ev.finalScore,
@@ -496,6 +497,7 @@ export async function buildResults(tenantIds: string[], q: z.infer<typeof result
     ...(!q.status || q.status === 'not_assigned') && !q.category && !q.managerUserId
       ? eligible.filter((e) => !evByEmp.has(e.id)).map((e) => ({
         evaluationId: null, employeeId: e.id, code: e.employeeCode, name: e.fullName,
+        departmentId: e.departmentId, designationId: e.designationId, locationId: e.locationId, managerUserId: null,
         department: label(e.departmentId), designation: label(e.designationId), branch: label(e.locationId),
         manager: null, status: 'not_assigned', statusLabel: STATUS_LABEL['not_assigned'],
         selfScore: null, managerScore: null, finalScore: null, category: null, categoryLabel: null,

@@ -10,6 +10,8 @@ import { card, btn, btnGhost, rs, day, human, withLeaveDays, leaveFields, STATUS
 import { HrShell, Modal, Stat, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../components/hr/FormRenderer'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
+import Link from 'next/link'
+import { StatusChip, pctOf, type TeamData } from '../../../components/hr/performance/shared'
 
 interface Me {
   tenantId: string
@@ -29,8 +31,12 @@ const REQUEST_LABEL: Record<string, string> = {
   requisition: 'Manpower requisition',
 }
 
+interface PerfMine { id: string; cycle: { name: string; periodFrom: string; periodTo: string }; status: string; statusLabel: string; dueDate: string | null; returnNote: string | null; finalScore: number | null; categoryLabel: string | null; employeeAckAt: string | null }
+
 export default function MyHrPage() {
   const { data: me, error, isLoading } = useQuery({ queryKey: ['hr-me'], queryFn: () => api.get<Me>('/hr/me'), retry: false })
+  const { data: mine } = useQuery({ queryKey: ['perf-mine'], queryFn: () => api.get<PerfMine[]>('/hr/performance/mine'), retry: false })
+  const { data: team } = useQuery({ queryKey: ['perf-team', 'all'], queryFn: () => api.get<TeamData>('/hr/performance/team'), retry: false })
   const [requesting, setRequesting] = useState<string | null>(null)
   const [slipId, setSlipId] = useState<string | null>(null)
   if (error) {
@@ -62,6 +68,34 @@ export default function MyHrPage() {
               <p className="text-xs text-white/55 mb-2 max-w-lg">Submitting a resignation starts your exit process and goes to your manager and HR. You will be asked to confirm.</p>
               <button className={btnGhost} onClick={() => setRequesting('resignation')}>{REQUEST_LABEL['resignation']}</button>
             </div>
+          )}
+
+          {mine && mine.length > 0 && (
+            <div className="rounded-2xl p-4" style={card}>
+              <p className="text-sm font-black text-white/85 mb-3">My Performance Evaluation</p>
+              {mine.map((m) => (
+                <Link key={m.id} href={`/hr/me/performance/${m.id}`} className="block py-2.5 border-t border-white/[0.05] first:border-t-0 hover:text-white">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-white/90">{m.cycle.name}{m.dueDate ? <span className="text-xs font-normal text-white/55"> · due {day(m.dueDate)}</span> : null}</span>
+                    <span className="flex items-center gap-2">
+                      {m.finalScore != null && <span className="text-sm font-black text-success">{pctOf(m.finalScore)}{m.categoryLabel ? ` · ${m.categoryLabel}` : ''}</span>}
+                      <StatusChip status={m.status} label={m.statusLabel} /><span aria-hidden="true" className="text-white/40">›</span>
+                    </span>
+                  </div>
+                  {m.status === 'returned' && m.returnNote && <p className="text-xs mt-1" style={{ color: 'var(--erp-danger)' }}>Returned: {m.returnNote}</p>}
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {team && (team.reports.length > 0 || team.evaluations.length > 0) && (
+            <Link href="/hr/me/team-evaluations" className="block rounded-2xl p-4 hover:opacity-90" style={card}>
+              <p className="text-sm font-black text-white/85">Team evaluations <span aria-hidden="true" className="text-white/40">›</span></p>
+              <p className="text-xs text-white/65 mt-1">
+                {team.reports.length} direct report{team.reports.length === 1 ? '' : 's'} · {team.evaluations.length} evaluation{team.evaluations.length === 1 ? '' : 's'}
+                {(() => { const n = team.evaluations.filter((e) => ['submitted', 'resubmitted', 'manager_in_progress'].includes(e.status)).length; return n > 0 ? <b className="ml-2" style={{ color: 'var(--erp-warning)' }}>{n} waiting for your review</b> : null })()}
+              </p>
+            </Link>
           )}
 
           <div className="grid lg:grid-cols-3 gap-4">

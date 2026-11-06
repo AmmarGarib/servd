@@ -20,6 +20,7 @@ const NAV: Array<{ href: string; label: string; staff?: boolean }> = [
   { href: '/hr/documents', label: 'Documents' },
   { href: '/hr/payroll', label: 'Payroll' },
   { href: '/hr/letters', label: 'Letters' },
+  { href: '/hr/performance', label: 'Performance' },
   { href: '/hr/reports', label: 'Reports' },
   { href: '/hr/formats', label: 'Formats' },
   { href: '/hr/org', label: 'Org setup' },

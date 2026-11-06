@@ -279,6 +279,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'HR payroll', href: '/hr/payroll', sub: true },
     { label: 'Documents', href: '/hr/documents', sub: true },
     { label: 'Letters', href: '/hr/letters', sub: true },
+    { label: 'Performance', href: '/hr/performance', sub: true, hint: 'Evaluation cycles and results' },
     { label: 'HR reports', href: '/hr/reports', sub: true },
     { label: 'Formats', href: '/hr/formats', sub: true },
     { label: 'Org setup', href: '/hr/org', sub: true },
