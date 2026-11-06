@@ -141,31 +141,49 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       // Safe — finance's own account, not 1010), Petty cash = 1010 Cash on Hand + 1011 petty-cash boxes (finance's
       // cash), Cash in bank (1020 + every bank account's own code, one line per bank). Ledger balances as of
       // now, from the trial balance — the same figures as the books.
+      // Worked out per company (account codes are per company: GS Foods' 1020 and Flipd's 1020 are two banks), then
+      // added up. With several companies in view (the All companies tab) each tile lists every company's own figure
+      // and the banks are named with their company — never one blended line.
       const cashSplit = async () => {
-        const banks = await prisma.bankAccount.findMany({
-          where: { ...company, deletedAt: null }, select: { name: true, bankName: true, accountCode: true }, orderBy: { name: 'asc' },
+        const [banks, tb] = await Promise.all([
+          prisma.bankAccount.findMany({
+            where: { ...company, deletedAt: null }, select: { tenantId: true, name: true, bankName: true, accountCode: true }, orderBy: { name: 'asc' },
+          }),
+          trialBalance(tenantIds, now),
+        ])
+        const many = tenantIds.length > 1
+        const per = tenantIds.map((tid) => {
+          const rows = tb.rows.filter((r) => r.tenantId === tid && !r.virtual)
+          const companyName = tb.companies.find((c) => c.id === tid)?.name ?? rows[0]?.companyName ?? 'Company'
+          const bal = (code: string) => rows.filter((r) => r.code === code).reduce((s, r) => s + Number(r.debitCents) - Number(r.creditCents), 0)
+          // One line per bank account (its own ledger code); 1020 only when no bank account uses it and it holds money.
+          const bankCodes = new Map<string, string>()
+          for (const b of banks) if (b.tenantId === tid && b.accountCode && !bankCodes.has(b.accountCode)) bankCodes.set(b.accountCode, b.name || b.bankName || b.accountCode)
+          if (!bankCodes.has('1020') && bal('1020') !== 0) bankCodes.set('1020', 'Bank — Operating Account')
+          const bankLines = [...bankCodes].map(([code, label]) => ({ label: many ? `${companyName} — ${label}` : label, value: bal(code) }))
+          const safeCodes = new Set(rows.filter((r) => r.type === 'asset' && /\bsafe\b/i.test(r.name) && !bankCodes.has(r.code)).map((r) => r.code))
+          const petty = ['1010', '1011'].filter((c) => !safeCodes.has(c)).reduce((s, c) => s + bal(c), 0)
+          const safe = [...safeCodes].reduce((s, c) => s + bal(c), 0)
+          return { companyName, safe, petty, bankLines }
         })
-        const tb = await trialBalance(tenantIds, now)
-        const bal = (code: string) => tb.rows.filter((r) => r.code === code && !r.virtual).reduce((s, r) => s + Number(r.debitCents) - Number(r.creditCents), 0)
-        // One line per bank account (its own ledger code); 1020 only when no bank account uses it and it holds money.
-        const bankCodes = new Map<string, string>()
-        for (const b of banks) if (b.accountCode && !bankCodes.has(b.accountCode)) bankCodes.set(b.accountCode, b.name || b.bankName || b.accountCode)
-        if (!bankCodes.has('1020') && bal('1020') !== 0) bankCodes.set('1020', 'Bank — Operating Account')
-        const bankLines = [...bankCodes].map(([code, label]) => ({ label, value: bal(code) }))
-        const bankSet = new Set(bankCodes.keys())
-        const safeCodes = new Set(tb.rows.filter((r) => !r.virtual && r.type === 'asset' && /\bsafe\b/i.test(r.name) && !bankSet.has(r.code)).map((r) => r.code))
-        const petty = ['1010', '1011'].filter((c) => !safeCodes.has(c)).reduce((s, c) => s + bal(c), 0)
-        const safe = [...safeCodes].reduce((s, c) => s + bal(c), 0)
-        return { safe, petty, bank: bankLines.reduce((s, l) => s + l.value, 0), bankLines }
+        const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0)
+        const bankLines = per.flatMap((p) => p.bankLines)
+        return {
+          safe: sum(per.map((p) => p.safe)), petty: sum(per.map((p) => p.petty)), bank: sum(bankLines.map((l) => l.value)), bankLines,
+          safeByCompany: many ? per.map((p) => ({ label: p.companyName, value: p.safe })) : null,
+          pettyByCompany: many ? per.map((p) => ({ label: p.companyName, value: p.petty })) : null,
+        }
       }
       let cashSplitP: ReturnType<typeof cashSplit> | null = null
       const cashOnce = () => (cashSplitP ??= cashSplit())
-      const safeN = () => num({ key: 'cash_in_safe', label: 'Cash in safe', unit: 'pkr', href: '/accounting/ledger' }, true, async () => ({
-        value: (await cashOnce()).safe,
-      }))
-      const pettyN = () => num({ key: 'petty_cash', label: 'Petty cash', unit: 'pkr', href: '/finance/petty-cash' }, true, async () => ({
-        value: (await cashOnce()).petty,
-      }))
+      const safeN = () => num({ key: 'cash_in_safe', label: 'Cash in safe', unit: 'pkr', href: '/accounting/ledger' }, true, async () => {
+        const c = await cashOnce()
+        return { value: c.safe, ...(c.safeByCompany && { breakdown: c.safeByCompany }) }
+      })
+      const pettyN = () => num({ key: 'petty_cash', label: 'Petty cash', unit: 'pkr', href: '/finance/petty-cash' }, true, async () => {
+        const c = await cashOnce()
+        return { value: c.petty, ...(c.pettyByCompany && { breakdown: c.pettyByCompany }) }
+      })
       const bankN = () => num({ key: 'cash_in_bank', label: 'Cash in bank', unit: 'pkr', href: '/configuration/bank-accounts' }, true, async () => {
         const c = await cashOnce()
         return { value: c.bank, ...(c.bankLines.length > 1 && { breakdown: c.bankLines }) }

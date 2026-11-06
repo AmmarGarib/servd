@@ -5,13 +5,12 @@ import { useQuery } from '@tanstack/react-query'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '../../store/auth'
 import { api } from '../../lib/api'
-import { useViewAsRole, type ViewAsRole } from '../../store/viewAsRole'
 import { useSyncRoleModules } from '../../store/roleModules'
 import { usePermissions } from '../../hooks/useCan'
 import { useTeam } from '../../hooks/useTeam'
 import { useMyWorkspaces, useHeadOfficeMe } from '../../hooks/useWorkspaces'
 import { APP_ROLES, roleLabel, type ModuleId } from '../../lib/appRoles'
-import { TenantSwitcher, useViewAllTenants } from './TenantSwitcher'
+import { ScopeBar } from './ScopeBar'
 import { MODULE_PAGES, PERSONAL_PAGES, canOpenPath, isDirector, isMarketingIntern } from '../../lib/moduleCatalog'
 import { DirectorShell } from './DirectorShell'
 import { InternShell } from './InternShell'
@@ -741,16 +740,14 @@ function Shell({ children }: { children: React.ReactNode }) {
     borderRight: '1px solid rgb(0 0 0 / 0.08)',
   }
 
-  // `switcher`: the company / brand / view-as module sits here on desktop
-  // (owner, 2026-10-14). The phone drawer leaves it out — on a phone it is
-  // the pill pinned to the bottom-left of the screen.
+  // `switcher`: kept for the call sites; the company / brand / branch choice is the scope bar at the top of every
+  // page now (owner, 2026-11-06).
   function UserFooter({ collapsed: c, switcher = true }: { collapsed: boolean; switcher?: boolean }) {
     return (
       <div className={`relative z-10 shrink-0 ${c ? 'px-1.5 py-2' : 'px-3 py-3'}`}
         style={{ borderTop: '1px solid rgb(var(--fg-rgb) / 0.05)' }}>
         {c ? (
           <>
-          {switcher && <TenantSwitcher placement="collapsed" />}
           <Link href="/account/password" title="Change password / PIN" aria-label="Change password / PIN"
             className="w-full flex justify-center py-1.5 rounded-lg transition-colors"
             style={{ color: 'rgb(var(--fg-rgb) / 0.35)' }}>
@@ -773,7 +770,6 @@ function Shell({ children }: { children: React.ReactNode }) {
           </>
         ) : (
           <div className="space-y-1.5">
-            {switcher && <TenantSwitcher placement="sidebar" />}
             <UserIdentityCard initials={initials} />
             <Link href="/account/password"
               className="w-full flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-semibold transition-colors"
@@ -916,13 +912,11 @@ function Shell({ children }: { children: React.ReactNode }) {
         {UserFooter({ collapsed: false, switcher: false })}
       </aside>
 
-      {/* ── The switcher module: a small round button, bottom-left, every size ── */}
-      <TenantSwitcher placement="floating" hidden={mobileOpen} />
 
       {/* ── Floating buttons (UX-6, owner 2026-10-16; every screen size since
           2026-10-26 — owner: "put the floating system on laptop/pc as well"): no
           top header and no fixed sidebar. Menu top-left (opens the drawer),
-          search + bell top-right, company / brand / role switcher bottom-left. <main> reserves a strip under
+          search + bell top-right; company / brand / branch tabs at the top of the page (ScopeBar). <main> reserves a strip under
           them so they never sit on a page's own title or its top-right buttons. */}
       {!mobileOpen && (
         <>
@@ -952,13 +946,13 @@ function Shell({ children }: { children: React.ReactNode }) {
 
         {/* Banners keep their text clear of the floating buttons (.fab). */}
         <div className="erp-banners">
-          <PortfolioBanner />
           <TestCompanyBanner />
           <LensBanner />
-          <ImpersonationBanner />
         </div>
         <main id="main" ref={mainRef} tabIndex={-1}
           className="flex-1 min-h-0 overflow-y-auto animate-fade-in pt-[calc(3.25rem+env(safe-area-inset-top,0px))] pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-16 outline-none">
+          {/* The scope bar (owner, 2026-11-06): company / brand / branch tabs on every page — it replaced the ∞ switcher. */}
+          <ScopeBar />
           <PageGuard pathname={pathname}>{children}</PageGuard>
         </main>
       </div>
@@ -1007,58 +1001,6 @@ function PageGuard({ pathname, fullScreen = false, children }: { pathname: strin
   )
 }
 
-function PortfolioBanner() {
-  const on = useViewAllTenants()
-  if (!on) return null
-  return (
-    <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 text-xs"
-      style={{
-        background: 'rgb(var(--erp-primary-rgb) / 0.08)',
-        borderBottom: '1px solid rgb(var(--erp-primary-rgb) / 0.2)',
-        color: 'var(--erp-primary-ink)',
-      }}>
-      <span className="font-black">∞</span>
-      <span className="font-bold">Portfolio view</span>
-      <span className="text-white/55">— viewing across all your companies. We&rsquo;ll ask which company to use when you make a change. Test companies are left out.</span>
-    </div>
-  )
-}
-
-// ─── Role impersonation options + banner ────────────────────────────────────
-//
-// Admin / CEO can preview the app as any other role using the dropdown inside
-// the user identity card. When engaged, useCan() and the sidebar nav resolve
-// against the chosen role's CEO-defined module allow-list. A banner across
-// the top reminds the operator they're impersonating.
-//
-// The dropdown options are drawn from APP_ROLES in src/lib/appRoles.ts so a
-// new role only needs to be added in one place.
-
-function ImpersonationBanner() {
-  const viewAs = useViewAsRole((s) => s.role)
-  const clear = useViewAsRole((s) => s.clear)
-  const { data: me } = usePermissions()
-  const isSuper = me?.role === 'admin'
-  if (!viewAs || !isSuper) return null
-  const opt = APP_ROLES.find((o) => o.value === viewAs)
-  return (
-    <div className="shrink-0 flex items-center gap-2 px-4 py-1.5 text-xs"
-      style={{
-        background: 'rgb(var(--ink-rgb) / 0.12)',
-        borderBottom: '1px solid rgb(var(--ink-rgb) / 0.3)',
-        color: 'var(--erp-primary-ink)',
-      }}>
-      <NavIcon name="eye" size={14} />
-      <span className="font-bold">Viewing as {opt?.label ?? viewAs}</span>
-      <span className="text-white/55">— sidebar & action buttons reflect what this role sees. Writes still run as you.</span>
-      <button onClick={() => clear()}
-        className="ml-auto rounded-md px-2 py-0.5 text-[10px] font-bold transition-colors"
-        style={{ background: 'rgb(var(--ink-rgb) / 0.2)', color: 'var(--erp-primary-ink)' }}>
-        Back to CEO view
-      </button>
-    </div>
-  )
-}
 
 // The servd logo (green circle, purple "s") — top left of the ERP, in place of
 // a text wordmark (owner, 2026-10-12).

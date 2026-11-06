@@ -130,6 +130,12 @@ describe('dashboard numbers', () => {
     const b = numbers(await get('ceoA', `/dashboards/ceo/numbers?tenantId=${T.B}`))
     expect(b.cash_in_safe!.value).toBe(0)
     expect(b.petty_cash!.value).toBe(7_000_00)
+    // All companies (portfolio): each tile lists each company's own figure — never one blended bank line.
+    const all = numbers(await app.inject({ method: 'GET', url: '/dashboards/ceo/numbers', headers: { authorization: `Bearer ${tok.ceoA}`, 'x-servd-portfolio': '1' } }))
+    expect(all.cash_in_safe!.value).toBe(830_900_00)
+    expect(all.petty_cash!.value).toBe(60_000_00)
+    expect(all.petty_cash!.breakdown).toEqual(expect.arrayContaining([{ label: 'DSH A', value: 53_000_00 }, { label: 'DSH B', value: 7_000_00 }]))
+    expect(all.cash_in_bank!.value).toBe(120_000_00)
     expect(b.cash_in_bank!.value).toBe(0)
   })
   it('unknown dashboard 404; a role without the module 403; money hidden from non-viewers', async () => {

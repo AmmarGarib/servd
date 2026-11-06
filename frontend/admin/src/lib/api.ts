@@ -8,6 +8,7 @@
 
 import { useAuthStore } from '../store/auth'
 import { useBrandFilter } from '../store/brandFilter'
+import { useBranchFilter } from '../store/branchFilter'
 import { toast } from 'sonner'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
@@ -308,6 +309,10 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
   const brand = typeof window !== 'undefined' && ['GET', 'HEAD'].includes(method)
     ? useBrandFilter.getState().brandId
     : null
+  // Global branch filter (store/branchFilter.ts) — reads only, like the brand.
+  const branch = typeof window !== 'undefined' && ['GET', 'HEAD'].includes(method)
+    ? useBranchFilter.getState().locationId
+    : null
 
   const res = await fetch(`${API_URL}/api/v1${path}`, {
     ...options,
@@ -322,6 +327,7 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
       ...(token && { Authorization: `Bearer ${token}` }),
       ...(portfolio && { 'x-servd-portfolio': '1' }),
       ...(brand && { 'x-servd-brand': brand }),
+      ...(branch && { 'x-servd-location': branch }),
       // An explicit tenantId wins; otherwise the head-office lens, if on.
       ...((resolvedTenantId ?? lens) && { 'x-servd-active-tenant': (resolvedTenantId ?? lens) as string }),
       ...options.headers,
@@ -369,6 +375,9 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
   if (brand && typeof window !== 'undefined') {
     useBrandFilter.getState().record(window.location.pathname, res.headers.get('x-servd-brand-applied') === '1')
   }
+  if (branch && typeof window !== 'undefined') {
+    useBranchFilter.getState().record(window.location.pathname, res.headers.get('x-servd-location-applied') === '1')
+  }
 
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
@@ -396,6 +405,9 @@ async function fetchBlob(path: string, retry = true): Promise<Blob> {
       ...(token && { Authorization: `Bearer ${token}` }),
       ...(!readLensTenant() && localStorage.getItem('servd_view_all_tenants') === '1' && { 'x-servd-portfolio': '1' }),
       ...(readLensTenant() && { 'x-servd-active-tenant': readLensTenant() as string }),
+      // …and the same brand / branch as the screen (the scope bar), so an export matches what was on it.
+      ...(useBrandFilter.getState().brandId && { 'x-servd-brand': useBrandFilter.getState().brandId as string }),
+      ...(useBranchFilter.getState().locationId && { 'x-servd-location': useBranchFilter.getState().locationId as string }),
     },
   })
   if (res.status === 401 && retry) {

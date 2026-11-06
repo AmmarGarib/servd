@@ -315,7 +315,7 @@ async function build() {
     // this default — the whole admin is PUT/PATCH/DELETE.
     methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     // Readable by the admin so it can say when the brand filter did NOT apply.
-    exposedHeaders: ['x-servd-brand-applied'],
+    exposedHeaders: ['x-servd-brand-applied', 'x-servd-location-applied'],
     credentials: true,
     maxAge: 3600,
   })

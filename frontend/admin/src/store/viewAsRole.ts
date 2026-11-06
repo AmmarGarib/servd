@@ -1,7 +1,6 @@
 'use client'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { useAuthStore } from './auth'
 import type { AppRole } from '../lib/appRoles'
 
 /**
@@ -21,26 +20,13 @@ interface State {
   clear: () => void
 }
 
-// Admin-only gate. Clearing (setting to null) is always allowed — anyone
-// should be able to undo a stale impersonation. Setting to a non-null role
-// is silently refused when the current auth user isn't admin.
-function isCurrentUserAdmin(): boolean {
-  if (typeof window === 'undefined') return false
-  const role = useAuthStore.getState().user?.role
-  return role === 'admin'
-}
-
 export const useViewAsRole = create<State>()(
   persist(
     (set) => ({
       role: null,
-      setRole: (role) => {
-        // Clearing always allowed.
-        if (role === null) return set({ role: null })
-        // Setting only allowed for admin.
-        if (!isCurrentUserAdmin()) return
-        set({ role })
-      },
+      // RETIRED (owner, 2026-11-06: "kill the role view option"): no screen offers it any more, and a role can
+      // never be set — every reader sees null, the real role.
+      setRole: () => set({ role: null }),
       clear: () => set({ role: null }),
     }),
     {
@@ -49,9 +35,8 @@ export const useViewAsRole = create<State>()(
       // user isn't admin — covers the case where the persisted value
       // outlived an admin-to-non-admin session change.
       onRehydrateStorage: () => (state) => {
-        if (state && state.role !== null && !isCurrentUserAdmin()) {
-          state.role = null
-        }
+        // A role stored before the retirement is dropped.
+        if (state) state.role = null
       },
     },
   ),

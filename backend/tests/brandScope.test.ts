@@ -18,6 +18,7 @@ beforeAll(async () => {
   registerBrandScope(app)
   app.get('/reads', async (req) => ({ conceptId: (req.query as { conceptId?: string }).conceptId ?? null }))
   app.get('/ignores', async () => ({ ok: true }))
+  app.get('/branch', async (req) => ({ locationId: (req.query as { locationId?: string }).locationId ?? null }))
   app.post('/writes', async (req) => ({ conceptId: (req.query as { conceptId?: string }).conceptId ?? null }))
   await app.ready()
 })
@@ -57,6 +58,29 @@ describe('brand filter via the default conceptId', () => {
     const r = await get('/reads')
     expect(r.json().conceptId).toBeNull()
     expect(r.headers['x-servd-brand-applied']).toBeUndefined()
+  })
+})
+
+describe('branch filter via the default locationId (owner, 2026-11-06)', () => {
+  const LOC = '33333333-3333-4333-8333-333333333333'
+  const OTHER_LOC = '44444444-4444-4444-8444-444444444444'
+  const getL = (url: string, h: Record<string, string>) => app.inject({ method: 'GET', url, headers: h })
+  it('becomes the locationId for a route that reads one, and says so', async () => {
+    const r = await getL('/branch', { 'x-servd-location': LOC })
+    expect(r.json().locationId).toBe(LOC)
+    expect(r.headers['x-servd-location-applied']).toBe('1')
+    expect(r.headers['x-servd-brand-applied']).toBeUndefined()
+  })
+  it('does not claim to be applied where ignored, lets the page win, never touches writes', async () => {
+    expect((await getL('/ignores', { 'x-servd-location': LOC })).headers['x-servd-location-applied']).toBeUndefined()
+    expect((await getL(`/branch?locationId=${OTHER_LOC}`, { 'x-servd-location': LOC })).json().locationId).toBe(OTHER_LOC)
+    const w = await app.inject({ method: 'POST', url: '/writes', headers: { 'x-servd-location': LOC } })
+    expect(w.statusCode).toBe(200)
+  })
+  it('brand and branch together each fill their own param', async () => {
+    const r = await getL('/reads', { 'x-servd-location': LOC, 'x-servd-brand': BRAND })
+    expect(r.json().conceptId).toBe(BRAND)
+    expect(r.headers['x-servd-location-applied']).toBeUndefined()
   })
 })
 

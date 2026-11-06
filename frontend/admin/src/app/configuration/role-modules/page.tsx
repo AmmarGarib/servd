@@ -6,7 +6,6 @@ import { api } from '../../../lib/api'
 import { usePermissions } from '../../../hooks/useCan'
 import { useRoleModules, modulesForRole } from '../../../store/roleModules'
 import { APP_ROLES, MODULES, type AppRole, type ModuleId } from '../../../lib/appRoles'
-import { useViewAsRole } from '../../../store/viewAsRole'
 import { useWorkspaceDefs } from '../../../hooks/useWorkspaces'
 import { NavIcon } from '../../../components/ui/NavIcon'
 
@@ -37,7 +36,6 @@ export default function RoleModulesPage() {
   const setRoleModules = useRoleModules((s) => s.setRoleModules)
   const resetRole = useRoleModules((s) => s.resetRole)
   const resetAll = useRoleModules((s) => s.resetAll)
-  const setViewAs = useViewAsRole((s) => s.setRole)
   const isSuper = me?.role === 'admin'
   const isHr = me?.role === 'hr'
   const canEdit = isSuper || isHr
@@ -188,27 +186,6 @@ export default function RoleModulesPage() {
           </div>
         </div>
 
-        {/* Role focus chip strip — quick jump into impersonation */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] uppercase tracking-wider font-black text-white/35">Preview as:</span>
-          {editableRoles.map((r) => (
-            <button key={r.value} onClick={() => { setFocusRole(r.value); setViewAs(r.value) }}
-              className="rounded-full px-2.5 py-1 text-[11px] font-bold transition-all"
-              style={focusRole === r.value
-                ? { background: 'var(--erp-accent-dim)', color: 'var(--text)', border: '1px solid var(--erp-accent)' }
-                : { background: 'rgb(var(--fg-rgb) / 0.02)', color: 'rgb(var(--fg-rgb) / 0.45)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-              {r.label}
-            </button>
-          ))}
-          {focusRole && (
-            <button onClick={() => { setFocusRole(null); setViewAs(null) }}
-              className="rounded-full px-2.5 py-1 text-[11px] font-bold transition-all"
-              style={{ background: 'color-mix(in srgb, var(--erp-danger) 8%, transparent)', color: 'var(--erp-danger)', border: '1px solid color-mix(in srgb, var(--erp-danger) 18%, transparent)' }}>
-              Clear preview
-            </button>
-          )}
-        </div>
-
         {/* Module grid */}
         <div className="rounded-2xl overflow-x-auto" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
           <table className="w-full text-sm border-collapse min-w-[1200px]">
@@ -221,7 +198,7 @@ export default function RoleModulesPage() {
                 {editableRoles.map((r) => (
                   <th key={r.value} className="px-2 py-3 border-l border-white/[0.04]"
                     style={{ borderBottom: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
-                    <button onClick={() => { setFocusRole(r.value); setViewAs(r.value) }}
+                    <button onClick={() => setFocusRole(focusRole === r.value ? null : r.value)}
                       className="w-full text-center hover:opacity-100 transition-opacity"
                       style={{ opacity: focusRole === r.value ? 1 : 0.85 }}
                       title={r.description}>
@@ -365,7 +342,7 @@ export default function RoleModulesPage() {
           <div className="fixed bottom-4 right-4 rounded-2xl p-4 max-w-sm shadow-2xl"
             style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.6)' }}>
             <p className="text-[10px] uppercase tracking-wider font-black mb-1" style={{ color: 'var(--erp-success)' }}>
-              <NavIcon name="eye" size={12} className="mr-1 inline" />Previewing as
+              <NavIcon name="eye" size={12} className="mr-1 inline" />Role
             </p>
             <p className="text-sm font-bold text-white/90">{focusedRoleMeta.label}</p>
             <p className="text-[11px] text-white/45 mt-0.5">{focusedRoleMeta.description}</p>
