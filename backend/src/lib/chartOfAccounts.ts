@@ -121,6 +121,9 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '2012', name: 'Payables — Capital Suppliers',       type: 'liability', description: 'CapEx still owed to the supplier when the asset was capitalised', controlledBy: 'fixed_asset' },
   { code: '2015', name: 'Goods Received Not Invoiced',        type: 'liability', description: 'Stock received, supplier invoice not yet booked (H17)' },
   { code: '2020', name: 'Wages Payable',                      type: 'liability' },
+  // Intern Management (owner, 2026-11-06): stipends approved by the CEO, until finance pays them. Never Wages
+  // Payable (2020): interns are not employees.
+  { code: '2025', name: 'Stipends Payable',                   type: 'liability', description: 'Intern stipends approved by the CEO and not yet paid (hr/internPayroll.ts)' },
   { code: '2030', name: 'GST Output (Payable to FBR)',        type: 'liability', description: 'Federal sales tax collected on sales — owed to FBR' },
   { code: '2032', name: 'SRB Sales Tax Output',               type: 'liability', description: 'Sindh service-sector sales tax' },
   { code: '2040', name: 'Income Tax Withholding Payable (suppliers, s.153)', type: 'liability', description: 'WHT deducted from supplier payments, owed to FBR. Salary tax is 2042.' },
@@ -183,6 +186,9 @@ export const CHART_OF_ACCOUNTS: AccountTemplate[] = [
   { code: '6032', name: 'Wages — Management',                 type: 'expense' },
   { code: '6035', name: 'Wages — Riders / Delivery',          type: 'expense' },
   { code: '6036', name: 'Gratuity / End-of-Service Benefits', type: 'expense',   description: 'Gratuity booked when a full & final settlement with gratuity is approved (H6)' },
+  // Intern Management (owner, 2026-11-06): NOT a wages account — outside WAGE_CODES (labour %), the head-office
+  // salary pool 6030–6036 and employee payroll.
+  { code: '6038', name: 'Intern Stipends',                    type: 'expense',   description: 'Stipends of paid interns, booked when the CEO approves the month (hr/internPayroll.ts). Not wages.' },
   { code: '6040', name: 'Cleaning & Supplies',                type: 'expense' },
   { code: '6050', name: 'Repairs & Maintenance',              type: 'expense' },
   { code: '6060', name: 'Marketing & Promo',                  type: 'expense' },

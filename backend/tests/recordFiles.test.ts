@@ -75,6 +75,8 @@ async function mkRecords(tag: string, tenantId: string, cook: string): Promise<C
   const doc = await prisma.hrDocument.create({ data: { tenantId, employeeId: emp.id, docType: 'cnic_front' } })
   const asset = await prisma.fixedAsset.create({ data: { tenantId, name: 'Oven', category: 'kitchen_equipment', acquiredAt: new Date('2026-01-01'), costCents: 500_000, usefulLifeMonths: 60 } })
   const rider = await prisma.rider.create({ data: { tenantId, name: `Rider ${tag}`, phone: `92300${Math.floor(Math.random() * 1e7).toString().padStart(7, '0')}${tag === 'A' ? '1' : '2'}`.slice(0, 12) } })
+  // An intern of the Intern register (owner, 2026-11-06): their documents (CNIC / B-form, student card…).
+  const intern = await prisma.intern.create({ data: { tenantId, internCode: `INT-${tag}-${RUN}`, fullName: `Intern ${tag}`, startDate: new Date('2026-10-01'), status: 'active' } })
   const proj = await prisma.capexProject.create({ data: { tenantId, name: `Buildout ${tag}` } })
   const cline = await prisma.capexLine.create({ data: { projectId: proj.id, scope: 'Equipment', item: 'Oven', unitCostCents: 100_000 } })
   const quote = await prisma.capexQuote.create({ data: { lineId: cline.id, vendor: `Vendor ${tag}`, totalCents: 100_000 } })
@@ -93,6 +95,7 @@ async function mkRecords(tag: string, tenantId: string, cook: string): Promise<C
       [RECORD_OWNER.opex_payment]: pay.id, [RECORD_OWNER.supplier_bill]: bill.id, [RECORD_OWNER.goods_receipt]: grn.id,
       [RECORD_OWNER.prep_batch]: prep.id, [RECORD_OWNER.hr_document]: doc.id, [RECORD_OWNER.rider_document]: rider.id, [RECORD_OWNER.fixed_asset]: asset.id,
       [RECORD_OWNER.purchase_order]: po.id,
+      [RECORD_OWNER.intern_document]: intern.id,
     },
   }
 }
@@ -116,6 +119,7 @@ const ACTOR: Record<string, [string, string]> = {
   [RECORD_OWNER.journal_entry]: ['finA', 'finB'],
   [RECORD_OWNER.rider_document]: ['fohA', 'fohB'],
   [RECORD_OWNER.purchase_order]: ['finA', 'finB'],
+  [RECORD_OWNER.intern_document]: ['hrA', 'hrB'],
 }
 
 beforeAll(async () => {
@@ -156,7 +160,7 @@ beforeAll(async () => {
 afterAll(async () => { invalidateSetupCache(); await app?.close() })
 
 describe('record files: every owner type, two companies', () => {
-  it('registers exactly the eleven owner types', () => {
+  it('registers exactly the twelve owner types', () => {
     expect(recordFileOwnerTypes()).toEqual(Object.values(RECORD_OWNER).sort())
   })
 
@@ -217,6 +221,15 @@ describe('record files: every owner type, two companies', () => {
     // Company B's own finance sees it; company A's finance (not a member of B) does not.
     expect((await call('finB', 'GET', `/record-files/${RECORD_OWNER.opex_payment}/${idB}/${id}`)).statusCode).toBe(200)
     expect((await call('finA', 'GET', `/record-files/${RECORD_OWNER.opex_payment}/${idB}/${id}`)).statusCode).toBe(404)
+  })
+
+  it('intern documents: HR with staff_hr only — finance, a cashier and HR without the module are refused', async () => {
+    const id = A.ids[RECORD_OWNER.intern_document]!
+    const t = RECORD_OWNER.intern_document
+    expect((await call('finA', 'GET', `/record-files/${t}/${id}`)).statusCode).toBe(403)
+    expect((await call('cashierA', 'GET', `/record-files/${t}/${id}`)).statusCode).toBe(403)
+    expect((await call('hrNoModuleA', 'POST', `/record-files/${t}/${id}`, { files: [png()] })).statusCode).toBe(403)
+    expect((await call('hrA', 'POST', `/record-files/${t}/${id}`, { files: [docx] })).statusCode).toBe(201)
   })
 
   it('an unknown owner type is 404', async () => {

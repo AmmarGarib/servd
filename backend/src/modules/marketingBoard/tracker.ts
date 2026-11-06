@@ -9,6 +9,13 @@
 //
 // Attendance is HR's: hr/service.ts attendanceWithin (the ONE reading payroll uses — absences incl. working days
 // with no punch, half days, lates) + the standing attendance records for days present. Never ClockLog.
+//
+// Interns / designers (owner, 2026-11-06): a record names an INTERN of the Intern register (internId; hr/interns.ts)
+// or an HR employee (employeeId — marketing staff who are tracked). Interns moved from the retired 'intern'
+// employment type keep employeeId for history beside internId; the intern wins. An intern record's login is the
+// Intern's userId and its attendance is the INTERN attendance (intern_attendance, marked by HR / the supervisor).
+// Every record carries `person: { kind: 'intern' | 'employee', id, userId, fullName, code, status }`; `employee` /
+// `intern` are the raw links (either may be null).
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
@@ -28,14 +35,28 @@ const ymdDate = (v: string) => new Date(`${v}T00:00:00.000Z`)
 
 // ── Reads shared by both sides ──────────────────────────────────────────────
 
-type TrackeeRow = { id: string; tenantId: string; employee: { id: string; userId: string | null; fullName: string; employeeCode: string } }
+type Person = { kind: 'intern' | 'employee'; id: string; userId: string | null; fullName: string; code: string; status: string }
+type TrackeeLinks = {
+  id: string; tenantId: string
+  employee: { id: string; userId: string | null; fullName: string; employeeCode: string; status: string } | null
+  intern: { id: string; userId: string | null; fullName: string; internCode: string; status: string } | null
+}
+type TrackeeRow = TrackeeLinks & { person: Person }
+
+/** Who the record is about: its intern when it names one, else its employee. */
+function personOf(t: TrackeeLinks): Person {
+  if (t.intern) return { kind: 'intern', id: t.intern.id, userId: t.intern.userId, fullName: t.intern.fullName, code: t.intern.internCode, status: t.intern.status }
+  const e = t.employee!
+  return { kind: 'employee', id: e.id, userId: e.userId, fullName: e.fullName, code: e.employeeCode, status: e.status }
+}
+const withPerson = <T extends TrackeeLinks>(t: T): T & { person: Person } => ({ ...t, person: personOf(t) })
 
 /** The cards the person (by their linked login) is a resource on, in the trackee's company, plus stats. */
 async function cardsOf(t: TrackeeRow) {
-  if (!t.employee.userId) return { cards: [], stats: { total: 0, onTime: 0, late: 0, open: 0, publishedLate: 0, revisions: 0 } }
+  if (!t.person.userId) return { cards: [], stats: { total: 0, onTime: 0, late: 0, open: 0, publishedLate: 0, revisions: 0 } }
   const now = new Date()
   const rows = await prisma.contentEvent.findMany({
-    where: { tenantId: t.tenantId, boardId: { not: null }, resources: { some: { userId: t.employee.userId } } },
+    where: { tenantId: t.tenantId, boardId: { not: null }, resources: { some: { userId: t.person.userId } } },
     include: CARD_INCLUDE,
     orderBy: { startDate: 'desc' },
     take: 500,
@@ -83,15 +104,32 @@ export async function attendanceSummary(tenantId: string, employeeId: string, fr
   return { from, to, present: presentDays.size + halfDays * 0.5, late: lateCount, absent: absentDays, halfDays, unpaidLeaveDays, records: records.length }
 }
 
+/** Days present / late / absent from the INTERN attendance (intern_attendance) over [from, to] — the same shape. */
+export async function internAttendanceSummary(tenantId: string, internId: string, from: string, to: string) {
+  const fromD = ymdDate(from)
+  const toD = ymdDate(to)
+  if (toD < fromD) throw new AppError('BAD_RANGE', 'The end date is before the start date', 422)
+  if (toD.getTime() - fromD.getTime() > 186 * DAY) throw new AppError('RANGE_TOO_LONG', 'Pick at most six months', 422)
+  const rows = await prisma.internAttendance.findMany({ where: { tenantId, internId, date: { gte: fromD, lte: toD } }, select: { status: true } })
+  const n = (s: string) => rows.filter((r) => r.status === s).length
+  const halfDays = n('half_day')
+  return { from, to, present: n('present') + n('late') + halfDays * 0.5, late: n('late'), absent: n('absent'), halfDays, unpaidLeaveDays: n('leave'), records: rows.length, source: 'intern' as const }
+}
+
+const attendanceOf = (t: TrackeeRow, from: string, to: string) => (t.person.kind === 'intern'
+  ? internAttendanceSummary(t.tenantId, t.person.id, from, to)
+  : attendanceSummary(t.tenantId, t.person.id, from, to))
+
 const TRACKEE_SELECT = {
   id: true, tenantId: true, roleLabel: true, startDate: true, endDate: true, active: true, createdAt: true,
   employee: { select: { id: true, userId: true, fullName: true, employeeCode: true, status: true } },
+  intern: { select: { id: true, userId: true, fullName: true, internCode: true, status: true } },
 } as const
 
 async function trackeeInScope(req: FastifyRequest, id: string, mode: ScopeMode) {
   const t = await prisma.marketingTrackee.findFirst({ where: { id, ...(await scopeTenantWhere(req, teamMode(mode))) }, select: TRACKEE_SELECT })
   if (!t) throw new NotFoundError('MarketingTrackee', id)
-  return t
+  return withPerson(t)
 }
 
 function defaultRange(): { from: string; to: string } {
@@ -115,7 +153,18 @@ export async function marketingTrackerRoutes(fastify: FastifyInstance) {
       select: TRACKEE_SELECT,
       orderBy: { createdAt: 'asc' },
     })
-    return Promise.all(rows.map(async (t) => ({ ...t, hrLinked: true, loginLinked: !!t.employee.userId, stats: (await cardsOf(t)).stats })))
+    return Promise.all(rows.map(withPerson).map(async (t) => ({ ...t, hrLinked: true, loginLinked: !!t.person.userId, stats: (await cardsOf(t)).stats })))
+  })
+
+  // GET /marketing-tracker/interns?q= — the ACTIVE company's enrolled interns (the "add a record" picker).
+  fastify.get<{ Querystring: { q?: string } }>('/interns', guard, async (req) => {
+    const q = req.query.q?.trim()
+    return prisma.intern.findMany({
+      where: { ...(await scopeTenantWhere(req, 'create')), status: { in: ['active', 'pending_approval'] }, ...(q ? { fullName: { contains: q, mode: 'insensitive' as const } } : {}) },
+      select: { id: true, fullName: true, internCode: true, userId: true, status: true },
+      orderBy: { fullName: 'asc' },
+      take: 50,
+    })
   })
 
   // GET /marketing-tracker/employees?q= — the ACTIVE company's HR employees (the "add a record" picker; name + code only).
@@ -129,29 +178,45 @@ export async function marketingTrackerRoutes(fastify: FastifyInstance) {
     })
   })
 
-  // POST /marketing-tracker {employeeId, roleLabel, startDate, endDate?} — the employee must be of the ACTIVE company.
+  // POST /marketing-tracker {internId | employeeId, roleLabel, startDate, endDate?} — an intern of the Intern register
+  // (interns / designers, owner 2026-11-06) or an HR employee (marketing staff); exactly one, of the ACTIVE company.
   fastify.post('/', guard, async (req, reply) => {
     const body = z.object({
-      employeeId: z.string().min(1), roleLabel: z.string().trim().min(1).max(80),
+      internId: z.string().min(1).optional(), employeeId: z.string().min(1).optional(), roleLabel: z.string().trim().min(1).max(80),
       startDate: zYmd, endDate: zYmd.nullish(),
     }).strict().parse(req.body)
-    const emp = await prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...(await scopeTenantWhere(req, 'create')) }, select: { id: true, tenantId: true } })
-    if (!emp) throw new NotFoundError('HrEmployee', body.employeeId)
+    if (!!body.internId === !!body.employeeId) throw new AppError('PERSON_REQUIRED', 'Name the intern (internId) or the employee (employeeId) — one of them', 422)
     if (body.endDate && body.endDate < body.startDate) throw new AppError('BAD_RANGE', 'The end date is before the start date', 422)
-    const dup = await prisma.marketingTrackee.findUnique({ where: { tenantId_employeeId: { tenantId: emp.tenantId, employeeId: emp.id } }, select: { id: true } })
-    if (dup) throw new AppError('ALREADY_TRACKED', 'This person already has a tracker record', 409, { id: dup.id })
+    const scope = await scopeTenantWhere(req, 'create')
+    let tenantId: string
+    if (body.internId) {
+      const intern = await prisma.intern.findFirst({ where: { id: body.internId, ...scope }, select: { id: true, tenantId: true } })
+      if (!intern) throw new NotFoundError('Intern', body.internId)
+      tenantId = intern.tenantId
+      const dup = await prisma.marketingTrackee.findUnique({ where: { tenantId_internId: { tenantId, internId: intern.id } }, select: { id: true } })
+      if (dup) throw new AppError('ALREADY_TRACKED', 'This person already has a tracker record', 409, { id: dup.id })
+    } else {
+      const emp = await prisma.hrEmployee.findFirst({ where: { id: body.employeeId, ...scope }, select: { id: true, tenantId: true } })
+      if (!emp) throw new NotFoundError('HrEmployee', body.employeeId)
+      tenantId = emp.tenantId
+      const dup = await prisma.marketingTrackee.findUnique({ where: { tenantId_employeeId: { tenantId, employeeId: emp.id } }, select: { id: true } })
+      if (dup) throw new AppError('ALREADY_TRACKED', 'This person already has a tracker record', 409, { id: dup.id })
+    }
     const t = await prisma.marketingTrackee.create({
-      data: { tenantId: emp.tenantId, employeeId: emp.id, roleLabel: body.roleLabel, startDate: ymdDate(body.startDate), endDate: body.endDate ? ymdDate(body.endDate) : null, createdById: req.staffUser!.id },
+      data: {
+        tenantId, internId: body.internId ?? null, employeeId: body.employeeId ?? null, roleLabel: body.roleLabel,
+        startDate: ymdDate(body.startDate), endDate: body.endDate ? ymdDate(body.endDate) : null, createdById: req.staffUser!.id,
+      },
       select: TRACKEE_SELECT,
     })
-    return reply.status(201).send(t)
+    return reply.status(201).send(withPerson(t))
   })
 
   // PATCH /marketing-tracker/:id {roleLabel?, startDate?, endDate?, active?}
   fastify.patch<{ Params: { id: string } }>('/:id', guard, async (req) => {
     const body = z.object({ roleLabel: z.string().trim().min(1).max(80).optional(), startDate: zYmd.optional(), endDate: zYmd.nullish(), active: z.boolean().optional() }).strict().parse(req.body)
     const t = await trackeeInScope(req, req.params.id, 'write')
-    return prisma.marketingTrackee.update({
+    return withPerson(await prisma.marketingTrackee.update({
       where: { id: t.id },
       data: {
         ...(body.roleLabel !== undefined ? { roleLabel: body.roleLabel } : {}),
@@ -160,7 +225,7 @@ export async function marketingTrackerRoutes(fastify: FastifyInstance) {
         ...(body.active !== undefined ? { active: body.active } : {}),
       },
       select: TRACKEE_SELECT,
-    })
+    }))
   })
 
   // GET /marketing-tracker/:id?from=&to= — the whole record: cards + stats, notes, every review, attendance.
@@ -171,7 +236,7 @@ export async function marketingTrackerRoutes(fastify: FastifyInstance) {
       cardsOf(t),
       prisma.marketingCheckIn.findMany({ where: { trackeeId: t.id, tenantId: t.tenantId }, orderBy: [{ weekStart: 'desc' }, { createdAt: 'desc' }] }),
       prisma.marketingReview.findMany({ where: { trackeeId: t.id, tenantId: t.tenantId }, orderBy: { month: 'desc' } }),
-      attendanceSummary(t.tenantId, t.employee.id, range.from, range.to),
+      attendanceOf(t, range.from, range.to),
     ])
     const authors = await authorNames([...checkIns.map((c) => c.authorId), ...reviews.map((r) => r.authorId)])
     return {
@@ -179,7 +244,7 @@ export async function marketingTrackerRoutes(fastify: FastifyInstance) {
       checkIns: checkIns.map((c) => ({ ...c, authorName: authors.get(c.authorId) ?? null })),
       reviews: reviews.map((r) => ({ ...r, authorName: authors.get(r.authorId) ?? null })),
       attendance,
-      warnings: t.employee.userId ? [] : ['This HR record has no login linked — cards cannot be matched to it until HR links one.'],
+      warnings: t.person.userId ? [] : [`This ${t.person.kind === 'intern' ? 'intern' : 'HR'} record has no login linked — cards cannot be matched to it until HR links one.`],
     }
   })
 
@@ -187,7 +252,7 @@ export async function marketingTrackerRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string }; Querystring: { from?: string; to?: string } }>('/:id/attendance', guard, async (req) => {
     const t = await trackeeInScope(req, req.params.id, 'read')
     const range = isYmd(req.query.from) && isYmd(req.query.to) ? { from: req.query.from, to: req.query.to } : defaultRange()
-    return attendanceSummary(t.tenantId, t.employee.id, range.from, range.to)
+    return attendanceOf(t, range.from, range.to)
   })
 
   // POST /marketing-tracker/:id/check-ins {note, weekOf?} — visible to the person at once.
@@ -248,13 +313,13 @@ export async function marketingProgressRoutes(fastify: FastifyInstance) {
   fastify.get('/me', { preHandler: requireAuth(...PROGRESS_ROLES) }, async (req) => {
     const me = req.staffUser!.id
     const records = await prisma.marketingTrackee.findMany({
-      where: { ...(await scopeTenantWhere(req, 'write')), employee: { userId: me } },
+      where: { ...(await scopeTenantWhere(req, 'write')), OR: [{ intern: { userId: me } }, { internId: null, employee: { userId: me } }] },
       select: TRACKEE_SELECT,
       orderBy: { createdAt: 'asc' },
     })
     if (records.length === 0) return { records: [] }
     return {
-      records: await Promise.all(records.map(async (t) => {
+      records: await Promise.all(records.map(withPerson).map(async (t) => {
         const [work, checkIns, reviews] = await Promise.all([
           cardsOf(t),
           prisma.marketingCheckIn.findMany({ where: { trackeeId: t.id, tenantId: t.tenantId }, orderBy: [{ weekStart: 'desc' }, { createdAt: 'desc' }] }),

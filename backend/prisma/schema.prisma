@@ -594,6 +594,216 @@ model PerformanceEvaluation {
   @@map("performance_evaluations")
 }
 
+// ─── Intern Management (owner, 2026-11-06) ──────────────────────────────────
+// Interns are a SEPARATE category from employees: their own register, codes (INT-0001 per company), attendance
+// (marked by HR / the supervisor — no clock-in), stipend payroll (Dr 6038 Intern Stipends / Cr 2025 Stipends
+// Payable at the CEO's approval), certificates and reports. Never an HrEmployee, never on employee payroll,
+// headcount, labour % or the head-office pool. Contract: header of backend/src/modules/hr/interns.ts.
+// departmentId (Department master) and supervisorEmployeeId (an HrEmployee) are plain ids of the SAME company,
+// checked by the routes. legacyEmployeeId = the HrEmployee this record was moved from (the retired 'intern'
+// employment type; boot step migrateLegacyInterns).
+model Intern {
+  id                       String    @id @default(uuid())
+  tenantId                 String
+  internCode               String // INT-0001 — unique per company
+  // Personal
+  fullName                 String
+  fatherName               String?
+  cnic                     String? // CNIC or B-form
+  dateOfBirth              DateTime? @db.Date
+  gender                   String?
+  phone                    String?
+  email                    String?
+  address                  String?
+  emergencyContactName     String?
+  emergencyContactPhone    String?
+  // Academic
+  institution              String?
+  degree                   String?
+  fieldOfStudy             String?
+  semester                 String?
+  studentRegNo             String?
+  // Internship
+  departmentId             String?
+  designation              String?
+  supervisorEmployeeId     String?
+  startDate                DateTime  @db.Date
+  endDate                  DateTime? @db.Date
+  internshipType           String    @default("unpaid") // paid | unpaid
+  monthlyStipendCents      Int       @default(0)
+  workingDays              Json      @default("[1,2,3,4,5,6]") // weekdays 0 = Sunday … 6 = Saturday
+  workingHours             String?
+  // draft | pending_approval | active | completed | terminated
+  status                   String    @default("pending_approval")
+  rejectionNote            String?
+  submittedById            String?
+  submittedAt              DateTime?
+  approvedById             String?
+  approvedAt               DateTime?
+  terminationReason        String?
+  terminationEffectiveDate DateTime? @db.Date
+  completedOn              DateTime? @db.Date
+  completedAt              DateTime?
+  userId                   String?   @unique
+  performanceRemarks       String?
+  legacyEmployeeId         String?   @unique
+  createdById              String?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  events       InternEvent[]
+  attendance   InternAttendance[]
+  slips        InternStipendSlip[]
+  certificates InternCertificate[]
+  trackees     MarketingTrackee[]
+
+  @@unique([tenantId, internCode])
+  @@index([tenantId, status])
+  @@index([supervisorEmployeeId])
+  @@map("interns")
+}
+
+// The intern's history: enrolled, submitted, approved, rejected, edited, extended, department / supervisor
+// changed, completed, terminated, login linked, certificate issued … (one row each, never edited).
+model InternEvent {
+  id            String    @id @default(uuid())
+  tenantId      String
+  internId      String
+  kind          String
+  note          String?
+  before        Json?
+  after         Json?
+  effectiveDate DateTime? @db.Date
+  actorId       String?
+  createdAt     DateTime  @default(now())
+
+  intern Intern @relation(fields: [internId], references: [id], onDelete: Cascade)
+
+  @@index([internId, createdAt])
+  @@index([tenantId])
+  @@map("intern_events")
+}
+
+// One row per intern per day, marked by HR (or the intern's supervisor). No row = nothing recorded (paid).
+model InternAttendance {
+  id         String   @id @default(uuid())
+  tenantId   String
+  internId   String
+  date       DateTime @db.Date
+  status     String // present | absent | late | half_day | leave | weekly_off
+  checkIn    String? // HH:MM
+  checkOut   String?
+  note       String?
+  source     String   @default("hr") // hr | supervisor | import
+  markedById String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  intern Intern @relation(fields: [internId], references: [id], onDelete: Cascade)
+
+  @@unique([internId, date])
+  @@index([tenantId, date])
+  @@map("intern_attendance")
+}
+
+// A month's stipend payroll for a company's PAID interns — separate from employee payroll (HrPayrollRun).
+// draft → finance_review → finance_checked → approved (accrual booked) → paid (payment booked).
+model InternPayrollRun {
+  id                   String    @id @default(uuid())
+  tenantId             String
+  period               String // YYYY-MM
+  status               String    @default("draft")
+  totals               Json      @default("{}")
+  createdById          String?
+  preparedByIds        String[]  @default([])
+  sentToFinanceById    String?
+  sentToFinanceAt      DateTime?
+  financeCheckedById   String?
+  financeCheckedAt     DateTime?
+  financeNote          String?
+  financeReturnNote    String?
+  financeReturnedById  String?
+  financeReturnedAt    DateTime?
+  ceoReturnNote        String?
+  ceoReturnedById      String?
+  ceoReturnedAt        DateTime?
+  approvedById         String?
+  approvedAt           DateTime?
+  accrualEntryId       String?
+  paidById             String?
+  paidAt               DateTime?
+  paidOn               DateTime? @db.Date
+  paymentMethod        String?
+  paymentBankAccountId String?
+  paymentReference     String?
+  paymentEntryId       String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  slips InternStipendSlip[]
+
+  @@unique([tenantId, period])
+  @@index([tenantId, status])
+  @@map("intern_payroll_runs")
+}
+
+// One intern's stipend in a run: stipend ÷ calendar days × paid days, ± HR's adjustments.
+model InternStipendSlip {
+  id                  String   @id @default(uuid())
+  tenantId            String
+  runId               String
+  internId            String
+  monthlyStipendCents Int
+  daysInMonth         Int
+  daysEngaged         Int
+  absentDays          Float    @default(0)
+  halfDays            Int      @default(0)
+  unpaidLeaveDays     Float    @default(0)
+  paidDays            Float
+  baseCents           Int
+  additionsCents      Int      @default(0)
+  deductionsCents     Int      @default(0)
+  netCents            Int
+  adjustments         Json     @default("[]") // [{ id, kind: addition | deduction, label, amountCents, note }]
+  breakdown           Json     @default("{}")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  run    InternPayrollRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  intern Intern           @relation(fields: [internId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, internId])
+  @@index([internId])
+  @@index([tenantId])
+  @@map("intern_stipend_slips")
+}
+
+// A Certificate of Internship (completed interns only). One live certificate per intern (supersededAt null —
+// SQL-only partial unique); a reissue makes a new one (status reissued, reissueOfId) and supersedes the old.
+model InternCertificate {
+  id             String    @id @default(uuid())
+  tenantId       String
+  internId       String
+  number         String // IC-2026-0001 — unique per company
+  status         String    @default("generated") // generated | issued | reissued
+  remarks        String?
+  generatedById  String?
+  issuedById     String?
+  issuedAt       DateTime?
+  reissueOfId    String?
+  reissueReason  String?
+  supersededAt   DateTime?
+  supersededById String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  intern Intern @relation(fields: [internId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, number])
+  @@index([internId])
+  @@map("intern_certificates")
+}
+
 // A guest-list download (phones / emails) a non-CEO asked for (owner, 2026-10-27: customer exports go to the CEO).
 // modules/crm/customerExports.ts is the contract. tenantId = the requester's ACTIVE company (whose guests are
 // exported; a 'waitlist' export is the servd-wide new-brand list, filed in that company). Approved = ONE download
@@ -3202,8 +3412,8 @@ model PurchaseOrder {
   buyerAssignedAt     DateTime?
   invoiceNumber       String?
   invoiceDate         DateTime? @db.Date
-  invoiceTaxCents      BigInt? // sales tax on the supplier's invoice (owner, 2026-11-05), paisa; null = none entered
-  invoiceTaxAuthority  String? // 'fbr' | 'srb' — who charged it; null = the supplier's usual authority
+  invoiceTaxCents     BigInt? // sales tax on the supplier's invoice (owner, 2026-11-05), paisa; null = none entered
+  invoiceTaxAuthority String? // 'fbr' | 'srb' — who charged it; null = the supplier's usual authority
   completedById       String?
   completedAt         DateTime?
   receiptReturnNote   String?
@@ -4968,7 +5178,11 @@ model ContentEventMedia {
 model MarketingTrackee {
   id          String    @id @default(cuid())
   tenantId    String
-  employeeId  String
+  // An HR employee (marketing staff who are tracked), or — for interns / designers (owner, 2026-11-06) — an Intern
+  // of the register (internId). Interns moved from the retired 'intern' employment type keep employeeId for history
+  // while their employee record stays; at least one is set (CHECK marketing_trackees_person_chk).
+  employeeId  String?
+  internId    String?
   roleLabel   String
   startDate   DateTime  @db.Date
   endDate     DateTime? @db.Date
@@ -4977,11 +5191,13 @@ model MarketingTrackee {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  employee HrEmployee         @relation("MarketingTrackees", fields: [employeeId], references: [id], onDelete: Restrict)
+  employee HrEmployee?        @relation("MarketingTrackees", fields: [employeeId], references: [id], onDelete: Restrict)
+  intern   Intern?            @relation(fields: [internId], references: [id], onDelete: Restrict)
   checkIns MarketingCheckIn[]
   reviews  MarketingReview[]
 
   @@unique([tenantId, employeeId])
+  @@unique([tenantId, internId])
   @@map("marketing_trackees")
 }
 
@@ -5357,16 +5573,16 @@ model BankReconciliationAdjustment {
 // A mark finance puts on a BOOK line of a bank account: 'under_review' (still outstanding, flagged), or 'cleared_prior'
 // (cleared by the bank before the bank's FIRST reconciliation — the opening balance; only lines dated before it).
 model BankReconBookMark {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   tenantId      String
   bankAccountId String
-  journalLineId String   @unique
+  journalLineId String    @unique
   status        String // under_review | cleared_prior | cleared_manual (owner, 2026-11-05: cleared by manual entry)
   note          String
   reference     String?
   clearedOn     DateTime? @db.Date // cleared_manual only: the day the bank cleared it
   createdById   String
-  createdAt     DateTime @default(now())
+  createdAt     DateTime  @default(now())
 
   @@index([tenantId, bankAccountId])
   @@map("bank_recon_book_marks")
@@ -6709,21 +6925,21 @@ model GoodsReceipt {
   // the requester's confirmation. GRN-00001 per company. grnStatus: finance_review (finance verifies) → ceo_review
   // (the CEO) → approved (the supplier bill is created: supplierBillId); a return → buyer_fix (the buyer corrects the
   // invoice) → finance_review. invoiceNumber / invoiceDate are the supplier's invoice the bill is booked from.
-  grnNumber          String?
-  grnStatus          String?
-  invoiceNumber      String?
-  invoiceDate        DateTime? @db.Date
-  invoiceTaxCents      BigInt? // sales tax on the supplier's invoice (owner, 2026-11-05), paisa; null = none entered
-  invoiceTaxAuthority  String? // 'fbr' | 'srb' — who charged it; null = the supplier's usual authority
-  financeCheckedById String?
-  financeCheckedAt   DateTime?
-  approvedById       String?
-  approvedAt         DateTime?
-  returnNote         String?
-  returnedById       String?
-  returnedAt         DateTime?
-  returnCount        Int       @default(0)
-  supplierBillId     String?
+  grnNumber           String?
+  grnStatus           String?
+  invoiceNumber       String?
+  invoiceDate         DateTime? @db.Date
+  invoiceTaxCents     BigInt? // sales tax on the supplier's invoice (owner, 2026-11-05), paisa; null = none entered
+  invoiceTaxAuthority String? // 'fbr' | 'srb' — who charged it; null = the supplier's usual authority
+  financeCheckedById  String?
+  financeCheckedAt    DateTime?
+  approvedById        String?
+  approvedAt          DateTime?
+  returnNote          String?
+  returnedById        String?
+  returnedAt          DateTime?
+  returnCount         Int       @default(0)
+  supplierBillId      String?
 
   lines GoodsReceiptLine[]
 
@@ -8220,16 +8436,16 @@ model HrEmployee {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
-  documents          HrDocument[]
-  records            HrRecord[]
-  payslips           HrPayslip[]
+  documents              HrDocument[]
+  records                HrRecord[]
+  payslips               HrPayslip[]
   // Tip pools this person is in without a servd login (kiosk / time-clock staff)
-  tipPoolMemberships TipPoolMember[]
+  tipPoolMemberships     TipPoolMember[]
   // Till tickets this person waited (Order.waiterEmployeeId; till flow 2026-10-20)
-  waitedOrders       Order[]          @relation("OrderWaiter")
+  waitedOrders           Order[]                 @relation("OrderWaiter")
   // Where this person works (owner, 2026-10-15): one or more of the company's Locations; the time clock checks a
   // punch against the nearest of them.
-  workLocations      HrWorkLocation[]
+  workLocations          HrWorkLocation[]
   performanceEvaluations PerformanceEvaluation[]
 
   @@unique([tenantId, employeeCode])

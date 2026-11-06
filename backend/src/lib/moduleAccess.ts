@@ -702,6 +702,11 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // Performance appraisal (owner, 2026-11-06): cycles, reopen and the Results dashboard are HR's; the rest of
   // /hr/performance is self-service (employee / reporting manager, checked in performance.ts).
   { prefix: '/hr/performance/admin', anyOf: ['staff_hr'] },
+  // Intern Management (owner, 2026-11-06; hr/interns.ts): the stipend payroll is read and worked by HR (staff_hr)
+  // and finance (accounting — its review and payment; the routes hold finance to 'accounting' and the role); the
+  // rest of /hr/interns is HR's. /hr/my-interns (the supervisor's own interns) is self-service, checked in interns.ts.
+  { prefix: '/hr/interns/payroll',  anyOf: ['staff_hr', 'accounting'] },
+  { prefix: '/hr/interns',          anyOf: ['staff_hr'] },
 
   // ── Live operations (wave 3, UI-12) ──────────────────────────────────────
   // Their role arrays are ALL_STAFF (every floor role works them), so before

@@ -1312,6 +1312,18 @@ async function build() {
     fastify.log.warn(`[payroll] office wages move skipped: ${(err as Error).message}`)
   }
 
+  // Intern Management (owner, 2026-11-06): employees of the retired 'intern' employment type (and marketing interns on
+  // the tracker) move to the Intern register — removed to the Trash when nothing depends on them, else kept and
+  // marked left. Idempotent per employee (Intern.legacyEmployeeId).
+  try {
+    const { migrateLegacyInterns } = await import('./modules/hr/internsMigration.js')
+    for (const r of await migrateLegacyInterns()) {
+      if (r.action !== 'already_moved') fastify.log.info(`[interns] employee ${r.employeeId} → intern ${r.internId ?? '-'}: ${r.action}${r.reason ? ` (${r.reason})` : ''}`)
+    }
+  } catch (err) {
+    fastify.log.warn(`[interns] legacy intern move skipped: ${(err as Error).message}`)
+  }
+
   // Shift corrections whose apply died mid-way (left 'approved' with no
   // progress for 5 minutes) → 'failed', so the CEO's Retry finishes them.
   try {

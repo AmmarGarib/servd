@@ -29,6 +29,7 @@ import { socialConnections } from '../socialConnections/approvalProvider.js'
 import { stationChanges } from '../stations/approvalProvider.js'
 import { staffOffboards } from '../auth/offboardApprovalProvider.js'
 import { employeeDeletes } from '../hr/employeeDeleteApprovalProvider.js'
+import { internEnrollments, internPayrollFinanceReviews, internPayrollRuns } from '../hr/internApprovalProvider.js'
 import { reservationOverbooks } from '../reservations/overbookProvider.js'
 import { marketingTasks } from '../marketingBoard/approvalProvider.js'
 import { karachiDay } from '../../connectors/util.js'
@@ -1605,6 +1606,9 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   stationChanges,
   staffOffboards,
   employeeDeletes,
+  internEnrollments,
+  internPayrollFinanceReviews,
+  internPayrollRuns,
   reservationOverbooks,
   wageChanges,
   customerExports,

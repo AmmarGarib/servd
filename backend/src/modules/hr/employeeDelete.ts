@@ -64,7 +64,7 @@ import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval } from '../../lib/approvalRights.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { audit } from '../../lib/audit.js'
-import { moveToTrash } from '../../lib/trash.js'
+import { moveToTrash, type TrashActor } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 import { OFFBOARDERS, assertHrBackOffice } from '../auth/offboarding.js'
 import { sectionByKey } from './forms.js'
@@ -112,6 +112,8 @@ export async function employeeHistory(db: Db, emp: Pick<HrEmployee, 'id' | 'stat
   ])
   // A finalized performance evaluation is history (owner, 2026-11-06); unfinished ones go with the employee.
   const appraisals = await db.performanceEvaluation.count({ where: { employeeId: id, status: 'finalized' } })
+  // Interns they supervise, or an intern record moved from them (Intern Management, owner 2026-11-06).
+  const supervised = await db.intern.count({ where: { supervisorEmployeeId: id } })
   const out: string[] = []
   if (payslips) out.push(plural(payslips, 'payslip'))
   for (const r of records) out.push(`${plural(r._count._all, 'approved record')} in ${sectionByKey(r.section)?.title ?? r.section.replace(/_/g, ' ')}`)
@@ -120,6 +122,7 @@ export async function employeeHistory(db: Db, emp: Pick<HrEmployee, 'id' | 'stat
   if (tags) out.push(plural(tags, 'journal line') + ' tagged to their sub-account')
   if (tracker) out.push('on the marketing tracker')
   if (appraisals) out.push(plural(appraisals, 'finalized performance evaluation'))
+  if (supervised) out.push(`supervises ${plural(supervised, 'intern')}`)
   if (reports) out.push(plural(reports, 'person reports', 'people report') + ' to them')
   if (emp.status === TRANSFERRED_STATUS) out.push('moved to a head office')
   return out
@@ -152,7 +155,7 @@ export async function assertDeletable(db: Db, emp: Pick<HrEmployee, 'id' | 'user
  */
 export async function deleteEmployeeTx(
   tx: Prisma.TransactionClient,
-  req: FastifyRequest,
+  req: FastifyRequest | TrashActor,
   employeeId: string,
   reason: string,
 ): Promise<{ trashEntryId: string; employee: HrEmployee }> {

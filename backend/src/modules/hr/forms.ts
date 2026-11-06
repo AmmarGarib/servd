@@ -107,7 +107,11 @@ const MGMT: WorkflowStep = { key: 'management', label: 'Management approval', ro
 /** The CEO only (role admin) — never HR, management or a hand-over delegate (owner, 2026-10-20). */
 export const CEO_STEP: WorkflowStep = { key: 'ceo', label: 'CEO approval', role: 'ceo' }
 
-export const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'temporary', 'intern']
+// 'intern' is RETIRED for new entries (owner, 2026-11-06): interns are a separate category — HR → Interns
+// (interns.ts). Old employee rows keep the value readable (reports.ts labels it); an employee create / edit that
+// names it is refused (hr/routes.ts saveEmployee → 422 INTERN_NOT_AN_EMPLOYEE).
+export const EMPLOYMENT_TYPES = ['permanent', 'probation', 'contract', 'temporary']
+export const RETIRED_EMPLOYMENT_TYPES = ['intern'] as const
 export const EMPLOYEE_STATUSES = ['active', 'on_leave', 'resigned', 'terminated', 'separated']
 /**
  * The value the Reporting line picker sends for its "CEO" option. Saving it

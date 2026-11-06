@@ -32,6 +32,7 @@
 //
 //   purchase_order  PurchaseOrder  AP_READERS + its requester / buyer   its buyer, requester, the CEO, finance (accounting)   /procurement/purchase-orders (procurement; reads + accounting) — the supplier's invoice (owner, 2026-11-05)
 //   rider_document  Rider          MANAGERS (riders admin)      MANAGERS (riders admin)        /riders (riders) — private rider documents (CNIC, licence, bike papers; owner C16, 2026-10-27); rider tokens never reach /record-files
+//   intern_document Intern         HR (HR_ADMIN + staff_hr)     HR (HR_ADMIN + staff_hr)       /hr/interns (staff_hr) — an intern's documents (CNIC / B-form, student card, NOC, CV; owner, 2026-11-06)
 //
 // The Purchase-order screen's "Attachment URL" is the SUPPLIER BILL form's
 // (POST /procurement/bills stores attachmentUrl on SupplierBill), hence
@@ -69,6 +70,7 @@ export const RECORD_OWNER = {
   journal_entry: 'journal_entry',
   rider_document: 'rider_document',
   purchase_order: 'purchase_order',
+  intern_document: 'intern_document',
 } as const
 
 /** 403 unless the caller's role is in the module's array for this mode. */
@@ -326,5 +328,23 @@ const purchaseOrder: RecordFileProvider = {
   },
 }
 
+const internDocument: RecordFileProvider = {
+  ownerType: RECORD_OWNER.intern_document,
+  label: 'intern',
+  allowOffice: true,
+  auditCategory: 'identity',
+  fileStem: 'intern-document',
+  async resolve(req, ownerId, mode) {
+    assertRole(req, HR_ADMIN, this.label)
+    await gateAs(req, '/hr/interns', mode)
+    const i = await prisma.intern.findFirst({
+      where: { id: ownerId, ...(await scopeTenantWhere(req, scopeMode(mode))) },
+      select: { tenantId: true },
+    })
+    if (!i) throw new NotFoundError('Intern', ownerId)
+    return { tenantId: i.tenantId }
+  },
+}
+
 /** Registered once, at import (routes.ts imports this file). */
-for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote, payment, journalEntry, riderDocument, purchaseOrder]) registerRecordFileProvider(p)
+for (const p of [opexPayment, supplierBill, goodsReceipt, prepBatch, hrDocument, fixedAsset, capexQuote, payment, journalEntry, riderDocument, purchaseOrder, internDocument]) registerRecordFileProvider(p)

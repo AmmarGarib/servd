@@ -158,6 +158,12 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   station_change: spec(() => '/kds/config'),
   staff_offboard: spec(() => '/hr/employees'),
   employee_delete: spec(() => '/hr/employees'),
+  // Intern Management (owner, 2026-11-06): the CEO approves enrolments; stipends go HR → finance → the CEO.
+  intern_enrollment: spec((id) => `/hr/interns/${encodeURIComponent(id)}`),
+  intern_payroll_finance: spec((id) => `/hr/interns/payroll/${encodeURIComponent(id)}`, {
+    waitingTitle: (_s, f) => `${f.ref} sent by HR for your review${f.companyName ? ` (${f.companyName})` : ''}`,
+  }),
+  intern_payroll: spec((id) => `/hr/interns/payroll/${encodeURIComponent(id)}`),
   reservation_overbook: spec(() => '/reservations'),
   stock_brand_move: spec(() => '/inventory/transfers'),
   // Owner, 2026-10-27: the CEO's final step on a wage change; the employee hears the outcome, as for HR requests.
@@ -342,6 +348,17 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       if (!r) return null
       return { ref: `Delete employee — ${r.fullName} (${r.employeeCode})` }
     }
+    case 'intern_enrollment': {
+      const r = await db.intern.findUnique({ where: { id }, select: { internCode: true, fullName: true, internshipType: true, monthlyStipendCents: true } })
+      return r && { ref: `Intern enrolment — ${r.fullName} (${r.internCode})`, ...(r.internshipType === 'paid' && { amountCents: r.monthlyStipendCents, detail: 'Monthly stipend' }) }
+    }
+    case 'intern_payroll':
+    case 'intern_payroll_finance': {
+      const p = await db.internPayrollRun.findUnique({ where: { id }, select: { period: true, totals: true } })
+      if (!p) return null
+      const net = ((p.totals ?? {}) as Record<string, unknown>)['netCents']
+      return { ref: `Intern stipends ${p.period}`, ...(typeof net === 'number' && { amountCents: net }) }
+    }
     case 'reservation_overbook': {
       const r = await db.reservationOverbookRequest.findUnique({ where: { id }, select: { kind: true, conceptId: true, reservationId: true } })
       if (!r) return null
@@ -459,7 +476,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
   let final = e.final
   if (final === undefined && outcome === 'approved') {
     if (type === 'hr_request') final = s.status === 'approved'
-    else if (type === 'cash_request_finance' || type === 'payroll_finance_review' || type === 'grn_finance') final = false
+    else if (type === 'cash_request_finance' || type === 'payroll_finance_review' || type === 'grn_finance' || type === 'intern_payroll_finance') final = false
   }
   const nonFinal = outcome === 'approved' && final === false
 
@@ -474,7 +491,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
       verb = 'approved'
       if (nonFinal) {
         const next = await nextStepLabel(type, e.id)
-        verb = type === 'cash_request_finance' ? 'approved by finance' : type === 'payroll_finance_review' || type === 'grn_finance' ? 'checked by finance' : 'approved at this step'
+        verb = type === 'cash_request_finance' ? 'approved by finance' : type === 'payroll_finance_review' || type === 'grn_finance' || type === 'intern_payroll_finance' ? 'checked by finance' : 'approved at this step'
         body = next ? `Now with ${next}.` : null
       } else if (type === 'storefront_publish') {
         const at = iso(e.publishAt)
@@ -517,7 +534,7 @@ export async function sendApprovalDecided(e: ApprovalDecidedEvent): Promise<numb
 
 /** "HR", "the CEO" … — who a multi-step item is with now. */
 async function nextStepLabel(type: ApprovalType, id: string): Promise<string | null> {
-  if (type === 'cash_request_finance' || type === 'payroll_finance_review') return 'the CEO'
+  if (type === 'cash_request_finance' || type === 'payroll_finance_review' || type === 'intern_payroll_finance') return 'the CEO'
   if (type === 'grn_finance') return 'the CEO'
   if (type !== 'hr_request') return null
   try {

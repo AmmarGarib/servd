@@ -29,7 +29,7 @@ import { takeSnapshot } from '../trash/snapshot.js'
 import { assertInt4Fits } from '../../lib/money.js'
 import {
   HR_SECTIONS, RECORD_SECTIONS, ESS_SECTIONS, sectionByKey, validateAgainst, checkFormat, withSystemFields, ORG_UNIT_KINDS, DOCUMENT_TYPES,
-  EMPLOYEE_COLUMN_TYPES, negativeMoney, parseHrDate, BANK_ACCOUNT_REF, transferTargetsOutsideCompany, REPORTS_TO_CEO, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
+  EMPLOYEE_COLUMN_TYPES, negativeMoney, parseHrDate, BANK_ACCOUNT_REF, transferTargetsOutsideCompany, REPORTS_TO_CEO, RETIRED_EMPLOYMENT_TYPES, type HrField, type HrSection, type WorkflowStep, type RecordSlot,
 } from './forms.js'
 import {
   getSettings, saveSettings, getFormat, getAllFormats, defaultFormat, employeeLabels, employeeLabelsAcross,
@@ -77,6 +77,7 @@ import { attendanceTrackingRoutes } from './attendanceTracking.js'
 import { buildAttendanceRegister, registerTable } from './attendanceRegister.js'
 import { employeeDeleteRoutes } from './employeeDelete.js'
 import { performanceRoutes } from './performance.js'
+import { internRoutes } from './interns.js'
 
 export const HR_ADMIN = ['admin', 'owner', 'management', 'hr'] as UserRole[]
 /** The HR back office under /hr/records (audit PPL-R2-01). lib/moduleAccess.ts
@@ -989,6 +990,8 @@ export async function hrRoutes(fastify: FastifyInstance) {
   await employeeDeleteRoutes(fastify)
   // Self-evaluation & performance appraisal (owner, 2026-11-06): /performance/* (performance.ts).
   await performanceRoutes(fastify)
+  // Intern Management (owner, 2026-11-06): /interns/*, /my-interns/* (interns.ts, internPayroll.ts).
+  await internRoutes(fastify)
 
   // ── Sections & formats ────────────────────────────────────────────────────
   fastify.get('/sections', { preHandler: requireAuth(...HR_ADMIN) }, async (req) => {
@@ -1513,6 +1516,15 @@ export async function hrRoutes(fastify: FastifyInstance) {
         if (ceo.employee) body.data[mgrField.key] = ceo.employee.id
         else if (ceo.userIds.length) { body.data[mgrField.key] = null; ceoFlag = true }
         else throw new AppError('NO_CEO', 'This company has no CEO login to report to — pick a person', 422)
+      }
+    }
+    // Interns are not employees (owner, 2026-11-06): the 'intern' employment type is retired for new entries — a
+    // saved company format may still offer it. An unchanged value on an old record still saves.
+    const typeField = fmt.fields.find((fl) => fl.bind === 'employee.employmentType')
+    if (typeField && (RETIRED_EMPLOYMENT_TYPES as readonly unknown[]).includes(body.data[typeField.key])) {
+      const cur = id ? await prisma.hrEmployee.findUnique({ where: { id }, select: { employmentType: true } }) : null
+      if (cur?.employmentType !== body.data[typeField.key]) {
+        throw new AppError('INTERN_NOT_AN_EMPLOYEE', 'Interns are not employees — enrol them in HR → Interns (Intern Management)', 422)
       }
     }
     const v = validateAgainst(fmt.fields, body.data, { partial: !!id })

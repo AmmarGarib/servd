@@ -116,6 +116,10 @@ export const APPROVAL_TYPES = [
   // HR offboards (owner, 2026-11-05).
   'staff_offboard',        // HR asked to switch a login off (offboard), waiting for the CEO
   'employee_delete',       // HR asked to delete an employee record (no history), waiting for the CEO
+  // Intern Management (owner, 2026-11-06; modules/hr/interns.ts).
+  'intern_enrollment',      // HR enrolled an intern — the CEO approves (pending_approval → active)
+  'intern_payroll_finance', // an intern stipend payroll HR sent to finance — finance passes it to the CEO or returns it
+  'intern_payroll',         // an intern stipend payroll finance checked — the CEO approves (books Dr 6038 / Cr 2025)
 ] as const
 export type ApprovalType = (typeof APPROVAL_TYPES)[number]
 
@@ -332,6 +336,23 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // handed over (owner, 2026-11-05: "Give option to HR to delete employee from list with CEO's approval"). The
     // requester (HR) never decides; the CEO's own delete applies at once.
     label: 'Delete employee', section: 'ceo', queueModule: 'staff_hr', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  intern_enrollment: {
+    // POST /hr/interns/:id/approve | reject (modules/hr/interns.ts): the CEO only, never handed over (owner,
+    // 2026-11-06 — "Pending Approval"). The CEO's own enrolment is active at once.
+    label: 'Intern enrolment', section: 'ceo', queueModule: 'staff_hr', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  intern_payroll_finance: {
+    // POST /hr/interns/payroll/runs/:id/finance-pass | finance-return (modules/hr/internPayroll.ts): role finance
+    // holding 'accounting', or the CEO as an override; never whoever created, prepared or sent the run. Never handed over.
+    label: 'Intern stipends — finance review', section: 'finance', queueModule: 'accounting', roles: ['finance', 'admin'],
+    overrideRoles: ['admin'], delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  intern_payroll: {
+    // POST /hr/interns/payroll/runs/:id/approve | return — the CEO only, never handed over; approval books the stipends.
+    label: 'Intern stipends', section: 'ceo', queueModule: 'staff_hr', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   stock_brand_move: {
@@ -940,7 +961,7 @@ export async function auditApproval(
   e: { type: string; id: string; tenantId: string | null; decision: string; grant: ApprovalGrant; entity?: string; metadata?: Record<string, unknown> },
 ): Promise<void> {
   const section = isApprovalType(e.type) ? APPROVAL_RIGHTS[e.type].section : 'ceo'
-  const money = section === 'finance' || ['purchase_order', 'grn_finance', 'grn', 'cash_voucher', 'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'stock_difference', 'on_account_client', 'payroll_run', 'shift_correction'].includes(e.type)
+  const money = section === 'finance' || ['purchase_order', 'grn_finance', 'grn', 'cash_voucher', 'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'stock_difference', 'on_account_client', 'payroll_run', 'intern_payroll', 'shift_correction'].includes(e.type)
   await audit({
     category: money ? 'accounting' : 'identity',
     action: 'approval.decide',
@@ -1203,6 +1224,15 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const r = await db.employeeDeleteRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, createdAt: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.createdAt })
     }
+    case 'intern_enrollment': {
+      const r = await db.intern.findUnique({ where: { id }, select: { tenantId: true, status: true, createdById: true, submittedById: true, submittedAt: true } })
+      return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.createdById, r.submittedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.submittedAt })
+    }
+    case 'intern_payroll':
+    case 'intern_payroll_finance': {
+      const p = await db.internPayrollRun.findUnique({ where: { id }, select: { tenantId: true, createdById: true, preparedByIds: true, sentToFinanceById: true, status: true, sentToFinanceAt: true } })
+      return p && subject({ companyIds: [p.tenantId], ownerTenantId: p.tenantId, submitterIds: [p.createdById, ...p.preparedByIds, p.sentToFinanceById], viaHeadOfficeId: null, status: p.status, submittedAt: p.sentToFinanceAt })
+    }
     case 'wage_change': {
       const r = await db.hrRecord.findUnique({ where: { id }, select: { tenantId: true, section: true, status: true, amountCents: true, currentStep: true, formVersion: true, data: true, createdById: true, updatedAt: true } })
       if (!r) return null
@@ -1350,6 +1380,9 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   station_change: ['pending'],
   staff_offboard: ['pending'],
   employee_delete: ['pending'],
+  intern_enrollment: ['pending_approval'],
+  intern_payroll_finance: ['finance_review'],
+  intern_payroll: ['finance_checked'],
   reservation_overbook: ['pending'],
   wage_change: ['pending'],
   customer_export: ['pending'],

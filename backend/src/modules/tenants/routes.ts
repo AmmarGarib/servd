@@ -260,19 +260,25 @@ async function assertMergeable(db: typeof prisma | MergeTx, src: string, dst: st
     SELECT 'payroll_month', a.period FROM hr_payroll_runs a
       JOIN hr_payroll_runs b ON b.period = a.period
      WHERE a."tenantId" = ${src} AND b."tenantId" = ${dst}
+    UNION ALL
+    SELECT 'stipend_month', a.period FROM intern_payroll_runs a
+      JOIN intern_payroll_runs b ON b.period = a.period
+     WHERE a."tenantId" = ${src} AND b."tenantId" = ${dst}
     ORDER BY 1, 2
     LIMIT 50`
   if (hrClash.length > 0) {
     const months = hrClash.filter((c) => c.kind === 'payroll_month').map((c) => c.key)
+    const stipendMonths = hrClash.filter((c) => c.kind === 'stipend_month').map((c) => c.key)
     const logins = hrClash.filter((c) => c.kind === 'login').length
     throw new AppError(
       'MERGE_HR_CLASH',
       [
         logins > 0 ? `${logins} login(s) are an HR employee in both companies` : null,
         months.length > 0 ? `both companies ran HR payroll for ${months.join(', ')}` : null,
+        stipendMonths.length > 0 ? `both companies ran intern stipend payroll for ${stipendMonths.join(', ')}` : null,
       ].filter(Boolean).join('; ') + ' — two people\'s (or two months\') payroll history is never collapsed into one. Resolve it in HR before merging.',
       422,
-      { employeesInBoth: logins, payrollMonthsInBoth: months },
+      { employeesInBoth: logins, payrollMonthsInBoth: months, stipendMonthsInBoth: stipendMonths },
     )
   }
   // On-account clients: one legal client is one credit account per company.
@@ -708,6 +714,23 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
       employeeCodesRenamed++
     }
   }
+  // Interns (owner, 2026-11-06): intern codes and certificate numbers are unique per company.
+  const srcInterns = await tx.intern.findMany({ where: { tenantId: src }, select: { id: true, internCode: true } })
+  if (srcInterns.length > 0) {
+    const taken = new Set((await tx.intern.findMany({ where: { tenantId: dst }, select: { internCode: true } })).map((e) => e.internCode))
+    for (const e of srcInterns) {
+      if (!taken.has(e.internCode)) { taken.add(e.internCode); continue }
+      await tx.intern.update({ where: { id: e.id }, data: { internCode: freeName(`${e.internCode}-${srcSlug}`, taken) } })
+    }
+  }
+  const srcCerts = await tx.internCertificate.findMany({ where: { tenantId: src }, select: { id: true, number: true } })
+  if (srcCerts.length > 0) {
+    const taken = new Set((await tx.internCertificate.findMany({ where: { tenantId: dst }, select: { number: true } })).map((c) => c.number))
+    for (const c of srcCerts) {
+      if (!taken.has(c.number)) { taken.add(c.number); continue }
+      await tx.internCertificate.update({ where: { id: c.id }, data: { number: freeName(`${c.number}-${srcSlug}`, taken) } })
+    }
+  }
   // Org units: unique per (company, kind, name). Records, employees and
   // positions name a unit by id, so a clash renames rather than collapses.
   const srcUnits = await tx.hrOrgUnit.findMany({ where: { tenantId: src }, select: { id: true, kind: true, name: true } })
@@ -780,6 +803,9 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.employeeDeleteRequest,
     // Performance appraisal (owner, 2026-11-06): cycles, templates and evaluations follow their company.
     tx.performanceCycle, tx.performanceTemplate, tx.performanceEvaluation,
+    // Intern Management (owner, 2026-11-06): the register, history, attendance, stipend runs / slips and certificates
+    // follow their company (codes / numbers renamed above, a stipend month in both refused in assertMergeable).
+    tx.intern, tx.internEvent, tx.internAttendance, tx.internPayrollRun, tx.internStipendSlip, tx.internCertificate,
     // Cook timers on the station screen (owner B12, 2026-10-26): follow the order's company.
     tx.kitchenTimer,
     // Sales sessions (2026-10-22): per brand, follow the brand's company.

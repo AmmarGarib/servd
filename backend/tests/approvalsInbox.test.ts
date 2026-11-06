@@ -258,7 +258,10 @@ describe('two companies', () => {
       'bad_debt', 'bank_reconciliation', 'cash_request_finance', 'cash_voucher',
       // HR's employee deletes (owner, 2026-11-05) read /hr/employee-delete-requests (HR routes): listed, none waiting.
       'employee_delete',
-      'fixed_asset_request', 'grn', 'grn_finance', 'grni_writeoff', 'hr_request', 'intercompany_transfer', 'on_account_client', 'payroll_finance_review', 'payroll_run',
+      'fixed_asset_request', 'grn', 'grn_finance', 'grni_writeoff', 'hr_request', 'intercompany_transfer',
+      // Intern Management (owner, 2026-11-06) reads /hr/interns and /hr/interns/payroll/runs (HR routes): listed, none waiting.
+      'intern_enrollment', 'intern_payroll', 'intern_payroll_finance',
+      'on_account_client', 'payroll_finance_review', 'payroll_run',
       'purchase_order', 'raast_void', 'recipe', 'staff_login',
       // HR's login offboards (owner, 2026-11-05) read /auth/staff/offboard-requests: listed, none waiting.
       'staff_offboard',
@@ -339,7 +342,8 @@ describe('each role sees only the types it can approve', () => {
     // Finance: the cash-voucher finance step (2026-10-15 flow).
     // …and a payroll HR sent for review (owner, 2026-10-30).
     // …and a GRN to verify (owner, 2026-11-05: the PO → GRN workflow).
-    expect(await typesOf('finance')).toEqual(['cash_request_finance', 'grn_finance', 'payroll_finance_review'])
+    // …and an intern stipend payroll HR sent for review (owner, 2026-11-06).
+    expect(await typesOf('finance')).toEqual(['cash_request_finance', 'grn_finance', 'intern_payroll_finance', 'payroll_finance_review'])
     // The buyer: no approval of their own (their tasks are Procurement → My tasks).
     expect(await typesOf('procurement')).toEqual([])
     for (const r of ['cashier', 'foh', 'boh', 'kitchen', 'expediter', 'marketing', 'brand_manager', 'it']) {

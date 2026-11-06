@@ -360,6 +360,33 @@ module id must be placed in a workspace in the same change.
   `hr.performance`. A finalized evaluation blocks deleting the employee. Admin: My HR → My Performance Evaluation
   (`/hr/me/performance/[id]`), Team evaluations (`/hr/me/team-evaluations`), HR → Performance (`/hr/performance`).
   Tests: `tests/performanceEvaluation.test.ts`.
+- **Intern Management — interns are NOT employees (owner, 2026-11-06; REPLACES the 'intern' employment type).**
+  Contract: header of `backend/src/modules/hr/interns.ts` (+ `internPayroll.ts`, `internAccess.ts`, `internPdf.ts`).
+  Own tables (migration `20261106140000_intern_management`; tenantId, RLS, merge repoint — codes / certificate numbers
+  renamed on a clash, a stipend month in both refused): `interns` (INT-0001 per company, advisory lock; department =
+  the company's Department, supervisor = an active HrEmployee of the company — 422), `intern_events` (the complete
+  history), `intern_attendance` (present / absent / late / half_day / leave / weekly_off; marked by HR or the
+  supervisor, never a clock-in), `intern_payroll_runs` / `intern_stipend_slips`, `intern_certificates`. Never on
+  employee lists, `/hr/team`, headcount, employee payroll, labour % or the head-office pool; never auto-made an
+  employee. **`EMPLOYMENT_TYPES` no longer has 'intern'** (old rows stay readable); an employee create / edit naming it
+  → 422 `INTERN_NOT_AN_EMPLOYEE`. Boot step `hr/internsMigration.ts migrateLegacyInterns` (idempotent per
+  `Intern.legacyEmployeeId`) moved every 'intern' employee and every tracked `marketing_intern` login into the
+  register (login, attendance days, tracker records and — when removed — document files follow): no history
+  (`employeeDelete.ts employeeHistory`) → the employee goes to the Trash (`deleteEmployeeTx`); with history → kept,
+  status `separated`. Flow: HR (HR_ADMIN + staff_hr) enrols → `pending_approval` → the CEO approves (approval type
+  `intern_enrollment`, never delegated) or rejects (note ≥10 → draft); the CEO's own enrolment is active at once;
+  extend (reason ≥10), complete, terminate (reason ≥10 + effective date). Stipend payroll (PAID interns enrolled in
+  the month; stipend ÷ calendar days × paid days — absent 1, half day 0.5, leave 1 unpaid; ± HR adjustments): HR →
+  finance (`intern_payroll_finance`, finance with accounting, never a preparer) → the CEO (`intern_payroll`) books
+  `hr.intern_stipend.accrual:<runId>` Dr **6038 Intern Stipends** / Cr **2025 Stipends Payable** after the approval
+  commits (a refusal is flagged posting_failed, REPOSTERS `hr.intern_stipend.accrual`); finance's paid books
+  `hr.intern_stipend.payment:<runId>` Dr 2025 / Cr `moneyAccountCode` (cash / bank transfer / cheque, reference
+  required off cash), classified. A month's attendance locks once its run leaves draft (409 `IN_PAYROLL`).
+  Certificates: completed only, one live (409 `CERTIFICATE_EXISTS`; reissue with reason ≥10), IC-<year>-0001, PDF.
+  Documents: record files owner type `intern_document`. Supervisor self-service `/hr/my-interns` (no pay / CNIC).
+  Gates: `/hr/interns/payroll` staff_hr | accounting, `/hr/interns` staff_hr. The marketing tracker names an intern
+  (`MarketingTrackee.internId`; `employeeId` nullable, kept for history) and reads intern attendance for it.
+  Tests: `tests/internManagement.test.ts`.
 - **HR issues new passwords too (owner, 2026-10-16: "Give this option to HR
   also").** `POST /auth/users/:id/reissue-password` admits HR with `staff_hr`
   (same scope as offboard; never `admin` / `owner` — 403 `REISSUE_CEO_ONLY`,

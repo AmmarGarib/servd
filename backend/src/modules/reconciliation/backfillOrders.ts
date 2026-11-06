@@ -74,6 +74,8 @@ export type RefusedPostingKind = 'deposit.drop' | 'inventory.waste' | 'inventory
   | 'supplier.opening'
   // A loyalty point-value change's revaluation of 2060 (loyalty/revaluation.ts, owner 2026-10-17).
   | 'loyalty.revalue'
+  // Intern stipends the CEO approved whose accrual the ledger refused (hr/internPayroll.ts, owner 2026-11-06).
+  | 'hr.intern_stipend.accrual'
 /** Step 5's kinds: a stock step of an order that failed ('stock_restore_failed', by metadata.phase). */
 export type StockRerunKind = 'stock.deplete' | 'stock.restore' | 'stock.remake'
 export type OrderBackfillKind = 'order.complete' | 'loyalty.earn' | 'loyalty.redeem' | 'order.refund' | RefusedPostingKind | StockRerunKind
@@ -432,6 +434,26 @@ function metaOf(v: Prisma.JsonValue): Record<string, unknown> {
 }
 
 const REPOSTERS: Record<RefusedPostingKind, Reposter> = {
+  // Intern stipends (owner, 2026-11-06): the approved run's STORED net, Dr 6038 / Cr 2025, dated the month's last day
+  // (into the open month when that one is closed). Nothing owed once the run's entry exists or its net is zero.
+  'hr.intern_stipend.accrual': {
+    entityType: 'InternPayrollRun',
+    title: 'Intern stipends did not reach the ledger',
+    nothingToPost: new Set(['run_not_found', 'run_not_approved', 'zero_amount']),
+    load: async (id) => {
+      const run = await prisma.internPayrollRun.findUnique({ where: { id }, select: { id: true, tenantId: true, period: true, status: true, totals: true } })
+      if (!run) return null
+      const { postStipendAccrual } = await import('../hr/internPayroll.js')
+      const net = Number(((run.totals ?? {}) as Record<string, unknown>)['netCents'] ?? 0)
+      const [y, m] = run.period.split('-').map(Number) as [number, number]
+      return {
+        tenantId: run.tenantId, date: new Date(Date.UTC(y, m, 0)), orderId: null, amountCents: net,
+        what: `Intern stipends ${run.period}: ${pkr(net)}`,
+        nothingOwed: run.status !== 'approved' && run.status !== 'paid' ? 'The stipend payroll is not approved — nothing to post.' : net <= 0 ? 'The stipend payroll comes to nothing — nothing to post.' : undefined,
+        post: (o) => postStipendAccrual(id, o),
+      }
+    },
+  },
   // A loyalty revaluation (owner, 2026-10-17): the STORED delta of that
   // point-value change (its AuditLog record), never recomputed — dated at the
   // change, or into the open month when that one is closed.
