@@ -2361,6 +2361,16 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   `costsHiddenFor` login; audit `ingredient_master.price`), stored in `IngredientMasterPrice` (platform table, no
   tenantId, one row per edit, never edited): a typed price is the LATEST until a newer delivery comes in (source
   `sheet`, in the history). Tests: `tests/ingredientMaster.test.ts`, `tests/recipeCompanyShare.test.ts`.
+- **Item groups under a category (owner, 2026-11-07: "In PO, make item categories like Sea food … Meat …"; answer:
+  groups UNDER the existing category, the PO maker can add groups).** `IngredientGroup` (`ingredient_groups`, servd-wide
+  like the master — no tenantId, deliberately; unique by normalised name; under ONE `INVENTORY_CATEGORIES` category;
+  switched off, never deleted; starter list seeded by migration `20261107120000`); `IngredientMaster.groupId`. A group
+  NEVER decides an account — the category still does. `GET /ingredient-master/groups` (readers), `POST …/groups {name,
+  category}` (PROCUREMENT_TEAM = the PO maker; an existing name is returned), `PATCH …/groups/:id` (managers), `PUT
+  /ingredient-master/:id/group {groupId|null}` (PROCUREMENT_TEAM; 422 `GROUP_CATEGORY_MISMATCH` / `GROUP_SWITCHED_OFF`),
+  `GET /ingredient-master?groupId=…|none`, `POST /ingredient-master {groupId}` (category defaults to the group's).
+  Admin: the ingredient picker (PO lines, recipes) filters by group and adds an item with a group or "+ New group";
+  Enter on a name with no match opens "Add new" so a typed item is saved; Ingredients sheet has a Group column.
 - **Par in PORTIONS (K5)** — `Recipe.portionsPerBatch` (portions one batch makes; size = yield ÷ it,
   `lib/portions.ts`, never stored) + `portionLabel`. A prep batch may be logged in portions (`actualPortions`; 422
   `NO_PORTION_SIZE` without). Portions are what CAME OUT: the draw is whole batches (`batches`, default 1), expected =

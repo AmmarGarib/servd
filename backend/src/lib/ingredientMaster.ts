@@ -102,6 +102,7 @@ export interface MasterRow {
   specFields: Prisma.JsonValue | null
   perishable: boolean
   shelfLifeDays: number | null
+  groupId?: string | null
   status: string
   mergedIntoId: string | null
 }

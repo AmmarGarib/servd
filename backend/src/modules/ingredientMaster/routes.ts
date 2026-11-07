@@ -35,6 +35,16 @@
 //                                              MERGE_NEEDS_STOCK_MERGE lists those items (a person merges the stock).
 //                                              The merge NEVER posts: units of different families are 409
 //                                              MERGE_UNIT_MISMATCH, different categories 409 MERGE_CATEGORY_MISMATCH.
+//   GET    /ingredient-master/groups?category&all  item GROUPS under a category (owner, 2026-11-07: "Sea food will contain
+//                                              all types of fish, Meat … all kind of meat"). Same readers.
+//   POST   /ingredient-master/groups {name, category}  a new group — the PO maker (PROCUREMENT_TEAM) and up. Unique by
+//                                              name servd-wide (an existing one is returned, existing: true).
+//   PATCH  /ingredient-master/groups/:id {name?, active?}  rename / switch off — MASTER_EDITORS (managers).
+//   PUT    /ingredient-master/:id/group {groupId|null}  put an ingredient in a group — the PO maker and up. A group
+//                                              never moves an account: it must sit under the ingredient's category
+//                                              (422 GROUP_CATEGORY_MISMATCH; an ingredient with no category takes any).
+//   GET /ingredient-master?groupId filters by group; POST /ingredient-master takes groupId (its category defaults to
+//   the group's). Groups are platform data like the master (no tenantId, deliberately).
 // Every write is audited (entity IngredientMaster, no company — platform data).
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
@@ -74,10 +84,33 @@ const createSchema = z.object({
   // Use-by (owner B6, 2026-10-26): perishable deliveries carry a use-by date; shelf life (days) defaults it.
   perishable: z.boolean().optional(),
   shelfLifeDays: z.number().int().min(1).max(3650).nullable().optional(),
+  groupId: z.string().uuid().nullable().optional(),
 })
-const patchSchema = createSchema.partial().extend({ status: z.enum(['approved', 'needs_review']).optional() })
+const patchSchema = createSchema.omit({ groupId: true }).partial().extend({ status: z.enum(['approved', 'needs_review']).optional() })
 
 type MasterDb = Prisma.IngredientMasterGetPayload<object>
+type GroupRow = { id: string; name: string; category: string; active: boolean }
+
+const groupShape = (g: GroupRow) => ({ id: g.id, name: g.name, category: g.category, active: g.active })
+
+/** The group names by id (for the list shape). */
+async function groupsById(ids: Array<string | null>): Promise<Map<string, GroupRow>> {
+  const want = [...new Set(ids.filter((x): x is string => !!x))]
+  if (want.length === 0) return new Map()
+  const rows = await prisma.ingredientGroup.findMany({ where: { id: { in: want } } })
+  return new Map(rows.map((g) => [g.id, g]))
+}
+
+/** A live group that fits the ingredient's category (a group never moves an account). */
+async function assertGroupFits(groupId: string, category: string | null): Promise<GroupRow> {
+  const g = await prisma.ingredientGroup.findUnique({ where: { id: groupId } })
+  if (!g) throw new NotFoundError('IngredientGroup', groupId)
+  if (!g.active) throw new AppError('GROUP_SWITCHED_OFF', `The group "${g.name}" is switched off`, 422)
+  if (category && g.category !== category) {
+    throw new AppError('GROUP_CATEGORY_MISMATCH', `"${g.name}" is a ${g.category.replace(/_/g, ' ')} group — this ingredient is ${category.replace(/_/g, ' ')}`, 422)
+  }
+  return g
+}
 
 /** The caller's ACTIVE company's linked stock item per master (never another company's). */
 async function companyItems(req: FastifyRequest, masterIds: string[]): Promise<Map<string, string>> {
@@ -107,9 +140,10 @@ function priceOf(m: MasterDb, p: MasterPrice | undefined | null) {
   }
 }
 
-function shape(m: MasterDb, companyItemId: string | null, price?: MasterPrice | null) {
+function shape(m: MasterDb, companyItemId: string | null, price?: MasterPrice | null, group?: GroupRow | null) {
   return {
-    id: m.id, name: m.name, stockUnit: m.stockUnit, category: m.category, allergens: m.allergens, yieldPct: m.yieldPct,
+    id: m.id, name: m.name, stockUnit: m.stockUnit, category: m.category,
+    groupId: m.groupId, group: group ? groupShape(group) : null, allergens: m.allergens, yieldPct: m.yieldPct,
     purchaseUnit: m.purchaseUnit, purchaseUnitFactor: m.purchaseUnitFactor, spec: m.spec, specFields: m.specFields,
     perishable: m.perishable, shelfLifeDays: m.shelfLifeDays,
     status: m.status, mergedIntoId: m.mergedIntoId, createdAt: m.createdAt, updatedAt: m.updatedAt,
@@ -128,12 +162,95 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
 
   const readers = { preHandler: [requireAuth(...ALL_STAFF), requireModule(...READ_MODULES)] }
 
-  fastify.get<{ Querystring: { q?: string; status?: string; limit?: string } }>('/', readers, async (req) => {
+  // ── Item groups (owner, 2026-11-07) ────────────────────────────────────────────────────────────────────────────
+  fastify.get<{ Querystring: { category?: string; all?: string } }>('/groups', readers, async (req) => {
+    const category = req.query.category && (INVENTORY_CATEGORIES as readonly string[]).includes(req.query.category) ? req.query.category : undefined
+    const rows = await prisma.ingredientGroup.findMany({
+      where: { ...(category ? { category } : {}), ...(req.query.all === '1' ? {} : { active: true }) },
+      orderBy: [{ category: 'asc' }, { name: 'asc' }],
+    })
+    const counts = await prisma.ingredientMaster.groupBy({ by: ['groupId'], where: { groupId: { in: rows.map((r) => r.id) }, mergedIntoId: null }, _count: { _all: true } })
+    const n = new Map(counts.map((c) => [c.groupId, c._count._all]))
+    return rows.map((g) => ({ ...groupShape(g), ingredients: n.get(g.id) ?? 0 }))
+  })
+
+  fastify.post('/groups', { preHandler: [requireAuth(...MASTER_CREATORS), requireModule(...READ_MODULES)] }, async (req, reply) => {
+    const body = z.object({ name: z.string().trim().min(2).max(60), category: z.enum(INVENTORY_CATEGORIES) }).parse(req.body)
+    const name = cleanIngredientName(body.name)
+    const normalizedName = normalizeIngredientName(name)
+    const existing = await prisma.ingredientGroup.findUnique({ where: { normalizedName } })
+    if (existing) {
+      if (existing.category !== body.category) {
+        throw new AppError('GROUP_NAME_TAKEN', `"${existing.name}" already exists under ${existing.category.replace(/_/g, ' ')}`, 409, { existingId: existing.id })
+      }
+      if (!existing.active) await prisma.ingredientGroup.update({ where: { id: existing.id }, data: { active: true } })
+      return reply.status(200).send({ ...groupShape({ ...existing, active: true }), existing: true })
+    }
+    let g: GroupRow
+    try {
+      g = await prisma.ingredientGroup.create({ data: { name, normalizedName, category: body.category, createdById: req.staffUser!.id } })
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const again = await prisma.ingredientGroup.findUniqueOrThrow({ where: { normalizedName } })
+        return reply.status(200).send({ ...groupShape(again), existing: true })
+      }
+      throw e
+    }
+    await audit({
+      category: 'identity', action: 'ingredient_group.create', entity: 'IngredientGroup', entityId: g.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
+      after: { name: g.name, category: g.category, actorRole: req.staffUser!.role },
+    })
+    return reply.status(201).send({ ...groupShape(g), existing: false })
+  })
+
+  fastify.patch<{ Params: { id: string } }>('/groups/:id', { preHandler: requireAuth(...MASTER_EDITORS) }, async (req) => {
+    const body = z.object({ name: z.string().trim().min(2).max(60).optional(), active: z.boolean().optional() }).parse(req.body)
+    const before = await prisma.ingredientGroup.findUnique({ where: { id: req.params.id } })
+    if (!before) throw new NotFoundError('IngredientGroup', req.params.id)
+    const data: Prisma.IngredientGroupUpdateInput = {}
+    if (body.name !== undefined) {
+      const name = cleanIngredientName(body.name)
+      const normalizedName = normalizeIngredientName(name)
+      const clash = await prisma.ingredientGroup.findFirst({ where: { normalizedName, id: { not: before.id } }, select: { id: true } })
+      if (clash) throw new AppError('GROUP_NAME_TAKEN', `"${name}" already exists`, 409, { existingId: clash.id })
+      data.name = name; data.normalizedName = normalizedName
+    }
+    if (body.active !== undefined) data.active = body.active
+    const g = await prisma.ingredientGroup.update({ where: { id: before.id }, data })
+    await audit({
+      category: 'identity', action: 'ingredient_group.update', entity: 'IngredientGroup', entityId: g.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
+      before: { name: before.name, active: before.active }, after: { name: g.name, active: g.active, actorRole: req.staffUser!.role },
+    })
+    return groupShape(g)
+  })
+
+  fastify.put<{ Params: { id: string } }>('/:id/group', { preHandler: [requireAuth(...MASTER_CREATORS), requireModule(...READ_MODULES)] }, async (req) => {
+    const { groupId } = z.object({ groupId: z.string().uuid().nullable() }).parse(req.body)
+    const m = await loadLive(req.params.id)
+    if (m.mergedIntoId) throw new AppError('MASTER_MERGED', `${m.name} was merged into another ingredient — group that one`, 409)
+    const g = groupId ? await assertGroupFits(groupId, m.category) : null
+    const updated = await prisma.ingredientMaster.update({ where: { id: m.id }, data: { groupId } })
+    await audit({
+      category: 'identity', action: 'ingredient_master.group', entity: 'IngredientMaster', entityId: m.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
+      before: { groupId: m.groupId }, after: { groupId, group: g?.name ?? null, actorRole: req.staffUser!.role },
+    })
+    const mine = await companyItems(req, [m.id])
+    const hide = costsHiddenFor(req)
+    return shape(updated, mine.get(m.id) ?? null, hide ? null : (await masterPricesMany([m.id])).get(m.id), g)
+  })
+
+  fastify.get<{ Querystring: { q?: string; status?: string; limit?: string; groupId?: string } }>('/', readers, async (req) => {
     const q = normalizeIngredientName(req.query.q ?? '')
     const status = req.query.status === 'needs_review' || req.query.status === 'approved' ? req.query.status : undefined
     const limit = Math.min(Math.max(parseInt(req.query.limit ?? '30', 10) || 30, 1), 500)
     const rows = await prisma.ingredientMaster.findMany({
-      where: { mergedIntoId: null, ...(status ? { status } : {}), ...(q ? { normalizedName: { contains: q } } : {}) },
+      where: {
+        mergedIntoId: null, ...(status ? { status } : {}), ...(q ? { normalizedName: { contains: q } } : {}),
+        ...(req.query.groupId === 'none' ? { groupId: null } : req.query.groupId ? { groupId: req.query.groupId } : {}),
+      },
       orderBy: [{ name: 'asc' }],
       take: limit,
     })
@@ -142,7 +259,8 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     const mine = await companyItems(req, rows.map((r) => r.id))
     const hide = costsHiddenFor(req)
     const prices = hide ? new Map<string, MasterPrice>() : await masterPricesMany(rows.map((r) => r.id))
-    return rows.map((r) => shape(r, mine.get(r.id) ?? null, hide ? null : prices.get(r.id)))
+    const groups = await groupsById(rows.map((r) => r.groupId))
+    return rows.map((r) => shape(r, mine.get(r.id) ?? null, hide ? null : prices.get(r.id), r.groupId ? groups.get(r.groupId) : null))
   })
 
   fastify.get<{ Params: { id: string } }>('/:id/prices', readers, async (req) => {
@@ -177,23 +295,31 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     const m = await loadLive(req.params.id)
     const mine = await companyItems(req, [m.id])
     const hide = costsHiddenFor(req)
-    return shape(m, mine.get(m.id) ?? null, hide ? null : (await masterPricesMany([m.id])).get(m.id))
+    return shape(m, mine.get(m.id) ?? null, hide ? null : (await masterPricesMany([m.id])).get(m.id), (await groupsById([m.groupId])).get(m.groupId ?? '') ?? null)
   })
 
   fastify.post('/', { preHandler: requireAuth(...MASTER_CREATORS) }, async (req, reply) => {
-    const body = createSchema.parse(req.body)
-    const { master, created } = await prisma.$transaction((tx) => findOrCreateMasterTx(tx, {
+    const { groupId, ...body } = createSchema.parse(req.body)
+    // A group picked with the new item: its category is the item's unless one was given (they must agree).
+    const group = groupId ? await assertGroupFits(groupId, body.category ?? null) : null
+    if (group && !body.category) body.category = group.category as (typeof INVENTORY_CATEGORIES)[number]
+    const { master: found, created } = await prisma.$transaction((tx) => findOrCreateMasterTx(tx, {
       ...body, specFields: body.specFields ?? null,
     }, { userId: req.staffUser!.id, tenantId: req.staffUser!.tenantId ?? null }, 'needs_review'))
+    // An existing item keeps its group; a new one (or one with none that fits) takes the group picked.
+    let master = found
+    if (group && !found.groupId && (!found.category || found.category === group.category)) {
+      master = await prisma.ingredientMaster.update({ where: { id: found.id }, data: { groupId: group.id } })
+    }
     if (created) {
       await audit({
         category: 'identity', action: 'ingredient_master.create', entity: 'IngredientMaster', entityId: master.id,
         userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
-        after: { name: master.name, stockUnit: master.stockUnit, status: master.status, createdInTenantId: req.staffUser!.tenantId ?? null },
+        after: { name: master.name, stockUnit: master.stockUnit, status: master.status, groupId: master.groupId, createdInTenantId: req.staffUser!.tenantId ?? null },
       })
     }
     const mine = await companyItems(req, [master.id])
-    return reply.status(created ? 201 : 200).send({ ...shape(master as MasterDb, mine.get(master.id) ?? null), existing: !created })
+    return reply.status(created ? 201 : 200).send({ ...shape(master as MasterDb, mine.get(master.id) ?? null, undefined, (await groupsById([master.groupId ?? null])).get(master.groupId ?? '') ?? null), existing: !created })
   })
 
   fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MASTER_EDITORS) }, async (req) => {

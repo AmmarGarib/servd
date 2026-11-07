@@ -2887,10 +2887,35 @@ model IngredientMaster {
 
   inventoryItems InventoryItem[]
   prices         IngredientMasterPrice[]
+  /// Item group (owner, 2026-11-07: "Sea food will contain all types of fish, Meat … all kind of meat"). A label
+  /// under the category; the category alone decides the stock account.
+  groupId        String?
+  group          IngredientGroup? @relation(fields: [groupId], references: [id])
 
   @@index([normalizedName])
   @@index([status])
+  @@index([groupId])
   @@map("ingredient_masters")
+}
+
+// Item groups under a category (owner, 2026-11-07: "make item categories like Sea food … Meat …"; answer: groups
+// under the existing category, the PO maker can add groups). servd-wide like the ingredient master — DELIBERATELY no
+// tenantId (platform data). A group sits under ONE inventory category (lib/inventoryClass.ts INVENTORY_CATEGORIES);
+// it never decides an account. Unique by normalised name. Switched off, never deleted.
+model IngredientGroup {
+  id              String   @id @default(uuid())
+  name            String
+  normalizedName  String   @unique
+  category        String
+  active          Boolean  @default(true)
+  createdById     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  ingredients IngredientMaster[]
+
+  @@index([category])
+  @@map("ingredient_groups")
 }
 
 // A price typed on the Ingredients sheet (owner, 2026-10-29: "just make this editable within the table"). servd-wide

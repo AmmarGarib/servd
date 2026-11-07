@@ -24,7 +24,7 @@ import { useManagerRoles } from '../../../lib/roles'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { INVENTORY_CATEGORY_OPTIONS, categoryLabel, stockErrorText } from '../../../lib/stockUi'
 import { Button, Dialog, DialogFooter, ErrorBanner, Field, Input, SidePanel, Textarea } from '../../../components/finance/ui'
-import type { MasterPrice, MasterRow } from '../../../components/kitchen/MasterIngredientPicker'
+import type { IngredientGroup, MasterPrice, MasterRow } from '../../../components/kitchen/MasterIngredientPicker'
 
 const UNITS = ['g', 'ml', 'pcs', 'kg', 'litres', 'each']
 /** The master is kept in its family's base unit: changing kg → g is no change, so the table offers the bases. */
@@ -63,12 +63,18 @@ export default function IngredientsPage() {
     queryFn: () => api.get<MasterRow[]>(`/ingredient-master?limit=500${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}${tab === 'needs_review' ? '&status=needs_review' : ''}`),
   })
   const pricesShown = rows.some((r) => r.price != null)
+  // Item groups under each category (owner, 2026-11-07: Sea food, Meat, …).
+  const { data: groups = [] } = useQuery<IngredientGroup[]>({ queryKey: ['ingredient-master', 'groups'], queryFn: () => api.get<IngredientGroup[]>('/ingredient-master/groups') })
+  const groupOptions = (m: MasterRow) => [{ value: '', label: 'No group' },
+    ...groups.filter((g) => !m.category || g.category === m.category).map((g) => ({ value: g.id, label: m.category ? g.name : `${g.name} (${categoryLabel(g.category)})` }))]
   const listKey = ['ingredient-master', 'page', debounced, tab]
   const [cellError, setCellError] = useState('')
   // One cell's save: PATCH the field (or PUT the price), then put the saved row back into the list.
   const saveCell = useMutation({
-    mutationFn: ({ m, field, value }: { m: MasterRow; field: 'name' | 'spec' | 'category' | 'unit' | 'price'; value: string }) =>
-      field === 'price'
+    mutationFn: ({ m, field, value }: { m: MasterRow; field: 'name' | 'spec' | 'category' | 'unit' | 'price' | 'group'; value: string }) =>
+      field === 'group'
+        ? api.put<MasterRow>(`/ingredient-master/${m.id}/group`, { groupId: value || null })
+        : field === 'price'
         ? api.put<MasterRow>(`/ingredient-master/${m.id}/price`, { priceCents: priceCentsOf(m, Number(value)) })
         : api.patch<MasterRow>(`/ingredient-master/${m.id}`, { [field]: field === 'category' || field === 'spec' ? (value || null) : value }),
     onMutate: () => setCellError(''),
@@ -79,7 +85,7 @@ export default function IngredientsPage() {
     },
     onError: (e, v) => setCellError(`${v.m.name}: ${stockErrorText(e)}`),
   })
-  const cell = (m: MasterRow, field: 'name' | 'spec' | 'category' | 'unit' | 'price') => (value: string) =>
+  const cell = (m: MasterRow, field: 'name' | 'spec' | 'category' | 'unit' | 'price' | 'group') => (value: string) =>
     saveCell.mutateAsync({ m, field, value })
 
   return (
@@ -132,6 +138,7 @@ export default function IngredientsPage() {
                 <th className="px-3 py-2 text-left">Ingredient</th>
                 <th className="px-3 py-2 text-left">Unit</th>
                 <th className="px-3 py-2 text-left">Category</th>
+                <th className="px-3 py-2 text-left">Group</th>
                 {pricesShown && <th className="px-3 py-2 text-right">Latest price</th>}
                 {pricesShown && <th className="px-3 py-2 text-right">90-day average</th>}
                 {pricesShown && <th className="px-3 py-2 text-left">Last bought</th>}
@@ -159,6 +166,10 @@ export default function IngredientsPage() {
                   <td className="px-2 py-1 text-s-muted min-w-[9.5rem]">
                     <InlineSelect value={m.category ?? ''} label={`Category of ${m.name}`} disabled={!isReviewer}
                       options={[{ value: '', label: 'Uncategorised' }, ...INVENTORY_CATEGORY_OPTIONS]} onSave={cell(m, 'category')} />
+                  </td>
+                  <td className="px-2 py-1 text-s-muted min-w-[8.5rem]">
+                    <InlineSelect value={m.groupId ?? ''} label={`Group of ${m.name}`} disabled={!canPrice}
+                      options={groupOptions(m)} onSave={cell(m, 'group')} />
                   </td>
                   {pricesShown && (
                     <td className="px-2 py-1 text-right min-w-[11rem]">

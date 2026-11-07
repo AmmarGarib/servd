@@ -380,3 +380,42 @@ describe('the servd price (owner, 2026-10-29: "a pure ingredient availability an
   })
 })
 
+
+describe('item groups (owner, 2026-11-07: "Sea food will contain all types of fish, Meat … all kind of meat")', () => {
+  it('the buyer adds a group under a category; a duplicate name returns it; the floor cannot add one', async () => {
+    const r = await call(u.buyerA!, 'POST', '/ingredient-master/groups', { name: 'Sea food test', category: 'protein' })
+    expect(r.statusCode, r.body).toBe(201)
+    const again = await call(u.chefB!, 'POST', '/ingredient-master/groups', { name: '  sea  FOOD test ', category: 'protein' })
+    expect(again.statusCode).toBe(200)
+    expect(again.json()).toMatchObject({ id: r.json().id, existing: true })
+    expect((await call(u.chefA!, 'POST', '/ingredient-master/groups', { name: 'Sea food test', category: 'produce' })).json().error.code).toBe('GROUP_NAME_TAKEN')
+    expect((await call(u.cashA!, 'POST', '/ingredient-master/groups', { name: 'Cash group', category: 'protein' })).statusCode).toBe(403)
+    expect((await call(u.buyerA!, 'POST', '/ingredient-master/groups', { name: 'Bad', category: 'not_a_category' })).statusCode).toBe(400)
+    const list = (await call(u.cookA!, 'GET', '/ingredient-master/groups?category=protein')).json() as Array<{ id: string }>
+    expect(list.map((g) => g.id)).toContain(r.json().id)
+  })
+
+  it('a new ingredient takes the group and its category; the list filters by group; a group never moves an account', async () => {
+    const sea = (await call(u.buyerA!, 'POST', '/ingredient-master/groups', { name: 'Fish group test', category: 'protein' })).json()
+    const veg = (await call(u.buyerA!, 'POST', '/ingredient-master/groups', { name: 'Veg group test', category: 'produce' })).json()
+    const fish = await call(u.buyerA!, 'POST', '/ingredient-master', { name: 'Pomfret group test', unit: 'kg', groupId: sea.id })
+    expect(fish.statusCode, fish.body).toBe(201)
+    expect(fish.json()).toMatchObject({ category: 'protein', groupId: sea.id, group: { name: 'Fish group test' } })
+    // A group that does not fit the category is refused.
+    expect((await call(u.buyerA!, 'POST', '/ingredient-master', { name: 'Prawn group test', unit: 'kg', category: 'dairy', groupId: sea.id })).json().error.code).toBe('GROUP_CATEGORY_MISMATCH')
+    expect((await call(u.buyerA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: veg.id })).json().error.code).toBe('GROUP_CATEGORY_MISMATCH')
+    const inGroup = (await call(u.cookA!, 'GET', `/ingredient-master?groupId=${sea.id}`)).json() as Array<{ id: string }>
+    expect(inGroup.map((m) => m.id)).toEqual([fish.json().id])
+    // Ungroup / regroup by the PO maker; audited; the category stays.
+    const off = await call(u.buyerA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: null })
+    expect(off.json()).toMatchObject({ groupId: null, category: 'protein' })
+    expect((await call(u.cashA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: sea.id })).statusCode).toBe(403)
+    expect((await call(u.buyerA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: sea.id })).json().groupId).toBe(sea.id)
+    expect(await prisma.auditLog.count({ where: { action: 'ingredient_master.group', entityId: fish.json().id } })).toBe(2)
+    // Switched off by a manager: no longer offered or usable.
+    expect((await call(u.buyerA!, 'PATCH', `/ingredient-master/groups/${veg.id}`, { active: false })).statusCode).toBe(403)
+    expect((await call(u.chefA!, 'PATCH', `/ingredient-master/groups/${veg.id}`, { active: false })).statusCode).toBe(200)
+    expect(((await call(u.cookA!, 'GET', '/ingredient-master/groups')).json() as Array<{ id: string }>).map((g) => g.id)).not.toContain(veg.id)
+    expect((await call(u.buyerA!, 'POST', '/ingredient-master', { name: 'Carrot group test', unit: 'kg', groupId: veg.id })).json().error.code).toBe('GROUP_SWITCHED_OFF')
+  })
+})

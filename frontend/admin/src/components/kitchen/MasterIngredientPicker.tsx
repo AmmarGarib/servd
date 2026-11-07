@@ -28,6 +28,9 @@ export interface MasterRow {
   specFields: Record<string, string> | null
   status: 'approved' | 'needs_review'
   companyItemId: string | null
+  /** Item group under the category (owner, 2026-11-07: Sea food, Meat, …). */
+  groupId?: string | null
+  group?: { id: string; name: string; category: string } | null
   /** servd's price (owner, 2026-10-29): one price across servd, per kg / litre / pcs. Null when hidden (kitchen floor). */
   price?: MasterPrice | null
 }
@@ -43,6 +46,10 @@ export interface MasterPrice {
   averageDays: number
   averageDeliveries: number
 }
+
+export interface IngredientGroup { id: string; name: string; category: string; active: boolean; ingredients?: number }
+
+const categoryLabel = (c: string) => INVENTORY_CATEGORY_OPTIONS.find((o) => o.value === c)?.label ?? c.replace(/_/g, ' ')
 
 export interface PickedItem { id: string; name: string; unit: string; category: string | null; yieldPct: number; masterIngredientId: string }
 
@@ -63,7 +70,9 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [adding, setAdding] = useState<{ unit: string; category: string; price: string } | null>(null)
+  const [adding, setAdding] = useState<{ unit: string; category: string; price: string; groupId: string; newGroup: string | null } | null>(null)
+  // Browse by group (owner, 2026-11-07: "Sea food will contain all types of fish").
+  const [groupFilter, setGroupFilter] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const btn = useRef<HTMLInputElement>(null)
@@ -72,11 +81,20 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
   useEffect(() => { const t = setTimeout(() => setDebounced(q.trim()), 200); return () => clearTimeout(t) }, [q])
 
   const { data: rows = [], isFetching } = useQuery<MasterRow[]>({
-    queryKey: ['ingredient-master', 'search', debounced],
-    queryFn: () => api.get<MasterRow[]>(`/ingredient-master?q=${encodeURIComponent(debounced)}&limit=25`),
+    queryKey: ['ingredient-master', 'search', debounced, groupFilter],
+    queryFn: () => api.get<MasterRow[]>(`/ingredient-master?q=${encodeURIComponent(debounced)}&limit=${groupFilter ? 200 : 25}${groupFilter ? `&groupId=${encodeURIComponent(groupFilter)}` : ''}`),
     enabled: open,
     staleTime: 30_000,
   })
+  const { data: groups = [], refetch: refetchGroups } = useQuery<IngredientGroup[]>({
+    queryKey: ['ingredient-master', 'groups'],
+    queryFn: () => api.get<IngredientGroup[]>('/ingredient-master/groups'),
+    enabled: open,
+    staleTime: 60_000,
+  })
+  const groupsByCategory = INVENTORY_CATEGORY_OPTIONS
+    .map((o) => ({ ...o, groups: groups.filter((g) => g.category === o.value) }))
+    .filter((c) => c.groups.length > 0)
 
   async function pick(masterId: string, typedPrice?: MasterPrice | null) {
     setBusy(true); setErr('')
@@ -93,7 +111,17 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
     if (!adding || !q.trim()) return
     setBusy(true); setErr('')
     try {
-      const m = await api.post<MasterRow>('/ingredient-master', { name: q.trim(), unit: adding.unit, category: adding.category || null })
+      // A new group typed here is saved first (owner, 2026-11-07: "Give option to add categories to PO maker").
+      let groupId = adding.groupId || null
+      if (adding.newGroup !== null) {
+        const name = adding.newGroup.trim()
+        if (name.length < 2) { setErr('Type the new group\'s name'); setBusy(false); return }
+        if (!adding.category) { setErr('Pick the category the new group sits under'); setBusy(false); return }
+        const g = await api.post<IngredientGroup>('/ingredient-master/groups', { name, category: adding.category })
+        groupId = g.id
+        void refetchGroups()
+      }
+      const m = await api.post<MasterRow>('/ingredient-master', { name: q.trim(), unit: adding.unit, category: adding.category || null, ...(groupId ? { groupId } : {}) })
       // The price typed with it (owner, 2026-11-03: "Adding here should allow me to add price too") — servd's ONE
       // price, per kg / litre / pcs (PUT /ingredient-master/:id/price, the same as the Ingredients sheet).
       const price = Number(adding.price)
@@ -117,7 +145,13 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setActive((a) => Math.min(a + 1, Math.max(rows.length - 1, 0))) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)) }
-    else if (e.key === 'Enter') { e.preventDefault(); const r = rows[active]; if (open && r && !busy) void pick(r.id) }
+    else if (e.key === 'Enter') {
+      e.preventDefault()
+      const r = rows[active]
+      if (open && r && !busy) void pick(r.id)
+      // Nothing matches: Enter opens "Add new" so a typed item is saved, never lost (owner, 2026-11-07).
+      else if (open && !r && q.trim() && !adding) setAdding({ unit: 'kg', category: '', price: '', groupId: groupFilter, newGroup: null })
+    }
     else if (e.key === 'Escape') { setOpen(false); setQ('') }
   }
 
@@ -131,24 +165,39 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
         className={`${inputCls} w-full truncate`} />
       <AnchoredMenu anchor={btn} open={open} onClose={closeMenu} align="start" minWidth={352} role="group" maxHeight={480} className="!bg-s-bg !p-2">
         <div>
+          {groupsByCategory.length > 0 && (
+            <select value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} aria-label="Group"
+              onMouseDown={(e) => e.stopPropagation()} className={`${inputCls} mb-2 w-full`}>
+              <option value="">All groups</option>
+              {groupsByCategory.map((c) => (
+                <optgroup key={c.value} label={c.label}>
+                  {c.groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </optgroup>
+              ))}
+              <option value="none">Not in a group</option>
+            </select>
+          )}
           <ul role="listbox" className="max-h-64 overflow-y-auto">
             {rows.map((r, i) => (
               <li key={r.id}>
                 <button type="button" disabled={busy} onMouseDown={(e) => e.preventDefault()} onMouseEnter={() => setActive(i)} onClick={() => void pick(r.id)}
                   className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-s-bg-soft disabled:opacity-50 ${i === active ? 'bg-s-bg-soft' : ''}`}>
-                  <span className="truncate text-s-text">{r.name} <span className="text-xs text-s-muted">({r.stockUnit}{r.price?.latestCents != null ? ` · PKR ${(r.price.latestCents / 100).toLocaleString('en-PK')}/${r.price.displayUnit}` : ''})</span></span>
+                  <span className="truncate text-s-text">{r.name} <span className="text-xs text-s-muted">({r.stockUnit}{r.price?.latestCents != null ? ` · PKR ${(r.price.latestCents / 100).toLocaleString('en-PK')}/${r.price.displayUnit}` : ''}){r.group ? ` · ${r.group.name}` : ''}</span></span>
                   <span className="shrink-0 text-[11px] text-s-muted">
                     {r.status === 'needs_review' ? 'needs review' : r.companyItemId ? 'in stock list' : 'not stocked yet'}
                   </span>
                 </button>
               </li>
             ))}
-            {!isFetching && rows.length === 0 && <li className="px-2 py-1.5 text-xs text-s-muted">No ingredient by that name yet.</li>}
+            {!isFetching && rows.length === 0 && <li className="px-2 py-1.5 text-xs text-s-muted">{q.trim() ? 'No ingredient by that name yet.' : 'Nothing in this group yet.'}</li>}
           </ul>
           {q.trim() && !exact && (
             <div className="mt-2 border-t border-s-border pt-2">
               {!adding ? (
-                <button type="button" onClick={() => setAdding({ unit: 'kg', category: '', price: '' })} className="text-xs font-semibold text-primary-ink hover:underline">
+                <button type="button" onClick={() => {
+                  const g = groups.find((x) => x.id === groupFilter)
+                  setAdding({ unit: 'kg', category: g?.category ?? '', price: '', groupId: g?.id ?? '', newGroup: null })
+                }} className="text-xs font-semibold text-primary-ink hover:underline">
                   Add new ingredient &ldquo;{q.trim()}&rdquo;
                 </button>
               ) : (
@@ -158,11 +207,37 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
                     <select value={adding.unit} onChange={(e) => setAdding({ ...adding, unit: e.target.value })} className={inputCls} aria-label="Stock unit">
                       {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
                     </select>
-                    <select value={adding.category} onChange={(e) => setAdding({ ...adding, category: e.target.value })} className={`${inputCls} flex-1`} aria-label="Category">
+                    <select value={adding.category} onChange={(e) => {
+                      const category = e.target.value
+                      const keep = groups.find((g) => g.id === adding.groupId)?.category === category
+                      setAdding({ ...adding, category, groupId: keep ? adding.groupId : '' })
+                    }} className={`${inputCls} flex-1`} aria-label="Category">
                       <option value="">Category…</option>
                       {INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                   </div>
+                  <select value={adding.newGroup !== null ? '__new' : adding.groupId} aria-label="Group"
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === '__new') { setAdding({ ...adding, groupId: '', newGroup: '' }); return }
+                      const g = groups.find((x) => x.id === v)
+                      setAdding({ ...adding, groupId: v, newGroup: null, category: g ? g.category : adding.category })
+                    }} className={`${inputCls} w-full`}>
+                    <option value="">Group (optional)…</option>
+                    {groupsByCategory.filter((c) => !adding.category || c.value === adding.category).map((c) => (
+                      <optgroup key={c.value} label={c.label}>
+                        {c.groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                      </optgroup>
+                    ))}
+                    <option value="__new">+ New group…</option>
+                  </select>
+                  {adding.newGroup !== null && (
+                    <div className="space-y-1">
+                      <input type="text" value={adding.newGroup} maxLength={60} placeholder="New group name, e.g. Sea food" aria-label="New group name"
+                        onChange={(e) => setAdding({ ...adding, newGroup: e.target.value })} className={`${inputCls} w-full`} />
+                      <p className="text-[11px] text-s-muted">{adding.category ? `Saved under ${categoryLabel(adding.category)} for everyone to use.` : 'Pick the category it sits under first.'}</p>
+                    </div>
+                  )}
                   <label className="flex items-center gap-2 text-xs text-s-muted">
                     <span className="shrink-0">Price PKR per {priceUnitOf(adding.unit)}</span>
                     <input type="text" inputMode="decimal" value={adding.price} placeholder="optional"
