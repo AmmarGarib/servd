@@ -241,6 +241,34 @@ describe('shift corrections', () => {
     expect(again.json().error.code).toBe('CORRECTION_PENDING')
   })
 
+  it('finance pulls a set back to edit, changes it and sends it again; a draft can be discarded; company B 404', async () => {
+    expect((await call()(financeB, 'POST', `/pos/shift-corrections/${setId}/pull-back`)).statusCode).toBe(404)
+    const pb = await call()(financeA, 'POST', `/pos/shift-corrections/${setId}/pull-back`)
+    expect(pb.statusCode, pb.body).toBe(200)
+    expect(pb.json().status).toBe('draft')
+    // Out of the CEO's reach while a draft; still the drawer's one open set.
+    expect((await call()(ceoA, 'POST', `/pos/shift-corrections/${setId}/approve`, {})).json().error.code).toBe('NOT_WAITING')
+    const second = await call()(financeA, 'POST', '/pos/shift-corrections', {
+      shiftId: drawer, reason: REASON, items: [{ orderId: bill2.id, kind: 'void_bill', reason: 'Duplicate bill of table 9' }],
+    })
+    expect(second.json().error.code).toBe('CORRECTION_PENDING')
+    // Edit = the same checks as raising; a short reason is refused, the draft stays.
+    const original = (await call()(financeA, 'GET', `/pos/shift-corrections/${setId}`)).json()
+    const items = original.items.map((i: { orderId: string; kind: string; moneyReturned: boolean; foodMade: boolean }) =>
+      ({ orderId: i.orderId, kind: i.kind, reason: 'Corrected after a second look', moneyReturned: i.moneyReturned, foodMade: i.foodMade }))
+    expect((await call()(financeA, 'PUT', `/pos/shift-corrections/${setId}`, { reason: 'short', items })).statusCode).toBe(400)
+    expect((await call()(financeB, 'PUT', `/pos/shift-corrections/${setId}`, { reason: REASON, items })).statusCode).toBe(404)
+    const sent = await call()(financeA, 'PUT', `/pos/shift-corrections/${setId}`, { reason: REASON, items })
+    expect(sent.statusCode, sent.body).toBe(200)
+    expect(sent.json().status).toBe('submitted')
+    expect(sent.json().items.map((i: { reason: string }) => i.reason)).toEqual(items.map(() => 'Corrected after a second look'))
+    // Only a draft is edited or discarded.
+    expect((await call()(financeA, 'PUT', `/pos/shift-corrections/${setId}`, { reason: REASON, items })).json().error.code).toBe('NOT_DRAFT')
+    expect((await call()(financeA, 'DELETE', `/pos/shift-corrections/${setId}`)).json().error.code).toBe('NOT_DRAFT')
+    const actions = (await prisma.auditLog.findMany({ where: { entity: 'ShiftCorrection', entityId: setId }, select: { action: true } })).map((a) => a.action)
+    expect(actions).toEqual(expect.arrayContaining(['shift_correction.pull_back', 'shift_correction.resubmit']))
+  })
+
   it('finance can never approve; a reject needs a reason', async () => {
     expect((await call()(financeA, 'POST', `/pos/shift-corrections/${setId}/approve`, {})).statusCode).toBe(403)
     expect((await call()(ceoA, 'POST', `/pos/shift-corrections/${setId}/reject`, { note: 'no' })).statusCode).toBe(400)
@@ -344,6 +372,26 @@ describe('shift corrections', () => {
     expect(await prisma.payment.count({ where: { orderId: bill.id, status: 'paid' } })).toBe(1)
     expect(await prisma.journalEntry.count({ where: { tenantId: A.tenantId } })).toBe(entries)
     expect(await prisma.trashEntry.count({ where: { entityType: 'order', entityId: bill.id } })).toBe(0)
+  })
+
+  it('a pulled-back draft can be discarded: nothing changes and the drawer takes a new set', async () => {
+    const d = await openDrawer(A, cashierA)
+    const bill = await paidBill(A, cashierA, d)
+    await closeDrawer(d, bill.totalCents)
+    const entries = await prisma.journalEntry.count({ where: { tenantId: A.tenantId } })
+    const body = { shiftId: d, reason: REASON, items: [{ orderId: bill.id, kind: 'void_bill', reason: 'Duplicate bill of table 3' }] }
+    const r = await call()(financeA, 'POST', '/pos/shift-corrections', body)
+    expect(r.statusCode, r.body).toBe(201)
+    expect((await call()(financeA, 'DELETE', `/pos/shift-corrections/${r.json().id}`)).json().error.code).toBe('NOT_DRAFT')
+    expect((await call()(financeA, 'POST', `/pos/shift-corrections/${r.json().id}/pull-back`)).statusCode).toBe(200)
+    expect((await call()(financeB, 'DELETE', `/pos/shift-corrections/${r.json().id}`)).statusCode).toBe(404)
+    expect((await call()(financeA, 'DELETE', `/pos/shift-corrections/${r.json().id}`)).statusCode).toBe(204)
+    expect(await prisma.shiftCorrection.count({ where: { id: r.json().id } })).toBe(0)
+    expect((await prisma.order.findUniqueOrThrow({ where: { id: bill.id } })).status).toBe('completed')
+    expect(await prisma.journalEntry.count({ where: { tenantId: A.tenantId } })).toBe(entries)
+    const again = await call()(financeA, 'POST', '/pos/shift-corrections', body)
+    expect(again.statusCode, again.body).toBe(201)
+    expect((await call()(ceoA, 'POST', `/pos/shift-corrections/${again.json().id}/reject`, { note: 'Not needed after all' })).statusCode).toBe(200)
   })
 
   it('a closed month is 409 BOOKS_CLOSED (company B; its own CEO reopens the month first)', async () => {

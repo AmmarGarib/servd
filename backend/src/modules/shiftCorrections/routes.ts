@@ -9,6 +9,9 @@
 //   GET  /:id              finance, CEO   the set with a preview of each fix
 //   POST /:id/approve      CEO            {note?} → applied | failed (the response says which)
 //   POST /:id/reject       CEO            {note ≥10} → rejected; nothing changes
+//   POST /:id/pull-back    finance, CEO   a set waiting for the CEO → draft (out of the CEO's inbox; owner 2026-11-07)
+//   PUT  /:id              finance, CEO   a draft: {reason, items[]} replaced and sent to the CEO again → submitted
+//   DELETE /:id            finance, CEO   a draft discarded (nothing was ever applied)
 //   POST /:id/retry        CEO            a failed set → applied | failed (the approve right; a set
 //                                         interrupted mid-apply is moved to failed by sweepStaleApplies)
 
@@ -25,7 +28,7 @@ import { approvalWaiting } from '../approvals/notify.js'
 import { TILL_TENDERS } from '../../lib/tenders.js'
 import {
   ITEM_KINDS, MAX_ITEMS, MIN_REASON, SHIFT_SELECT, applyCorrection, claimDecision, claimRetry, correctionView,
-  createCorrection, loadCorrection, shiftCandidates, type Actor,
+  createCorrection, discardDraft, loadCorrection, pullBackCorrection, resubmitDraft, shiftCandidates, type Actor,
 } from './service.js'
 
 /** Finance (the accounting module, enforced by the gate) and the CEO raise and read. */
@@ -49,7 +52,7 @@ const createSchema = z.object({
 })
 
 const listQuery = z.object({
-  status: z.enum(['submitted', 'approved', 'rejected', 'applied', 'failed']).optional(),
+  status: z.enum(['submitted', 'draft', 'approved', 'rejected', 'applied', 'failed']).optional(),
   shiftId: z.string().uuid().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 })
@@ -107,6 +110,37 @@ export async function shiftCorrectionRoutes(app: FastifyInstance): Promise<void>
     const id = z.string().uuid().parse(req.params.id)
     const c = await loadCorrection(prisma, id, await scopeTenantWhere(req, 'read'))
     return correctionView(c, { preview: true })
+  })
+
+  // Pull back / edit / discard (owner, 2026-11-07: "Add pull back for shift corrections too").
+  const draftEditSchema = z.object({ reason: createSchema.shape.reason, items: createSchema.shape.items })
+  async function ownSet(req: FastifyRequest, id: string) {
+    const found = await loadCorrection(prisma, id, await scopeTenantWhere(req, 'write'))
+    const shift = await shiftInScope(req, found.shiftId, 'write')
+    return { found, shift }
+  }
+
+  app.post<{ Params: { id: string } }>('/:id/pull-back', raisers, async (req) => {
+    const id = z.string().uuid().parse(req.params.id)
+    const { found, shift } = await ownSet(req, id)
+    await pullBackCorrection(found.id, shift, actorOf(req))
+    return correctionView(await loadCorrection(prisma, found.id, { tenantId: found.tenantId }), { preview: true })
+  })
+
+  app.put<{ Params: { id: string } }>('/:id', raisers, async (req) => {
+    const id = z.string().uuid().parse(req.params.id)
+    const body = draftEditSchema.parse(req.body ?? {})
+    const { found, shift } = await ownSet(req, id)
+    const updated = await resubmitDraft({ id: found.id, shift, reason: body.reason, items: body.items, actor: actorOf(req) })
+    approvalWaiting('shift_correction', updated.id, { round: `resubmit:${new Date().toISOString()}`, actorId: req.staffUser!.id })
+    return correctionView(await loadCorrection(prisma, found.id, { tenantId: found.tenantId }), { preview: true })
+  })
+
+  app.delete<{ Params: { id: string } }>('/:id', raisers, async (req, reply) => {
+    const id = z.string().uuid().parse(req.params.id)
+    const { found, shift } = await ownSet(req, id)
+    await discardDraft(found.id, shift, actorOf(req))
+    return reply.code(204).send()
   })
 
   /** The CEO's decision: APPROVAL_RIGHTS (CEO only, never handed over), then the claim, then the apply. */

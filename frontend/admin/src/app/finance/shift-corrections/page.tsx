@@ -15,6 +15,7 @@ import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 const FILTERS: Array<{ key: SetStatus | 'all'; label: string }> = [
   { key: 'all', label: 'All' },
   { key: 'submitted', label: 'Waiting for CEO' },
+  { key: 'draft', label: 'Pulled back' },
   { key: 'applied', label: 'Applied' },
   { key: 'rejected', label: 'Rejected' },
   { key: 'failed', label: 'Failed' },

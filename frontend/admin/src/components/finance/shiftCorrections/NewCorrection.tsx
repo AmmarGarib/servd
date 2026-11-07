@@ -7,7 +7,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { api } from '../../../lib/api'
 import { fmtPkr, todayPktIso } from '../../../lib/money'
-import { type CorrectionSet, type ShiftCandidates, MIN_REASON, KIND_LABEL, REISSUE_TENDERS, TENDER_LABEL, TENDER_REF_LABEL, errorText, fmtDateTime, fmtDay, tenderText } from './types'
+import { type CorrectionSet, type SetItem, type ShiftCandidates, MIN_REASON, KIND_LABEL, REISSUE_TENDERS, TENDER_LABEL, TENDER_REF_LABEL, errorText, fmtDateTime, fmtDay, tenderText } from './types'
 
 interface ShiftRow { shiftId: string; cashier: string; openedAt: string; closedAt: string | null; status: string; totalSalesCents: number; varianceCents: number | null }
 interface Summary { shifts: ShiftRow[] }
@@ -75,9 +75,22 @@ export function NewCorrection({ onCreated, onCancel }: { onCreated: (set: Correc
   )
 }
 
-function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () => void; onCreated: (set: CorrectionSet) => void }) {
-  const [picks, setPicks] = useState<Record<string, Pick>>({})
-  const [reason, setReason] = useState('')
+/** The set being edited after a pull back (owner, 2026-11-07): its reason and fixes prefill the builder. */
+export interface EditingSet { id: string; reason: string; items: SetItem[] }
+
+function picksOf(items: SetItem[]): Record<string, Pick> {
+  const out: Record<string, Pick> = {}
+  for (const i of items) {
+    out[i.orderId] = i.kind === 'void_reissue'
+      ? { action: 'reissue', reason: i.reason, moneyReturned: false, foodMade: false, newTender: i.newTender ?? '', tenderRef: i.tenderRef ?? '' }
+      : { action: 'void', reason: i.reason, moneyReturned: i.moneyReturned, foodMade: i.foodMade, newTender: '', tenderRef: '' }
+  }
+  return out
+}
+
+export function Builder({ shiftId, onBack, onCreated, editing }: { shiftId: string; onBack: () => void; onCreated: (set: CorrectionSet) => void; editing?: EditingSet }) {
+  const [picks, setPicks] = useState<Record<string, Pick>>(() => (editing ? picksOf(editing.items) : {}))
+  const [reason, setReason] = useState(editing?.reason ?? '')
   const [err, setErr] = useState<string | null>(null)
 
   const { data, isLoading, error } = useQuery({
@@ -85,7 +98,7 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
     queryFn: () => api.get<ShiftCandidates>(`/pos/shift-corrections/shift/${shiftId}`),
   })
 
-  const blocked = data?.booksClosed ?? (data?.pendingCorrectionId ? { code: 'CORRECTION_PENDING', message: 'This shift already has a correction waiting for the CEO. Add to it after it is decided.' } : null)
+  const blocked = data?.booksClosed ?? (data?.pendingCorrectionId && data.pendingCorrectionId !== editing?.id ? { code: 'CORRECTION_PENDING', message: 'This shift already has a correction waiting for the CEO. Add to it after it is decided.' } : null)
   const chosen = useMemo(() => (data?.orders ?? []).filter((o) => picks[o.orderId]), [data, picks])
   const pickOk = (o: ShiftCandidates['orders'][number]) => {
     const p = picks[o.orderId]!
@@ -106,8 +119,9 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
   const patch = (id: string, v: Partial<Pick>) => setPicks((p) => ({ ...p, [id]: { ...p[id]!, ...v } }))
 
   const send = useMutation({
-    mutationFn: () => api.post<CorrectionSet>('/pos/shift-corrections', {
-      shiftId,
+    mutationFn: () => (editing
+      ? (body: object) => api.put<CorrectionSet>(`/pos/shift-corrections/${editing.id}`, body)
+      : (body: object) => api.post<CorrectionSet>('/pos/shift-corrections', { shiftId, ...body }))({
       reason: reason.trim(),
       items: chosen.map((o) => {
         const p = picks[o.orderId]!
@@ -139,7 +153,7 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
           <p className="text-sm font-semibold text-s-text">{sh.cashierName ?? 'Cashier'}{sh.locationName ? ` · ${sh.locationName}` : ''}</p>
           <p className="text-xs text-s-muted">Business day {fmtDay(sh.businessDay)} · opened {fmtDateTime(sh.openedAt)} · closed {fmtDateTime(sh.closedAt)}</p>
         </div>
-        <Button variant="secondary" type="button"  onClick={onBack}>Pick another shift</Button>
+        <Button variant="secondary" type="button"  onClick={onBack}>{editing ? 'Back' : 'Pick another shift'}</Button>
       </div>
 
       {blocked && <div role="alert" className="rounded-lg border border-s-border p-3 text-sm text-s-red">{blocked.message}</div>}
@@ -234,7 +248,7 @@ function Builder({ shiftId, onBack, onCreated }: { shiftId: string; onBack: () =
       {err && <p role="alert" className="text-sm text-s-red">{err}</p>}
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button"  disabled={!ready || send.isPending} onClick={() => { setErr(null); send.mutate() }}>
-          {send.isPending ? 'Sending…' : `Send ${chosen.length || ''} ${chosen.length === 1 ? 'fix' : 'fixes'} to the CEO`}
+          {send.isPending ? 'Sending…' : `${editing ? 'Send again: ' : 'Send '}${chosen.length || ''} ${chosen.length === 1 ? 'fix' : 'fixes'} to the CEO`}
         </Button>
         <span className="text-xs text-s-muted">Nothing changes until the CEO approves.</span>
       </div>

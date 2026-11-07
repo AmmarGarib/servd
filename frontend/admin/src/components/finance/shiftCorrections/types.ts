@@ -2,10 +2,11 @@ import { fmtPkr } from '../../../lib/money'
 // Shapes of /pos/shift-corrections (backend/src/modules/shiftCorrections/service.ts).
 export const MIN_REASON = 10
 
-export type SetStatus = 'submitted' | 'approved' | 'rejected' | 'applied' | 'failed'
+export type SetStatus = 'submitted' | 'draft' | 'approved' | 'rejected' | 'applied' | 'failed'
 
 export const STATUS_LABEL: Record<SetStatus, string> = {
   submitted: 'Waiting for CEO',
+  draft: 'Pulled back to edit',
   approved: 'Applying',
   applied: 'Applied',
   rejected: 'Rejected',
@@ -13,6 +14,7 @@ export const STATUS_LABEL: Record<SetStatus, string> = {
 }
 export const STATUS_BADGE: Record<SetStatus, string> = {
   submitted: 's-badge-amber',
+  draft: 's-badge-purple',
   approved: 's-badge-blue',
   applied: 's-badge-green',
   rejected: 's-badge-muted',

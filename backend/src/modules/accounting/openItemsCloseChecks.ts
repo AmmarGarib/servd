@@ -79,7 +79,7 @@ const shiftCorrectionsOpenCheck: CloseCheck = {
   overridable: true,
   async run(ctx) {
     const count = await ctx.db.shiftCorrection.count({
-      where: { tenantId: ctx.tenantId, status: { in: ['submitted', 'approved', 'failed'] }, shift: { openedAt: { lte: ctx.newLock } } },
+      where: { tenantId: ctx.tenantId, status: { in: ['submitted', 'draft', 'approved', 'failed'] }, shift: { openedAt: { lte: ctx.newLock } } },
     })
     if (count === 0) return null
     return {

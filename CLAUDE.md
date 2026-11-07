@@ -480,7 +480,10 @@ module id must be placed in a workspace in the same change.
   submitted → draft (`/reconciliation/brs/:id`); cash voucher waiting for the CEO → `returned` (payee voucher or one finance
   raised; Resubmit sends it to the CEO again) or `submitted` (someone else's request; finance approves again), never a
   PO's voucher; payroll run and intern stipend run `finance_checked` → `finance_review`; GRN `ceo_review` →
-  `finance_review`. Audited `pull_back`. Journal changes, fixed-asset requests and write-offs already have withdraw /
+  `finance_review`; shift correction `submitted` → `draft` (owner, 2026-11-07: "Add pull back for shift corrections too";
+  enum value + the one-open index counts a draft; `PUT /pos/shift-corrections/:id {reason, items}` edits a draft and sends
+  it again through the same checks as raising, `DELETE /:id` discards a draft; audits `shift_correction.pull_back |
+  resubmit | discard`; the `shift_corrections_open` close check counts drafts). Audited `pull_back`. Journal changes, fixed-asset requests and write-offs already have withdraw /
   cancel. A new finance → CEO step adds a pull-back in the same change.
 - **Bulk approve (owner, 2026-10-22: "It should go for approval in bulk, not
   individually").** The inbox has a tick per item, "Select all N" per type and

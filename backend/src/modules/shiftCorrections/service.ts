@@ -357,8 +357,12 @@ export async function createCorrection(input: {
   const created = await prisma.$transaction(async (tx) => {
     // One open set per shift (also the partial unique shift_corrections_one_open).
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`shift-correction:${shift.id}`}))`
-    const open = await tx.shiftCorrection.findFirst({ where: { shiftId: shift.id, status: 'submitted' }, select: { id: true } })
-    if (open) throw new AppError('CORRECTION_PENDING', 'This drawer already has a correction waiting for the CEO — add to it after it is decided', 409, { correctionId: open.id })
+    const open = await tx.shiftCorrection.findFirst({ where: { shiftId: shift.id, status: { in: ['submitted', 'draft'] } }, select: { id: true, status: true } })
+    if (open) {
+      throw new AppError('CORRECTION_PENDING', open.status === 'draft'
+        ? 'This drawer has a correction pulled back to edit — change and send that one'
+        : 'This drawer already has a correction waiting for the CEO — add to it after it is decided', 409, { correctionId: open.id })
+    }
     const now = Date.now()
     return tx.shiftCorrection.create({
       data: {
@@ -383,6 +387,68 @@ export async function createCorrection(input: {
     metadata: { actorRole: actor.role, reason, items: input.items.map((i) => ({ orderId: i.orderId, kind: i.kind, moneyReturned: !!i.moneyReturned, foodMade: !!i.foodMade })) },
   })
   return created
+}
+
+// ─── Pull back / edit / discard (owner, 2026-11-07) ──────────────────────────
+//
+// Finance takes a set waiting for the CEO back (submitted → draft): it leaves the CEO's inbox at once. A draft is
+// changed and sent again in one step (resubmitDraft — the same checks as a new set, the items replaced) or
+// discarded (deleted; nothing was ever applied). Only finance (the raisers) of the shift's company; the same
+// separation of duties as raising (never a drawer the caller ran or closed). The open-set rule counts a draft.
+
+export async function pullBackCorrection(id: string, shift: ShiftRow, actor: Actor): Promise<void> {
+  await assertNotOwnDrawer(shift, actor)
+  const n = await prisma.shiftCorrection.updateMany({ where: { id, status: 'submitted' }, data: { status: 'draft' } })
+  if (n.count === 0) throw new AppError('NOT_WAITING', 'Only a correction waiting for the CEO can be pulled back — reload it', 409)
+  await audit({
+    category: 'accounting', action: 'shift_correction.pull_back', entity: 'ShiftCorrection', entityId: id,
+    userId: actor.id, userEmail: actor.email ?? null, tenantId: shiftFacts(shift).tenantId,
+    before: { status: 'submitted' }, after: { status: 'draft' }, metadata: { actorRole: actor.role, shiftId: shift.id },
+  })
+}
+
+export async function resubmitDraft(input: { id: string; shift: ShiftRow; reason: string; items: ItemInput[]; actor: Actor }): Promise<ShiftCorrection> {
+  const { id, shift, actor } = input
+  if (shift.status !== 'closed') throw new AppError('SHIFT_NOT_CLOSED', 'Only a closed drawer is corrected', 409)
+  const { tenantId, businessDate } = shiftFacts(shift)
+  await assertNotOwnDrawer(shift, actor)
+  const reason = input.reason.trim()
+  assertItemsShape(input.items, reason)
+  await assertBooksOpen(prisma, tenantId, shift.id, businessDate)
+  for (const i of input.items) await checkItem(prisma, shift, tenantId, i)
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`shift-correction:${shift.id}`}))`
+    const n = await tx.shiftCorrection.updateMany({ where: { id, status: 'draft' }, data: { status: 'submitted', reason, requestedById: actor.id } })
+    if (n.count === 0) throw new AppError('NOT_DRAFT', 'Only a correction pulled back to edit can be changed — reload it', 409)
+    await tx.shiftCorrectionItem.deleteMany({ where: { correctionId: id } })
+    const now = Date.now()
+    await tx.shiftCorrectionItem.createMany({
+      data: input.items.map((i, n2) => ({
+        correctionId: id, createdAt: new Date(now + n2),
+        tenantId, kind: i.kind, orderId: i.orderId, reason: i.reason.trim(),
+        moneyReturned: !!i.moneyReturned, foodMade: !!i.foodMade, newTender: i.newTender ?? null,
+        tenderRef: i.kind === 'void_reissue' && i.newTender !== 'cash' ? (i.tenderRef?.trim() || null) : null,
+      })),
+    })
+    return tx.shiftCorrection.findUniqueOrThrow({ where: { id } })
+  }, { maxWait: 10_000, timeout: 15_000 })
+  await audit({
+    category: 'accounting', action: 'shift_correction.resubmit', entity: 'ShiftCorrection', entityId: id,
+    userId: actor.id, userEmail: actor.email ?? null, tenantId,
+    before: { status: 'draft' }, after: { status: 'submitted', items: input.items.length },
+    metadata: { actorRole: actor.role, reason, items: input.items.map((i) => ({ orderId: i.orderId, kind: i.kind, moneyReturned: !!i.moneyReturned, foodMade: !!i.foodMade })) },
+  })
+  return updated
+}
+
+export async function discardDraft(id: string, shift: ShiftRow, actor: Actor): Promise<void> {
+  const n = await prisma.shiftCorrection.deleteMany({ where: { id, status: 'draft' } })
+  if (n.count === 0) throw new AppError('NOT_DRAFT', 'Only a correction pulled back to edit can be discarded — reload it', 409)
+  await audit({
+    category: 'accounting', action: 'shift_correction.discard', entity: 'ShiftCorrection', entityId: id,
+    userId: actor.id, userEmail: actor.email ?? null, tenantId: shiftFacts(shift).tenantId,
+    before: { status: 'draft' }, after: { deleted: true }, metadata: { actorRole: actor.role, shiftId: shift.id },
+  })
 }
 
 // ─── Read ────────────────────────────────────────────────────────────────────
@@ -559,7 +625,7 @@ export async function shiftCandidates(shift: ShiftRow) {
     orderBy: { placedAt: 'asc' },
     take: 500,
   })
-  const pending = await prisma.shiftCorrection.findFirst({ where: { shiftId: shift.id, status: 'submitted' }, select: { id: true } })
+  const pending = await prisma.shiftCorrection.findFirst({ where: { shiftId: shift.id, status: { in: ['submitted', 'draft'] } }, select: { id: true } })
   let booksClosed: { code: string; message: string } | null = null
   try { await assertBooksOpen(prisma, tenantId, shift.id, shiftBusinessDate(shift)!) } catch (e) {
     if (e instanceof AppError) booksClosed = { code: e.code, message: e.message }

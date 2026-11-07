@@ -149,6 +149,8 @@ enum ShiftStatus {
 // Shift corrections (owner, 2026-10-21): finance asks, the CEO approves the SET once.
 enum ShiftCorrectionStatus {
   submitted
+  /// Finance pulled it back from the CEO to change it (owner, 2026-11-07); resubmitted or discarded.
+  draft
   approved
   rejected
   applied

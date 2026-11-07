@@ -1,6 +1,7 @@
 'use client'
 // One set of fixes: what it asks for, what approving will do, and the CEO's buttons.
 import { Button } from '@/components/finance/ui'
+import { Builder } from './NewCorrection'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api } from '../../../lib/api'
@@ -19,6 +20,27 @@ export function CorrectionDetail({ id, onBack }: { id: string; onBack: () => voi
     queryKey: ['shift-corrections', 'set', id],
     queryFn: () => api.get<CorrectionSet>(`/pos/shift-corrections/${id}`),
   })
+
+  const [editing, setEditing] = useState(false)
+  // Pull back (owner, 2026-11-07): finance takes a set waiting for the CEO back to change it, or discards a draft.
+  const draftAct = useMutation({
+    mutationFn: (what: 'pull-back' | 'discard') => (what === 'discard'
+      ? api.delete(`/pos/shift-corrections/${id}`)
+      : api.post<CorrectionSet>(`/pos/shift-corrections/${id}/pull-back`, {})),
+    onSuccess: (_r, what) => {
+      void qc.invalidateQueries({ queryKey: ['shift-corrections'] })
+      void qc.invalidateQueries({ queryKey: ['approvals'] })
+      if (what === 'discard') onBack()
+      else setMsg({ ok: true, text: 'Pulled back from the CEO. Edit it and send it again, or discard it.' })
+    },
+    onError: (e: Error) => setMsg({ ok: false, text: errorText(e) || 'Could not complete that' }),
+  })
+  async function pullBack() {
+    if (await confirm({ title: 'Pull back from the CEO?', body: 'It leaves the CEO\'s approvals so you can change it. Nothing on the drawer changes.', confirmLabel: 'Pull back' })) { setMsg(null); draftAct.mutate('pull-back') }
+  }
+  async function discard() {
+    if (await confirm({ title: 'Discard this correction?', body: 'Nothing was applied. You can raise a new one for this drawer.', danger: true, confirmLabel: 'Discard' })) { setMsg(null); draftAct.mutate('discard') }
+  }
 
   const decide = useMutation({
     mutationFn: (v: { path: 'approve' | 'reject' | 'retry'; body?: { note: string } }) => api.post<CorrectionSet>(`/pos/shift-corrections/${id}/${v.path}`, v.body ?? {}),
@@ -56,6 +78,13 @@ export function CorrectionDetail({ id, onBack }: { id: string; onBack: () => voi
   if (isLoading) return <p className="text-xs text-s-muted">Loading…</p>
   if (error) return <p role="alert" className="text-xs text-s-red">{(error as Error).message}</p>
   if (!c) return null
+
+  if (editing && c.status === 'draft') {
+    return (
+      <Builder shiftId={c.shiftId} editing={{ id: c.id, reason: c.reason, items: c.items }} onBack={() => setEditing(false)}
+        onCreated={() => { setEditing(false); void qc.invalidateQueries({ queryKey: ['shift-corrections'] }); void qc.invalidateQueries({ queryKey: ['approvals'] }); setMsg({ ok: true, text: 'Sent to the CEO again.' }) }} />
+    )
+  }
 
   const before = c.result?.drawer
   const drawer = c.drawer
@@ -140,7 +169,18 @@ export function CorrectionDetail({ id, onBack }: { id: string; onBack: () => voi
       {isCeo && c.status === 'failed' && (
         <Button type="button"  disabled={decide.isPending} onClick={retry}>{decide.isPending ? 'Working…' : 'Retry'}</Button>
       )}
-      {!isCeo && c.status === 'submitted' && <p className="text-xs text-s-muted">Only the CEO can approve or reject this.</p>}
+      {!isCeo && c.status === 'submitted' && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="secondary" type="button" disabled={draftAct.isPending} onClick={pullBack}>{draftAct.isPending ? 'Working…' : 'Pull back to edit'}</Button>
+          <span className="text-xs text-s-muted">Only the CEO can approve or reject this.</span>
+        </div>
+      )}
+      {c.status === 'draft' && (
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" disabled={draftAct.isPending} onClick={() => { setMsg(null); setEditing(true) }}>Edit and send again</Button>
+          <Button variant="danger" type="button" disabled={draftAct.isPending} onClick={discard}>Discard</Button>
+        </div>
+      )}
     </div>
   )
 }
