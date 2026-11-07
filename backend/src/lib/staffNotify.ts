@@ -71,6 +71,8 @@ export type NotificationKind =
   | 'bank_reconciliation.reopened' // finance reopened an approved bank reconciliation — the company's CEO(s) (owner, 2026-11-05)
   | 'hr.performance'          // a performance evaluation was assigned / submitted / returned / finalized / reopened (owner, 2026-11-06)
   | 'marketing.weekly'        // Monday: last week's published vs slipped per board — marketing leads + the CEO (owner, 2026-11-03)
+  | 'cost_split.posted'       // finance (or the CEO) split a booked cost between companies — each company's CEO(s) (owner, 2026-11-07)
+  | 'cost_split.reversed'     // a cost split was reversed — each company's CEO(s)
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical'
 

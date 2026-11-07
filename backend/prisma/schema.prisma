@@ -4561,6 +4561,57 @@ model IntercompanyTransfer {
   @@map("intercompany_transfers")
 }
 
+// Cost splits (owner, 2026-11-07: "Build a split option to split cost/payroll/expenses into FLIPD and GS Foods or any
+// other company … in % and in amount, an expense already booked, Payroll already processed should also have option to
+// split"). A SHARE of an already-booked expense entry (or a payroll run's live accrual) moved to other companies through
+// the EXISTING inter-company engine: one IntercompanyTransfer (kind charge, source 'cost_split') per receiving company.
+// No second ledger. tenantId = the SOURCE company; a share's tenantId = the RECEIVING company. Contract: header of
+// src/modules/intercompany/costSplit.ts. Migration 20261107140000_cost_splits (one posted split per source entry —
+// partial unique index in SQL, never re-declared here).
+model CostSplit {
+  id             String    @id @default(uuid())
+  tenantId       String // the source company (whose entry is split)
+  sourceKind     String // journal_entry | payroll_run
+  sourceEntryId  String // the journal entry split (a payroll run: its live accrual)
+  payrollRunId   String?
+  mode           String // percent | amount
+  baseCents      BigInt // Σ of the expense debit lines split
+  splitCents     BigInt // Σ of the shares (the source keeps baseCents − splitCents)
+  lines          Json // [{lineId, accountCode, accountName, conceptId, amountCents}] — the split base
+  entryDate      DateTime
+  memo           String
+  status         String    @default("posted") // posted | reversed
+  createdById    String
+  reversedById   String?
+  reversedAt     DateTime?
+  reversalReason String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  shares CostSplitShare[]
+
+  @@index([tenantId, status])
+  @@index([sourceEntryId])
+  @@index([payrollRunId])
+  @@map("cost_splits")
+}
+
+model CostSplitShare {
+  id                     String  @id @default(uuid())
+  splitId                String
+  tenantId               String // the receiving company
+  percentBp              Int? // basis points (percent mode)
+  amountCents            BigInt // the final amount moved
+  lines                  Json // [{accountCode, conceptId, amountCents}] — the source lines this share takes
+  intercompanyTransferId String  @unique
+
+  split CostSplit @relation(fields: [splitId], references: [id], onDelete: Cascade)
+
+  @@unique([splitId, tenantId])
+  @@index([tenantId])
+  @@map("cost_split_shares")
+}
+
 // ─── RiderRating ──────────────────────────────────────────────────────────────
 //
 // One rating per delivered order. Staff rates on behalf of the customer at

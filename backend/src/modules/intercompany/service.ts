@@ -64,7 +64,9 @@ export const TRANSFER_KINDS = ['charge', 'settlement', 'netting'] as const
 export type TransferKind = (typeof TRANSFER_KINDS)[number]
 // 'asset_transfer': a fixed asset one servd company gives another at book value (owner, 2026-10-21;
 // fixedAssets/events.ts applyRelatedCompanyTransfer) — reversed only from the register, never here.
-export const SYSTEM_SOURCES = ['fleet', 'cod', 'ho_recharge', 'asset_transfer'] as const
+// 'cost_split': a share of an already-booked expense / payroll moved to another company (owner, 2026-11-07;
+// costSplit.ts) — reversed only from its split (POST /accounting/intercompany/splits/:id/reverse), never here.
+export const SYSTEM_SOURCES = ['fleet', 'cod', 'ho_recharge', 'asset_transfer', 'cost_split'] as const
 export type SystemSource = (typeof SYSTEM_SOURCES)[number]
 /** How a settlement was paid (receipt methods without card — lib/bankAccounts.ts RECEIPT_METHODS). */
 export const SETTLEMENT_METHODS = ['bank_transfer', 'bank_deposit', 'cheque', 'cash'] as const
@@ -372,7 +374,7 @@ async function assertWithinBalance(
 // ─── Posting both books ──────────────────────────────────────────────────────
 
 /** Both books' lines of a transfer (the codes are each company's own). */
-async function linesOf(tx: Tx, t: TransferRow, names: Map<string, string>): Promise<{ debtor: JournalLineInput[]; creditor: JournalLineInput[] }> {
+async function linesOf(tx: Tx, t: TransferRow, names: Map<string, string>, chargeLines?: ChargeLine[]): Promise<{ debtor: JournalLineInput[]; creditor: JournalLineInput[] }> {
   const D = t.tenantId
   const C = t.counterpartyTenantId
   const amount = toCents(t.amountCents)
@@ -380,6 +382,30 @@ async function linesOf(tx: Tx, t: TransferRow, names: Map<string, string>): Prom
   const dName = names.get(D) ?? 'debtor'
   const cName = names.get(C) ?? 'creditor'
   const memo = t.memo.slice(0, 200)
+
+  if (t.kind === 'charge' && chargeLines && chargeLines.length > 0) {
+    // Several accounts (a cost split): the debtor debits each debtorAccountCode (no brand — the brands are the
+    // creditor's), the creditor credits each creditorAccountCode under its own brand. Grouped per account (and brand).
+    const dr = new Map<string, number>()
+    const cr = new Map<string, { code: string; conceptId: string | null; cents: number }>()
+    for (const l of chargeLines) {
+      dr.set(l.debtorAccountCode, (dr.get(l.debtorAccountCode) ?? 0) + l.amountCents)
+      const k = `${l.creditorAccountCode}|${l.creditorConceptId ?? ''}`
+      const cur = cr.get(k) ?? { code: l.creditorAccountCode, conceptId: l.creditorConceptId ?? null, cents: 0 }
+      cur.cents += l.amountCents
+      cr.set(k, cur)
+    }
+    return {
+      debtor: [
+        ...[...dr.entries()].map(([code, cents]) => ({ accountCode: code, type: 'debit' as const, amountCents: cents, memo: `${memo} (charged by ${cName})` })),
+        { accountCode: pair.aDueTo, type: 'credit', amountCents: amount, memo: `Due to ${cName}: ${memo}` },
+      ],
+      creditor: [
+        { accountCode: pair.bDueFrom, type: 'debit', amountCents: amount, memo: `Due from ${dName}: ${memo}` },
+        ...[...cr.values()].map((c) => ({ accountCode: c.code, type: 'credit' as const, amountCents: c.cents, memo: `${memo} (recharged to ${dName})`, conceptId: c.conceptId })),
+      ],
+    }
+  }
 
   if (t.kind === 'charge') {
     if (!t.debtorAccountCode || !t.creditorAccountCode) throw new AppError('ACCOUNT_INVALID', 'A charge names an account in each company', 422)
@@ -434,11 +460,11 @@ async function linesOf(tx: Tx, t: TransferRow, names: Map<string, string>): Prom
  * rolls back both.
  */
 async function postBothBooks(
-  tx: Tx, t: TransferRow, opts: { entryDate: Date; memoNote?: string; postedBy: string },
+  tx: Tx, t: TransferRow, opts: { entryDate: Date; memoNote?: string; postedBy: string; chargeLines?: ChargeLine[] },
 ): Promise<{ debtorEntryId: string; creditorEntryId: string }> {
   const names = await namesOf(tx, [t.tenantId, t.counterpartyTenantId])
   await assertOpenInBoth(tx, [t.tenantId, t.counterpartyTenantId], opts.entryDate)
-  const lines = await linesOf(tx, t, names)
+  const lines = await linesOf(tx, t, names, opts.chargeLines)
   const what = t.kind === 'charge' ? 'charge' : t.kind === 'settlement' ? 'settlement' : 'netting'
   const how = t.kind === 'settlement' ? ` (${receiptText(t.method, t.bankReference)})` : ''
   const description = `Inter-company ${what}: ${names.get(t.tenantId) ?? ''} → ${names.get(t.counterpartyTenantId) ?? ''}${how} — ${t.memo}`.slice(0, 480)
@@ -642,7 +668,7 @@ function assertActorOfBoth(actor: TransferActor, t: { tenantId: string; counterp
  * was already reversed.
  */
 async function reverseInTx(
-  tx: Tx, id: string, reason: string, opts: { actorId: string; natural?: Date; idempotent: boolean },
+  tx: Tx, id: string, reason: string, opts: { actorId: string; natural?: Date; idempotent: boolean; strictDate?: boolean },
 ): Promise<boolean> {
   const t = await tx.intercompanyTransfer.findUnique({ where: { id } })
   if (!t) throw new AppError('NOT_FOUND', 'Transfer not found', 404)
@@ -650,6 +676,8 @@ async function reverseInTx(
   const fresh = await tx.intercompanyTransfer.findUniqueOrThrow({ where: { id } })
   if (fresh.status === 'reversed' && opts.idempotent) return false
   if (fresh.status !== 'posted') throw new AppError('NOT_POSTED', `This transfer is ${fresh.status}, not posted — nothing to reverse`, 409)
+  // strictDate: the reversal is dated exactly `natural`, refused (422 PERIOD_LOCKED) when either book is closed then.
+  if (opts.strictDate) await assertOpenInBoth(tx, [t.tenantId, t.counterpartyTenantId], opts.natural ?? new Date())
   const place = await commonOpenPlacement(tx, [t.tenantId, t.counterpartyTenantId], opts.natural ?? new Date(), 'the reversal')
   if ('lockedThroughToday' in place) {
     const names = await namesOf(tx, [place.tenantId])
@@ -680,6 +708,9 @@ export async function reverseTransfer(actor: TransferActor, id: string, reason: 
   }
   if (t.source === 'ho_recharge') {
     throw new AppError('REVERSE_FROM_SOURCE', 'A head-office recharge is reversed from its run — reverse the recharge run instead (Inter-company → Head office)', 409)
+  }
+  if (t.source === 'cost_split') {
+    throw new AppError('REVERSE_FROM_SOURCE', 'A cost split is reversed from the split itself (Inter-company → Cost splits → Reverse), which undoes every company\'s share together', 409)
   }
   if (t.source === 'asset_transfer') {
     throw new AppError('REVERSE_FROM_SOURCE', 'A fixed asset given to another servd company is not undone here — transfer it back from the receiving company\'s register (Add existing asset → Another servd company)', 409)
@@ -713,6 +744,22 @@ export interface SystemTransferInput {
   period?: string | null
   /** Late-posting note (withLateNote) when entryDate is not the natural date. */
   memoNote?: string
+  /**
+   * Several accounts instead of the single debtor / creditor code (a cost split, costSplit.ts): Σ amountCents must
+   * equal amountCents; each debtor code must be postable in the debtor's chart, each creditor code in the creditor's,
+   * and a creditorConceptId must be a brand of the CREDITOR. debtorAccountCode / creditorAccountCode are then stored
+   * on the row for display only (the first line's). conceptSplit must be empty. Existing callers pass nothing.
+   */
+  chargeLines?: ChargeLine[]
+}
+
+/** One account pair of a multi-account system charge (postSystemTransferTx chargeLines). */
+export interface ChargeLine {
+  debtorAccountCode: string
+  creditorAccountCode: string
+  amountCents: number
+  /** A brand of the CREDITOR company on its credit line (the debtor's line carries none). */
+  creditorConceptId?: string | null
 }
 
 /**
@@ -748,6 +795,21 @@ export async function postSystemTransferTx(
   const names = await namesOf(serviceTx, [D, C])
   await assertPostableAccount(serviceTx, D, a.debtorAccountCode, names.get(D) ?? 'the debtor', 'debited')
   await assertPostableAccount(serviceTx, C, a.creditorAccountCode, names.get(C) ?? 'the creditor', 'credited')
+  if (a.chargeLines && a.chargeLines.length > 0) {
+    if (a.conceptSplit && a.conceptSplit.length > 0) throw new AppError('SPLIT_INVALID', 'A multi-account charge carries its brands on its lines, not a brand split', 500)
+    let total = 0
+    for (const l of a.chargeLines) {
+      if (!Number.isInteger(l.amountCents) || l.amountCents <= 0) throw new AppError('AMOUNT_INVALID', 'Each charge line must be a positive whole number of paisa', 422)
+      total += l.amountCents
+    }
+    if (total !== a.amountCents) throw new AppError('SPLIT_MISMATCH', `The charge lines add up to ${total} paisa, not the transfer's ${a.amountCents}`, 422)
+    for (const code of new Set(a.chargeLines.map((l) => l.debtorAccountCode))) await assertPostableAccount(serviceTx, D, code, names.get(D) ?? 'the debtor', 'debited')
+    for (const code of new Set(a.chargeLines.map((l) => l.creditorAccountCode))) await assertPostableAccount(serviceTx, C, code, names.get(C) ?? 'the creditor', 'credited')
+    const brands = Array.from(new Set(a.chargeLines.map((l) => l.creditorConceptId).filter((x): x is string => !!x)))
+    if (brands.length > 0 && await serviceTx.concept.count({ where: { id: { in: brands }, tenantId: C } }) !== brands.length) {
+      throw new AppError('CONCEPT_NOT_IN_CREDITOR', 'Every brand on the credit lines must belong to the company credited', 422)
+    }
+  }
   const split = await assertConceptSplit(serviceTx, D, a.conceptSplit, a.amountCents)
   const now = new Date()
   const row = await serviceTx.intercompanyTransfer.create({
@@ -760,7 +822,7 @@ export async function postSystemTransferTx(
       preparedById: a.preparedById, decidedById: a.preparedById, decidedAt: now,
     },
   })
-  const posted = await postBothBooks(serviceTx, row, { entryDate: a.entryDate, memoNote: a.memoNote, postedBy: a.preparedById })
+  const posted = await postBothBooks(serviceTx, row, { entryDate: a.entryDate, memoNote: a.memoNote, postedBy: a.preparedById, chargeLines: a.chargeLines })
   return { transferId: row.id, ...posted, alreadyPosted: false }
 }
 
@@ -770,8 +832,12 @@ export async function postSystemTransferTx(
  * In the given serviceClient `tx`, else its own transaction. Idempotent: an
  * already-reversed transfer is left alone. Frees its sourceRef.
  */
-export async function reverseSystemTransfer(transferId: string, reason: string, o: { entryDate?: Date; tx?: Tx } = {}): Promise<void> {
-  const run = (tx: Tx) => reverseInTx(tx, transferId, reason, { actorId: 'system', natural: o.entryDate, idempotent: true })
+export async function reverseSystemTransfer(
+  transferId: string, reason: string, o: { entryDate?: Date; tx?: Tx; actorId?: string; strictDate?: boolean } = {},
+): Promise<void> {
+  // actorId: the person reversing (closed / reopened books apply to them — closedBooks.ts); strictDate: dated
+  // exactly entryDate, refused (422 PERIOD_LOCKED) when a book is closed then — never moved to the first open day.
+  const run = (tx: Tx) => reverseInTx(tx, transferId, reason, { actorId: o.actorId ?? 'system', natural: o.entryDate, idempotent: true, strictDate: o.strictDate })
   if (o.tx) { await run(o.tx); return }
   await serviceClient.$transaction(run, TX_OPTS)
 }
@@ -887,7 +953,7 @@ export async function presentTransfers(rows: TransferRow[], viewer: TransferActo
       createdAt: t.createdAt.toISOString(),
       memberOfBoth: both,
       canApprove: isCeo && both && t.status === 'submitted',
-      canReverse: isCeo && both && t.status === 'posted' && t.source !== 'cod' && t.source !== 'ho_recharge' && t.source !== 'asset_transfer',
+      canReverse: isCeo && both && t.status === 'posted' && t.source !== 'cod' && t.source !== 'ho_recharge' && t.source !== 'asset_transfer' && t.source !== 'cost_split',
     }
   })
 }

@@ -1730,6 +1730,30 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   run's transaction). Closed books stay the CEO's through the ledger. Audited with
   `actorRole`. Tests: `tests/allocationsFinance.test.ts`.
 
+- **Cost splits between companies (owner, 2026-11-07: "Build a split option to split cost/payroll/expenses into
+  FLIPD and GS Foods or any other company … in % and in amount, an expense already booked, Payroll already processed
+  should also have option to split"; answers: EXTEND the inter-company engine, finance posts directly, the CEO is told).**
+  Contract: header of `modules/intercompany/costSplit.ts`; routes under `/accounting/intercompany/splits` (`GET /`,
+  `GET /preview?sourceEntryId|payrollRunId`, `GET /:id`, `POST /`, `POST /:id/reverse {reason ≥10}`). Source = a LIVE
+  journal entry (not reversed / a reversal / an `ic.*` entry — 422 `SOURCE_REVERSED` / `SOURCE_NOT_SPLITTABLE`) or a
+  payroll run approved | locked through `liveRunAccrual` (422 `PAYROLL_NOT_APPROVED` / `PAYROLL_NOT_BOOKED`); unseen
+  404. Base = its DEBIT lines on ordinary expense accounts (type `expense`, not controlled, not 6200–6249 / 6990–6999),
+  optionally narrowed by `lines` (422 `LINE_NOT_SPLITTABLE`) — payables, tax and money lines (2020, 2042–2044, banks)
+  stay with the payer. Shares `{tenantId, percent}` (2 dp, Σ ≤ 100 — 422 `SPLIT_OVER_100`, rounding `splitByBps`) or
+  `{tenantId, amountCents}` (Σ ≤ base — 422 `SPLIT_OVER_BASE`); trading companies only (head office 422
+  `HEAD_OFFICE_NOT_SPLIT`), never the source (422 `SAME_COMPANY`); the source keeps the rest. Each share = ONE
+  `IntercompanyTransfer` charge, source `cost_split`, sourceRef `cost_split:<splitId>:<X>`, through
+  `postSystemTransferTx` with `chargeLines` (receiver Dr the same expense codes / Cr Due to; source Dr Due from / Cr each
+  expense line under its brand); a code missing in the receiver's chart is created from the source's account (422
+  `ACCOUNT_TYPE_MISMATCH` if the code is not an expense there). Dated `entryDate` (default the source entry's date); a
+  closed month in any company 422 `PERIOD_LOCKED`, reopened books CEO only. One POSTED split per entry (partial unique
+  index, 409 `ALREADY_SPLIT`); reverse = every share's transfer reversed on the split's date in one transaction (409
+  `NOT_POSTED`), then it may be split again; a share is never reversed from the transfers list (409
+  `REVERSE_FROM_SOURCE`). Who: CEO or finance (the '/accounting' gate holds finance to `accounting`), member of the
+  source and every receiver (403 `NOT_IN_BOTH_COMPANIES`). Audit `cost_split.post` / `.reverse` in every company; bell
+  `cost_split.posted` / `.reversed` to each company's CEO(s). Tables `cost_splits` / `cost_split_shares` (tenantId =
+  source / receiver, RLS, merge repoint; migration `20261107140000_cost_splits`). Not built: sub-account tags on the
+  split lines. Tests: `tests/costSplit.test.ts`.
 - **Every report exports CSV / Excel / PDF (owner, 2026-10-20: "Add option
   to export BS, P&L, GL, and any other report/account statement in PDF and
   Excel also").** ONE renderer, `backend/src/lib/reportExport.ts`: a route

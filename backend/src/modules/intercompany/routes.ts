@@ -24,6 +24,12 @@
 //   POST /fleet/charge {month?, agreementId?}    CEO "Charge now" (also the close checklist's fix)
 //   GET  /tie-out?asOf=YYYY-MM-DD         2050 / 2060 / 2080 vs subledgers + pre-split residue
 //   POST /legacy-writeoff                 CEO, once per company and code (dry run first)
+//   Cost splits (owner, 2026-11-07; costSplit.ts header is the contract):
+//   GET  /splits?sourceEntryId=&payrollRunId=&status=&limit=   splits touching the read scope
+//   GET  /splits/preview?sourceEntryId=|payrollRunId=          the split base, the companies, a live split
+//   GET  /splits/:id
+//   POST /splits                          the CEO / finance (accounting) post at once
+//   POST /splits/:id/reverse {reason}     the same people, member of every company
 //
 // Company separation: lists read through resolveTenantScope (a transfer shows
 // to either party's members); an existing row the caller cannot see is 404;
@@ -68,6 +74,10 @@ import {
   type FleetChargeResult,
 } from './fleet.js'
 import { LEGACY_CODES, controlTieOut, legacyDifference, writeOffLegacy, type LegacyCode } from './legacy.js'
+import {
+  COST_SPLITTERS, MAX_SHARES, ceoIdsOf, createCostSplit, presentSplits, resolveSource, reverseCostSplit, type SplitRow,
+} from './costSplit.js'
+import { notifyStaffMany, queueStaffNotify } from '../../lib/staffNotify.js'
 
 /** Who prepares a transfer: finance and the CEO. Only the CEO approves, posts at once, reverses, sets rates. */
 export const TRANSFER_PREPARERS = ['admin', 'finance'] as UserRole[]
@@ -242,6 +252,22 @@ const rateSchema = z.object({
 const chargeSchema = z.object({
   month: z.string().regex(ISO_MONTH, 'YYYY-MM').optional(),
   agreementId: z.string().min(1).optional(),
+})
+
+const splitShareSchema = z.object({
+  tenantId: z.string().min(1),
+  percent: z.number().positive().max(100).nullable().optional(),
+  amountCents: zMoneyCents('A share', { sign: 'positive' }).nullable().optional(),
+})
+
+const splitCreateSchema = z.object({
+  sourceEntryId: z.string().min(1).nullable().optional(),
+  payrollRunId: z.string().min(1).nullable().optional(),
+  mode: z.enum(['percent', 'amount']),
+  shares: z.array(splitShareSchema).min(1).max(MAX_SHARES),
+  lines: z.array(z.string().min(1)).max(500).nullable().optional(),
+  entryDate: z.string().regex(ISO_DATE, 'YYYY-MM-DD').nullable().optional(),
+  memo: z.string().trim().min(3).max(300),
 })
 
 const writeOffSchema = z.object({
@@ -557,6 +583,127 @@ export async function intercompanyRoutes(fastify: FastifyInstance) {
       })
     }
     return { asOf: asOf.toISOString(), companies }
+  })
+
+  // ─── Cost splits (owner, 2026-11-07) ───────────────────────────────────────
+  const splitInclude = { shares: true } as const
+  /** The splits the caller sees: its in-scope member companies as the source, or as a receiver. */
+  const splitScope = async (req: FastifyRequest): Promise<Prisma.CostSplitWhereInput> => {
+    const scope = await resolveTenantScope(req)
+    const ids = scope.tenantIds.filter((t) => req.staffUser!.memberTenantIds.includes(t))
+    return { OR: [{ tenantId: { in: ids } }, { shares: { some: { tenantId: { in: ids } } } }] }
+  }
+  const announceSplit = (req: FastifyRequest, splitId: string, tenantIds: string[], what: 'posted' | 'reversed', body: string) => {
+    const actorId = req.staffUser!.id
+    queueStaffNotify(async () => {
+      const names = await companyNames(tenantIds)
+      const rows = []
+      for (const tenantId of Array.from(new Set(tenantIds))) {
+        for (const userId of await ceoIdsOf(tenantId)) {
+          rows.push({
+            userId, tenantId, kind: `cost_split.${what}` as const, severity: what === 'posted' ? 'info' as const : 'warning' as const,
+            title: `Cost split ${what}: ${tenantIds.map((t) => names.get(t) ?? '?').join(' / ')}`.slice(0, 140),
+            body: body.slice(0, 500), link: `/accounting/intercompany?split=${splitId}`,
+            entityType: 'CostSplit', entityId: splitId, actorId, dedupeKey: `cost_split.${what}:${splitId}:${tenantId}`,
+          })
+        }
+      }
+      await notifyStaffMany(rows)
+    })
+  }
+
+  fastify.get('/splits', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+    const q = z.object({
+      sourceEntryId: z.string().min(1).optional(),
+      payrollRunId: z.string().min(1).optional(),
+      status: z.enum(['posted', 'reversed']).optional(),
+      limit: z.coerce.number().int().min(1).max(500).default(100),
+    }).parse(req.query)
+    const where: Prisma.CostSplitWhereInput = {
+      AND: [await splitScope(req)],
+      ...(q.sourceEntryId && { sourceEntryId: q.sourceEntryId }),
+      ...(q.payrollRunId && { payrollRunId: q.payrollRunId }),
+      ...(q.status && { status: q.status }),
+    }
+    const rows = await serviceClient.costSplit.findMany({ where, include: splitInclude, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: q.limit })
+    return { items: await presentSplits(rows as SplitRow[], actorOf(req)) }
+  })
+
+  fastify.get('/splits/preview', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+    const q = z.object({ sourceEntryId: z.string().min(1).optional(), payrollRunId: z.string().min(1).optional() }).parse(req.query)
+    const su = req.staffUser!
+    let src
+    try {
+      src = await resolveSource(serviceClient, su, q)
+    } catch (err) {
+      // A payroll not approved / not booked is a preview answer, not an error page.
+      if (err instanceof AppError && (err.code === 'PAYROLL_NOT_APPROVED' || err.code === 'PAYROLL_NOT_BOOKED')) {
+        return { source: null, lines: [], baseCents: 0, companies: [], liveSplit: null, canSplit: false, blocker: { code: err.code, message: err.message } }
+      }
+      throw err
+    }
+    const companies = await serviceClient.tenant.findMany({
+      where: { id: { in: su.memberTenantIds.filter((t) => t !== src.tenantId) }, kind: 'company', deletedAt: null },
+      select: { id: true, name: true }, orderBy: { name: 'asc' },
+    })
+    const live = await serviceClient.costSplit.findFirst({ where: { sourceEntryId: src.entryId, status: 'posted' }, include: splitInclude })
+    const [liveView] = live ? await presentSplits([live as SplitRow], actorOf(req)) : [null]
+    const sourceCompany = await serviceClient.tenant.findUnique({ where: { id: src.tenantId }, select: { name: true, kind: true } })
+    const conceptIds = Array.from(new Set(src.lines.map((l) => l.conceptId).filter((x): x is string => !!x)))
+    const concepts = conceptIds.length ? await serviceClient.concept.findMany({ where: { id: { in: conceptIds } }, select: { id: true, name: true } }) : []
+    const cName = new Map(concepts.map((c) => [c.id, c.name]))
+    let blocker: { code: string; message: string } | null = null
+    if (!(COST_SPLITTERS as readonly string[]).includes(su.role)) blocker = { code: 'FORBIDDEN', message: 'Only the CEO or finance splits a cost' }
+    else if (!src.splittable) blocker = { code: src.live ? 'SOURCE_NOT_SPLITTABLE' : 'SOURCE_REVERSED', message: src.notSplittableReason! }
+    else if (sourceCompany?.kind !== 'company') blocker = { code: 'HEAD_OFFICE_NOT_SPLIT', message: 'A head office\'s costs move only through the monthly recharge run' }
+    else if (live) blocker = { code: 'ALREADY_SPLIT', message: 'This entry is already split — reverse that split first to split it again' }
+    else if (companies.length === 0) blocker = { code: 'NO_OTHER_COMPANY', message: 'You belong to no other company to split to' }
+    return {
+      source: {
+        kind: src.kind, entryId: src.entryId, payrollRunId: src.payrollRunId, payrollPeriod: src.payrollPeriod,
+        tenantId: src.tenantId, companyName: sourceCompany?.name ?? null, reference: src.reference, voucherNo: src.voucherNo,
+        description: src.description, entryDate: src.entryDate.toISOString(), live: src.live,
+      },
+      lines: src.lines.map((l) => ({ ...l, conceptName: l.conceptId ? cName.get(l.conceptId) ?? null : null })),
+      baseCents: src.lines.reduce((s, l) => s + l.amountCents, 0),
+      companies,
+      liveSplit: liveView,
+      canSplit: blocker === null,
+      blocker,
+    }
+  })
+
+  fastify.get<{ Params: { id: string } }>('/splits/:id', { preHandler: requireAuth(...FINANCIALS_VIEWERS) }, async (req) => {
+    const row = await serviceClient.costSplit.findFirst({ where: { id: req.params.id, AND: [await splitScope(req)] }, include: splitInclude })
+    if (!row) throw new NotFoundError('Cost split', req.params.id)
+    return (await presentSplits([row as SplitRow], actorOf(req)))[0]
+  })
+
+  fastify.post('/splits', { preHandler: requireAuth(...(COST_SPLITTERS as unknown as UserRole[])) }, async (req, reply) => {
+    const body = splitCreateSchema.parse(req.body)
+    const res = await createCostSplit(actorOf(req), body)
+    const row = await serviceClient.costSplit.findUniqueOrThrow({ where: { id: res.splitId }, include: splitInclude })
+    const [view] = await presentSplits([row as SplitRow], actorOf(req))
+    const all = [res.sourceTenantId, ...res.tenantIds]
+    await auditBoth(req, all, 'cost_split.post', 'CostSplit', res.splitId, view, {
+      actorRole: req.staffUser!.role, sourceEntryId: row.sourceEntryId, payrollRunId: row.payrollRunId, createdAccounts: res.createdAccounts,
+    })
+    const names = await companyNames(all)
+    const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    announceSplit(req, res.splitId, all, 'posted',
+      `${req.staffUser!.name ?? 'Finance'} split ${pkr(view!.splitCents)} of ${view!.payrollPeriod ? `payroll ${view!.payrollPeriod}` : 'an expense'} booked by ${names.get(res.sourceTenantId) ?? '?'}: ${view!.shares.map((s) => `${s.companyName ?? '?'} ${pkr(s.amountCents)}`).join(', ')}. ${row.memo}`)
+    return reply.status(201).send(view)
+  })
+
+  fastify.post<{ Params: { id: string } }>('/splits/:id/reverse', { preHandler: requireAuth(...(COST_SPLITTERS as unknown as UserRole[])) }, async (req) => {
+    const body = z.object({ reason: z.string().trim().min(10).max(500) }).parse(req.body ?? {})
+    const res = await reverseCostSplit(actorOf(req), req.params.id, body.reason)
+    const row = await serviceClient.costSplit.findUniqueOrThrow({ where: { id: req.params.id }, include: splitInclude })
+    const [view] = await presentSplits([row as SplitRow], actorOf(req))
+    const all = [res.sourceTenantId, ...res.tenantIds]
+    await auditBoth(req, all, 'cost_split.reverse', 'CostSplit', row.id, view, { actorRole: req.staffUser!.role, reason: body.reason })
+    announceSplit(req, row.id, all, 'reversed', `${req.staffUser!.name ?? 'Finance'} reversed a cost split. Reason: ${body.reason}`)
+    return view
   })
 
   fastify.post('/legacy-writeoff', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
