@@ -216,6 +216,14 @@ describe('payroll: HR → finance → CEO', () => {
     expect(code(await call('fin', 'PUT', `/hr/payroll/payslips/${cook.id}/tax`, { taxCents: 0 }))).toBe('RUN_NOT_IN_FINANCE_REVIEW')
     // HR edits nothing now either.
     expect(code(await call('hr', 'POST', `/hr/payroll/runs/${runA}/recalculate`))).toBe('RUN_NOT_DRAFT')
+    // Finance pulls it back from the CEO (owner, 2026-11-07), then passes it again.
+    expect((await call('hr', 'POST', `/hr/payroll/runs/${runA}/pull-back`)).statusCode).toBe(403)
+    const pb = await call('fin', 'POST', `/hr/payroll/runs/${runA}/pull-back`)
+    expect(pb.statusCode, pb.body).toBe(200)
+    expect(pb.json().status).toBe('finance_review')
+    expect(await inboxIds('ceo', 'payroll_run')).not.toContain(runA)
+    expect(code(await call('ceo', 'POST', `/hr/payroll/runs/${runA}/approve`))).toBe('NOT_FINANCE_CHECKED')
+    expect((await call('fin', 'POST', `/hr/payroll/runs/${runA}/finance-pass`, { note: 'Tax checked' })).statusCode).toBe(200)
 
     const ok = await call('ceo', 'POST', `/hr/payroll/runs/${runA}/approve`)
     expect(ok.statusCode, ok.body).toBe(200)

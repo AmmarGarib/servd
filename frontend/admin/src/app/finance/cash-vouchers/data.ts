@@ -252,6 +252,7 @@ export interface CashVoucher {
   canFinanceApprove?: boolean
   canApprove: boolean
   canReturn?: boolean
+  canPullBack?: boolean
   canReject: boolean
   canUpload?: boolean
   canSendBack?: boolean

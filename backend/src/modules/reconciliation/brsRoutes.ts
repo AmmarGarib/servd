@@ -579,6 +579,17 @@ export async function brsRoutes(fastify: FastifyInstance) {
     return { ok: true }
   })
 
+  // Pull back (owner, 2026-11-07: "give option to Finance to pull back drafts from CEO's approval box to edit or change
+  // details"): finance takes a SUBMITTED reconciliation back to draft before the CEO decides; it leaves the CEO's inbox.
+  fastify.post<{ Params: { id: string } }>('/:id/pull-back', { preHandler: BANK_BOOKERS }, async (req) => {
+    const r = await loadRec(req, req.params.id, 'write')
+    if (r.status !== 'submitted') throw new AppError('RECONCILIATION_NOT_SUBMITTED', `This reconciliation is ${r.status} — only one waiting for the CEO can be pulled back`, 409)
+    const n = await prisma.bankReconciliation.updateMany({ where: { id: r.id, status: 'submitted' }, data: { status: 'draft' } })
+    if (n.count === 0) throw new AppError('RECONCILIATION_NOT_SUBMITTED', 'This reconciliation is no longer waiting — reload it', 409)
+    await auditRec(req, r, 'pull_back', {})
+    return { ok: true }
+  })
+
   fastify.post<{ Params: { id: string } }>('/:id/reopen', { preHandler: REOPENERS }, async (req) => {
     const body = z.object({ reason: z.string().trim().min(MIN_TEXT, `Say why (at least ${MIN_TEXT} characters)`).max(1000) }).parse(req.body ?? {})
     const r = await loadRec(req, req.params.id, 'write')

@@ -341,6 +341,21 @@ export async function grnReturn(grnId: string, actor: Actor, noteIn: string, exp
   return r
 }
 
+/**
+ * Pull back (owner, 2026-11-07: "give option to Finance to pull back drafts from CEO's approval box to edit or change
+ * details"): finance takes a GRN it passed (ceo_review) back to its own step before the CEO decides — it leaves the
+ * CEO's inbox and finance may verify it again or return it to the buyer.
+ */
+export async function grnPullBack(grnId: string, actor: Actor) {
+  return prisma.$transaction(async (tx) => {
+    const g = await lockGrnTx(tx, grnId)
+    if (g.grnStatus !== 'ceo_review') throw new AppError('INVALID_STATE', `This GRN is ${String(g.grnStatus).replace(/_/g, ' ')} — only one waiting for the CEO can be pulled back`, 409)
+    await tx.goodsReceipt.update({ where: { id: grnId }, data: { grnStatus: 'finance_review', financeCheckedById: null, financeCheckedAt: null } })
+    await logGrnTx(tx, g.poId, actor.id, 'grn_pulled_back', { grnId, grnNumber: g.grnNumber, from: 'ceo_review', to: 'finance_review' })
+    return { id: grnId, grnStatus: 'finance_review' as const }
+  })
+}
+
 export interface ResubmitInput { invoiceNumber?: string; invoiceDate?: string; taxCents?: number | null; taxAuthority?: AuthorityKey | null; lines?: LineRate[]; note?: string | null }
 
 /** The buyer corrected the GRN's invoice: buyer_fix → finance_review. Only the PO's buyer (or the CEO). */

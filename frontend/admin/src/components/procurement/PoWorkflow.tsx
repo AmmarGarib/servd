@@ -389,6 +389,7 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const role = me?.role ?? ''
   const canFinance = g.grnStatus === 'finance_review' && (role === 'finance' || role === 'admin')
   const canCeo = g.grnStatus === 'ceo_review' && role === 'admin'
+  const canPullBack = g.grnStatus === 'ceo_review' && role === 'finance'
   return (
     <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -447,6 +448,11 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
         </ul>
       )}
       {act.error && <p role="alert" className="text-xs text-s-red">{errOf(act.error)}</p>}
+      {canPullBack && (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" disabled={act.isPending} onClick={() => act.mutate({ path: 'pull-back' })}>Pull back from the CEO</Button>
+        </div>
+      )}
       {(canFinance || canCeo) && (
         <div className="flex flex-wrap gap-2">
           {canFinance && <Button size="sm" disabled={act.isPending} onClick={() => act.mutate({ path: 'finance-pass' })}>Verified — to the CEO</Button>}

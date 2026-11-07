@@ -120,6 +120,13 @@ export default function InternPayrollRunPage() {
               <button className={btn} onClick={() => { setErr(''); setDialog('finance-pass') }}>Pass to CEO</button>
               <button className={btnGhost} onClick={() => { setErr(''); setDialog('finance-return') }}>Return to HR</button>
             </>}
+            {run.status === 'finance_checked' && finance && !ceo && (
+              <button className={btnGhost} onClick={async () => {
+                if (await confirm({ title: 'Pull back from the CEO?', body: 'It leaves the CEO\'s approvals and comes back to finance, so you can change it or return it to HR. Pass it to the CEO again when it is ready.', confirmLabel: 'Pull back' })) {
+                  try { await post('pull-back', {})() } catch (e) { setErr(errText(e)) }
+                }
+              }}>Pull back to edit</button>
+            )}
             {run.status === 'finance_checked' && ceo && <>
               <button className={btn} disabled={act.isPending} onClick={() => void ask('approve')}>Approve</button>
               <button className={btnGhost} onClick={() => { setErr(''); setDialog('ceo-return-finance') }}>Return to finance</button>

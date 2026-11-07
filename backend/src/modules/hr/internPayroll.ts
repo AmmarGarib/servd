@@ -346,6 +346,18 @@ export async function internPayrollRoutes(fastify: FastifyInstance) {
     return prisma.internPayrollRun.findUnique({ where: { id: run.id } })
   })
 
+  // Pull back (owner, 2026-11-07): finance takes a run it passed (finance_checked) back to its own review step before the
+  // CEO decides; it leaves the CEO's inbox.
+  fastify.post<{ Params: { id: string } }>(`${P}/runs/:id/pull-back`, staff, async (req) => {
+    if (!(await isInternFinance(req))) throw new AppError('FINANCE_ONLY', 'Only finance (with the accounting module) or the CEO pulls a stipend payroll back', 403)
+    const run = await runInScope(req, req.params.id)
+    if (run.status !== 'finance_checked') throw new AppError('NOT_FINANCE_CHECKED', 'Only a stipend payroll waiting for the CEO can be pulled back', 409)
+    const n = await prisma.internPayrollRun.updateMany({ where: { id: run.id, status: 'finance_checked' }, data: { status: 'finance_review', financeCheckedById: null, financeCheckedAt: null } })
+    if (n.count === 0) throw new AppError('NOT_FINANCE_CHECKED', 'This stipend payroll is no longer waiting for the CEO — reload it', 409)
+    await auditRun(req, run, 'pull_back', { from: 'finance_checked', to: 'finance_review' })
+    return prisma.internPayrollRun.findUnique({ where: { id: run.id } })
+  })
+
   fastify.post<{ Params: { id: string } }>(`${P}/runs/:id/finance-return`, staff, async (req) => {
     const { note } = z.object({ note: z.string().trim().max(1000).optional() }).parse(req.body ?? {})
     if (!note || note.length < 10) throw new AppError('NOTE_TOO_SHORT', 'Say what HR needs to correct (at least 10 characters)', 422)

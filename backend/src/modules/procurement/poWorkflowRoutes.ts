@@ -34,7 +34,7 @@ import { lineDisplay, lineValueCents } from './poUnits.js'
 import { scopeTenantIds } from './scope.js'
 import { AP_READERS } from './routes.js'
 import {
-  setPoBuyer, completePo, confirmReceipt, rejectReceipt, grnFinancePass, grnReturn, grnResubmit, approveGrn, myTasks,
+  setPoBuyer, completePo, confirmReceipt, rejectReceipt, grnFinancePass, grnReturn, grnPullBack, grnResubmit, approveGrn, myTasks,
   assertNote, PO_FILE_OWNER,
 } from './poWorkflow.js'
 
@@ -285,6 +285,14 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     const { grant, tenantId } = await grnRight(req, req.params.id, type, 'return a GRN')
     const r = await grnReturn(req.params.id, actorOf(req), n, head.grnStatus)
     await auditApproval(req, { type, id: req.params.id, tenantId, decision: 'return', grant, entity: 'GoodsReceipt', metadata: { note: n, from: r.from, to: 'buyer_fix' } })
+    return { id: r.id, grnStatus: r.grnStatus }
+  })
+
+  fastify.post<{ Params: { id: string } }>('/grns/:id/pull-back', { preHandler: requireAuth('finance', 'admin') }, async (req) => {
+    const head = await guardGrn(req, req.params.id, 'write')
+    if (req.staffUser!.role === 'finance') await financeAccounting(req)
+    if (head.grnStatus !== 'ceo_review') throw new AppError('INVALID_STATE', `This GRN is ${String(head.grnStatus).replace(/_/g, ' ')} — only one waiting for the CEO can be pulled back`, 409)
+    const r = await grnPullBack(req.params.id, actorOf(req))
     return { id: r.id, grnStatus: r.grnStatus }
   })
 

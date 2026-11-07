@@ -271,6 +271,8 @@ export interface CashRequestCaps {
   /** The CEO's final approval. */
   canApprove: boolean
   canReturn: boolean
+  /** Finance takes a voucher waiting for the CEO back to edit it (owner, 2026-11-07). */
+  canPullBack: boolean
   canReject: boolean
   canResubmit: boolean
   canCancel: boolean
@@ -330,6 +332,7 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canFinanceApprove: financeStep,
     canApprove: ceoStep && v.financeApprovedById !== me && v.hodSignedById !== me,
     canReturn: financeStep || ceoStep,
+    canPullBack: WAIT_CEO.includes(s) && viewer.financeApprover && !viewer.isAdmin && !v.purchaseOrderId,
     canReject: financeStep || ceoStep || (s === 'returned' && (viewer.financeApprover || viewer.isAdmin) && !own),
     canResubmit: s === 'returned' && (raiser || (v.kind === 'expense' && viewer.financeApprover)),
     canCancel: (EDITABLE.includes(s) && raiser) || (viewer.keeper && PRE_PAY.includes(s)),
@@ -1562,6 +1565,30 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     if (res.count === 0) throw new AppError('VOUCHER_CHANGED', `Cash request ${v.number} was changed by someone else — reload it`, 409)
     await auditVoucher(req, 'return', v, { status: 'returned', note }, { status: v.status })
     await voucherDecided(req, queueTypeOf(v.status), v, 'return', now, note)
+    return detailOf(v.id, viewer)
+  })
+
+  // POST /:id/pull-back — finance takes a voucher waiting for the CEO back to edit it (owner, 2026-11-07: "give option to
+  // Finance to pull back drafts from CEO's approval box to edit or change details"). It leaves the CEO's inbox at once.
+  // A payee voucher, or one finance raised itself → returned (finance edits, then Resubmit sends it to the CEO again);
+  // a cash request somebody else raised → back to finance's own step (submitted): finance edits and approves it again.
+  // A PO's cash voucher is never pulled back (change the PO).
+  fastify.post<{ Params: { id: string } }>('/:id/pull-back', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const v = await loadVoucher(req, req.params.id)
+    const viewer = await viewerOf(req)
+    if (!viewer.financeApprover) throw new AppError('NOT_FINANCE', 'Only finance pulls a voucher back from the CEO', 403)
+    if (!WAIT_CEO.includes(v.status)) throw wrongStatus('VOUCHER_NOT_WITH_CEO', v, 'only a voucher waiting for the CEO can be pulled back')
+    if (v.purchaseOrderId) throw new AppError('PO_VOUCHER_LOCKED', `${v.number} is the cash for an approved purchase order — change the PO instead`, 409)
+    const toReturned = v.kind === 'expense' || v.preparedById === viewer.id
+    const now = new Date()
+    const res = await prisma.cashVoucher.updateMany({
+      where: { id: v.id, tenantId: v.tenantId, status: v.status },
+      data: toReturned
+        ? { status: 'returned', returnedById: viewer.id, returnedAt: now, returnNote: 'Pulled back by finance to edit', returnCount: { increment: 1 } }
+        : { status: 'submitted', financeApprovedById: null, financeApprovedAt: null },
+    })
+    if (res.count === 0) throw new AppError('VOUCHER_CHANGED', `Cash request ${v.number} was changed by someone else — reload it`, 409)
+    await auditVoucher(req, 'pull_back', v, { status: toReturned ? 'returned' : 'submitted' }, { status: v.status })
     return detailOf(v.id, viewer)
   })
 

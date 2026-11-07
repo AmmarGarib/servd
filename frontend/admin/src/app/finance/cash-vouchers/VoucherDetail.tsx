@@ -30,7 +30,7 @@ import { FileViewModal } from '../../../components/files/FileViewModal'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 
-type Act = 'confirm-received' | 'confirm-received-on-behalf' | 'send-back' | 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel'
+type Act = 'confirm-received' | 'confirm-received-on-behalf' | 'send-back' | 'finance-approve' | 'approve' | 'return' | 'resubmit' | 'reject' | 'cancel' | 'pull-back'
 const ACT_DONE: Record<Act, string> = {
   'confirm-received': 'Cash received confirmed — finance can now verify the documents.',
   'confirm-received-on-behalf': 'Cash received recorded on the holder\'s behalf — the documents can now be checked.',
@@ -41,6 +41,7 @@ const ACT_DONE: Record<Act, string> = {
   resubmit: 'Resubmitted.',
   reject: 'Voucher rejected.',
   cancel: 'Voucher cancelled.',
+  'pull-back': 'Pulled back from the CEO — edit it, then send it again.',
 }
 const NOTE_ACTS = { 'send-back': 'What is wrong with the documents? (the requester sees this and attaches what is missing)', return: 'Why is it returned? (the requester sees this and corrects it)', reject: 'Why is it rejected? (the requester sees this)', cancel: 'Why is it cancelled?' } as const
 type NoteAct = keyof typeof NOTE_ACTS
@@ -188,6 +189,12 @@ export function VoucherDetail({ id }: { id: string }) {
             {v.canSendBack && (
               <Button variant="secondary" type="submit" onClick={() => { act.reset(); setNoteFor(noteFor === 'send-back' ? null : 'send-back') }} disabled={act.isPending}>
                 Send back for documents
+              </Button>
+            )}
+            {v.canPullBack && (
+              <Button variant="secondary" type="submit" disabled={act.isPending}
+                onClick={async () => { if (await confirm({ title: `Pull ${v.number} back from the CEO?`, body: 'It leaves the CEO\'s approvals so you can edit it. Send it again when it is ready.', confirmLabel: 'Pull back' })) run('pull-back') }}>
+                Pull back to edit
               </Button>
             )}
             {v.canReturn && (

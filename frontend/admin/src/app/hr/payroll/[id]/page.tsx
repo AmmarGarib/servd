@@ -130,7 +130,7 @@ export default function PayrollRunPage() {
   const confirm = useConfirm()
   const { data, error: loadErr, isLoading } = useQuery({ queryKey: ['hr-payroll', id], queryFn: () => api.get<Detail>(`/hr/payroll/runs/${id}`) })
   const act = useMutation({
-    mutationFn: (what: 'recalculate' | 'approve' | 'reopen' | 'lock' | 'delete' | 'send-to-finance' | 'finance-pass') =>
+    mutationFn: (what: 'recalculate' | 'approve' | 'reopen' | 'lock' | 'delete' | 'send-to-finance' | 'finance-pass' | 'pull-back') =>
       what === 'delete' ? deleteWithUndo(`/hr/payroll/runs/${id}`, { trashType: 'hr_payroll_run', id, onRestored: () => void qc.invalidateQueries() })
       : api.post(`/hr/payroll/runs/${id}/${what}`, {}),
     onSuccess: (_r, what) => { setErr(''); if (what === 'delete') router.push('/hr/payroll'); else void qc.invalidateQueries() },
@@ -160,11 +160,12 @@ export default function PayrollRunPage() {
   // The API's rules: only admin, owner or management approve, reopen and lock,
   // and nobody approves a payroll they created, recalculated or edited — the
   // CEO (admin) excepted.
-  const ask = async (what: 'approve' | 'lock' | 'delete' | 'send-to-finance' | 'finance-pass') => {
+  const ask = async (what: 'approve' | 'lock' | 'delete' | 'send-to-finance' | 'finance-pass' | 'pull-back') => {
     if (!run) return
     const facts = `${run.period} · ${t['employees'] ?? 0} employees · net pay ${rs(t['netCents'])}.`
     const ok = await confirm(
       what === 'send-to-finance' ? { title: `Send payroll for ${run.period} to finance?`, body: `${facts} Finance checks it and enters the income tax. You cannot edit it while finance has it; finance can send it back to you.`, confirmLabel: 'Send to finance' }
+      : what === 'pull-back' ? { title: `Pull payroll for ${run.period} back from the CEO?`, body: `${facts} It leaves the CEO's approvals and comes back to finance's review, so you can change the tax or return it to HR. Pass it to the CEO again when it is ready.`, confirmLabel: 'Pull back' }
       : what === 'finance-pass' ? { title: `Pass payroll for ${run.period} to the CEO?`, body: `${facts} Check the income tax on each payslip first. The CEO then approves it.`, confirmLabel: 'Pass to CEO' }
       : what === 'lock' ? { title: `Lock payroll for ${run.period}?`, body: `${facts} It cannot be reopened after this.`, confirmLabel: 'Lock payroll', danger: true }
       : what === 'approve' ? { title: `Approve payroll for ${run.period}?`, body: `${facts} Approving books it: Dr wages expense / Cr 2020 Wages payable (income tax to 2042 Salary tax payable). Reopening before the lock reverses that entry.`, confirmLabel: 'Approve' }
@@ -237,6 +238,9 @@ export default function PayrollRunPage() {
               <button className={btn} disabled={act.isPending} onClick={() => void ask('finance-pass')}>Pass to CEO</button>
               <button className={btnGhost} disabled={act.isPending} onClick={() => { setErr(''); setReturning('finance-to-hr') }}>Return to HR</button>
             </>}
+            {run.status === 'finance_checked' && isFinanceReviewer && role !== 'admin' && (
+              <button className={btnGhost} disabled={act.isPending} onClick={() => void ask('pull-back')}>Pull back to edit</button>
+            )}
             {run.status === 'finance_checked' && canApprove && <>
               <button className={btn} disabled={act.isPending} onClick={() => void ask('approve')}>Approve</button>
               <button className={btnGhost} disabled={act.isPending} onClick={() => { setErr(''); setReturning('approver-to-finance') }}>Return to finance</button>

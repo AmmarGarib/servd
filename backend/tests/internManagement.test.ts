@@ -281,6 +281,11 @@ describe('stipend payroll', () => {
     const fInbox = (await send('GET', 'fin', '/approvals?type=intern_payroll_finance')).json() as { items: Array<{ id: string }> }
     expect(fInbox.items.map((i) => i.id)).toContain(runId)
     expect((await send('POST', 'fin', `/hr/interns/payroll/runs/${runId}/finance-pass`, { note: 'Checked' })).json().status).toBe('finance_checked')
+    // Finance pulls it back from the CEO (owner, 2026-11-07), then passes it again.
+    expect((await send('POST', 'hr', `/hr/interns/payroll/runs/${runId}/pull-back`)).statusCode).toBe(403)
+    expect((await send('POST', 'fin', `/hr/interns/payroll/runs/${runId}/pull-back`)).json().status).toBe('finance_review')
+    expect((await send('POST', 'fin', `/hr/interns/payroll/runs/${runId}/pull-back`)).json().error.code).toBe('NOT_FINANCE_CHECKED')
+    expect((await send('POST', 'fin', `/hr/interns/payroll/runs/${runId}/finance-pass`, { note: 'Checked' })).json().status).toBe('finance_checked')
     // The CEO only; HR cannot approve.
     expect((await send('POST', 'hr', `/hr/interns/payroll/runs/${runId}/approve`)).statusCode).toBe(403)
     expect((await send('POST', 'ceoB', `/hr/interns/payroll/runs/${runId}/approve`)).statusCode).toBe(404)

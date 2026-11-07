@@ -246,6 +246,13 @@ describe('the whole flow: CEO → buyer → requester → GRN → finance → CE
     expect(pass.statusCode, pass.body).toBe(200)
     expect(pass.json().grnStatus).toBe('ceo_review')
     expect((await approverIdsFor('grn', grnId))?.userIds).toEqual([U.ceoA!.id])
+    // Finance pulls it back from the CEO (owner, 2026-11-07), then verifies it again; company B 404, a buyer 403.
+    expect((await call('finB', 'POST', `/procurement/grns/${grnId}/pull-back`)).statusCode).toBe(404)
+    expect((await call('buyerA', 'POST', `/procurement/grns/${grnId}/pull-back`)).statusCode).toBe(403)
+    const pb = await call('finA', 'POST', `/procurement/grns/${grnId}/pull-back`)
+    expect(pb.statusCode, pb.body).toBe(200)
+    expect(pb.json().grnStatus).toBe('finance_review')
+    expect((await call('finA', 'POST', `/procurement/grns/${grnId}/finance-pass`)).statusCode).toBe(200)
     const actions = (await prisma.poActivityLog.findMany({ where: { purchaseOrderId: poId }, orderBy: { createdAt: 'asc' } })).map((a) => a.action)
     expect(actions).toEqual(expect.arrayContaining(['created', 'submitted', 'approved', 'completed', 'received', 'grn_returned', 'grn_resubmitted', 'grn_finance_checked']))
   })

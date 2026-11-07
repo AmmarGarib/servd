@@ -474,6 +474,14 @@ module id must be placed in a workspace in the same change.
   companies' active brands); plain `/concepts` stays managers/till. Line
   cooks and finance never get costs/codes they don't need (`costsHidden`,
   masked gift-card codes).
+- **Finance pulls back from the CEO (owner, 2026-11-07: "give option to Finance to pull back drafts from CEO's approval
+  box to edit or change details").** `POST …/pull-back` (finance with `accounting`; the item's company, else 404) takes an
+  item finance sent on back to finance BEFORE the CEO decides — it leaves the CEO's inbox at once: bank reconciliation
+  submitted → draft (`/reconciliation/brs/:id`); cash voucher waiting for the CEO → `returned` (payee voucher or one finance
+  raised; Resubmit sends it to the CEO again) or `submitted` (someone else's request; finance approves again), never a
+  PO's voucher; payroll run and intern stipend run `finance_checked` → `finance_review`; GRN `ceo_review` →
+  `finance_review`. Audited `pull_back`. Journal changes, fixed-asset requests and write-offs already have withdraw /
+  cancel. A new finance → CEO step adds a pull-back in the same change.
 - **Bulk approve (owner, 2026-10-22: "It should go for approval in bulk, not
   individually").** The inbox has a tick per item, "Select all N" per type and
   "Approve N selected". HR requests go in ONE call per company to `POST

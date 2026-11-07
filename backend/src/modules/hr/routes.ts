@@ -3037,6 +3037,22 @@ export async function hrRoutes(fastify: FastifyInstance) {
     return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
   })
 
+  // Pull back (owner, 2026-11-07: "give option to Finance to pull back drafts from CEO's approval box to edit or change
+  // details"): finance takes a run it passed (finance_checked, not yet approved) back to its own review step — tax can
+  // be entered again, or it can be returned to HR — and it leaves the CEO's inbox.
+  fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/pull-back', { preHandler: [requireAuth('finance', 'admin'), financeNeedsAccounting] }, async (req) => {
+    const run = await prisma.hrPayrollRun.findUnique({ where: { id: req.params.id } })
+    if (!run || !req.staffUser!.memberTenantIds.includes(run.tenantId)) throw new NotFoundError('Payroll', req.params.id)
+    if (run.status !== 'finance_checked') throw new AppError('NOT_FINANCE_CHECKED', 'Only a payroll waiting for the CEO can be pulled back', 409)
+    const n = await prisma.hrPayrollRun.updateMany({ where: { id: run.id, status: 'finance_checked' }, data: { status: 'finance_review', financeCheckedById: null, financeCheckedAt: null } })
+    if (n.count === 0) throw new AppError('NOT_FINANCE_CHECKED', 'This payroll is no longer waiting for the CEO — reload it', 409)
+    await audit({
+      category: 'accounting', action: 'hr.payroll.pull_back', entity: 'HrPayrollRun', entityId: run.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: run.tenantId,
+      before: { status: run.status }, after: { status: 'finance_review', period: run.period }, metadata: { actorRole: req.staffUser!.role },
+    })
+    return prisma.hrPayrollRun.findUnique({ where: { id: run.id } })
+  })
+
   fastify.post<{ Params: { id: string } }>('/payroll/runs/:id/finance-return', { preHandler: [requireAuth('finance', 'admin'), financeNeedsAccounting] }, async (req) => {
     const { note } = z.object({ note: z.string().trim().max(1000).optional() }).parse(req.body ?? {})
     if (!note || note.length < 10) throw new AppError('NOTE_TOO_SHORT', 'Say what HR needs to correct (at least 10 characters)', 422)

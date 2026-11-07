@@ -254,6 +254,24 @@ describe('request → finance → CEO → pay → documents → verify', () => {
     expect(fa).toMatchObject({ status: 'finance_approved', stage: 'waiting_ceo', financeApprovedById: U['finA']!.id, financeApprovedByName: `${P} finA` })
     expect((await call('finA', 'POST', `${V}/${v.id}/approve`)).statusCode).toBe(403)
 
+    // Finance pulls it back from the CEO (owner, 2026-11-07): someone else's request → finance's own step again.
+    expect((await call('cookA', 'POST', `${V}/${v.id}/pull-back`)).json().error.code).toBe('NOT_FINANCE')
+    expect((await call('finB', 'POST', `${V}/${v.id}/pull-back`)).statusCode).toBe(404)
+    const pulled = await ok('finA', 'POST', `${V}/${v.id}/pull-back`)
+    expect(pulled).toMatchObject({ status: 'submitted', stage: 'waiting_finance', financeApprovedById: null })
+    expect((await call('ceoA', 'POST', `${V}/${v.id}/approve`)).json().error.code).toBe('VOUCHER_NOT_FINANCE_APPROVED')
+    await ok('finA', 'POST', `${V}/${v.id}/finance-approve`)
+    // A payee voucher finance raised → returned; finance edits and resubmits straight to the CEO.
+    const payeeRes = await call('finA', 'POST', V, { kind: 'expense', payeeName: 'Pull-back payee', amountCents: 2_000, purpose: 'Printer ink for the office', conceptId: C.A, categoryKey: 'repairs' })
+    expect(payeeRes.statusCode, payeeRes.body).toBe(201)
+    const payee = payeeRes.json()
+    expect(payee.status).toBe('finance_approved')
+    const pb2 = await ok('finA', 'POST', `${V}/${payee.id}/pull-back`)
+    expect(pb2).toMatchObject({ status: 'returned' })
+    await ok('finA', 'PATCH', `${V}/${payee.id}`, { purpose: 'Printer ink and paper for the office' })
+    expect(await ok('finA', 'POST', `${V}/${payee.id}/resubmit`)).toMatchObject({ status: 'finance_approved' })
+    expect((await call('finA', 'POST', `${V}/${payee.id}/pull-back`, {})).statusCode).toBe(200)
+
     // The CEO's final approval: never the login that gave the finance approval.
     const other = await raise('cookA', { amountCents: 1_000 })
     await ok('ceoA', 'POST', `${V}/${other.id}/finance-approve`)
@@ -369,7 +387,7 @@ describe('request → finance → CEO → pay → documents → verify', () => {
     // The audit trail, oldest first, with names.
     const hist = (await call('cookA', 'GET', `${V}/${v.id}/history`)).json() as { items: Array<{ action: string; userName: string | null }> }
     const actions = hist.items.map((h) => h.action)
-    expect(actions.slice(0, 7)).toEqual(['create', 'return', 'update', 'resubmit', 'finance_approve', 'approve', 'pay'])
+    expect(actions.slice(0, 7)).toEqual(['create', 'return', 'update', 'resubmit', 'finance_approve', 'pull_back', 'finance_approve'])
     expect(actions).toEqual(expect.arrayContaining(['document_add', 'verify_docs']))
     expect(actions).not.toContain('spend')
     expect(hist.items[0]!.userName).toBe(`${P} cookA`)

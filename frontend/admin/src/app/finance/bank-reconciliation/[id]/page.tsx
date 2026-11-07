@@ -153,6 +153,11 @@ export default function BankReconciliationWorkspace() {
     onSuccess: () => { setActionErr(null); refresh() },
     onError: (e) => setActionErr(errText(e)),
   })
+  const pullBack = useMutation({
+    mutationFn: () => post('/pull-back'),
+    onSuccess: () => { setActionErr(null); refresh() },
+    onError: (e) => setActionErr(errText(e)),
+  })
   const approve = useMutation({
     mutationFn: () => post('/approve'),
     onSuccess: () => { setActionErr(null); refresh() },
@@ -262,7 +267,7 @@ export default function BankReconciliationWorkspace() {
             Approved and locked. Nothing in this period can be changed{rec.reopenCount > 0 ? ` (reopened ${rec.reopenCount} time${rec.reopenCount === 1 ? '' : 's'} before)` : ''}.
           </div>
         )}
-        {status === 'submitted' && <div className="rounded-lg border border-s-border px-4 py-3 text-sm text-s-text bg-s-bg-soft">Submitted — waiting for the CEO to approve or return it.</div>}
+        {status === 'submitted' && <div className="rounded-lg border border-s-border px-4 py-3 text-sm text-s-text bg-s-bg-soft">Submitted — waiting for the CEO to approve or return it.{canPrepare && !canApprove ? ' You can pull it back to edit it until then.' : ''}</div>}
         {status === 'superseded' && (
           <div className="rounded-lg border border-s-border px-4 py-3 text-sm text-s-text bg-s-bg-soft">
             Replaced by a newer approved reconciliation{q.data!.supersededBy ? <> ({fmtDay(q.data!.supersededBy.periodFrom)} to {fmtDay(q.data!.supersededBy.periodTo)}) — <Link className="font-semibold text-primary underline" href={`/finance/bank-reconciliation/${q.data!.supersededBy.id}`}>open the current one</Link></> : ''}.
@@ -288,6 +293,11 @@ export default function BankReconciliationWorkspace() {
               }}>{approve.isPending ? 'Approving…' : 'Approve & lock'}</Button>
               <Button variant="secondary" onClick={() => setTool({ kind: 'return' })}>Return</Button>
             </>
+          )}
+          {status === 'submitted' && canPrepare && !canApprove && (
+            <Button variant="secondary" disabled={pullBack.isPending} onClick={async () => {
+              if (await confirm({ title: 'Pull back from the CEO?', body: 'It leaves the CEO\'s approvals and goes back to draft so you can change it. Submit it again when it is ready.', confirmLabel: 'Pull back' })) pullBack.mutate()
+            }}>{pullBack.isPending ? 'Pulling back…' : 'Pull back to edit'}</Button>
           )}
           {status === 'approved' && canReopen && <Button variant="secondary" onClick={() => setTool({ kind: 'reopen' })}>Reopen</Button>}
         </div>
