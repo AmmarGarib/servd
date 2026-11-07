@@ -273,6 +273,11 @@ module id must be placed in a workspace in the same change.
   rejected / cancelled request again as a new record (`_reraisedFrom`; one live
   copy, 409 `ALREADY_RERAISED`; approved → 409 `CANCEL_FIRST`; attendance → edit
   it); admin "Re-raise" on the record. Tests: `tests/hrRaisedCeoInbox.test.ts`.
+- **Resignations: line manager → HR → the CEO (owner, 2026-11-07: "should not go directly from line manager to
+  CEO").** The resignation workflow is HOD, HR, CEO (`forms.ts`); `service.ts resignationWorkflow` keeps an HR step
+  before the CEO and the CEO last on any saved format and on records raised before (read through `workflowOf` and
+  `enforcedWorkflow`). HR's approval never applies a resignation; the CEO's does. A resignation HR raises still has its HR step
+  signed by raising (`signHrStepRaisedByHr`). Tests: `tests/hrResignationWorkflow.test.ts`.
 - **HODs raise manpower requisitions for their own department (owner,
   2026-10-22: "Give manpower requisition option on screen of all HODs, for
   their own department only").** An HOD = a login whose own active employee

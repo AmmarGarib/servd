@@ -70,7 +70,17 @@ export function defaultFormat(sec: HrSection): ActiveFormat {
 function enforcedWorkflow(section: string, wf: WorkflowStep[]): WorkflowStep[] {
   if (section === 'attendance') return [CEO_STEP]
   if (section === 'salary_revision') return withCeoLast(wf)
+  if (section === 'resignation') return resignationWorkflow(wf)
   return wf
+}
+
+/** A resignation: the line manager, then HR, then the CEO's final approval (owner, 2026-11-07: "after HR submits it
+ *  should go to CEO for final approval, should not go directly from line manager to CEO"). Any workflow (a saved
+ *  format, or a record raised on an older one) keeps an HR step before the CEO and ends with the CEO. */
+export function resignationWorkflow(wf: WorkflowStep[]): WorkflowStep[] {
+  const steps = wf.filter((s) => s.role !== 'ceo')
+  if (!steps.some((s) => s.role === 'hr')) steps.push({ key: 'hr', label: 'HR approval', role: 'hr' })
+  return [...steps, CEO_STEP]
 }
 
 // ─── Wage changes go to the CEO (owner, 2026-10-27) ─────────────────────────
@@ -749,6 +759,7 @@ export function workflowOf(rec: { section: string; data: unknown; amountCents?: 
   // HR's own record change with no manager login to sign it: the CEO, once (owner, 2026-11-04).
   if (rec.section === 'profile_update' && ((rec.data ?? {}) as Record<string, unknown>)['_ceoOnly'] === true) return [CEO_STEP]
   // A wage change ends with the CEO (owner, 2026-10-27).
+  if (rec.section === 'resignation') return resignationWorkflow(fmt.workflow)
   return isWageChange(rec) ? withCeoLast(fmt.workflow) : fmt.workflow
 }
 

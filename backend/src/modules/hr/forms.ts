@@ -620,8 +620,10 @@ export const HR_SECTIONS: HrSection[] = [
       t('bankAccount', 'Bank account', { group: 'Payment', ref: BANK_ACCOUNT_REF, help: 'Blank = the company\'s bank. Management can pick it when approving.' }),
     ] },
 
+  // Line manager → HR → the CEO's final approval (owner, 2026-11-07: "should not go directly from line manager
+  // to CEO"). A saved format keeps the HR step and the CEO last (service.ts enforcedWorkflow).
   { key: 'resignation', specNo: 24, title: 'Resignations', group: 'Separation', kind: 'record',
-    workflow: [HOD, HR], requires: ['employeeId', 'endDate'],
+    workflow: [HOD, HR, CEO_STEP], requires: ['employeeId', 'endDate'],
     effect: 'On final approval the employee is marked resigned with their last working day.',
     fields: [
       emp(),
