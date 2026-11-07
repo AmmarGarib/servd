@@ -164,11 +164,12 @@ function SplitForm({ preview, sourceEntryId, payrollRunId, tenantId, onDone, onC
     <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (ok && !submit.isPending) { setErr(''); submit.mutate() } }}>
       <div className="rounded-lg border border-s-border p-3 text-sm space-y-0.5">
         <p className="font-semibold text-s-text break-words">
-          {src.kind === 'payroll_run' ? `Payroll ${src.payrollPeriod ?? ''}` : (src.voucherNo ?? src.reference ?? 'Journal entry')}
+          {src.kind === 'payroll_run' ? `Payroll ${src.payrollPeriod ?? ''}` : (src.voucherNo ?? (src.reference && !/^[a-z_.]+:/i.test(src.reference) ? src.reference : 'Journal entry'))}
           <span className="text-s-muted font-normal"> · {src.companyName} · {day(src.entryDate)}</span>
         </p>
         {src.description && <p className="text-xs text-s-muted break-words">{src.description}</p>}
-        {src.reference && src.voucherNo && <p className="text-xs text-s-muted font-mono break-all">{src.reference}</p>}
+        {/* A system key (manual:<id>, hr.payroll.accrual:<id>…) is never shown (owner, 2026-11-06) — only a typed reference. */}
+        {src.reference && src.voucherNo && !/^[a-z_.]+:/i.test(src.reference) && <p className="text-xs text-s-muted break-all">{src.reference}</p>}
       </div>
 
       <section>
@@ -261,7 +262,7 @@ function SplitDetail({ split, tenantId, onChanged, onClose, justPosted }: {
       {justPosted && <p role="status" className="text-sm text-success font-semibold">Split posted.</p>}
       <div className="rounded-lg border border-s-border p-3 text-sm space-y-0.5">
         <p className="font-semibold text-s-text break-words">
-          {s.sourceKind === 'payroll_run' ? `Payroll ${s.payrollPeriod ?? ''}` : (s.sourceVoucherNo ?? s.sourceReference ?? 'Journal entry')}
+          {s.sourceKind === 'payroll_run' ? `Payroll ${s.payrollPeriod ?? ''}` : (s.sourceVoucherNo ?? (s.sourceReference && !/^[a-z_.]+:/i.test(s.sourceReference) ? s.sourceReference : 'Journal entry'))}
           <span className="text-s-muted font-normal"> · {s.companyName} · {day(s.entryDate)}</span>
           <span className={`ml-2 align-middle ${s.status === 'posted' ? 's-badge-green' : 's-badge-purple'}`}>{s.status === 'posted' ? 'Posted' : 'Reversed'}</span>
         </p>

@@ -387,7 +387,7 @@ function SplitsTab() {
                   </td>
                   <td className="px-3 py-2 break-words">
                     {s.companyName}
-                    <span className="block text-xs text-white/50">{s.sourceKind === 'payroll_run' ? `Payroll ${s.payrollPeriod ?? ''}` : (s.sourceVoucherNo ?? s.sourceReference ?? 'Journal entry')}</span>
+                    <span className="block text-xs text-white/50">{s.sourceKind === 'payroll_run' ? `Payroll ${s.payrollPeriod ?? ''}` : (s.sourceVoucherNo ?? (s.sourceReference && !/^[a-z_.]+:/i.test(s.sourceReference) ? s.sourceReference : 'Journal entry'))}</span>
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtPkr(s.baseCents)}</td>
                   <td className="px-3 py-2">
