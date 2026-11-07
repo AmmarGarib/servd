@@ -36,6 +36,8 @@ interface InventoryItem {
   bySite?: Array<{ locationId: string; qty: number }>
   /** 'prep' = made in house by prep batches. */
   kind?: string
+  /** The item group of its servd ingredient (owner, 2026-11-07: Sea food, Meat, …). */
+  group?: { id: string; name: string; category: string } | null
   /** The unit it is bought in and how many stock units one holds (a delivery typed in it converts at the dock). */
   purchaseUnit?: string | null
   purchaseUnitFactor?: number
@@ -169,6 +171,8 @@ export default function InventoryPage() {
     } catch { /* no window */ }
   }, [])
   const [showAdd, setShowAdd] = useState(false)
+  // Item groups (owner, 2026-11-07: "Add groups to the Inventory page too"): '' = all, 'none' = not in a group.
+  const [groupFilter, setGroupFilter] = useState('')
   // A panel's Save was pressed once: show what is missing next to each field.
   const [tried, setTried] = useState(false)
   const [addForm, setAddForm] = useState({ name: '', unit: 'kg', parLevel: '', category: '', notes: '', tenantId: '' })
@@ -432,9 +436,11 @@ export default function InventoryPage() {
   // Sourcing Master Sheet catalog (loaded at 0 stock / 0 par) off this page;
   // an item joins Inventory once you give it a par level or log stock.
   const tracked = items.filter((i) => i.currentStock > 0 || i.parLevel > 0)
+  const groupChoices = [...new Map(tracked.filter((i) => i.group).map((i) => [i.group!.id, i.group!])).values()].sort((a, b) => a.name.localeCompare(b.name))
+  const shown = tracked.filter((i) => !groupFilter || (groupFilter === 'none' ? !i.group : i.group?.id === groupFilter))
 
   const grouped: Record<string, InventoryItem[]> = {}
-  for (const item of tracked) {
+  for (const item of shown) {
     const cat = categoryLabel(item.category)
     if (!grouped[cat]) grouped[cat] = []
     grouped[cat]!.push(item)
@@ -875,14 +881,35 @@ export default function InventoryPage() {
                   </div>
                 )}
 
-                {Object.entries(grouped).map(([cat, catItems]) => (
+                {groupChoices.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label htmlFor="inv-group" className="text-xs text-s-muted">Group</label>
+                    <Select id="inv-group" value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)} className="s-input w-auto px-3 py-1.5 text-sm">
+                      <option value="">All groups</option>
+                      {groupChoices.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                      <option value="none">Not in a group</option>
+                    </Select>
+                    <span className="text-xs text-s-muted">Groups are set on <Link href="/kitchen/ingredients" className="text-primary-ink underline">Ingredients</Link>.</span>
+                  </div>
+                )}
+                {Object.keys(grouped).length === 0 && groupFilter && <p className="text-sm text-s-muted">No stock items in this group.</p>}
+
+                {Object.entries(grouped).map(([cat, catItemsRaw]) => {
+                  // Within a category, items sit under their group (no group last).
+                  const catItems = [...catItemsRaw].sort((a, b) => (a.group ? 0 : 1) - (b.group ? 0 : 1) || (a.group?.name ?? '').localeCompare(b.group?.name ?? '') || a.name.localeCompare(b.name))
+                  const hasGroups = catItems.some((i) => i.group)
+                  return (
                   <div key={cat}>
                     <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">{cat}</p>
                     <div className="rounded-xl border border-s-border overflow-hidden">
-                      {catItems.map((item) => {
+                      {catItems.map((item, idx) => {
                         const isLow = item.currentStock <= item.parLevel
+                        const gName = item.group?.name ?? 'Not in a group'
+                        const newGroup = hasGroups && (idx === 0 || (catItems[idx - 1]!.group?.name ?? 'Not in a group') !== gName)
                         return (
-                          <div key={item.id}
+                          <div key={item.id}>
+                          {newGroup && <p className="bg-s-bg-soft px-4 py-1.5 text-[11px] font-semibold text-s-muted border-b border-s-border/50">{gName}</p>}
+                          <div
                             className={`border-b border-s-border/50 last:border-0 transition-colors ${isLow ? 'bg-red-100/5' : ''}`}>
                             <div className="flex items-center justify-between gap-2 px-4 py-3 flex-wrap">
                               <div className="flex items-center gap-3 min-w-0 flex-wrap">
@@ -946,11 +973,13 @@ export default function InventoryPage() {
                               </div>
                             </div>
                           </div>
+                          </div>
                         )
                       })}
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </>
             )
           )}

@@ -2370,7 +2370,9 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   /ingredient-master/:id/group {groupId|null}` (PROCUREMENT_TEAM; 422 `GROUP_CATEGORY_MISMATCH` / `GROUP_SWITCHED_OFF`),
   `GET /ingredient-master?groupId=…|none`, `POST /ingredient-master {groupId}` (category defaults to the group's).
   Admin: the ingredient picker (PO lines, recipes) filters by group and adds an item with a group or "+ New group";
-  Enter on a name with no match opens "Add new" so a typed item is saved; Ingredients sheet has a Group column.
+  Enter on a name with no match opens "Add new" so a typed item is saved; Ingredients sheet has a Group column; the
+  Inventory page lists stock items under their group within each category with a Group filter (`GET /inventory` rows
+  carry `group`).
 - **Par in PORTIONS (K5)** — `Recipe.portionsPerBatch` (portions one batch makes; size = yield ÷ it,
   `lib/portions.ts`, never stored) + `portionLabel`. A prep batch may be logged in portions (`actualPortions`; 422
   `NO_PORTION_SIZE` without). Portions are what CAME OUT: the draw is whole batches (`batches`, default 1), expected =

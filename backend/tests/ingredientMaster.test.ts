@@ -412,6 +412,11 @@ describe('item groups (owner, 2026-11-07: "Sea food will contain all types of fi
     expect((await call(u.cashA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: sea.id })).statusCode).toBe(403)
     expect((await call(u.buyerA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: sea.id })).json().groupId).toBe(sea.id)
     expect(await prisma.auditLog.count({ where: { action: 'ingredient_master.group', entityId: fish.json().id } })).toBe(2)
+    // The Inventory page sees the group on the company's stock item (owner, 2026-11-07).
+    const item = await call(u.buyerA!, 'POST', '/inventory/from-master', { masterIngredientId: fish.json().id })
+    expect(item.statusCode, item.body).toBeLessThan(300)
+    const inv = (await call(u.chefA!, 'GET', '/inventory')).json() as Array<{ id: string; group: { name: string } | null }>
+    expect(inv.find((i) => i.id === item.json().id)?.group?.name).toBe('Fish group test')
     // Switched off by a manager: no longer offered or usable.
     expect((await call(u.buyerA!, 'PATCH', `/ingredient-master/groups/${veg.id}`, { active: false })).statusCode).toBe(403)
     expect((await call(u.chefA!, 'PATCH', `/ingredient-master/groups/${veg.id}`, { active: false })).statusCode).toBe(200)
