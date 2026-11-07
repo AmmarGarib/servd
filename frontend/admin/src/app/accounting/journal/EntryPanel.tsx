@@ -12,6 +12,8 @@ import { api } from '../../../lib/api'
 import { fmtPkr } from '../../../lib/money'
 import { Button, ErrorBanner, Field, Input, LinkButton, SidePanel } from '@/components/finance/ui'
 import { RecordFiles } from '@/components/files/RecordFiles'
+import { CostSplitDialog, splitToText, usePreviewQuery } from '@/components/finance/CostSplitDialog'
+import { useAuthStore } from '../../../store/auth'
 import { StatusBadge, SubAccountSelect, readableDescription } from './JournalBits'
 import { PENDING_MSG, isPending, pktDate, type EntryDetail, type RegRow } from './journalTypes'
 
@@ -51,6 +53,8 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
     queryFn: () => api.get(`/accounting/journals/${entryId}`),
   })
   const [mode, setMode] = useState<'view' | 'text' | 'cancel'>('view')
+  const [splitOpen, setSplitOpen] = useState(false)
+  const canSplitRole = useAuthStore((s) => s.isRole('admin', 'finance'))
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   // text edit draft
@@ -109,6 +113,10 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
     desc.trim() !== e.description || ref.trim() !== (e.operatorReference ?? '')
     || e.lines.some((l) => (memos[l.id] ?? '') !== (l.memo ?? '') || (l.subAccounts.length <= 1 && (subs[l.id] ?? '') !== singleSub(l))))
 
+  // Cost split (owner, 2026-11-07): looked up once, only when this panel is open on a live entry.
+  const splitPreview = usePreviewQuery({ sourceEntryId: entryId, tenantId, enabled: canSplitRole && !!e && e.status === 'live' && !e.reverses })
+  const liveSplit = splitPreview.data?.liveSplit && splitPreview.data.liveSplit.status === 'posted' ? splitPreview.data.liveSplit : null
+  const showSplit = canSplitRole && !!e && e.status === 'live' && !e.reverses && !!splitPreview.data && (!!liveSplit || splitPreview.data.canSplit)
   const canChange = !!e && e.canRequestChange && e.status === 'live' && !e.pendingChange
   const total = e ? e.totalCents : 0
 
@@ -234,8 +242,13 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
                     <Button variant="secondary" type="button" onClick={() => onDuplicate(e)}
                       title="Open a new entry with the same type, lines and description — nothing posts until you post it">Duplicate</Button>
                   )}
+                  {showSplit && (
+                    <Button variant="secondary" type="button" onClick={() => setSplitOpen(true)}
+                      title="Move part of this expense to other companies through inter-company charges">{liveSplit ? 'View split' : 'Split to companies'}</Button>
+                  )}
                 </div>
               )}
+              {liveSplit && <p className="text-xs text-s-muted">{splitToText(liveSplit)}.</p>}
               {e.blockedReason && (!e.canTextEdit || !canChange) && <p className="text-xs text-s-muted">{e.blockedReason}</p>}
               {canChange && e.changeNeedsApproval && (
                 <p className="text-xs text-s-muted">A change of amount, and cancelling, waits for the CEO&apos;s approval. Text edits, and moving the account, brand or date with the same amounts, apply at once.</p>
@@ -279,6 +292,10 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
           )}
           <div className="pt-2"><LinkButton tone="muted" type="button" onClick={onClose}>Close</LinkButton></div>
         </div>
+      )}
+      {splitOpen && (
+        <CostSplitDialog sourceEntryId={entryId} tenantId={tenantId} onClose={() => setSplitOpen(false)}
+          onDone={() => { void splitPreview.refetch(); refresh() }} />
       )}
     </SidePanel>
   )

@@ -18,6 +18,7 @@ import { Select } from '@/components/ui/Select'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { OvertimePicker, otAvailableOf, otSummary } from '../../../../components/hr/OvertimePicker'
+import { CostSplitDialog } from '@/components/finance/CostSplitDialog'
 import { NavIcon } from '../../../../components/ui/NavIcon'
 import { SalaryBreakupView, PayslipParticularsView, PayslipPdfButtons, type SalaryBreakup, type PayslipParticulars } from '../../../../components/hr/SalaryBreakup'
 
@@ -123,6 +124,7 @@ export default function PayrollRunPage() {
   const qc = useQueryClient()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [paying, setPaying] = useState(false)
+  const [splitting, setSplitting] = useState(false)
   const [err, setErr] = useState('')
   const { userId, role, isHrAdmin, isPayrollApprover, isPayrollPayer, isFinanceReviewer } = useHrAccess()
   const [returning, setReturning] = useState<ReturnMode | null>(null)
@@ -253,6 +255,10 @@ export default function PayrollRunPage() {
             {run.status === 'locked' && !run.paidAt && isPayrollPayer && (
               <button className={btn} onClick={() => { setErr(''); setPaying(true) }}>Mark paid</button>
             )}
+            {(run.status === 'approved' || run.status === 'locked') && (role === 'admin' || role === 'finance') && (
+              <button className={btnGhost} onClick={() => setSplitting(true)}
+                title="Move part of this payroll cost to other companies through inter-company charges">Split to companies</button>
+            )}
             {run.paidAt && (
               <span className="text-xs text-success font-bold self-center">
                 Paid {day(payment?.paidOn ?? run.paidAt)}{payment ? ` — ${splitLine(payment.bank.cents, payment.bank.staff, payment.cash.cents, payment.cash.staff)}` : ''}
@@ -314,6 +320,7 @@ export default function PayrollRunPage() {
           </div>
         </div>
       )}
+      {splitting && run && <CostSplitDialog payrollRunId={id} tenantId={run.tenantId} onClose={() => setSplitting(false)} />}
       {editing && run && <SlipModal key={`${editing.id}:${((editing.inputs['otRecordIds'] as string[] | undefined) ?? []).join(',')}:${Number(editing.inputs['otCents'] ?? 0)}`} slip={editing} period={run.period} draft={run.status === 'draft'} types={data?.deductionTypes ?? []} onClose={() => setEditingId(null)} />}
       {returning && run && <ReturnModal mode={returning} runId={run.id} period={run.period} onClose={() => setReturning(null)} />}
       {taxSlip && run && <TaxModal slip={taxSlip} period={run.period} onClose={() => setTaxSlipId(null)} />}

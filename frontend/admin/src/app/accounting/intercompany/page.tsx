@@ -42,6 +42,7 @@ import { Select } from '@/components/ui/Select'
 import { useHeadOfficeMe } from '../../../hooks/useWorkspaces'
 import { HeadOfficeTab } from './HeadOfficeTab'
 import { useActiveCompany } from '../../../lib/connectorsApi'
+import { CostSplitDialog, type SplitView } from '@/components/finance/CostSplitDialog'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 
 // ─── API shapes ──────────────────────────────────────────────────────────────
@@ -153,6 +154,7 @@ interface WriteOffPreview extends LegacyDiff {
 const TABS = [
   { key: 'balances', label: 'Balances' },
   { key: 'transfers', label: 'Transfers' },
+  { key: 'splits', label: 'Cost splits' },
   { key: 'fleet', label: 'Shared fleet' },
   { key: 'tieout', label: 'Tie-out & legacy' },
   // Shown only with a head office (or a charge from one); `?tab=recharges` is the close checklist's link.
@@ -326,6 +328,7 @@ export default function IntercompanyPage() {
         {tab === 'transfers' && (
           <TransfersTab companies={companies.data ?? null} prefill={settlePrefill} clearPrefill={() => setSettlePrefill(null)} setMsg={setMsg} />
         )}
+        {tab === 'splits' && <SplitsTab />}
         {tab === 'fleet' && <FleetTab canDecide={can.decide} setMsg={setMsg} />}
         {tab === 'tieout' && <TieOutTab setMsg={setMsg} />}
         {tab === 'recharges' && showHeadOffice && (
@@ -346,6 +349,62 @@ export default function IntercompanyPage() {
 }
 
 // ─── Balances ────────────────────────────────────────────────────────────────
+
+function SplitsTab() {
+  const [status, setStatus] = useState<'' | 'posted' | 'reversed'>('')
+  const [open, setOpen] = useState<string | null>(null)
+  const list = useQuery({
+    queryKey: ['cost-split', 'list', status],
+    queryFn: () => api.get<{ items: SplitView[] }>(`/accounting/intercompany/splits?limit=200${status ? `&status=${status}` : ''}`),
+  })
+  const items = list.data?.items ?? []
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <Field label="Show">
+          <Select value={status} onChange={(e) => setStatus(e.target.value as '' | 'posted' | 'reversed')} className="s-select">
+            <option value="">All splits</option>
+            <option value="posted">Posted</option>
+            <option value="reversed">Reversed</option>
+          </Select>
+        </Field>
+        <p className="text-xs text-white/50 max-w-md">To split a cost, open the expense on the Journals page, or an approved payroll run, and choose &ldquo;Split to companies&rdquo;.</p>
+      </div>
+      {list.isLoading && <p className="text-sm text-white/40" role="status">Loading…</p>}
+      {list.isError && <p className="text-sm" style={{ color: danger }} role="alert">{errMessage(list.error)}</p>}
+      {list.data && items.length === 0 && <CompactEmptyState message="No cost splits yet." />}
+      {items.length > 0 && (
+        <div className="overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--border)' }}>
+          <table className="w-full min-w-[40rem] text-sm">
+            <thead className="text-left text-xs text-white/50">
+              <tr><th className="px-3 py-2">Date</th><th className="px-3 py-2">From</th><th className="px-3 py-2 text-right">Total</th><th className="px-3 py-2">Split to</th><th className="px-3 py-2">By</th><th className="px-3 py-2">Status</th></tr>
+            </thead>
+            <tbody>
+              {items.map((s) => (
+                <tr key={s.id} className="border-t align-top" style={{ borderColor: 'var(--border)' }}>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <button type="button" className="font-semibold text-primary-ink hover:underline" onClick={() => setOpen(s.id)}>{s.entryDate.slice(0, 10)}</button>
+                  </td>
+                  <td className="px-3 py-2 break-words">
+                    {s.companyName}
+                    <span className="block text-xs text-white/50">{s.sourceKind === 'payroll_run' ? `Payroll ${s.payrollPeriod ?? ''}` : (s.sourceVoucherNo ?? s.sourceReference ?? 'Journal entry')}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtPkr(s.baseCents)}</td>
+                  <td className="px-3 py-2">
+                    {s.shares.map((x) => <span key={x.id} className="block break-words">{x.companyName} <span className="tabular-nums text-white/60">{fmtPkr(x.amountCents)}</span></span>)}
+                  </td>
+                  <td className="px-3 py-2 break-words">{s.createdByName ?? '—'}</td>
+                  <td className="px-3 py-2"><span className={s.status === 'posted' ? 's-badge-green' : 's-badge-purple'}>{s.status === 'posted' ? 'Posted' : 'Reversed'}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {open && <CostSplitDialog splitId={open} onClose={() => setOpen(null)} onDone={() => void list.refetch()} />}
+    </section>
+  )
+}
 
 function BalancesTab({ canPrepare, onSettle }: { canPrepare: boolean; onSettle: (p: TransferPrefill) => void }) {
   const [asOf, setAsOf] = useState('')
