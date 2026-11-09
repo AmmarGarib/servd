@@ -13,6 +13,7 @@ import MyTimeClockCard from '../../../components/hr/MyTimeClockCard'
 import { roleLabel } from '../../../lib/appRoles'
 import { pagesForModules, isParkedSection } from '../../../lib/moduleCatalog'
 import { useApprovalCounts } from '../../ceo/approvalsData'
+import { MyPoTasksCard } from '../../../components/procurement/MyPoTasksCard'
 
 const card = { background: 'rgb(var(--fg-rgb) / 0.03)', border: '1px solid rgb(var(--fg-rgb) / 0.07)' }
 
@@ -70,6 +71,8 @@ export default function WorkspaceHomePage() {
       </div>
 
       {ceoWs && <ApprovalsFirst />}
+      {/* A buyer / requester's purchase-order tasks, right under the header (owner, 2026-11-09). */}
+      <MyPoTasksCard />
 
       {lead.map((p) => (
         <Link key={p.href} href={p.href} className="mt-5 flex items-center rounded-2xl px-4 py-3 hover:bg-white/[0.04]" style={card}>
