@@ -123,20 +123,34 @@ function Card({ title, sub, children }: { title: React.ReactNode; sub?: React.Re
   )
 }
 
-/** Rate inputs per line (rupees per the line's order unit): only changed ones are sent. */
+/** Actual price paid per line (owner, 2026-11-10: "Buyer should have option to put the actual price of items
+ *  purchased because rates of items can fluctuate") — rupees per the line's order unit, prefilled with the estimate
+ *  the PO was raised with; only changed ones are sent. */
 function RateFields({ lines, rates, setRates }: { lines: WfLine[]; rates: Record<string, number>; setRates: (r: Record<string, number>) => void }) {
+  const qtyOf = (l: WfLine) => round6(l.quantityOrdered / shown(l).factor)
+  const estimate = lines.reduce((t, l) => t + Math.round(qtyOf(l) * shown(l).rate), 0)
+  const actual = lines.reduce((t, l) => t + Math.round(qtyOf(l) * (rates[l.id] ?? shown(l).rate)), 0)
   return (
     <div className="space-y-2">
+      <p className="text-sm font-bold text-s-text">Actual price paid</p>
+      <p className="text-[11px] text-s-muted">Each line starts at the estimated rate the PO was raised with. Type the price you really paid per unit, as on the supplier&apos;s invoice.</p>
       {lines.map((l) => {
         const s = shown(l)
+        const changed = rates[l.id] != null && rates[l.id] !== s.rate
         return (
           <div key={l.id} className="grid grid-cols-1 sm:grid-cols-[1fr_12rem] gap-1 sm:gap-3 items-center">
-            <span className="text-xs text-s-text break-words">{l.inventoryItem?.name ?? 'Item'} · {round6(l.quantityOrdered / s.factor)} {s.unit}</span>
-            <MoneyInput value={rates[l.id] ?? s.rate} onChange={(c) => setRates({ ...rates, [l.id]: c })} ariaLabel={`Rate per ${s.unit} for ${l.inventoryItem?.name ?? 'item'}`} className="s-input w-full" />
+            <span className="text-xs text-s-text break-words">
+              {l.inventoryItem?.name ?? 'Item'} · {qtyOf(l)} {s.unit}
+              <span className="block text-[11px] text-s-muted">Estimated {fmtPkrWhole(s.rate)} / {s.unit}{changed ? ` → actual ${fmtPkrWhole(rates[l.id]!)}` : ''}</span>
+            </span>
+            <MoneyInput value={rates[l.id] ?? s.rate} onChange={(c) => setRates({ ...rates, [l.id]: c })} ariaLabel={`Actual price per ${s.unit} for ${l.inventoryItem?.name ?? 'item'}`} className="s-input w-full" />
           </div>
         )
       })}
-      <p className="text-[11px] text-s-muted">The rate per the unit ordered in — change it only when the invoice price differs.</p>
+      <p className="text-xs text-s-muted">
+        Estimated total {fmtPkrWhole(estimate)} · <span className="font-bold text-s-text">Actual total {fmtPkrWhole(actual)}</span>
+        {actual !== estimate && <span className={actual > estimate ? ' text-s-red' : ' text-success'}> ({actual > estimate ? '+' : '−'}{fmtPkrWhole(Math.abs(actual - estimate))})</span>}
+      </p>
     </div>
   )
 }

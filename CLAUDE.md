@@ -1983,7 +1983,7 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `requireApWriterModule` holds finance to `accounting` and every other role
   to `procurement`; GATED_PREFIXES admits either on `/procurement/bills`,
   `/credit-notes` and `/payments`. POs, receiving and the supplier master stay
-  closed to finance. Every write is audited under the supplier's company; bill
+  closed to finance (POs open to finance since 2026-11-10 — see "Finance raises POs"). Every write is audited under the supplier's company; bill
   files (`supplier_bill`) follow the same rule. Admin: `/procurement` shows
   finance only Bills, Payments and Aging (`useApOnly`); sidebar Accounting →
   "Supplier bills & payments". A payment or due date that is not a date is 422
@@ -2026,6 +2026,18 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `/procurement/purchase-orders`, 422 `BUYER_NOT_LISTED`); the CEO's approval keeps it unless the CEO names another
   (`resolvePoBuyer`: the CEO's pick → the raiser's → the only listed buyer → the only `procurement` login → the
   requester). The buyer sees the PO in My tasks only once the CEO approves. Tests: `tests/poApprovalChain.test.ts`.
+- **Finance raises POs (owner, 2026-11-10: "Allow finance to create POs" — REPLACES "POs stay closed to finance").**
+  `procurement/routes.ts PO_RAISERS` (procurement team + finance) on POST / PATCH `/purchase-orders`, `/submit`,
+  `/cancel`; finance works only the POs it raised (403 `PO_FINANCE_OWN_ONLY`; cancel only draft / waiting for the
+  CEO); send / mark-sent and the supplier master stay procurement's. GATED_PREFIXES: `/procurement/purchase-orders`
+  and `/procurement/my-tasks` admit `procurement | accounting`; `/procurement/buyers` reads with `accounting`. The PO
+  form's helpers admit finance too: ingredient-master reads (`accounting` in READ_MODULES), adding an item / group,
+  `POST /inventory/from-master`. A PO a finance login raised gets its cash voucher already finance-signed (the
+  finance-raised rule). Admin: finance's procurement page shows My tasks + Purchase Orders + the AP tabs; no "+ New
+  supplier". **The buyer enters the actual price paid** per line when completing (existing `lines` on `/complete`;
+  the form shows estimate → actual and both totals). **Units:** a line is ordered in the item's unit, its family
+  (g / kg, ml / l, pcs / items / dozen) or the item's buying unit, the rate per that unit (`poUnits.ts`; `items` =
+  `pcs`). Tests: `tests/poApprovalChain.test.ts`, `tests/apFinanceFinal.test.ts`, `tests/wave3Finance.test.ts`.
 - **PO cancel:** a PO with a pending GRNI match (a bill booked before
   delivery) cannot be cancelled (409 `PO_BILLED_AHEAD`; void the bill or raise
   a "short" credit note first); billing ahead on a cancelled PO is 409

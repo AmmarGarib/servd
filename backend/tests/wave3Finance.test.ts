@@ -333,9 +333,10 @@ describe('UI-07 finance reads the payables (AP) — and only reads them', () => 
   })
 
   // Owner, 2026-10-16: finance bills and pays (procurement AP_WRITERS; the
-  // full cover is apFinanceFinal.test.ts) — it still raises no PO.
-  it('finance raises no PO; bills and payments are no longer refused by role', async () => {
-    expect((await call('finAp', 'POST', '/procurement/purchase-orders', { supplierId: ids.supA, lines: [{ inventoryItemId: ids.supA, quantityOrdered: 1, unitCostCents: 1 }] })).statusCode).toBe(403)
+  // full cover is apFinanceFinal.test.ts). Since 2026-11-10 finance raises POs too (owner: "Allow finance to create
+  // POs") — never on another company's supplier.
+  it('finance raises POs only on its own companies\' suppliers; bills and payments are no longer refused by role', async () => {
+    expect((await call('finAp', 'POST', '/procurement/purchase-orders', { supplierId: ids.supB, lines: [{ inventoryItemId: ids.supA, quantityOrdered: 1, unitCostCents: 1 }] })).statusCode).toBe(404)
     const bill = await call('finAp', 'POST', '/procurement/bills', { supplierId: ids.supA, billNumber: 'X1', billDate: '2026-10-01', lines: [{ description: 'Flour', quantity: 1, unitCostCents: 100 }] })
     expect(bill.statusCode).not.toBe(403)
   })

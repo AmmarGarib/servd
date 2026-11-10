@@ -626,7 +626,10 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // GRNs of the PO → GRN workflow (owner, 2026-11-05): finance verifies with 'accounting', buyers and requesters work
   // with 'procurement' (procurement/poWorkflowRoutes.ts holds finance's step to 'accounting').
   { prefix: '/procurement/grns',            anyOf: ['procurement', 'accounting'] },
-  { prefix: '/procurement/purchase-orders', anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
+  // Finance raises POs with 'accounting' (owner, 2026-11-10); every PO route keeps its own role / ownership guard.
+  { prefix: '/procurement/purchase-orders', anyOf: ['procurement', 'accounting'] },
+  { prefix: '/procurement/buyers',          anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting'] },
+  { prefix: '/procurement/my-tasks',        anyOf: ['procurement', 'accounting'] },
   // 'capital' reads the supplier picker (?view=picker) of the OpEx / CapEx
   // forms (vendor, filer status, WHT section); adding a supplier stays procurement.
   { prefix: '/procurement/suppliers',       anyOf: ['procurement'], readAnyOf: ['procurement', 'accounting', 'capital'] },

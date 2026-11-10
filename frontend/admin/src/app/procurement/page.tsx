@@ -188,7 +188,11 @@ const pktDate = (iso: string) => new Date(new Date(iso).getTime() + 5 * 3_600_00
 interface InventoryItem { id: string; name: string; unit: string; supplierId?: string | null; unitCostCents?: number | null; latestCostCents?: number | null; purchaseUnit?: string | null; purchaseUnitFactor?: number | null }
 
 /** The units a PO line may be ordered in — the same rule as backend procurement/poUnits.ts (the server's factor wins). */
-const UNIT_FAMILY: Record<string, Array<[string, number]>> = { g: [['kg', 1000]], kg: [['g', 0.001]], ml: [['l', 1000]], l: [['ml', 0.001]], pcs: [['dozen', 12]] }
+// Pieces and items are the same count (owner, 2026-11-10: "Qty should have UOM in grams, KGs, pieces, items").
+const UNIT_FAMILY: Record<string, Array<[string, number]>> = {
+  g: [['kg', 1000]], kg: [['g', 0.001]], ml: [['l', 1000]], l: [['ml', 0.001]],
+  pcs: [['items', 1], ['dozen', 12]], items: [['pcs', 1], ['dozen', 12]], item: [['pcs', 1], ['dozen', 12]], pieces: [['pcs', 1], ['dozen', 12]],
+}
 function orderUnitsOf(item: InventoryItem): Array<{ unit: string; factor: number }> {
   const out = [{ unit: item.unit, factor: 1 }]
   for (const [u, f] of UNIT_FAMILY[item.unit.trim().toLowerCase()] ?? []) out.push({ unit: u, factor: f })
@@ -296,14 +300,15 @@ function useCanWriteAp(): boolean {
   return isManager || (me?.role === 'finance' && (perms?.modules ?? []).includes('accounting'))
 }
 
-const AP_ONLY_TABS: readonly Tab[] = ['grns', 'bills', 'payments', 'aging']
+// Finance raises its own POs too (owner, 2026-11-10: "Allow finance to create POs").
+const AP_ONLY_TABS: readonly Tab[] = ['tasks', 'pos', 'grns', 'bills', 'payments', 'aging']
 
 export default function ProcurementPage() {
   const qc = useQueryClient()
   const apOnly = useApOnly()
   const [tab, setTab] = useState<Tab>('pos')
   // My tasks (owner, 2026-11-05: "users see only pending tasks assigned to them") — the first tab when there is any.
-  const { data: myTasks } = useMyPoTasks(!apOnly)
+  const { data: myTasks } = useMyPoTasks(true)
   const nTasks = taskCount(myTasks)
   const pickedTab = useRef(false)
   useEffect(() => { if (!pickedTab.current && nTasks > 0) { pickedTab.current = true; setTab('tasks') } }, [nTasks])
@@ -354,8 +359,8 @@ export default function ProcurementPage() {
   return (
     <div className="min-h-screen bg-s-bg flex flex-col">
       <header className="border-b border-s-border px-6 py-4 shrink-0">
-        <h1 className="text-2xl font-black text-s-text">{apOnly ? 'Supplier bills & payments' : 'Procurement'}</h1>
-        <p className="text-sm text-s-muted mt-0.5">{apOnly ? 'Supplier bills, credit notes and payments · AP aging' : 'Purchase orders · Accounts payable · Supplier management'}</p>
+        <h1 className="text-2xl font-black text-s-text">{apOnly ? 'Purchase orders, bills & payments' : 'Procurement'}</h1>
+        <p className="text-sm text-s-muted mt-0.5">{apOnly ? 'Your purchase orders · Supplier bills, credit notes and payments · AP aging' : 'Purchase orders · Accounts payable · Supplier management'}</p>
       </header>
 
       {/* Tab strip */}
@@ -762,8 +767,8 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
     actions.push({ label: 'Return', action: 'return', cls: 'text-s-amber hover:opacity-80' })
     actions.push({ label: 'Reject', action: 'reject', cls: 'text-s-red hover:opacity-80' })
   }
-  if (po.status === 'approved' && !noSupplier(po)) {
-    // Approved is not sent: email/WhatsApp it, or record that it was phoned in.
+  if (po.status === 'approved' && !noSupplier(po) && role !== 'finance') {
+    // Approved is not sent: email/WhatsApp it, or record that it was phoned in. (Procurement's — never finance's.)
     actions.push({ label: 'Send', action: 'send', cls: 'text-s-blue hover:opacity-80' })
     actions.push({ label: 'Mark sent', action: 'mark-sent', cls: 'text-s-blue hover:opacity-80' })
   }
@@ -772,7 +777,10 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
       ? { label: 'Receive', action: 'receive', cls: 'text-primary-ink hover:opacity-80' }
       : { label: 'View at dock', action: 'receive', cls: 'text-s-muted hover:text-s-text', title: ownPo ? 'You raised this PO, so a colleague receives it' : 'A manager takes the delivery in' })
   }
-  if (['draft', ...PO_CHAIN, 'approved'].includes(po.status)) {
+  // Finance works only its own draft / waiting POs (the API's PO_FINANCE_OWN_ONLY).
+  const financeMay = role !== 'finance' || ownPo
+  if (po.status === 'draft' && !financeMay) actions.splice(actions.findIndex((a) => a.action === 'submit'), 1)
+  if ((role === 'finance' ? ['draft', ...PO_CHAIN] : ['draft', ...PO_CHAIN, 'approved']).includes(po.status) && financeMay) {
     actions.push({ label: 'Cancel', action: 'cancel', cls: 'text-s-muted hover:text-s-red' })
   }
   if (actions.length === 0) return null
@@ -896,6 +904,8 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
     queryFn: () => api.get<InventoryItem[]>('/inventory'),
   })
 
+  // Finance raises POs but never edits the supplier master (owner, 2026-11-10): no "+ New supplier" for it.
+  const isFinance = useAuthStore((st) => st.user?.role) === 'finance'
   // A draft from the Reorder tab arrives pre-filled; the buyer can still change anything.
   const [supplierId, setSupplierId] = useState(initial?.supplierId ?? '')
   const [expectedDate, setExpectedDate] = useState(initial?.expectedDate ?? '')
@@ -991,7 +1001,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
           }} className={fi}>
             <option value="">No supplier yet (choose later)</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            <option value="__new">+ New supplier…</option>
+            {!isFinance && <option value="__new">+ New supplier…</option>}
           </Select>
         </Field>
         {newSupplier && (

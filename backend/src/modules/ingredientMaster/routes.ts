@@ -67,7 +67,10 @@ export const MASTER_EDITORS = MANAGERS
 export const MASTER_REVIEWERS = ['admin', 'fnb_manager'] as UserRole[]
 /** Who adds a new ingredient: the recipe editors and the buyer. */
 const MASTER_CREATORS = PROCUREMENT_TEAM
-const READ_MODULES = ['recipes', 'inventory', 'procurement', 'par_sheet'] as const
+// Whoever raises a PO adds a new item / group from the PO form — finance too (owner, 2026-11-10). Prices stay
+// MASTER_CREATORS'.
+const PO_ITEM_ADDERS = [...PROCUREMENT_TEAM, 'finance'] as UserRole[]
+const READ_MODULES = ['recipes', 'inventory', 'procurement', 'par_sheet', 'accounting'] as const
 
 const specFields = z.record(z.string().trim().min(1).max(60), z.string().trim().max(300)).refine((o) => Object.keys(o).length <= 30, 'At most 30 spec fields')
 
@@ -174,7 +177,7 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     return rows.map((g) => ({ ...groupShape(g), ingredients: n.get(g.id) ?? 0 }))
   })
 
-  fastify.post('/groups', { preHandler: [requireAuth(...MASTER_CREATORS), requireModule(...READ_MODULES)] }, async (req, reply) => {
+  fastify.post('/groups', { preHandler: [requireAuth(...PO_ITEM_ADDERS), requireModule(...READ_MODULES)] }, async (req, reply) => {
     const body = z.object({ name: z.string().trim().min(2).max(60), category: z.enum(INVENTORY_CATEGORIES) }).parse(req.body)
     const name = cleanIngredientName(body.name)
     const normalizedName = normalizeIngredientName(name)
@@ -226,7 +229,7 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     return groupShape(g)
   })
 
-  fastify.put<{ Params: { id: string } }>('/:id/group', { preHandler: [requireAuth(...MASTER_CREATORS), requireModule(...READ_MODULES)] }, async (req) => {
+  fastify.put<{ Params: { id: string } }>('/:id/group', { preHandler: [requireAuth(...PO_ITEM_ADDERS), requireModule(...READ_MODULES)] }, async (req) => {
     const { groupId } = z.object({ groupId: z.string().uuid().nullable() }).parse(req.body)
     const m = await loadLive(req.params.id)
     if (m.mergedIntoId) throw new AppError('MASTER_MERGED', `${m.name} was merged into another ingredient — group that one`, 409)
@@ -298,7 +301,7 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     return shape(m, mine.get(m.id) ?? null, hide ? null : (await masterPricesMany([m.id])).get(m.id), (await groupsById([m.groupId])).get(m.groupId ?? '') ?? null)
   })
 
-  fastify.post('/', { preHandler: requireAuth(...MASTER_CREATORS) }, async (req, reply) => {
+  fastify.post('/', { preHandler: requireAuth(...PO_ITEM_ADDERS) }, async (req, reply) => {
     const { groupId, ...body } = createSchema.parse(req.body)
     // A group picked with the new item: its category is the item's unless one was given (they must agree).
     const group = groupId ? await assertGroupFits(groupId, body.category ?? null) : null

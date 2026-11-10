@@ -482,7 +482,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   // flow, 2026-10-26, K3): the linked item when it has one (200), else an unlinked item of the same name and unit is
   // linked, else one is made from the master's definition (201) — no price, supplier, par or stock (the company sets
   // those on Sourcing / Inventory). Idempotent. Item keepers and recipe editors (picking an ingredient in a recipe).
-  fastify.post('/from-master', { preHandler: requireAuth(...ITEM_MASTER_EDITORS) }, async (req, reply) => {
+  // Finance too: picking an ingredient on a PO it raises (owner, 2026-11-10).
+  fastify.post('/from-master', { preHandler: requireAuth(...ITEM_MASTER_EDITORS, 'finance') }, async (req, reply) => {
     const body = z.object({ masterIngredientId: z.string().min(1).max(64) }).parse(req.body)
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_COMPANY', 'Pick the company this ingredient belongs to.', 422)

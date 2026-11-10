@@ -170,11 +170,13 @@ describe('finance records supplier bills, credit notes and payments (item 15)', 
     expect((await call('finB', 'POST', '/api/v1/procurement/payments', { supplierId: supB, paymentDate: day(0), method: 'cash', amountCents: 1_000 })).statusCode).toBe(201)
   })
 
-  it('finance without accounting, a manager without procurement and a cashier are refused; PO writes stay closed to finance', async () => {
+  it('finance without accounting, a manager without procurement and a cashier are refused; finance raises POs but never edits suppliers', async () => {
     expect((await call('finNoAcct', 'POST', '/api/v1/procurement/bills', expenseBill(supA, `F-3-${RUN}`, 1_000))).statusCode).toBe(403)
     expect((await call('mgrNoProc', 'POST', '/api/v1/procurement/bills', expenseBill(supA, `F-4-${RUN}`, 1_000))).statusCode).toBe(403)
     expect((await call('cashier', 'POST', '/api/v1/procurement/payments', { supplierId: supA, paymentDate: day(0), method: 'cash', amountCents: 1 })).statusCode).toBe(403)
-    expect((await call('finA', 'POST', '/api/v1/procurement/purchase-orders', { supplierId: supA, lines: [] })).statusCode).toBe(403)
+    // Finance raises POs (owner, 2026-11-10) — an empty PO is a plain validation refusal, not a role one.
+    expect((await call('finA', 'POST', '/api/v1/procurement/purchase-orders', { supplierId: supA, lines: [] })).statusCode).toBe(400)
+    expect((await call('finNoAcct', 'POST', '/api/v1/procurement/purchase-orders', { supplierId: supA, lines: [] })).statusCode).toBe(403)
     expect((await call('finA', 'POST', '/api/v1/procurement/suppliers', { name: 'x' })).statusCode).toBe(403)
   })
 })
@@ -217,7 +219,7 @@ describe('a PO billed ahead of delivery cannot be cancelled (item 3)', () => {
     expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId } })).status).toBe('sent')
 
     // Company B cannot even see it.
-    expect((await call('finB', 'POST', `/api/v1/procurement/purchase-orders/${poId}/cancel`, { reason: 'x' })).statusCode).toBe(403)
+    expect((await call('finB', 'POST', `/api/v1/procurement/purchase-orders/${poId}/cancel`, { reason: 'x' })).statusCode).toBe(404)
 
     await voidBill(b.id, users['ceo']!.id, 'goods never coming')
     const ok = await call('ceo', 'POST', `/api/v1/procurement/purchase-orders/${poId}/cancel`, { reason: 'supplier out of stock' })

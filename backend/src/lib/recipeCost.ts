@@ -115,7 +115,7 @@ const UNIT_TABLE: Record<string, { dim: Dim; base: number }> = (() => {
   for (const u of ['mg']) t[u] = { dim: 'mass', base: 0.001 }
   for (const u of ['g', 'gm', 'gms', 'gr', 'gram', 'grams', 'ml', 'millilitre', 'millilitres', 'milliliter', 'milliliters']) t[u] = { dim: 'mass', base: 1 }
   for (const u of BULK_UNITS) t[u] = { dim: 'mass', base: 1000 }
-  for (const u of ['pcs', 'pc', 'piece', 'pieces', 'unit', 'units', 'each', 'ea', 'no', 'nos']) t[u] = { dim: 'count', base: 1 }
+  for (const u of ['pcs', 'pc', 'piece', 'pieces', 'item', 'items', 'unit', 'units', 'each', 'ea', 'no', 'nos']) t[u] = { dim: 'count', base: 1 }
   for (const u of DOZEN_UNITS) t[u] = { dim: 'count', base: 12 }
   return t
 })()

@@ -190,9 +190,12 @@ describe('the simulated month — purchasing and stock', () => {
       sim.clock.at('2026-10-02', T(co, '10:00', '11:00'))
       const s = S(co)
       const mgr = sim.as(s.buyer, co)
-      // finance raises and receives nothing (owner: kept apart from paying)
-      const finPo = await sim.as(co.finance, co).post('/procurement/purchase-orders', { supplierId: s.meats, lines: [{ inventoryItemId: s.items.chicken, quantityOrdered: 1, unitCostCents: 80_000 }] })
-      expect(finPo.statusCode, finPo.body).toBe(403)
+      // finance may raise a PO (owner, 2026-11-10: "Allow finance to create POs") — this one is cancelled again; it
+      // still receives nothing at the dock (kept apart from paying)
+      const fin = sim.as(co.finance, co)
+      const finPo = await fin.post('/procurement/purchase-orders', { supplierId: s.meats, lines: [{ inventoryItemId: s.items.chicken, quantityOrdered: 1, unitCostCents: 80_000 }] })
+      expect(finPo.statusCode, finPo.body).toBe(201)
+      expect((await fin.post(`/procurement/purchase-orders/${finPo.json().id}/cancel`, { reason: 'raised to try it' })).statusCode).toBe(200)
       const po1 = ok(await mgr.post('/procurement/purchase-orders', {
         supplierId: s.meats, reference: `PO1-${co.key}`,
         lines: [

@@ -46,7 +46,8 @@ export async function onlyListedBuyer(tenantId: string): Promise<string | null> 
 }
 
 export async function registerBuyerRoutes(fastify: FastifyInstance) {
-  fastify.get<{ Querystring: { active?: string } }>('/buyers', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req) => {
+  // Read by whoever raises a PO — finance included (owner, 2026-11-10).
+  fastify.get<{ Querystring: { active?: string } }>('/buyers', { preHandler: requireAuth(...PROCUREMENT_TEAM, 'finance') }, async (req) => {
     const { tenantIds } = await resolveTenantScope(req)
     const rows = await prisma.poBuyer.findMany({
       where: { tenantId: { in: tenantIds }, ...(req.query.active === '1' && { active: true }) },

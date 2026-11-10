@@ -30,7 +30,7 @@ export function orderUnitFactor(item: UnitItem, orderUnit: string): number | nul
 /** The units offered for an item (stock unit first). */
 export function orderUnitsFor(item: UnitItem): Array<{ unit: string; factor: number }> {
   const out: Array<{ unit: string; factor: number }> = [{ unit: item.unit, factor: 1 }]
-  const family: Record<string, string[]> = { g: ['kg', 'mg'], kg: ['g'], mg: ['g', 'kg'], ml: ['l'], l: ['ml'], ltr: ['ml', 'l'], litre: ['ml'], liter: ['ml'], pcs: ['dozen'] }
+  const family: Record<string, string[]> = { g: ['kg', 'mg'], kg: ['g'], mg: ['g', 'kg'], ml: ['l'], l: ['ml'], ltr: ['ml', 'l'], litre: ['ml'], liter: ['ml'], pcs: ['items', 'dozen'], items: ['pcs', 'dozen'], item: ['pcs', 'dozen'], pieces: ['pcs', 'dozen'] }
   for (const u of family[norm(item.unit)] ?? []) {
     const f = orderUnitFactor(item, u)
     if (f != null && !out.some((o) => norm(o.unit) === u)) out.push({ unit: u, factor: f })

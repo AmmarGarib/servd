@@ -464,3 +464,29 @@ describe('the buyers list (owner, 2026-11-10): managers add buyers; whoever rais
     expect(code(await call('mgrB', 'POST', '/procurement/purchase-orders', { supplierId: supB, buyerUserId: U.buyerB2!.id, lines: line }))).toBe('BUYER_NOT_LISTED')
   })
 })
+
+describe('finance raises POs (owner, 2026-11-10: "Allow finance to create POs")', () => {
+  const line = () => [{ inventoryItemId: flour, quantityOrdered: 2, unitCostCents: 200 }]
+  it('finance raises, edits, submits and cancels its OWN PO; never another\'s; B is 404', async () => {
+    const r = await call('finA', 'POST', '/procurement/purchase-orders', { supplierId: supA, lines: line() })
+    expect(r.statusCode, r.body).toBe(201)
+    const id = r.json().id
+    expect((await call('finA', 'PATCH', `/procurement/purchase-orders/${id}`, { supplierId: supA, lines: [{ inventoryItemId: flour, quantityOrdered: 3, unitCostCents: 200 }] })).statusCode).toBe(200)
+    expect((await call('finB', 'POST', `/procurement/purchase-orders/${id}/submit`)).statusCode).toBe(404)
+    const sub = await call('finA', 'POST', `/procurement/purchase-orders/${id}/submit`)
+    expect(sub.statusCode, sub.body).toBe(200)
+    expect(sub.json().status).toBe('pending_approval')
+    // Finance never approves it, and never sends one.
+    expect((await call('finA', 'POST', `/procurement/purchase-orders/${id}/approve`)).statusCode).toBe(403)
+    // Someone else's PO: finance cannot submit or cancel it.
+    const other = await chefPo()
+    expect(code(await call('finA', 'POST', `/procurement/purchase-orders/${other.id}/submit`))).toBe('PO_FINANCE_OWN_ONLY')
+    expect(code(await call('finA', 'POST', `/procurement/purchase-orders/${other.id}/cancel`, { reason: 'not needed any more' }))).toBe('PO_FINANCE_OWN_ONLY')
+    const c = await call('finA', 'POST', `/procurement/purchase-orders/${id}/cancel`, { reason: 'raised by mistake' })
+    expect(c.statusCode, c.body).toBe(200)
+    // The buyers list is readable to finance (to pick one), never writable.
+    expect((await call('finA', 'GET', '/procurement/buyers')).statusCode).toBe(200)
+    expect((await call('finA', 'POST', '/procurement/buyers', { userId: U.buyerA!.id })).statusCode).toBe(403)
+    expect((await call('finA', 'GET', '/procurement/my-tasks')).statusCode).toBe(200)
+  })
+})

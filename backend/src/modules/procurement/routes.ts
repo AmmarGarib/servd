@@ -74,6 +74,16 @@ import { parsePktEndOfDay, fmtPktDate } from '../accounting/dates.js'
 import { fmtPkr } from '../accounting/csv.js'
 
 export const AP_READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
+// Who may RAISE a PO (owner, 2026-11-10: "Allow finance to create POs"): the procurement team + finance (held to the
+// 'accounting' module by GATED_PREFIXES). Finance works its OWN POs only — edit, submit, cancel (403
+// PO_FINANCE_OWN_ONLY); sending, marking sent and the supplier master stay with procurement.
+export const PO_RAISERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
+function assertFinanceOwnPo(req: FastifyRequest, po: { createdBy: string | null; status: string }, statuses?: string[]) {
+  const su = req.staffUser!
+  if (su.role !== 'finance') return
+  if (po.createdBy !== su.id) throw new AppError('PO_FINANCE_OWN_ONLY', 'Finance works only the purchase orders it raised', 403)
+  if (statuses && !statuses.includes(po.status)) throw new AppError('PO_FINANCE_OWN_ONLY', `Finance cannot change a PO that is ${po.status.replace(/_/g, ' ')}`, 403)
+}
 
 /**
  * Who records supplier bills, supplier credit notes and supplier payments
@@ -658,7 +668,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     },
   )
 
-  fastify.post('/purchase-orders', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req, reply) => {
+  fastify.post('/purchase-orders', { preHandler: requireAuth(...PO_RAISERS) }, async (req, reply) => {
     const body = poCreateSchema.parse(req.body)
     // Don't let the operator post a PO against a supplier they can't see.
     // createPo then checks every line's item is the supplier's company's.
@@ -687,7 +697,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // Edit a draft (never submitted, or returned for correction — owner, 2026-11-03: "yes add editing"): whoever raised
   // it, or the CEO. Same body as create (minus the number); the same checks (service.ts updatePoDraft). Another
   // company's PO is 404; not a draft 409 PO_NOT_DRAFT; someone else's 403 PO_EDIT_RAISER_ONLY. Audited.
-  fastify.patch<{ Params: { id: string } }>('/purchase-orders/:id', { preHandler: requireAuth(...PROCUREMENT_TEAM) }, async (req) => {
+  fastify.patch<{ Params: { id: string } }>('/purchase-orders/:id', { preHandler: requireAuth(...PO_RAISERS) }, async (req) => {
     const po = await guardPo(req, req.params.id)
     const body = poCreateSchema.omit({ reference: true }).parse(req.body)
     const su = req.staffUser!
@@ -717,9 +727,10 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // Procurement hand-over) decides it (spec §6.4, A3). Everyone else: as before.
   fastify.post<{ Params: { id: string } }>(
     '/purchase-orders/:id/submit',
-    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    { preHandler: requireAuth(...PO_RAISERS) },
     async (req) => {
       const po = await guardPo(req, req.params.id)
+      assertFinanceOwnPo(req, po)
       const tenantId = po.supplier.tenantId
       // The bell: a PO that entered the approval queue (queued, after the submit committed).
       // Round = the PO's updatedAt stamped by this submit, so a reject + resubmit notifies again.
@@ -838,9 +849,10 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // draft or waiting for approval (spec §6.4).
   fastify.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/purchase-orders/:id/cancel',
-    { preHandler: requireAuth(...PROCUREMENT_TEAM) },
+    { preHandler: requireAuth(...PO_RAISERS) },
     async (req) => {
       const po = await guardPo(req, req.params.id)
+      assertFinanceOwnPo(req, po, ['draft', 'pending_approval'])
       if (po.supplier.tenantId) {
         const own = po.createdBy === req.staffUser!.id && (po.status === 'draft' || isPoChainStatus(po.status))
         await assertHoMayPropose(req, po.supplier.tenantId, own, "cancelling this purchase order")
