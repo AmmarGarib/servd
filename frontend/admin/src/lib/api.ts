@@ -269,6 +269,26 @@ async function companyNames(): Promise<Map<string, string>> {
   } catch { return new Map() }
 }
 
+// A read that fails on the network (the API restarting during a release, a
+// tunnel blip — the browser reports it as "Failed to fetch") is tried again a
+// few times before anyone sees an error (2026-11-10). Only GET / HEAD: a write
+// that failed on the network may still have reached the server, so it is never
+// re-sent behind the person's back.
+const READ_RETRY_DELAYS_MS = [700, 1500, 3000, 5000]
+async function fetchRetryingReads(method: string, url: string, init: RequestInit): Promise<Response> {
+  const read = method === 'GET' || method === 'HEAD'
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, init)
+    } catch (err) {
+      const network = err instanceof TypeError
+      const aborted = init.signal?.aborted
+      if (!read || !network || aborted || attempt >= READ_RETRY_DELAYS_MS.length) throw err
+      await new Promise((r) => setTimeout(r, READ_RETRY_DELAYS_MS[attempt]))
+    }
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}, retry = true, extra: RequestExtra = {}): Promise<T> {
   const token = getToken()
   const method = (options.method ?? 'GET').toUpperCase()
@@ -314,7 +334,7 @@ async function request<T>(path: string, options: RequestInit = {}, retry = true,
     ? useBranchFilter.getState().locationId
     : null
 
-  const res = await fetch(`${API_URL}/api/v1${path}`, {
+  const res = await fetchRetryingReads(method, `${API_URL}/api/v1${path}`, {
     ...options,
     // Send the httpOnly session cookie. Bearer is still attached when an
     // in-memory token exists (fresh login this session); after a reload there's

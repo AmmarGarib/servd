@@ -1073,6 +1073,14 @@ async function build() {
     fastify.log.warn(`[locations] seed skipped: ${(err as Error).message}`)
   }
 
+  // Boot maintenance runs AFTER the server is listening (2026-11-10: staff saw
+  // "Couldn't reach the servd API" / "Failed to fetch" on every API deploy —
+  // these ~30 idempotent catch-ups ran before listen, so every release meant a
+  // minute or more of no API). Each step is idempotent and already has a lazy
+  // path for the request side (ensureFifoReady, the module-grant / revoke lazy
+  // runs), so serving requests while they finish is safe. The workers start
+  // after them, in the same order as before.
+  bootAfterListen = async (): Promise<void> => {
   // Ledger bootstrap: every company needs its own chart of accounts before a
   // single order can post (Account.tenantId; codes are unique per company).
   // Adds only what a company is missing, so operator edits are never touched.
@@ -1430,9 +1438,13 @@ async function build() {
   } else {
     fastify.log.warn('Background workers disabled (set ENABLE_WORKERS=true to run them)')
   }
+  }
 
   return fastify
 }
+
+/** Set by build(): the boot catch-ups + workers, run once the server listens. */
+let bootAfterListen: (() => Promise<void>) | null = null
 
 function validateProductionEnv() {
   if (process.env['NODE_ENV'] !== 'production') return
@@ -1533,6 +1545,14 @@ async function start() {
     fastify.log.error(err)
     await prisma.$disconnect()
     process.exit(1)
+  }
+
+  // Boot catch-ups and workers, now that requests are being served.
+  if (bootAfterListen) {
+    const t0 = Date.now()
+    void bootAfterListen()
+      .then(() => fastify.log.info(`[boot] maintenance finished in ${Date.now() - t0} ms`))
+      .catch((err: Error) => fastify.log.error(`[boot] maintenance failed: ${err.message}`))
   }
 
   const shutdown = async () => {

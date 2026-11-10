@@ -19,7 +19,7 @@ function describe(error: unknown): string {
   // toast with meta.inlineErrors and show the cause where it happened — so
   // this text is only ever about the API.
   if (error instanceof TypeError && error.message.toLowerCase().includes('fetch')) {
-    return `Couldn't reach the servd API (${apiHost()}). Check your connection; if it keeps happening, the API may be down.`
+    return `Couldn't reach servd (${apiHost()}). It may be restarting after an update, or your internet dropped. Wait a few seconds and try again — if you were saving something, check whether it saved before pressing again.`
   }
   if (error instanceof Error) return error.message
   return 'Something went wrong'
