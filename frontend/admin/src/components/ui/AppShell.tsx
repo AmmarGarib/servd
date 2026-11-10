@@ -348,13 +348,14 @@ function NavLinks({
                     color: 'var(--erp-primary-ink)',
                   } : {
                     background: 'transparent',
-                    color: 'rgb(var(--fg-rgb) / 0.32)',
+                    // Sub-pages readable on a dim screen (owner, 2026-11-10: "more visibility in low brightness").
+                    color: 'rgb(var(--fg-rgb) / 0.72)',
                   }}
-                  onMouseEnter={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.65)' }}
-                  onMouseLeave={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.32)' }}
+                  onMouseEnter={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.95)' }}
+                  onMouseLeave={(e) => { if (!isActive(pathname, c.href)) e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.72)' }}
                 >
-                  <span className="text-[10px] opacity-50">└</span>
-                  <span className="text-[11.5px] font-medium leading-none truncate flex-1">{c.label}</span>
+                  <span className="text-[10px] opacity-60">└</span>
+                  <span className="text-[11.5px] font-semibold leading-none truncate flex-1">{c.label}</span>
                 </Link>
               ))}
             </div>
