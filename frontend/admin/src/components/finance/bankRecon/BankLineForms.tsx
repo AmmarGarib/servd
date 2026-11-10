@@ -4,7 +4,7 @@
 // voucher at once), match by hand to a journal line already booked, ignore
 // with a reason. The API rules live in backend reconciliation/routes.ts.
 import { CheckLabel, Input, LinkButton } from '@/components/finance/ui'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { api, ApiError } from '../../../lib/api'
 import { fmtPkr } from '../../../lib/money'
@@ -196,7 +196,7 @@ const NEAR_MISS_TEXT: Record<NearMiss['reason'], (m: NearMiss) => string> = {
   other_company: (m) => `Booked in ${m.companyName ?? 'another company'}, not in this bank's company. Cancel it there and book it in the right company.`,
   wrong_side: (m) => `On this account but as a ${m.side} — the other way round. Correct the entry, then match.`,
   split: () => 'Split over several lines on this account that add up to this amount. A bank line matches ONE book line — edit the entry into one line on this bank, then match.',
-  taken: (m) => `Already matched to the bank line of ${m.takenBy ? m.takenBy.postedDate.slice(0, 10) + ' (' + m.takenBy.description + ')' : 'another date'}. Unmatch that one first if it is wrong.`,
+  taken: (m) => `Already matched to the bank line of ${m.takenBy ? m.takenBy.postedDate.slice(0, 10) + ' (' + m.takenBy.description + ')' : 'another date'}. If that match is wrong, Unmatch it here — the entry then shows above to match.`,
   reversed: () => 'This entry was reversed (or is a reversal), so it is not in the books any more.',
   outside_window: () => 'Dated outside the days chosen above — pick more days.',
 }
@@ -224,9 +224,49 @@ function NearMisses({ lineId, days }: { lineId: string; days: number }) {
             </div>
             <p className="text-s-muted">{m.accountCode} {m.accountName}{m.companyName ? ` · ${m.companyName}` : ''}</p>
             <p className="text-s-amber">{NEAR_MISS_TEXT[m.reason](m)}</p>
+            {m.reason === 'taken' && m.takenBy && <UnmatchTaken lineId={lineId} taken={m.takenBy} />}
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+// Undo the OTHER bank line's match from inside the match box (owner, 2026-11-10: "add the Unmatch button in the
+// match box"). Same route and rules as Reconciliation → Bank Imports (finance with accounting / the CEO; a line in a
+// CEO-approved reconciliation, a card payout or a Raast line is refused with its reason). Then the entry is free and
+// appears in the list above.
+function UnmatchTaken({ lineId, taken }: { lineId: string; taken: NonNullable<NearMiss['takenBy']> }) {
+  const qc = useQueryClient()
+  const [sure, setSure] = useState(false)
+  const unmatch = useMutation({
+    mutationFn: () => api.post(`/reconciliation/bank/lines/${taken.statementLineId}/unmatch`, { reason: 'Unmatched from the match box of another bank line' }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['bank-line-candidates', lineId] })
+      void qc.invalidateQueries({ queryKey: ['bank-line-near-misses', lineId] })
+      void qc.invalidateQueries({ queryKey: ['bank-lines'] })
+      void qc.invalidateQueries({ queryKey: ['brs'] })
+    },
+  })
+  const err = unmatch.error
+  return (
+    <div className="flex flex-wrap items-center gap-3 pt-1">
+      {!sure ? (
+        <LinkButton size="md" type="button" onClick={() => setSure(true)}>Unmatch that line</LinkButton>
+      ) : (
+        <>
+          <span className="text-s-text">Undo the match on the bank line of {taken.postedDate.slice(0, 10)}?</span>
+          <LinkButton size="md" type="button" disabled={unmatch.isPending} onClick={() => unmatch.mutate()}>{unmatch.isPending ? 'Undoing…' : 'Yes, unmatch'}</LinkButton>
+          <LinkButton tone="muted" size="md" type="button" onClick={() => setSure(false)}>Keep it</LinkButton>
+        </>
+      )}
+      {err && (
+        <p role="alert" className="w-full text-s-red">
+          {err instanceof ApiError && err.code === 'RAAST_MATCHED_LINE' ? 'That line is matched to a Raast payment — unmatch it on Reconciliation → Raast.'
+            : err instanceof ApiError && err.code === 'CARD_PAYOUT_LINE' ? cardPayoutErrorText(err)
+            : (err as Error).message}
+        </p>
+      )}
     </div>
   )
 }

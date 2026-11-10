@@ -350,6 +350,20 @@ describe('#32 reversed entries never match', () => {
     expect(misses.map((m) => m.entryId)).not.toContain(foreign.entryId)
   })
 
+  it('a near miss already matched names that bank line; unmatching it frees the entry for this line', async () => {
+    const day = new Date('2026-03-20T07:00:00Z')
+    const e = await bankEntry(T.A, '1020', 555_000, day)
+    const first = await statementLine(T.A, bank['A1']!.id, '1020', 555_000, day)
+    expect((await call('finA', 'POST', `/reconciliation/bank/lines/${first.id}/match`, { journalLineId: e.bankLineId })).statusCode).toBe(200)
+    const second = await statementLine(T.A, bank['A1']!.id, '1020', 555_000, day)
+    const misses = (await call('finA', 'GET', `/reconciliation/bank/lines/${second.id}/near-misses`)).json() as Array<{ reason: string; entryId: string; takenBy: { statementLineId: string } | null }>
+    const taken = misses.find((m) => m.reason === 'taken' && m.entryId === e.entryId)
+    expect(taken?.takenBy?.statementLineId).toBe(first.id)
+    expect((await call('finA', 'POST', `/reconciliation/bank/lines/${first.id}/unmatch`, { reason: 'Unmatched from the match box of another bank line' })).statusCode).toBe(200)
+    const cands = (await call('finA', 'GET', `/reconciliation/bank/lines/${second.id}/candidates`)).json() as Array<{ journalLineId: string }>
+    expect(cands.map((c) => c.journalLineId)).toContain(e.bankLineId)
+  })
+
   it('sales_bank_unmatched does not count a reversed sales line or its reversal', async () => {
     const day = new Date('2026-02-20T07:00:00Z')
     const sale = await bankEntry(T.A, '1020', 33_000, day, 'order.complete')
