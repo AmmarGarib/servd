@@ -412,13 +412,13 @@ function NavLinks({
                   className="flex items-center gap-1.5 flex-1 min-w-0 rounded-md px-1.5 py-1 text-left hover:bg-white/[0.03]"
                   title={open ? `Close ${g.title}` : `Open ${g.title}`} aria-expanded={open}>
                   <span className="transition-transform duration-150"
-                    style={{ color: 'rgb(var(--fg-rgb) / 0.3)', display: 'inline-block', fontSize: '8px', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▼</span>
+                    style={{ color: 'rgb(var(--fg-rgb) / 0.55)', display: 'inline-block', fontSize: '8px', transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}>▼</span>
                   <span className="text-[10.5px] font-black uppercase tracking-[0.2em] truncate"
-                    style={{ color: open ? 'rgb(var(--fg-rgb) / 0.7)' : 'rgb(var(--fg-rgb) / 0.4)' }}>{g.title}</span>
+                    style={{ color: open ? 'rgb(var(--fg-rgb) / 0.9)' : 'rgb(var(--fg-rgb) / 0.68)' }}>{g.title}</span>
                 </button>
                 <Link href={wsHome(g.id)} onClick={onNavigate}
                   className="text-[10px] font-bold px-1.5 py-1 rounded-md hover:bg-white/[0.05]"
-                  style={{ color: pathname === wsHome(g.id) ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.3)' }}
+                  style={{ color: pathname === wsHome(g.id) ? 'var(--erp-primary)' : 'rgb(var(--fg-rgb) / 0.55)' }}
                   title={`${g.title} home`}>
                   home
                 </Link>
@@ -453,7 +453,7 @@ function NavLinks({
 
 function SubHeader({ title }: { title: string }) {
   return (
-    <p className="px-4 pt-1 pb-1 text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'rgb(var(--fg-rgb) / 0.22)' }}>
+    <p className="px-4 pt-1 pb-1 text-[9px] font-bold uppercase tracking-[0.18em]" style={{ color: 'rgb(var(--fg-rgb) / 0.5)' }}>
       {title}
     </p>
   )
@@ -469,14 +469,14 @@ function SectionHeader({ title, collapsed, onClick }: { title: string; collapsed
         <span
           className="transition-transform duration-150"
           style={{
-            color: 'rgb(var(--fg-rgb) / 0.18)',
+            color: 'rgb(var(--fg-rgb) / 0.45)',
             display: 'inline-block',
             transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
             fontSize: '8px',
           }}
         >▼</span>
-        <span className="text-[9px] font-black uppercase tracking-[0.28em] group-hover:text-white/45 transition-colors"
-          style={{ color: 'rgb(var(--fg-rgb) / 0.32)' }}>
+        <span className="text-[9px] font-black uppercase tracking-[0.28em] group-hover:text-white/80 transition-colors"
+          style={{ color: 'rgb(var(--fg-rgb) / 0.6)' }}>
           {title}
         </span>
       </span>
@@ -521,10 +521,11 @@ function NavLinkRow({
         } : {
           background: 'transparent',
           border: '1px solid transparent',
-          color: 'rgb(var(--fg-rgb) / 0.72)',
+          // Brighter for low-brightness screens (owner, 2026-11-10: "Make the main sidebar items brighter too").
+          color: 'rgb(var(--fg-rgb) / 0.92)',
         }}
-        onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.06)'; e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.95)' } }}
-        onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.72)' } }}
+        onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = 'rgb(var(--fg-rgb) / 0.08)'; e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 1)' } }}
+        onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.92)' } }}
       >
         <span className="flex w-[18px] shrink-0 justify-center"><NavIcon name={item.icon} size={17} /></span>
         {!collapsed && (
@@ -556,7 +557,7 @@ function NavLinkRow({
             <button onClick={(e) => { e.stopPropagation(); onToggleExpand?.() }}
               className="p-1 rounded hover:bg-white/10 transition-colors"
               title={expanded ? 'Collapse' : 'Expand'}
-              style={{ color: 'rgb(var(--fg-rgb) / 0.3)' }}>
+              style={{ color: 'rgb(var(--fg-rgb) / 0.6)' }}>
               <svg width="9" height="9" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2"
                 style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>
                 <path d="M4 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
