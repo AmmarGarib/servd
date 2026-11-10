@@ -349,6 +349,19 @@ describe('roles', () => {
     expect(await prisma.auditLog.count({ where: { entityId: id, tenantId: A.tenantId } })).toBeGreaterThanOrEqual(2)
   })
 
+  it('finance edits a class too (owner, 2026-11-10); the policy stays the CEO\'s; another company\'s finance gets 404', async () => {
+    const office = await prisma.fixedAssetClass.findFirstOrThrow({ where: { tenantId: A.tenantId, key: 'office_equipment' } })
+    expect((await call('finB', 'PATCH', `/classes/${office.id}`, { defaultLifeMonths: 36 })).statusCode).toBe(404)
+    const list = (await call('finA', 'GET', '/classes')).json()
+    expect(list.canEdit).toBe(true)
+    const r = await call('finA', 'PATCH', `/classes/${office.id}`, { defaultLifeMonths: 36, taxRateBp: 1500 })
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json()).toMatchObject({ defaultLifeMonths: 36, taxRateBp: 1500 })
+    expect(code(await call('finA', 'PATCH', `/classes/${office.id}`, { accumAccountCode: '1999' }))).toBe('FIELD_NOT_EDITABLE')
+    expect((await call('finA', 'PATCH', '/policy', { capexAdvanceOverdueDays: 10 })).statusCode).toBe(403)
+    expect((await call('finA', 'GET', '/policy')).json().canEdit).toBe(false)
+  })
+
   it('the CEO edits a class (codes fixed); one asset\'s page has its schedule, events and journal', async () => {
     const it = await prisma.fixedAssetClass.findFirstOrThrow({ where: { tenantId: A.tenantId, key: 'it_equipment' } })
     expect(code(await call('ceoA', 'PATCH', `/classes/${it.id}`, { costAccountCode: '1999' }))).toBe('FIELD_NOT_EDITABLE')

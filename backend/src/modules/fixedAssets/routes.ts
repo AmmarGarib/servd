@@ -8,7 +8,7 @@
 //   GET    /                     the register, values as of ?asOf, per-company totals, each company's last run
 //   GET    /lookups              everything the register's screens pick from (no other gated path needed)
 //   GET    /runs                 the automatic runs (FixedAssetRun)
-//   GET    /classes              classes per company · PATCH /classes/:id (CEO)
+//   GET    /classes              classes per company · PATCH /classes/:id (CEO + finance)
 //   GET    /policy               per company · PATCH /policy (CEO, the ACTIVE company)
 //   POST   /                     422 USE_CAPEX — bought equipment reaches the register through CapEx
 //   POST   /existing             "Add existing asset" (owner, 2026-10-21): bought before servd or from a
@@ -57,6 +57,9 @@ import {
 const READERS = FINANCIALS_VIEWERS
 const FA_WRITERS = [...FA_WRITER_ROLES] as UserRole[]
 const APPROVER = ADMIN_ONLY as UserRole[]
+// Asset classes (default life, tax rate, initial allowance, pooled, active): the CEO and finance (owner, 2026-11-10:
+// "Give it to finance also"). The '/accounting' gate holds finance to the `accounting` module. The policy stays the CEO's.
+const CLASS_EDITORS = ['admin', 'finance'] as UserRole[]
 // H42: who ticks an asset's initial-allowance eligibility — finance and the CEO.
 const IA_EDITORS = ['finance', 'admin'] as UserRole[]
 
@@ -401,13 +404,13 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
       classes: lists.flatMap(([t, cs]) => cs.map((c) => ({
         ...c, companyName: name.get(t) ?? '', assetCount: count.get(`${t}|${c.key}`) ?? 0,
       }))),
-      canEdit: req.staffUser!.role === FA_APPROVER_ROLE,
+      canEdit: CLASS_EDITORS.includes(req.staffUser!.role as UserRole),
     }
   })
 
-  // PATCH /classes/:id — the CEO: label, default life, tax rates, pooled,
+  // PATCH /classes/:id — the CEO and finance (CLASS_EDITORS): label, default life, tax rates, pooled,
   // active. Account codes are fixed per key.
-  fastify.patch<{ Params: { id: string } }>('/classes/:id', { preHandler: requireAuth(...APPROVER) }, async (req) => {
+  fastify.patch<{ Params: { id: string } }>('/classes/:id', { preHandler: requireAuth(...CLASS_EDITORS) }, async (req) => {
     const raw = (req.body ?? {}) as Record<string, unknown>
     for (const k of ['key', 'costAccountCode', 'accumAccountCode', 'depreciable', 'tenantId', 'sortOrder']) {
       if (k in raw) throw new AppError('FIELD_NOT_EDITABLE', `${k} is fixed for a class — its ledger accounts never change`, 400, { field: k })
@@ -435,7 +438,7 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
     await audit({
       category: 'accounting', action: 'fixed_asset.class_update', entity: 'FixedAssetClass', entityId: cls.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: cls.tenantId,
-      before: pick(cls), after: pick(updated), metadata: { key: cls.key },
+      before: pick(cls), after: pick(updated), metadata: { key: cls.key, actorRole: req.staffUser!.role },
     })
     return updated
   })

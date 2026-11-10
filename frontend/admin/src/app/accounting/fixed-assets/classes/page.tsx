@@ -36,7 +36,8 @@ export default function ClassesPage() {
     queryFn: () => api.get(`${FA_BASE}/policy`),
   })
 
-  const canEdit = !!classes.data?.canEdit
+  const canEdit = !!classes.data?.canEdit // classes: the CEO and finance
+  const canEditPolicy = !!policy.data?.canEdit // the register policy: the CEO
   const rows = classes.data?.classes ?? []
   const multi = new Set(rows.map((r) => r.tenantId)).size > 1
   const policies = policy.data?.policies ?? []
@@ -52,7 +53,7 @@ export default function ClassesPage() {
       title="Classes & policy"
       subtitle={canEdit
         ? 'Lives and tax rates for each kind of asset, and the register policy. Changes apply to assets bought from now on; posted depreciation never changes.'
-        : 'Lives and tax rates for each kind of asset, and the register policy. Only the CEO can change them.'}
+        : 'Lives and tax rates for each kind of asset, and the register policy. Only the CEO and finance can change them.'}
     >
       {notice && <Notice tone={notice.tone} onClose={() => setNotice(null)}>{notice.text}</Notice>}
       {classes.error && <Notice tone="bad">{errorWords(classes.error)}</Notice>}
@@ -97,7 +98,7 @@ export default function ClassesPage() {
                 <p className="font-black text-white/90">{p.companyName}</p>
                 <p className="text-xs text-s-muted mt-0.5">Depreciation: automatic, every night, for completed months.</p>
               </div>
-              {canEdit && <button className={btnGhost} onClick={() => { setNotice(null); setEditingPolicy(p) }}>Edit policy</button>}
+              {canEditPolicy && <button className={btnGhost} onClick={() => { setNotice(null); setEditingPolicy(p) }}>Edit policy</button>}
             </div>
             <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-3 text-sm">
               <div><dt className="text-xs font-bold uppercase tracking-wider text-white/40">Asset tag prefix</dt><dd className="text-white/85 font-mono">{p.assetTagPrefix}</dd></div>

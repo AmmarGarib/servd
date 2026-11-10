@@ -1918,6 +1918,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   the statutory 25% when the class carries 0 (`tax.ts initialAllowanceBpOf`).
   Tax view only, never the books; smallwares and land never. Once any tax year
   from the asset's first is frozen the tick is final (409 `TAX_YEAR_FROZEN`).
+- **Asset classes are finance's too (owner, 2026-11-10: "Give it to finance also").** `PATCH
+  /accounting/fixed-assets/classes/:id` (label, default life, tax rate, initial allowance, pooled, active) admits the
+  CEO and finance (`fixedAssets/routes.ts CLASS_EDITORS`; the '/accounting' gate holds finance to `accounting`);
+  audit `fixed_asset.class_update` carries `actorRole`. The register policy (`PATCH /policy`) stays the CEO's. Tests:
+  `tests/fixedAssetsCompany.test.ts`.
 - **Tax:** `accounting/taxAuthorities.ts` is the one authority table; input
   tax is booked by authority (1320 FBR, 1322 SRB — the ONLY two: PRA, KPRA, BRA and their 1321/1323/1324 + 2031/2033/2034 were removed, owner 2026-10-15; brands cannot be set to Punjab, KP or Balochistan). Federal input
   on food, drink and packaging stock (H34) may be set off against SRB output (H8:
