@@ -19,6 +19,7 @@ import { approvalWaiting } from '../approvals/notify.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { assertNote, poTaskNotice } from './poWorkflow.js'
 import { registerPoWorkflowRoutes } from './poWorkflowRoutes.js'
+import { registerBuyerRoutes, assertListedBuyer } from './buyers.js'
 
 // Company scope: every procurement row belongs to its supplier's company, so
 // every route below scopes through the supplier (./scope.ts). Reads use
@@ -183,6 +184,9 @@ const poCreateSchema = z.object({
   notes:        z.string().optional().nullable(),
   // Brand stock (owner B13 (a)): the brand that orders — its receipt's lots are that brand's (a brand of the supplier's company).
   conceptId:    z.string().uuid().optional().nullable(),
+  // The buyer, picked by whoever raises the PO from the company's buyers list (owner, 2026-11-10; buyers.ts) — the CEO
+  // may change it when approving. Omitted / null = none picked (the approval's fallback).
+  buyerUserId:  z.string().min(1).max(64).optional().nullable(),
   lines:        z.array(poLineSchema).min(1),
 })
 
@@ -664,6 +668,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     const supplierId = body.supplierId ?? await noSupplierFor(activeTenantOr422(req, null))
     const supplier = await findSupplierInScope(req, supplierId, 'write', { live: true })
     if (supplier.tenantId) await assertHoMayPropose(req, supplier.tenantId, true, 'a purchase order')
+    if (body.buyerUserId && supplier.tenantId) await assertListedBuyer(prisma, supplier.tenantId, body.buyerUserId)
     const po = await createPo({ ...body, supplierId, createdBy: req.staffUser!.id })
     return reply.status(201).send(po)
   })
@@ -695,13 +700,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     const supplierId = body.supplierId ?? (po.supplier.tenantId ? await noSupplierFor(po.supplier.tenantId) : null)
     if (!supplierId) throw new AppError('SUPPLIER_REQUIRED', 'Pick a supplier for this PO', 422)
     await findSupplierInScope(req, supplierId, 'write', { live: true })
-    const before = await prisma.purchaseOrder.findUnique({ where: { id: po.id }, select: { supplierId: true, totalCents: true, notes: true, expectedDate: true, conceptId: true } })
+    if (body.buyerUserId && po.supplier.tenantId) await assertListedBuyer(prisma, po.supplier.tenantId, body.buyerUserId)
+    const before = await prisma.purchaseOrder.findUnique({ where: { id: po.id }, select: { supplierId: true, totalCents: true, notes: true, expectedDate: true, conceptId: true, buyerUserId: true } })
     const updated = await updatePoDraft(po.id, su.id, { ...body, supplierId })
     await audit({
       category: 'accounting', action: 'po.edit', entity: 'PurchaseOrder', entityId: po.id,
       userId: su.id, userEmail: su.email ?? null, tenantId: po.supplier.tenantId,
       before: before ? { ...before, totalCents: toCents(before.totalCents) } : undefined,
-      after: { supplierId: updated.supplierId, totalCents: toCents(updated.totalCents), lineCount: updated.lines.length, notes: updated.notes, conceptId: updated.conceptId },
+      after: { supplierId: updated.supplierId, totalCents: toCents(updated.totalCents), lineCount: updated.lines.length, notes: updated.notes, conceptId: updated.conceptId, buyerUserId: updated.buyerUserId },
     })
     return updated
   })
@@ -825,6 +831,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
 
   // The PO → GRN workflow's own routes (buyer, requester, finance, the CEO's GRN approval, my tasks): ./poWorkflowRoutes.ts.
   await registerPoWorkflowRoutes(fastify, { guardPo })
+  // The buyers list per company (owner, 2026-11-10): ./buyers.ts.
+  await registerBuyerRoutes(fastify)
 
   // Cancel. Through a head-office lens only your OWN PO, while it is still a
   // draft or waiting for approval (spec §6.4).

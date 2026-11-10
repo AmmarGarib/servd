@@ -1542,6 +1542,7 @@ model User {
   tenantMemberships      TenantMember[]
   positionsFilled        Position[]             @relation("PositionFilledBy")
   passwordResets         StaffPasswordReset[]
+  poBuyerOf              PoBuyer[]              @relation("PoBuyerUser")
 
   @@index([invitedById])
   @@map("users")
@@ -2890,7 +2891,7 @@ model IngredientMaster {
   /// Item group (owner, 2026-11-07: "Sea food will contain all types of fish, Meat … all kind of meat"). A label
   /// under the category; the category alone decides the stock account.
   groupId        String?
-  group          IngredientGroup? @relation(fields: [groupId], references: [id])
+  group          IngredientGroup?        @relation(fields: [groupId], references: [id])
 
   @@index([normalizedName])
   @@index([status])
@@ -2903,14 +2904,14 @@ model IngredientMaster {
 // tenantId (platform data). A group sits under ONE inventory category (lib/inventoryClass.ts INVENTORY_CATEGORIES);
 // it never decides an account. Unique by normalised name. Switched off, never deleted.
 model IngredientGroup {
-  id              String   @id @default(uuid())
-  name            String
-  normalizedName  String   @unique
-  category        String
-  active          Boolean  @default(true)
-  createdById     String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id             String   @id @default(uuid())
+  name           String
+  normalizedName String   @unique
+  category       String
+  active         Boolean  @default(true)
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   ingredients IngredientMaster[]
 
@@ -3386,6 +3387,24 @@ model KitchenTimer {
 // ─── Purchase Orders ──────────────────────────────────────────────────────────
 
 // BOOKS-06: money columns on this model are BIGINT paisa (lib/money.ts returns them as JS numbers).
+// The buyers list per company (owner, 2026-11-10: "Give option to add buyers and then select buyer when PO is being
+// raised"): any active login of the company; whoever raises a PO picks its buyer from it (procurement/buyers.ts).
+// Switched off, never deleted. RLS + the company merge's repoint list (a login listed in both keeps the target's row).
+model PoBuyer {
+  id        String   @id @default(uuid())
+  tenantId  String
+  userId    String
+  active    Boolean  @default(true)
+  addedById String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation("PoBuyerUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([tenantId, active])
+  @@map("po_buyers")
+}
+
 model PurchaseOrder {
   id           String    @id @default(uuid())
   supplierId   String
@@ -4597,13 +4616,13 @@ model CostSplit {
 }
 
 model CostSplitShare {
-  id                     String  @id @default(uuid())
+  id                     String @id @default(uuid())
   splitId                String
   tenantId               String // the receiving company
   percentBp              Int? // basis points (percent mode)
   amountCents            BigInt // the final amount moved
   lines                  Json // [{accountCode, conceptId, amountCents}] — the source lines this share takes
-  intercompanyTransferId String  @unique
+  intercompanyTransferId String @unique
 
   split CostSplit @relation(fields: [splitId], references: [id], onDelete: Cascade)
 

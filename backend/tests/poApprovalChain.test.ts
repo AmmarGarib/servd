@@ -424,3 +424,43 @@ describe('company B: its own buyer rule, never A\'s people', () => {
     expect((await call('finA', 'GET', `/procurement/grns?poId=${r.json().id}`)).json()).toEqual([])
   })
 })
+
+describe('the buyers list (owner, 2026-11-10): managers add buyers; whoever raises the PO picks one', () => {
+  it('a manager adds a login of the active company; another company\'s people are refused / 404', async () => {
+    expect(code(await call('mgrB', 'POST', '/procurement/buyers', { userId: U.chefA!.id }))).toBe('BUYER_NOT_IN_COMPANY')
+    expect((await call('buyerB', 'POST', '/procurement/buyers', { userId: U.buyerB2!.id })).statusCode).toBe(403)
+    const add = await call('mgrB', 'POST', '/procurement/buyers', { userId: U.buyerB2!.id })
+    expect(add.statusCode, add.body).toBe(201)
+    expect(add.json()).toMatchObject({ tenantId: T.B, userId: U.buyerB2!.id, active: true })
+    expect((await call('mgrB', 'POST', '/procurement/buyers', { userId: U.buyerB2!.id })).statusCode).toBe(200)
+    const list = (await call('buyerB', 'GET', '/procurement/buyers?active=1')).json()
+    expect(list.map((b: { userId: string }) => b.userId)).toEqual([U.buyerB2!.id])
+    expect((await call('chefA', 'GET', '/procurement/buyers')).json().map((b: { userId: string }) => b.userId)).not.toContain(U.buyerB2!.id)
+    expect((await call('ceoA', 'PATCH', `/procurement/buyers/${add.json().id}`, { active: false })).statusCode).toBe(404)
+    const cands = (await call('mgrB', 'GET', '/procurement/buyers/candidates')).json().map((u: { id: string }) => u.id)
+    expect(cands).toContain(U.buyerB!.id)
+    expect(cands).not.toContain(U.buyerB2!.id)
+    expect(cands).not.toContain(U.chefA!.id)
+  })
+
+  it('the raiser picks a listed buyer; the CEO\'s approval keeps it; a buyer not listed (or switched off) is refused', async () => {
+    const line = [{ inventoryItemId: itemB, quantityOrdered: 1, unitCostCents: 200 }]
+    expect(code(await call('mgrB', 'POST', '/procurement/purchase-orders', { supplierId: supB, buyerUserId: U.buyerB!.id, lines: line }))).toBe('BUYER_NOT_LISTED')
+    const r = await call('mgrB', 'POST', '/procurement/purchase-orders', { supplierId: supB, buyerUserId: U.buyerB2!.id, lines: line })
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().buyerUserId).toBe(U.buyerB2!.id)
+    // Not on the buyer's tasks before the CEO approves.
+    expect((await call('buyerB2', 'GET', '/procurement/my-tasks')).json().toBuy.map((p: { id: string }) => p.id)).not.toContain(r.json().id)
+    const list = (await call('mgrB', 'GET', '/procurement/purchase-orders')).json()
+    expect(list.find((p: { id: string }) => p.id === r.json().id)).toMatchObject({ buyerName: `${P} buyerB2` })
+    await call('mgrB', 'POST', `/procurement/purchase-orders/${r.json().id}/submit`)
+    const a = await call('ceoB', 'POST', `/procurement/purchase-orders/${r.json().id}/approve`)
+    expect(a.statusCode, a.body).toBe(200)
+    expect(a.json()).toMatchObject({ buyerUserId: U.buyerB2!.id, buyerChosen: 'named' })
+    expect((await call('buyerB2', 'GET', '/procurement/my-tasks')).json().toBuy.map((p: { id: string }) => p.id)).toContain(r.json().id)
+
+    const row = (await call('mgrB', 'GET', '/procurement/buyers')).json().find((b: { userId: string }) => b.userId === U.buyerB2!.id)
+    expect((await call('mgrB', 'PATCH', `/procurement/buyers/${row.id}`, { active: false })).statusCode).toBe(200)
+    expect(code(await call('mgrB', 'POST', '/procurement/purchase-orders', { supplierId: supB, buyerUserId: U.buyerB2!.id, lines: line }))).toBe('BUYER_NOT_LISTED')
+  })
+})

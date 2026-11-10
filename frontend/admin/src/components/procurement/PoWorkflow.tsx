@@ -478,16 +478,16 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
 }
 
 /** The buyer picker of the CEO's approve dialog (active logins of the PO's company, buyers first). */
-export function BuyerPicker({ poId, value, onChange }: { poId: string; value: string; onChange: (v: string) => void }) {
+export function BuyerPicker({ poId, value, onChange, pickedName }: { poId: string; value: string; onChange: (v: string) => void; pickedName?: string | null }) {
   const { data: opts = [], isError } = useQuery({
     queryKey: ['procurement', 'buyer-options', poId],
-    queryFn: () => api.get<Array<{ id: string; name: string | null; email: string | null; role: string }>>(`/procurement/purchase-orders/${poId}/buyer-options`),
+    queryFn: () => api.get<Array<{ id: string; name: string | null; email: string | null; role: string; listed?: boolean }>>(`/procurement/purchase-orders/${poId}/buyer-options`),
   })
   return (
-    <Field label="Buyer" hint="Empty = the company's buyer, else whoever raised it">
+    <Field label="Buyer" hint={pickedName ? `Whoever raised it picked ${pickedName}` : "Empty = the company's buyer, else whoever raised it"}>
       <Select value={value} onChange={(e) => onChange(e.target.value)} className="s-input w-full">
-        <option value="">The company&apos;s buyer (else the requester)</option>
-        {opts.map((u) => <option key={u.id} value={u.id}>{u.name ?? u.email ?? 'Login'} · {u.role.replace(/_/g, ' ')}</option>)}
+        <option value="">{pickedName ? `Keep ${pickedName}` : 'The company\'s buyer (else the requester)'}</option>
+        {opts.map((u) => <option key={u.id} value={u.id}>{u.name ?? u.email ?? 'Login'} · {u.listed ? 'buyer' : u.role.replace(/_/g, ' ')}</option>)}
       </Select>
       {isError && <p className="text-xs text-s-red">Could not load the logins.</p>}
     </Field>

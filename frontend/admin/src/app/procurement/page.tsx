@@ -177,6 +177,7 @@ interface PoDraft {
   expectedDate?: string
   notes?: string
   conceptId?: string | null
+  buyerUserId?: string | null
 }
 
 const errText = (e: unknown) => stockErrorText(e)
@@ -213,7 +214,7 @@ interface PriceHistoryRow {
   supplier?: { name: string } | null
 }
 
-type Tab = 'tasks' | 'pos' | 'grns' | 'bills' | 'payments' | 'suppliers' | 'aging' | 'reorder' | 'approvals' | 'history'
+type Tab = 'tasks' | 'pos' | 'grns' | 'bills' | 'payments' | 'suppliers' | 'buyers' | 'aging' | 'reorder' | 'approvals' | 'history'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -342,6 +343,7 @@ export default function ProcurementPage() {
     { id: 'bills',     label: 'Bills (AP)',       icon: '' },
     { id: 'payments',  label: 'Payments',         icon: '' },
     { id: 'suppliers', label: 'Suppliers',        icon: '' },
+    { id: 'buyers',    label: 'Buyers',           icon: '' },
     { id: 'aging',     label: 'Aging',            icon: '' },
     { id: 'reorder',   label: 'Reorder',          icon: '' },
     { id: 'approvals', label: 'Approvals',        icon: '' },
@@ -374,6 +376,7 @@ export default function ProcurementPage() {
         {tab === 'bills'     && <BillsTab    qc={qc} prefill={billPrefill} />}
         {tab === 'payments'  && <PaymentsTab qc={qc} prefill={paymentPrefill} />}
         {tab === 'suppliers' && <SuppliersTab qc={qc} />}
+        {tab === 'buyers'    && <BuyersTab />}
         {tab === 'aging'     && <AgingTab />}
         {tab === 'reorder'   && <ReorderTab qc={qc} />}
         {tab === 'approvals' && <ApprovalsTab qc={qc} />}
@@ -517,6 +520,7 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
             expectedDate: editPo.expectedDate ? editPo.expectedDate.slice(0, 10) : '',
             notes: editPo.notes ?? '',
             conceptId: editPo.conceptId ?? null,
+            buyerUserId: editPo.buyerUserId ?? null,
             lines: (editPo.lines ?? []).map((l) => {
               const v = poLineShown(l)
               return { inventoryItemId: l.inventoryItemId, quantityOrdered: String(v.qty), unitCostCents: String(v.rate / 100), notes: l.notes ?? '', unit: v.unit }
@@ -654,7 +658,7 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
                 : decide.kind === 'return' ? { note: decideNote.trim() } : { reason: decideNote.trim() }
               stepMut.mutate({ id: decide.id, kind: decide.kind, status: decide.status, body })
             }}>
-              {decide.kind === 'approve' && <BuyerPicker poId={decide.id} value={buyerId} onChange={setBuyerId} />}
+              {decide.kind === 'approve' && <BuyerPicker poId={decide.id} value={buyerId} onChange={setBuyerId} pickedName={orders.find((o) => o.id === decide.id)?.buyerName ?? null} />}
               {decide.kind === 'approve' && (
                 <CheckLabel className="flex items-start gap-2 text-sm text-s-text cursor-pointer">
                   <input type="checkbox" className="mt-1 accent-accent" checked={payByCash} onChange={(e) => setPayByCash(e.target.checked)} />
@@ -896,6 +900,11 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   const [supplierId, setSupplierId] = useState(initial?.supplierId ?? '')
   const [expectedDate, setExpectedDate] = useState(initial?.expectedDate ?? '')
   const [notes, setNotes] = useState(initial?.notes ?? '')
+  // The buyer, picked from the company's buyers list (owner, 2026-11-10: "anyone who's raising PO could select buyer").
+  const [buyerUserId, setBuyerUserId] = useState(initial?.buyerUserId ?? '')
+  const { data: buyers = [] } = useQuery({ queryKey: ['procurement', 'buyers', 'active'], queryFn: () => api.get<PoBuyerRow[]>('/procurement/buyers?active=1') })
+  const supplierTenant = suppliers.find((x) => x.id === supplierId)?.tenantId ?? null
+  const buyerChoices = buyers.filter((b) => !supplierTenant || b.tenantId === supplierTenant)
   const [lines, setLines] = useState(initial?.lines.length ? initial.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
   // "+ New supplier…" right in the PO (owner, 2026-11-03: create the supplier from here, not another tab).
   const [newSupplier, setNewSupplier] = useState<{ name: string; phone: string } | null>(null)
@@ -913,6 +922,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
     mutationFn: () => (editId ? (body: unknown) => api.patch(`/procurement/purchase-orders/${editId}`, body) : (body: unknown) => api.post('/procurement/purchase-orders', body))({
       supplierId: supplierId || null, expectedDate: expectedDate || null,
       notes: notes || null,
+      buyerUserId: buyerUserId && buyerChoices.some((b) => b.userId === buyerUserId) ? buyerUserId : null,
       ...(editId ? { conceptId: initial?.conceptId ?? null } : {}),
       // Quantity and rate in the unit picked on the line; the server converts to stock units (poUnits.ts).
       lines: lines.map((l) => ({
@@ -998,6 +1008,13 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
             {addSupplier.isError && <p role="alert" className="w-full text-xs text-s-red">{(addSupplier.error as Error)?.message ?? 'Could not add the supplier.'}</p>}
           </div>
         )}
+        <Field label="Buyer">
+          <Select value={buyerChoices.some((b) => b.userId === buyerUserId) ? buyerUserId : ''} onChange={(e) => setBuyerUserId(e.target.value)} className={fi}
+            aria-label="Who buys it">
+            <option value="">{buyerChoices.length ? 'Pick the buyer…' : 'No buyers listed yet'}</option>
+            {buyerChoices.map((b) => <option key={b.id} value={b.userId}>{b.name}</option>)}
+          </Select>
+        </Field>
         <Field label="Expected delivery">
           <Input type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} className={fi} />
         </Field>
@@ -2989,6 +3006,71 @@ function ApprovalsTab({ qc }: { qc: ReturnType<typeof useQueryClient> }) {
 // ══════════════════════════════════════════════════════════════════════════════
 // PRICE HISTORY TAB
 // ══════════════════════════════════════════════════════════════════════════════
+
+interface PoBuyerRow { id: string; tenantId: string; userId: string; active: boolean; name: string; email: string | null; role: string; loginActive: boolean }
+
+/** The buyers list per company (owner, 2026-11-10): managers add any login of the company; whoever raises a PO picks one. */
+function BuyersTab() {
+  const qc = useQueryClient()
+  const me = useAuthStore((s) => s.user)
+  const isManager = useManagerRoles().has(me?.role ?? '')
+  const [pick, setPick] = useState('')
+  const { data: rows = [], isLoading } = useQuery({ queryKey: ['procurement', 'buyers', 'all'], queryFn: () => api.get<PoBuyerRow[]>('/procurement/buyers') })
+  const { data: candidates = [] } = useQuery({
+    queryKey: ['procurement', 'buyers', 'candidates'], enabled: isManager,
+    queryFn: () => api.get<Array<{ id: string; name: string | null; email: string | null; role: string }>>('/procurement/buyers/candidates'),
+  })
+  const refresh = () => { void qc.invalidateQueries({ queryKey: ['procurement', 'buyers'] }) }
+  const add = useMutation({
+    mutationFn: () => api.post('/procurement/buyers', { userId: pick }),
+    meta: { inlineErrors: true },
+    onSuccess: () => { toast.success('Buyer added'); setPick(''); refresh() },
+  })
+  const toggle = useMutation({
+    mutationFn: (r: PoBuyerRow) => api.patch(`/procurement/buyers/${r.id}`, { active: !r.active }, { tenantId: r.tenantId }),
+    onSuccess: () => refresh(),
+  })
+  return (
+    <div className="space-y-4">
+      <div className="s-card p-4 space-y-3">
+        <p className="text-sm font-black text-white/90">Buyers</p>
+        <p className="text-xs text-s-muted">The people who go out and buy. Whoever raises a PO picks the buyer from this list; the CEO can change it when approving.</p>
+        {isManager && (
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[14rem] flex-1">
+              <FieldLabel htmlFor="buyer-pick">Add a buyer (a login of this company)</FieldLabel>
+              <Select id="buyer-pick" value={pick} onChange={(e) => setPick(e.target.value)} className="s-input mt-1">
+                <option value="">— pick a login —</option>
+                {candidates.map((u) => <option key={u.id} value={u.id}>{u.name ?? u.email} · {u.role.replace(/_/g, ' ')}</option>)}
+              </Select>
+            </div>
+            <Button type="button" disabled={!pick || add.isPending} onClick={() => { add.reset(); add.mutate() }}>{add.isPending ? 'Adding…' : 'Add buyer'}</Button>
+          </div>
+        )}
+        {add.error && <p role="alert" className="text-xs font-bold text-s-red">{(add.error as Error).message}</p>}
+      </div>
+      <div className="s-card overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-xs text-s-muted"><th className="px-4 py-2">Buyer</th><th className="px-4 py-2 hidden sm:table-cell">Role</th><th className="px-4 py-2">Status</th><th className="px-4 py-2" /></tr></thead>
+          <tbody>
+            {isLoading && <tr><td className="px-4 py-4 text-s-muted" colSpan={4}>Loading…</td></tr>}
+            {!isLoading && rows.length === 0 && <tr><td className="px-4 py-4 text-s-muted" colSpan={4}>No buyers yet{isManager ? ' — add one above.' : '.'}</td></tr>}
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t border-s-border">
+                <td className="px-4 py-2 break-words"><span className="font-bold text-white/90">{r.name}</span>{r.email && <span className="block text-xs text-s-muted break-all">{r.email}</span>}<span className="block text-xs text-s-muted sm:hidden">{r.role.replace(/_/g, ' ')}</span></td>
+                <td className="px-4 py-2 text-white/70 hidden sm:table-cell">{r.role.replace(/_/g, ' ')}</td>
+                <td className="px-4 py-2">{r.active && r.loginActive ? <span className="text-xs font-bold text-success">Active</span> : <span className="text-xs text-s-muted">{r.loginActive ? 'Switched off' : 'Login off'}</span>}</td>
+                <td className="px-4 py-2 text-right whitespace-nowrap">{isManager && (
+                  <LinkButton type="button" tone={r.active ? 'muted' : undefined} disabled={toggle.isPending} onClick={() => toggle.mutate(r)}>{r.active ? 'Switch off' : 'Switch on'}</LinkButton>
+                )}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
 
 function PriceHistoryTab() {
   const [itemFilter, setItemFilter] = useState('')

@@ -72,7 +72,10 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
       where: { deletedAt: null, isActive: true, accountStatus: 'active', OR: [{ tenantId }, { tenantMemberships: { some: { tenantId } } }] },
       select: { id: true, name: true, email: true, role: true }, orderBy: { name: 'asc' }, take: 500,
     })
-    return users.sort((a, b) => Number(b.role === 'procurement') - Number(a.role === 'procurement'))
+    // The company's buyers list first (owner, 2026-11-10; buyers.ts), then 'procurement' logins, then everyone else.
+    const listed = new Set((await prisma.poBuyer.findMany({ where: { tenantId, active: true }, select: { userId: true } })).map((b) => b.userId))
+    const rank = (u: { id: string; role: string }) => (listed.has(u.id) ? 2 : u.role === 'procurement' ? 1 : 0)
+    return users.map((u) => ({ ...u, listed: listed.has(u.id) })).sort((a, b) => rank(b) - rank(a))
   })
 
   fastify.post<{ Params: { id: string } }>('/purchase-orders/:id/complete', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {

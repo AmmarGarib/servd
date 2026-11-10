@@ -63,6 +63,8 @@ export interface CreatePoInput {
   notes?: string | null
   /** The brand that orders (owner B13 (a)): a brand of the supplier's company (422 BRAND_NOT_IN_COMPANY). */
   conceptId?: string | null
+  /** The buyer the raiser picked from the company's buyers list (buyers.ts; the route checks it). */
+  buyerUserId?: string | null
   /** Stock units (quantityOrdered / unitCostCents), or the unit it is ordered in (orderUnit / orderQuantity /
    *  orderUnitCostCents = the rate per that unit) — procurement/poUnits.ts. */
   lines: TypedLine[]
@@ -134,6 +136,7 @@ export async function createPo(input: CreatePoInput) {
       reference,
       notes:        input.notes       ?? null,
       conceptId:    input.conceptId   ?? null,
+      buyerUserId:  input.buyerUserId ?? null,
       totalCents,
       createdBy:    input.createdBy,
       status:       'draft',
@@ -196,6 +199,7 @@ export async function updatePoDraft(poId: string, actorId: string, input: Update
         expectedDate: input.expectedDate ? new Date(input.expectedDate) : null,
         notes: input.notes ?? null,
         conceptId: input.conceptId ?? null,
+        ...(input.buyerUserId !== undefined && { buyerUserId: input.buyerUserId ?? null }),
         totalCents,
         lines: {
           create: lines.map((l) => ({
@@ -312,6 +316,10 @@ export async function resolvePoBuyer(
     if (!u) throw new AppError('BUYER_NOT_IN_COMPANY', "The buyer must be an active login of this PO's company", 422)
     return { id: u.id, how: 'named' }
   }
+  // The company's only listed buyer (buyers.ts), else its only 'procurement' login, else the requester.
+  const { onlyListedBuyer } = await import('./buyers.js')
+  const listed = await onlyListedBuyer(po.tenantId)
+  if (listed) return { id: listed, how: 'company_buyer' }
   const buyers = await prisma.user.findMany({
     where: {
       role: 'procurement', deletedAt: null, isActive: true, accountStatus: 'active',
@@ -340,7 +348,8 @@ export async function approvePo(
   if (po.status !== 'pending_approval') throw new AppError('INVALID_STATE', `Cannot approve PO in status ${po.status}`, 400)
   const tenantId = po.supplier.tenantId
   if (!tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company before approving its PO', 422)
-  const buyer = await resolvePoBuyer({ createdBy: po.createdBy, tenantId }, opts.buyerUserId)
+  // The CEO's pick, else the raiser's (owner, 2026-11-10: "anyone who's raising PO could select buyer").
+  const buyer = await resolvePoBuyer({ createdBy: po.createdBy, tenantId }, opts.buyerUserId ?? po.buyerUserId)
   const payByCash = opts.payByCash ?? po.payByCash
   const { raisePoCashVoucherTx, prepareCashVoucher } = await import('./poCash.js')
   const plan = payByCash ? await prepareCashVoucher(poId, opts.cashHolderUserId ?? buyer.id) : null

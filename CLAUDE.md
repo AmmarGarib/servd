@@ -2017,6 +2017,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   discount, never returned (409 `PO_VOUCHER_LOCKED`; reject stays); a PO a finance login raised (or one finance checked
   under the retired chain) is raised `approved`. Migration `20261110100000` sent unpaid PO vouchers with no finance
   approval back to finance. The PO list shows the buyer's name (`buyerName`). Tests: `tests/poApprovalChain.test.ts`.
+- **Buyers list per company (owner, 2026-11-10: "Give option to add buyers and then select buyer when PO is being
+  raised"; "Not only CEO, anyone who's raising PO could select buyer").** Contract: header of
+  `procurement/buyers.ts`; table `po_buyers` (tenantId, RLS, merge repoint — a login listed in both companies keeps the
+  target's row; migration `20261110120000`). Managers add any active login of the ACTIVE company (`POST
+  /procurement/buyers`, 422 `BUYER_NOT_IN_COMPANY`), switch off / on (`PATCH /:id`), never delete; Procurement →
+  Buyers. Whoever raises a PO picks the buyer from the list of the PO's company (`buyerUserId` on POST / PATCH
+  `/procurement/purchase-orders`, 422 `BUYER_NOT_LISTED`); the CEO's approval keeps it unless the CEO names another
+  (`resolvePoBuyer`: the CEO's pick → the raiser's → the only listed buyer → the only `procurement` login → the
+  requester). The buyer sees the PO in My tasks only once the CEO approves. Tests: `tests/poApprovalChain.test.ts`.
 - **PO cancel:** a PO with a pending GRNI match (a bill booked before
   delivery) cannot be cancelled (409 `PO_BILLED_AHEAD`; void the bill or raise
   a "short" credit note first); billing ahead on a cancelled PO is 409

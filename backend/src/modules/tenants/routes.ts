@@ -775,6 +775,9 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     for (const l of srcLetters) if (dstKeys.has(l.key)) await tx.hrLetterTemplate.delete({ where: { id: l.id } })
   }
 
+  // The buyers list (owner, 2026-11-10): a login listed in both companies keeps the target's row.
+  const dstBuyers = (await tx.poBuyer.findMany({ where: { tenantId: dst }, select: { userId: true } })).map((b) => b.userId)
+  if (dstBuyers.length > 0) await tx.poBuyer.deleteMany({ where: { tenantId: src, userId: { in: dstBuyers } } })
   const repoint: Array<{
     updateMany(args: { where: { tenantId: string }; data: { tenantId: string } }): Promise<unknown>
   }> = [
@@ -804,6 +807,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     // Cost splits (owner, 2026-11-07): a split follows its source company, a share its receiving company (a company
     // with inter-company activity is refused above, MERGE_HAS_INTERCOMPANY — listed so nothing is ever stranded).
     tx.costSplit, tx.costSplitShare,
+    // The buyers list (owner, 2026-11-10): follows its company (twins dropped above).
+    tx.poBuyer,
     // Performance appraisal (owner, 2026-11-06): cycles, templates and evaluations follow their company.
     tx.performanceCycle, tx.performanceTemplate, tx.performanceEvaluation,
     // Intern Management (owner, 2026-11-06): the register, history, attendance, stipend runs / slips and certificates
