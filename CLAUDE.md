@@ -2011,6 +2011,12 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   writes `PoActivityLog` (GRN steps carry `grnId`). `GET /procurement/my-tasks` = the caller's own to buy / to confirm
   / to fix; finance and the CEO work the approvals inbox. Migration `20261105140000_po_grn_workflow` (moved
   buyer_check / finance_check POs to the CEO). Tests: `tests/poApprovalChain.test.ts`.
+- **A PO's cash voucher waits for finance (owner, 2026-11-10: "Finance approval getting skipped, fix it").** The CEO's
+  PO approval raises it `submitted` (CEO step already signed — `directorSignedById`); finance's `POST
+  /trustops/cash-vouchers/:id/finance-approve {}` moves it straight to `approved` (ready to pay) — no account, no
+  discount, never returned (409 `PO_VOUCHER_LOCKED`; reject stays); a PO a finance login raised (or one finance checked
+  under the retired chain) is raised `approved`. Migration `20261110100000` sent unpaid PO vouchers with no finance
+  approval back to finance. The PO list shows the buyer's name (`buyerName`). Tests: `tests/poApprovalChain.test.ts`.
 - **PO cancel:** a PO with a pending GRNI match (a bill booked before
   delivery) cannot be cancelled (409 `PO_BILLED_AHEAD`; void the bill or raise
   a "short" credit note first); billing ahead on a cancelled PO is 409

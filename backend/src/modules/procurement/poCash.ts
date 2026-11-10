@@ -5,9 +5,12 @@
 //
 //   1. CEO approves the PO (service.ts approvePo) → in the SAME transaction raisePoCashVoucherTx raises ONE cash
 //      voucher (CashVoucher.purchaseOrderId @unique, kind 'request', CV-00001 series of the PO's company) for the PO
-//      total, in the BUYER's name (the holder — the buyer the approval named, owner 2026-11-05), already 'approved' —
-//      the CEO's approval of the PO IS its approval (directorSignedById; financeApprovedById only for a PO checked by
-//      finance under the retired 2026-11-03 chain). Posts nothing.
+//      total, in the BUYER's name (the holder — the buyer the approval named, owner 2026-11-05). The CEO's approval of
+//      the PO IS the CEO's step (directorSignedById), but FINANCE still approves it (owner, 2026-11-10: "Finance approval
+//      getting skipped, fix it"): it is raised 'submitted' and finance's POST /:id/finance-approve moves it straight to
+//      'approved' (the CEO already signed). Exceptions, raised 'approved' at once: a PO finance checked under the retired
+//      2026-11-03 chain (financeCheckedById), or a PO a finance login raised (the finance-raised rule of 2026-10-24).
+//      Posts nothing.
 //
 //   2. Finance pays it (POST /trustops/cash-vouchers/:id/pay — the normal pay route, finance only). For a PO voucher
 //      the pay is NOT an expense (that would double-count: the goods are booked at the dock). It TOPS UP the buyer's
@@ -95,9 +98,9 @@ export async function prepareCashVoucher(poId: string, namedHolderId: string | n
  * Raise the PO's cash voucher inside the approval's transaction (header, step 1). One per PO: a second call for the
  * same PO returns the existing voucher. Numbered under the company's cash-voucher lock (as POST /trustops/cash-vouchers).
  */
-export async function raisePoCashVoucherTx(tx: Tx, p: PoCashPlan, approverId: string): Promise<{ id: string; number: string }> {
+export async function raisePoCashVoucherTx(tx: Tx, p: PoCashPlan, approverId: string): Promise<{ id: string; number: string; status: string }> {
   const existing = await tx.cashVoucher.findUnique({ where: { purchaseOrderId: p.poId }, select: { id: true, number: true, status: true } })
-  if (existing && existing.status !== 'cancelled') return { id: existing.id, number: existing.number }
+  if (existing && existing.status !== 'cancelled') return { id: existing.id, number: existing.number, status: existing.status }
   if (existing) {
     // A voucher cancelled with an earlier round of this PO (cannot happen today: a cancelled PO is never approved
     // again) — release its link so the new one can be raised.
@@ -107,6 +110,11 @@ export async function raisePoCashVoucherTx(tx: Tx, p: PoCashPlan, approverId: st
   const max = await tx.cashVoucher.aggregate({ where: { tenantId: p.tenantId }, _max: { seq: true } })
   const seq = (max._max.seq ?? 0) + 1
   const now = new Date()
+  // Finance's step: already signed when finance checked the PO (retired chain) or a finance login raised the PO.
+  const raisedByFinance = !p.financeCheckedById && !!p.preparedById && !!(await tx.user.findFirst({
+    where: { id: p.preparedById, role: 'finance', isActive: true, deletedAt: null }, select: { id: true },
+  }))
+  const financeSignerId = p.financeCheckedById ?? (raisedByFinance ? p.preparedById : null)
   const v = await tx.cashVoucher.create({
     data: {
       tenantId: p.tenantId,
@@ -121,17 +129,17 @@ export async function raisePoCashVoucherTx(tx: Tx, p: PoCashPlan, approverId: st
       conceptId: p.conceptId,
       amountCents: p.amountCents,
       discountCents: 0,
-      status: 'approved',
+      status: financeSignerId ? 'approved' : 'submitted',
       preparedById: p.preparedById ?? approverId,
       submittedById: p.submittedById ?? p.preparedById ?? approverId,
       submittedAt: now,
-      financeApprovedById: p.financeCheckedById,
-      financeApprovedAt: p.financeCheckedById ? now : null,
+      financeApprovedById: financeSignerId,
+      financeApprovedAt: financeSignerId ? now : null,
       directorSignedById: approverId,
       directorSignedAt: now,
       purchaseOrderId: p.poId,
     },
-    select: { id: true, number: true },
+    select: { id: true, number: true, status: true },
   })
   await tx.auditLog.create({
     data: {

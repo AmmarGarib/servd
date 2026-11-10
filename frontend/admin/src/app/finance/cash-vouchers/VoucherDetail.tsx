@@ -490,6 +490,33 @@ function Steps({ v }: { v: CashVoucher }) {
 
 /** Finance approves: may still fix the account and discount in the same call. */
 function FinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
+  if (v.purchaseOrderId) return <PoFinanceApprovePanel v={v} onDone={onDone} />
+  return <ExpenseFinanceApprovePanel v={v} onDone={onDone} />
+}
+
+/** A PO's cash voucher (owner, 2026-11-10): the CEO already approved the PO, so finance's approval makes it ready to pay. */
+function PoFinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
+  const approve = useMutation({
+    mutationFn: () => api.post(`${CV_BASE}/${v.id}/finance-approve`, {}, { tenantId: v.tenantId }),
+    meta: { inlineErrors: true },
+    onSuccess: () => { toast.success('Approved by finance — ready to pay.'); onDone() },
+  })
+  return (
+    <div className="rounded-2xl p-5 space-y-3" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
+      <p className="text-sm font-black text-white/90">Finance approval</p>
+      <p className="text-xs text-s-muted">
+        The CEO approved {v.purchaseOrder?.reference ?? 'the purchase order'}. Check the amount and who takes the cash, then approve it — it is then ready to pay.
+        To change anything, change the PO (or reject this voucher).
+      </p>
+      {approve.error && <ErrorBanner message={errorWords(approve.error)} />}
+      <Button type="submit" disabled={approve.isPending} onClick={() => { approve.reset(); approve.mutate() }}>
+        {approve.isPending ? 'Approving…' : 'Approve — ready to pay'}
+      </Button>
+    </div>
+  )
+}
+
+function ExpenseFinanceApprovePanel({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
   const { data: cats } = useCategories()
   const categories = (cats?.categories ?? []).filter((c) => c.kind === 'expense')
   const accounts = useExpenseAccounts(v.tenantId)

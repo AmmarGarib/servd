@@ -590,7 +590,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       // every procurement entity. PO returns include the supplier so the
       // result already carries the tenant context downstream consumers need.
       const tenantWhere = await supplierScopeWhere(req, 'read')
-      return prisma.purchaseOrder.findMany({
+      const rows = await prisma.purchaseOrder.findMany({
         where: {
           supplier: tenantWhere,
           ...(req.query.supplierId && { supplierId: req.query.supplierId }),
@@ -604,6 +604,11 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         orderBy: { createdAt: 'desc' },
         take: limit,
       })
+      // Who is buying it (owner, 2026-11-10: "Who is the buyer?") — the list shows the buyer's name.
+      const buyerIds = [...new Set(rows.map((r) => r.buyerUserId).filter((x): x is string => !!x))]
+      const buyers = buyerIds.length ? await prisma.user.findMany({ where: { id: { in: buyerIds } }, select: { id: true, name: true, email: true } }) : []
+      const buyerName = new Map(buyers.map((u) => [u.id, u.name ?? u.email ?? null]))
+      return rows.map((r) => ({ ...r, buyerName: r.buyerUserId ? buyerName.get(r.buyerUserId) ?? null : null }))
     },
   )
 
@@ -781,9 +786,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       })
       poTaskNotice('to_buy', req.params.id, req.staffUser!.id)
       if (result.cashVoucher) {
-        // The bell: finance has a voucher to pay (the buyer takes the cash from finance).
-        const { voucherTaskNotice } = await import('../trustops/cashVouchers.js')
-        voucherTaskNotice('approved', result.cashVoucher.id, req.staffUser!.id)
+        if (result.cashVoucher.status === 'submitted') {
+          // The bell: finance approves the PO's cash voucher first (owner, 2026-11-10), then pays it.
+          approvalWaiting('cash_request_finance', result.cashVoucher.id, { round: 'r0', actorId: req.staffUser!.id })
+        } else {
+          // The bell: finance has a voucher to pay (the buyer takes the cash from finance).
+          const { voucherTaskNotice } = await import('../trustops/cashVouchers.js')
+          voucherTaskNotice('approved', result.cashVoucher.id, req.staffUser!.id)
+        }
       }
       return result
     },

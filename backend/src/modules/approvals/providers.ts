@@ -934,6 +934,7 @@ type CashRequestRow = {
   submittedAt?: string | null; returnCount?: number
   canFinanceApprove?: boolean; canApprove?: boolean
   preparedById?: string | null; payeeUserId?: string | null
+  purchaseOrderId?: string | null
 }
 
 const cashRequestTitle = (r: CashRequestRow) => `${r.number} — ${r.holderName ?? r.payeeName} — ${pkr(r.amountCents)}`
@@ -1027,10 +1028,17 @@ const cashRequestsFinance: ApprovalProvider = {
         amountCents: r.amountCents,
         waitingSince: iso(r.submittedAt ?? r.createdAt),
         link: `/finance/cash-vouchers?id=${encodeURIComponent(r.id)}`,
-        actions: cashRequestActions(base, {
-          kind: 'approve', label: 'Approve (finance)', method: 'POST', path: `${base}/finance-approve`, body: {},
-          confirm: 'Approve this voucher for finance? It then goes to the CEO for the final approval.',
-        }),
+        // A PO's cash voucher (owner, 2026-11-10): the CEO already approved the PO — finance's approval makes it ready
+        // to pay; it is approved or rejected, never returned (change the PO).
+        actions: r.purchaseOrderId
+          ? cashRequestActions(base, {
+            kind: 'approve', label: 'Approve (finance)', method: 'POST', path: `${base}/finance-approve`, body: {},
+            confirm: 'Approve the cash for this purchase order? The CEO already approved the PO, so it is then ready to pay.',
+          }).filter((a) => a.kind !== 'return')
+          : cashRequestActions(base, {
+            kind: 'approve', label: 'Approve (finance)', method: 'POST', path: `${base}/finance-approve`, body: {},
+            confirm: 'Approve this voucher for finance? It then goes to the CEO for the final approval.',
+          }),
       }
     })
   },

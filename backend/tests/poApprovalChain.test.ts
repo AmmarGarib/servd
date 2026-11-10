@@ -145,7 +145,7 @@ describe('the whole flow: CEO → buyer → requester → GRN → finance → CE
     expect(row).toMatchObject({ grnWorkflow: true, buyerUserId: U.buyerA!.id, approvedById: U.ceoA!.id })
     voucherId = a.json().cashVoucher.id
     const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })
-    expect(v).toMatchObject({ tenantId: T.A, purchaseOrderId: poId, status: 'approved', amountCents: 3_500, payeeUserId: U.buyerA!.id, directorSignedById: U.ceoA!.id })
+    expect(v).toMatchObject({ tenantId: T.A, purchaseOrderId: poId, status: 'submitted', amountCents: 3_500, payeeUserId: U.buyerA!.id, directorSignedById: U.ceoA!.id, financeApprovedById: null })
     const log = await prisma.poActivityLog.findFirstOrThrow({ where: { purchaseOrderId: poId, action: 'approved' } })
     expect(log.details).toMatchObject({ buyerUserId: U.buyerA!.id, buyerChosen: 'company_buyer', cashVoucherId: voucherId })
     // The buyer is told; it is his task.
@@ -157,7 +157,16 @@ describe('the whole flow: CEO → buyer → requester → GRN → finance → CE
     expect((await call('buyerB', 'GET', '/procurement/my-tasks')).json().toBuy.map((p: { id: string }) => p.id)).not.toContain(poId)
   })
 
-  it('finance pays the voucher into the buyer\'s box (unchanged)', async () => {
+  it('finance approves the PO\'s cash voucher first (owner, 2026-11-10), then pays it into the buyer\'s box', async () => {
+    // Not payable before finance approves it.
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, { source: 'cash_on_hand' })).statusCode).not.toBe(200)
+    // Never returned, never edited at finance's step; another company's finance gets 404.
+    expect(code(await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/return`, { note: 'Please check the amount again' }))).toBe('PO_VOUCHER_LOCKED')
+    expect(code(await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/finance-approve`, { discountCents: 100 }))).toBe('PO_VOUCHER_LOCKED')
+    expect((await call('finB', 'POST', `/trustops/cash-vouchers/${voucherId}/finance-approve`, {})).statusCode).toBe(404)
+    const ok = await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/finance-approve`, {})
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })).toMatchObject({ status: 'approved', financeApprovedById: U.finA!.id, directorSignedById: U.ceoA!.id })
     const r = await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, { source: 'cash_on_hand' })
     expect(r.statusCode, r.body).toBe(200)
     const box = await prisma.pettyCashBox.findFirstOrThrow({ where: { tenantId: T.A, custodianId: U.buyerA!.id } })

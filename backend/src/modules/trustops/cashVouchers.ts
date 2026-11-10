@@ -331,7 +331,7 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canSignHod: false,
     canFinanceApprove: financeStep,
     canApprove: ceoStep && v.financeApprovedById !== me && v.hodSignedById !== me,
-    canReturn: financeStep || ceoStep,
+    canReturn: (financeStep && !v.purchaseOrderId) || ceoStep,
     canPullBack: WAIT_CEO.includes(s) && viewer.financeApprover && !viewer.isAdmin && !v.purchaseOrderId,
     canReject: financeStep || ceoStep || (s === 'returned' && (viewer.financeApprover || viewer.isAdmin) && !own),
     canResubmit: s === 'returned' && (raiser || (v.kind === 'expense' && viewer.financeApprover)),
@@ -1462,6 +1462,27 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     if (!viewer.financeApprover) throw new AppError('NOT_FINANCE', 'Only finance approves a cash voucher at this step', 403)
     if (!WAIT_FINANCE.includes(v.status)) throw wrongStatus('VOUCHER_NOT_SUBMITTED', v, 'finance approves a voucher waiting for finance')
     if (isOwn(viewer, v)) throw selfApprove()
+    // A PO's cash voucher (owner, 2026-11-10: "Finance approval getting skipped, fix it"): the CEO signed it by
+    // approving the PO, so finance's approval is the last step → approved, ready for finance to pay. Nothing on it is
+    // editable here (it is a box top-up, never an expense: no account, no discount — change the PO instead).
+    if (v.purchaseOrderId) {
+      const edits = (['categoryKey', 'accountCode', 'discountCents', 'grossCents', 'conceptId', 'department', 'assetClassId', 'assetLocationId'] as const)
+        .filter((k) => body[k] !== undefined)
+      if (edits.length > 0) throw new AppError('PO_VOUCHER_LOCKED', `${v.number} is the cash for an approved purchase order — change the PO instead`, 409, { fields: edits })
+      if (!v.directorSignedById) throw new AppError('PO_NOT_APPROVED', `${v.number}'s purchase order has no CEO approval`, 409)
+      const now = new Date()
+      const res = await prisma.cashVoucher.updateMany({
+        where: { id: v.id, tenantId: v.tenantId, status: v.status, amountCents: v.amountCents, purchaseOrderId: v.purchaseOrderId },
+        data: { status: 'approved', financeApprovedById: viewer.id, financeApprovedAt: now },
+      })
+      if (res.count === 0) throw new AppError('VOUCHER_CHANGED', `Cash request ${v.number} was changed by someone else — reload it`, 409)
+      await auditVoucher(req, 'finance_approve', v, { status: 'approved', financeApprovedAt: now.toISOString(), purchaseOrderId: v.purchaseOrderId, ...(body.note && { note: body.note }) },
+        { status: v.status })
+      await voucherDecided(req, 'cash_request_finance', v, 'approve', now, body.note)
+      // The bell: ready to pay (the buyer takes the cash from finance).
+      voucherTaskNotice('approved', v.id, viewer.id)
+      return detailOf(v.id, viewer)
+    }
     const data: Prisma.CashVoucherUncheckedUpdateManyInput = {}
     if (body.conceptId) {
       const concept = await assertConceptOwned(req, body.conceptId, 'write')
@@ -1551,6 +1572,8 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     const viewer = await viewerOf(req)
     if (WAIT_FINANCE.includes(v.status)) {
       if (!viewer.financeApprover) throw new AppError('NOT_FINANCE', 'Only finance returns a voucher waiting for finance', 403)
+      // A PO's cash voucher is approved or rejected, never returned (nothing on it is edited — change the PO).
+      if (v.purchaseOrderId) throw new AppError('PO_VOUCHER_LOCKED', `${v.number} is the cash for an approved purchase order — approve or reject it, or change the PO`, 409)
     } else if (WAIT_CEO.includes(v.status)) {
       if (!viewer.isAdmin) throw new ForbiddenError('Only the CEO returns a voucher waiting for the final approval')
     } else {
@@ -2261,7 +2284,9 @@ async function payPoCashVoucher(
  */
 export async function forwardFinanceRaisedRequests(): Promise<number> {
   const waiting = await prisma.cashVoucher.findMany({
-    where: { status: { in: WAIT_FINANCE }, kind: 'request', financeApprovedById: null },
+    // A PO's cash voucher is never forwarded here: the CEO already signed it (poCash.ts raises it signed by finance
+    // when a finance login raised the PO).
+    where: { status: { in: WAIT_FINANCE }, kind: 'request', financeApprovedById: null, purchaseOrderId: null },
     select: { id: true, tenantId: true, number: true, preparedById: true, status: true },
   })
   if (waiting.length === 0) return 0

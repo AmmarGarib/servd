@@ -84,7 +84,7 @@ interface PurchaseOrder {
   submittedById?: string | null; buyerCheckedById?: string | null; financeCheckedById?: string | null
   returnNote?: string | null; returnCount?: number; returnedAt?: string | null
   payByCash?: boolean
-  grnWorkflow?: boolean; buyerUserId?: string | null; invoiceNumber?: string | null; invoiceDate?: string | null
+  grnWorkflow?: boolean; buyerUserId?: string | null; buyerName?: string | null; invoiceNumber?: string | null; invoiceDate?: string | null
   completedAt?: string | null; receiptReturnNote?: string | null
   names?: { createdBy: string | null; submittedBy: string | null; buyerCheckedBy: string | null; financeCheckedBy: string | null; approvedBy: string | null; returnedBy: string | null; buyer?: string | null; completedBy?: string | null; receiptReturnedBy?: string | null }
   grns?: Array<{ id: string; grnNumber: string; grnStatus: string; invoiceNumber: string | null; receivedAt: string; receivedBy: string | null; financeCheckedBy: string | null; approvedBy: string | null; supplierBillId: string | null }>
@@ -568,7 +568,12 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
                   <td className="px-4 py-3 text-s-muted hidden md:table-cell">{fmt(po.createdAt)}</td>
                   <td className="px-4 py-3 text-s-muted hidden md:table-cell">{po.expectedDate ? fmt(po.expectedDate) : '—'}</td>
                   <td className="px-4 py-3 text-s-text font-semibold text-right">{fmtPkrWhole(po.totalCents)}</td>
-                  <td className="px-4 py-3"><Badge status={po.status} /></td>
+                  <td className="px-4 py-3">
+                    <Badge status={po.status} />
+                    {po.buyerName && ['approved', 'sent', 'partial', 'completed'].includes(po.status) && (
+                      <p className="text-xs text-s-muted mt-1">Buyer: <span className="font-bold text-white/80">{po.buyerName}</span></p>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <PoActions po={po} onAction={(action, body) => {
                       if (action === 'reject' || action === 'return' || action === 'approve') { setDecide({ id: po.id, kind: action, status: po.status }); return }
