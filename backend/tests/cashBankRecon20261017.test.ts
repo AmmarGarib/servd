@@ -320,6 +320,36 @@ describe('#32 reversed entries never match', () => {
     expect(code(dead)).toBe('ENTRY_REVERSED')
   })
 
+  it('near misses say where the amount was booked when nothing can be matched (owner, 2026-11-10)', async () => {
+    const day = new Date('2026-03-10T07:00:00Z')
+    const amt = 777_000
+    const other = await bankEntry(T.A, '1042', amt, day)            // booked to the wrong bank
+    const wrongSide = await bankEntry(T.A, '1020', -amt, day)       // booked as a payment
+    const foreign = await bankEntry(T.B, '1020', amt, day)          // company B (finA is not a member)
+    const splitId = randomUUID()
+    await postJournalEntry({
+      tenantId: T.A, sourceType: 'test.split', sourceId: splitId, description: 'Split deposit', entryDate: day, postedBy: 'system',
+      lines: [
+        { accountCode: '1020', type: 'debit', amountCents: 400_000 },
+        { accountCode: '1020', type: 'debit', amountCents: amt - 400_000 },
+        { accountCode: '3010', type: 'credit', amountCents: amt },
+      ],
+    })
+    const line = await statementLine(T.A, bank['A1']!.id, '1020', amt, day)
+    const url = `/reconciliation/bank/lines/${line.id}`
+    expect((await call('finA', 'GET', `${url}/candidates`)).json()).toEqual([])
+    expect((await call('finB', 'GET', `${url}/near-misses`)).statusCode).toBe(404)
+    const r = await call('finA', 'GET', `${url}/near-misses`)
+    expect(r.statusCode, r.body).toBe(200)
+    const misses = r.json() as Array<{ reason: string; entryId: string; accountCode: string }>
+    const by = (reason: string) => misses.filter((m) => m.reason === reason).map((m) => m.entryId)
+    expect(by('other_account')).toContain(other.entryId)
+    expect(misses.find((m) => m.entryId === other.entryId)!.accountCode).toBe('1042')
+    expect(by('wrong_side')).toContain(wrongSide.entryId)
+    expect(by('split').length).toBe(1)
+    expect(misses.map((m) => m.entryId)).not.toContain(foreign.entryId)
+  })
+
   it('sales_bank_unmatched does not count a reversed sales line or its reversal', async () => {
     const day = new Date('2026-02-20T07:00:00Z')
     const sale = await bankEntry(T.A, '1020', 33_000, day, 'order.complete')

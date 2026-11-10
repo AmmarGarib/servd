@@ -9,6 +9,7 @@ import {
   unmatchStatementLine,
   manualMatchStatementLine,
   manualMatchCandidates,
+  manualMatchNearMisses,
 } from './service.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { assertStatementLineEditable } from './brs.js'
@@ -234,6 +235,24 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
       })
       if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
       return manualMatchCandidates(line.id, days)
+    },
+  )
+
+  // GET /bank/lines/:id/near-misses?days=45 — why the picker is empty: the same amount booked to another account,
+  // another company (in view), the other side, split over several lines, already matched, reversed or outside the
+  // window (service.ts manualMatchNearMisses). Read only.
+  fastify.get<{ Params: { id: string }; Querystring: { days?: string } }>(
+    '/bank/lines/:id/near-misses',
+    { preHandler: BANK_BOOKERS },
+    async (req) => {
+      const days = z.coerce.number().int().min(1).max(400).default(45).parse(req.query.days ?? undefined)
+      const line = await prisma.bankStatementLine.findFirst({
+        where: { id: req.params.id, import: await scopeTenantWhere(req, 'write') },
+        select: { id: true },
+      })
+      if (!line) throw new NotFoundError('BankStatementLine', req.params.id)
+      const { tenantIds } = await resolveTenantScope(req)
+      return manualMatchNearMisses(line.id, days, tenantIds)
     },
   )
 

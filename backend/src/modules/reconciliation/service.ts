@@ -849,6 +849,117 @@ export async function manualMatchCandidates(lineId: string, days: number): Promi
     }))
 }
 
+// ─── Why no candidate? (owner, 2026-11-10: "This entry is available in books, it's showing no relevant entry") ──
+//
+// When the picker is empty the money is usually in the books, just not where the match needs it. These are the
+// near misses, each with its reason, so finance can see WHERE it went and fix that entry (e.g. move it to this bank
+// account — a same-amount edit applies at once) instead of booking it twice. Read only; never matches anything.
+//   other_account  same amount, same side, another account of this company (booked to the wrong bank / cash)
+//   other_company  same amount, same side, on this bank code in another company the caller can see
+//   wrong_side     same amount on this account, but the other side (a deposit booked as a payment)
+//   split          one entry whose lines on this account add up to the amount (only single lines can be matched)
+//   taken          same amount on this account, already matched to another statement line
+//   reversed       same amount on this account, but the entry was reversed / is a reversal
+//   outside_window same amount on this account, further than the chosen days (up to 400)
+
+export interface NearMiss {
+  reason: 'other_account' | 'other_company' | 'wrong_side' | 'split' | 'taken' | 'reversed' | 'outside_window'
+  entryId: string; entryDate: Date; reference: string | null; description: string
+  accountCode: string; accountName: string; tenantId: string; companyName: string | null
+  amountCents: number; side: 'debit' | 'credit'
+  takenBy?: { statementLineId: string; postedDate: Date; description: string } | null
+}
+
+export async function manualMatchNearMisses(lineId: string, days: number, visibleTenantIds: string[]): Promise<NearMiss[]> {
+  const line = await prisma.bankStatementLine.findUnique({
+    where: { id: lineId },
+    select: { id: true, postedDate: true, amountCents: true, import: { select: { tenantId: true, accountCode: true } } },
+  })
+  if (!line) throw new NotFoundError('BankStatementLine', lineId)
+  const tenantId = line.import.tenantId
+  const amount = toCents(line.amountCents)
+  if (!tenantId || amount === 0) return []
+  const abs = Math.abs(amount)
+  const side: 'debit' | 'credit' = amount > 0 ? 'debit' : 'credit'
+  const code = line.import.accountCode
+  const t = line.postedDate.getTime()
+  const span = days * 86_400_000
+  const wide = 400 * 86_400_000
+  const inWindow = (d: Date) => Math.abs(d.getTime() - t) <= span
+  const companies = new Map((await prisma.tenant.findMany({ where: { id: { in: [...new Set([tenantId, ...visibleTenantIds])] } }, select: { id: true, name: true } })).map((c) => [c.id, c.name]))
+  const sel = {
+    id: true, type: true, amountCents: true, memo: true,
+    account: { select: { code: true, name: true, tenantId: true } },
+    journalEntry: { select: { id: true, entryDate: true, reference: true, description: true, tenantId: true } },
+  } as const
+  const out: NearMiss[] = []
+  const push = (reason: NearMiss['reason'], r: { type: string; amountCents: unknown; account: { code: string; name: string; tenantId: string | null }; journalEntry: { id: string; entryDate: Date; reference: string | null; description: string; tenantId: string | null } }, extra: Partial<NearMiss> = {}) => {
+    const tid = r.journalEntry.tenantId ?? tenantId
+    out.push({
+      reason, entryId: r.journalEntry.id, entryDate: r.journalEntry.entryDate, reference: r.journalEntry.reference,
+      description: r.journalEntry.description, accountCode: r.account.code, accountName: r.account.name,
+      tenantId: tid, companyName: companies.get(tid) ?? null, amountCents: toCents(r.amountCents as never), side: r.type as 'debit' | 'credit', ...extra,
+    })
+  }
+  // Same amount anywhere in this company, ±400 days (filtered below by case).
+  const same = await prisma.journalLine.findMany({
+    where: { amountCents: abs, journalEntry: { tenantId, entryDate: { gte: new Date(t - wide), lte: new Date(t + wide) } } },
+    select: sel, orderBy: { journalEntry: { entryDate: 'asc' } }, take: 300,
+  })
+  const dead = await deadEntryIds(prisma, tenantId, same.map((r) => r.journalEntry))
+  const takenRows = await prisma.bankStatementLine.findMany({
+    where: { matchedJournalLineId: { in: same.map((r) => r.id) }, NOT: { id: line.id } },
+    select: { id: true, postedDate: true, description: true, matchedJournalLineId: true },
+  })
+  const takenBy = new Map(takenRows.map((x) => [x.matchedJournalLineId!, x]))
+  for (const r of same) {
+    if ((r.memo ?? '').startsWith(RAAST_RECEIPTS_MEMO)) continue
+    const onThis = r.account.code === code
+    const isDead = dead.has(r.journalEntry.id)
+    if (onThis) {
+      if (r.type !== side) { if (!isDead && inWindow(r.journalEntry.entryDate)) push('wrong_side', r); continue }
+      if (isDead) { if (inWindow(r.journalEntry.entryDate)) push('reversed', r); continue }
+      const tk = takenBy.get(r.id)
+      if (tk) { push('taken', r, { takenBy: { statementLineId: tk.id, postedDate: tk.postedDate, description: tk.description } }); continue }
+      if (!inWindow(r.journalEntry.entryDate)) push('outside_window', r)
+      continue
+    }
+    if (r.type === side && !isDead && inWindow(r.journalEntry.entryDate)) push('other_account', r)
+  }
+  // Same bank code in another company the caller can see.
+  const others = visibleTenantIds.filter((x) => x !== tenantId)
+  if (others.length > 0) {
+    const rows = await prisma.journalLine.findMany({
+      where: {
+        type: side, amountCents: abs, account: { code, tenantId: { in: others } },
+        journalEntry: { tenantId: { in: others }, entryDate: { gte: new Date(t - span), lte: new Date(t + span) } },
+      },
+      select: sel, take: 50,
+    })
+    for (const r of rows) push('other_company', r)
+  }
+  // An entry whose several lines on this account add up to the amount.
+  const account = await prisma.account.findFirst({ where: { tenantId, code }, select: { id: true } })
+  if (account) {
+    const groups = await prisma.journalLine.groupBy({
+      by: ['journalEntryId'],
+      where: { accountId: account.id, type: side, journalEntry: { tenantId, entryDate: { gte: new Date(t - span), lte: new Date(t + span) } } },
+      _sum: { amountCents: true }, _count: { _all: true },
+    })
+    const hit = groups.filter((g) => g._count._all > 1 && toCents(g._sum.amountCents as never) === abs).map((g) => g.journalEntryId).slice(0, 20)
+    if (hit.length > 0) {
+      const rows = await prisma.journalLine.findMany({ where: { journalEntryId: { in: hit }, accountId: account.id, type: side }, select: sel })
+      const seen = new Set<string>()
+      for (const r of rows) {
+        if (seen.has(r.journalEntry.id)) continue
+        seen.add(r.journalEntry.id)
+        push('split', { ...r, amountCents: abs })
+      }
+    }
+  }
+  return out.slice(0, 60)
+}
+
 export async function manualMatchStatementLine(lineId: string, journalLineId: string): Promise<{
   tenantId: string; amountCents: number; journalEntryId: string; reference: string | null
 }> {

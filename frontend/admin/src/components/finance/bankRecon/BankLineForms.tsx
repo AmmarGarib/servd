@@ -165,9 +165,7 @@ export function ManualMatch({ line, onCancel, onDone }: { line: BankLine; onCanc
       </div>
       {isLoading && <p className="text-s-muted">Looking…</p>}
       {error && <p role="alert" className="text-s-red">{(error as Error).message}</p>}
-      {!isLoading && !error && cands.length === 0 && (
-        <p className="text-s-muted">No free journal line of this amount on this account — book an adjustment if the money was never booked.</p>
-      )}
+      {!isLoading && !error && cands.length === 0 && <NearMisses lineId={line.id} days={days} />}
       {cands.length > 0 && (
         <ul className="space-y-1">
           {cands.map((c) => (
@@ -185,3 +183,50 @@ export function ManualMatch({ line, onCancel, onDone }: { line: BankLine; onCanc
   )
 }
 
+
+interface NearMiss {
+  reason: 'other_account' | 'other_company' | 'wrong_side' | 'split' | 'taken' | 'reversed' | 'outside_window'
+  entryId: string; entryDate: string; reference: string | null; description: string
+  accountCode: string; accountName: string; companyName: string | null; amountCents: number; side: 'debit' | 'credit'
+  takenBy?: { statementLineId: string; postedDate: string; description: string } | null
+}
+
+const NEAR_MISS_TEXT: Record<NearMiss['reason'], (m: NearMiss) => string> = {
+  other_account: (m) => `Booked to ${m.accountCode} ${m.accountName}, not this bank's account. Edit the entry and move that line to this bank (same amount — applies at once), then match.`,
+  other_company: (m) => `Booked in ${m.companyName ?? 'another company'}, not in this bank's company. Cancel it there and book it in the right company.`,
+  wrong_side: (m) => `On this account but as a ${m.side} — the other way round. Correct the entry, then match.`,
+  split: () => 'Split over several lines on this account that add up to this amount. A bank line matches ONE book line — edit the entry into one line on this bank, then match.',
+  taken: (m) => `Already matched to the bank line of ${m.takenBy ? m.takenBy.postedDate.slice(0, 10) + ' (' + m.takenBy.description + ')' : 'another date'}. Unmatch that one first if it is wrong.`,
+  reversed: () => 'This entry was reversed (or is a reversal), so it is not in the books any more.',
+  outside_window: () => 'Dated outside the days chosen above — pick more days.',
+}
+
+// When nothing can be matched, say where the money WAS booked and why it cannot be picked (owner, 2026-11-10).
+function NearMisses({ lineId, days }: { lineId: string; days: number }) {
+  const { data = [], isLoading } = useQuery<NearMiss[]>({
+    queryKey: ['bank-line-near-misses', lineId, days],
+    queryFn: () => api.get(`/reconciliation/bank/lines/${lineId}/near-misses?days=${days}`),
+  })
+  if (isLoading) return <p className="text-s-muted">Looking…</p>
+  if (data.length === 0) {
+    return <p className="text-s-muted">No journal line of this amount on this account — nor anywhere else in the books within these days. Book an adjustment if the money was never booked.</p>
+  }
+  return (
+    <div className="space-y-2">
+      <p className="text-s-text font-medium">Nothing can be matched yet — this amount is in the books here:</p>
+      <ul className="space-y-2">
+        {data.map((m, i) => (
+          <li key={`${m.entryId}-${m.reason}-${i}`} className="rounded border border-s-border bg-s-card px-2.5 py-2 space-y-0.5">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <span className="text-s-muted whitespace-nowrap">{m.entryDate.slice(0, 10)}</span>
+              <span className="text-s-text flex-1 min-w-[10rem] break-words">{m.description}{m.reference && <span className="text-s-muted"> · {m.reference}</span>}</span>
+              <span className="font-mono whitespace-nowrap">{fmtPkr(m.amountCents)}</span>
+            </div>
+            <p className="text-s-muted">{m.accountCode} {m.accountName}{m.companyName ? ` · ${m.companyName}` : ''}</p>
+            <p className="text-s-amber">{NEAR_MISS_TEXT[m.reason](m)}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
