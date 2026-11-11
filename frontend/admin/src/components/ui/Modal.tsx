@@ -118,6 +118,8 @@ export interface ModalProps {
   onClose: () => void
   children: ReactNode
   wide?: boolean
+  /** A full-width dialog for tables of lines (max 64rem). */
+  extraWide?: boolean
   /** Unsaved edits: closing (backdrop, Escape, X) asks "Discard changes?" first. */
   dirty?: boolean
   dismissible?: boolean
@@ -130,7 +132,7 @@ export interface ModalProps {
 }
 
 export function Modal({
-  title, onClose, children, wide, dirty, dismissible = true, footer, labelledBy, zIndex = 50, initialFocusRef,
+  title, onClose, children, wide, extraWide, dirty, dismissible = true, footer, labelledBy, zIndex = 50, initialFocusRef,
 }: ModalProps) {
   const confirm = useConfirm()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -158,7 +160,7 @@ export function Modal({
       onMouseDown={(e) => { downOnBackdrop.current = e.target === e.currentTarget }}
       onMouseUp={(e) => { if (downOnBackdrop.current && e.target === e.currentTarget) void requestClose(); downOnBackdrop.current = false }}>
       <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={labelledBy ?? titleId}
-        className={`w-full ${wide ? 'max-w-xl' : 'max-w-md'} max-h-[90dvh] flex flex-col rounded-2xl overflow-hidden outline-none`}
+        className={`w-full ${extraWide ? 'max-w-5xl' : wide ? 'max-w-xl' : 'max-w-md'} max-h-[90dvh] flex flex-col rounded-2xl overflow-hidden outline-none`}
         style={{ background: 'var(--surface)', border: '1px solid rgb(var(--fg-rgb) / 0.08)', overscrollBehavior: 'contain' }}>
         <div className="flex items-center justify-between border-b border-white/[0.05] pl-5 pr-1 py-1 shrink-0">
           <h2 id={titleId} className="font-black text-white/90">{title}</h2>

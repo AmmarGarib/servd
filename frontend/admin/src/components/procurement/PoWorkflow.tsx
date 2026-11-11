@@ -147,6 +147,11 @@ function RateFields({ lines, rates, setRates, qtys, setQtys, amounts, setAmounts
           ? "Each line starts at what the PO was raised with. Change the quantity if you bought more or less, and type the WHOLE amount you paid for the line, as on the supplier's invoice — the rate is worked out for you."
           : "Each line starts at the estimated rate the PO was raised with. Type the price you really paid per unit, as on the supplier's invoice."}
       </p>
+      {editWhole && (
+        <div className="hidden sm:grid sm:grid-cols-[minmax(10rem,1.6fr)_1fr_8rem_9rem_8rem] gap-x-3 border-b border-s-border pb-1 text-[11px] font-semibold uppercase tracking-wide text-s-muted">
+          <span>Item</span><span>Ordered · estimate</span><span>Qty bought</span><span>Amount paid (PKR)</span><span className="text-right">Rate</span>
+        </div>
+      )}
       {lines.map((l) => {
         const s = shown(l)
         const q = qtyOf(l)
@@ -154,21 +159,21 @@ function RateFields({ lines, rates, setRates, qtys, setQtys, amounts, setAmounts
           const amt = amountOf(l)
           const per = perUnitText(amt, q, s.unit)
           const qtyChanged = Math.abs(q - orderedOf(l)) > 1e-9
+          const estAmt = Math.round(orderedOf(l) * s.rate)
           return (
-            <div key={l.id} className="grid grid-cols-1 sm:grid-cols-[1fr_8rem_10rem] gap-1 sm:gap-3 items-center">
-              <span className="text-xs text-s-text break-words">
-                {l.inventoryItem?.name ?? 'Item'}
-                <span className="block text-[11px] text-s-muted">
-                  Ordered {orderedOf(l)} {s.unit}{qtyChanged ? ` → bought ${q} ${s.unit}` : ''} · estimated {fmtPkrWhole(Math.round(orderedOf(l) * s.rate))}
-                </span>
-                {per && <span className="block text-[11px] text-s-text">= {per}</span>}
+            <div key={l.id} className="grid grid-cols-2 sm:grid-cols-[minmax(10rem,1.6fr)_1fr_8rem_9rem_8rem] gap-x-3 gap-y-1 items-center py-2 border-b border-s-border/40 last:border-0">
+              <span className="col-span-2 sm:col-span-1 text-sm font-semibold text-s-text break-words">{l.inventoryItem?.name ?? 'Item'}</span>
+              <span className="col-span-2 sm:col-span-1 text-[11px] text-s-muted">
+                <span className="sm:hidden">Ordered </span>{orderedOf(l)} {s.unit} · {fmtPkrWhole(estAmt)}
               </span>
               <label className="flex items-center gap-1.5 text-[11px] text-s-muted">
                 <Input type="number" inputMode="decimal" min={0} step="any" value={qtys![l.id] ?? String(orderedOf(l))}
-                  onChange={(e) => setQtys!({ ...qtys!, [l.id]: e.target.value })} aria-label={`Quantity bought of ${l.inventoryItem?.name ?? 'item'} in ${s.unit}`} className="w-full" />
+                  onChange={(e) => setQtys!({ ...qtys!, [l.id]: e.target.value })} aria-label={`Quantity bought of ${l.inventoryItem?.name ?? 'item'} in ${s.unit}`}
+                  className={`w-full ${qtyChanged ? 'ring-1 ring-s-amber' : ''}`} />
                 <span className="whitespace-nowrap">{s.unit}</span>
               </label>
               <MoneyInput value={amt} onChange={(c) => setAmounts!({ ...amounts!, [l.id]: c })} ariaLabel={`Amount paid for ${l.inventoryItem?.name ?? 'item'} in rupees`} className="s-input w-full" />
+              <span className="col-span-2 sm:col-span-1 text-xs text-s-text sm:text-right whitespace-nowrap">{per ?? '—'}</span>
             </div>
           )
         }
@@ -269,15 +274,17 @@ function BuyCard({ po }: { po: WfPo }) {
       </div>
       <p className="text-[11px] text-s-muted">Bought a different quantity or paid a different amount? Change them in the next step — type the whole amount per line, the rate is worked out.</p>
       {open && (
-        <Modal title={`Mark ${ref(po)} completed`} onClose={() => setOpen(false)} dirty={invoiceNumber !== ''}>
+        <Modal extraWide title={`Mark ${ref(po)} completed`} onClose={() => setOpen(false)} dirty={invoiceNumber !== ''}>
           <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!invoiceNumber.trim() || !invoiceDate || badQty(qtys) || done.isPending) return; done.mutate() }}>
             <p className="text-xs text-s-muted">It goes to whoever raised it to confirm what arrived. The invoice must be attached first.</p>
-            <Field label="Invoice / bill number" required error={tried && !invoiceNumber.trim() ? "Enter the supplier's invoice number." : null}>
-              <Input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} maxLength={100} className="w-full" autoFocus />
-            </Field>
-            <Field label="Invoice date" required>
-              <Input type="date" value={invoiceDate} max={todayPktIso()} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full" />
-            </Field>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Invoice / bill number" required error={tried && !invoiceNumber.trim() ? "Enter the supplier's invoice number." : null}>
+                <Input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} maxLength={100} className="w-full" autoFocus />
+              </Field>
+              <Field label="Invoice date" required>
+                <Input type="date" value={invoiceDate} max={todayPktIso()} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full" />
+              </Field>
+            </div>
             <RateFields lines={po.lines} rates={rates} setRates={setRates} qtys={qtys} setQtys={setQtys} amounts={amounts} setAmounts={setAmounts} />
             {tried && badQty(qtys) && <p role="alert" className="text-xs text-s-red">Every quantity bought must be more than zero.</p>}
             <TaxFields cents={taxCents} setCents={setTaxCents} authority={taxBy} setAuthority={setTaxBy} />
