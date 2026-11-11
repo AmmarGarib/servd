@@ -2374,15 +2374,34 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           const pm = recipe.pendingMenuItem as { conceptId: string; categoryId: string; name: string; description: string | null }
           // The deferred item opens under its brand's own category only (the
           // brand itself is one of the companies the right was proven for).
-          const cat = await tx.category.findFirst({
+          // The category it was filed under may have been deleted / renamed
+          // since it was submitted (2026-11-11: Chocolate Mousse was stuck in
+          // the CEO's inbox — the recipe editor cannot re-pick it). Fall back,
+          // inside the same brand only: a live category with the old one's
+          // name, else the brand's first live category. The dish can be moved
+          // on Menu → Items afterwards.
+          let cat = await tx.category.findFirst({
             where: { id: pm.categoryId, conceptId: pm.conceptId, deletedAt: null },
             select: { id: true },
           })
-          if (!cat) throw new AppError('CATEGORY_NOT_IN_BRAND', 'The category this dish was filed under is no longer part of its brand — edit the recipe first', 422)
+          if (!cat) {
+            const old = await tx.category.findFirst({ where: { id: pm.categoryId, conceptId: pm.conceptId }, select: { name: true } })
+            if (old) {
+              cat = await tx.category.findFirst({
+                where: { conceptId: pm.conceptId, deletedAt: null, name: { equals: old.name, mode: 'insensitive' } },
+                orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }], select: { id: true },
+              })
+            }
+            cat ??= await tx.category.findFirst({
+              where: { conceptId: pm.conceptId, deletedAt: null },
+              orderBy: [{ parentId: { sort: 'asc', nulls: 'first' } }, { sortOrder: 'asc' }, { createdAt: 'asc' }], select: { id: true },
+            })
+          }
+          if (!cat) throw new AppError('CATEGORY_NOT_IN_BRAND', 'This brand has no menu category to put the dish in — add one on Menu → Items first', 422)
           const item = await tx.menuItem.create({
             data: {
               conceptId:   pm.conceptId,
-              categoryId:  pm.categoryId,
+              categoryId:  cat.id,
               name:        pm.name,
               description: pm.description ?? null,
               priceCents:  recipe.actualSellingPriceCents ?? 0,

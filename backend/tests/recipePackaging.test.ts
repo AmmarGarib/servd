@@ -278,6 +278,29 @@ describe('warnings', () => {
     expect((await call(mgrA, 'GET', `/recipes/${pending.json().id}/costing`)).json().warnings.costedWhileUnapproved).toBe(false)
   })
 
+  it('approval opens the dish even when its category was deleted after submit (same-name live category, else the brand\'s first)', async () => {
+    const gone = (await prisma.category.create({ data: { conceptId: stackd, name: 'Desserts' } })).id
+    const id = (await call(mgrA, 'POST', '/recipes', { newMenuItem: { conceptId: stackd, categoryId: gone, name: 'Mousse' }, ingredients: [lines().beef, lines().box] })).json().id
+    await call(mgrA, 'POST', `/recipes/${id}/submit`, {})
+    await prisma.category.update({ where: { id: gone }, data: { deletedAt: new Date() } })
+    const again = (await prisma.category.create({ data: { conceptId: stackd, name: 'desserts', sortOrder: 9 } })).id
+    const ok = await call(ceoA, 'POST', `/recipes/${id}/approve`, {})
+    expect(ok.statusCode).toBe(200)
+    const item = await prisma.menuItem.findUniqueOrThrow({ where: { id: ok.json().menuItemId } })
+    expect(item.categoryId).toBe(again)
+    expect(item.conceptId).toBe(stackd)
+    // No same-name category: the brand's first live category.
+    const gone2 = (await prisma.category.create({ data: { conceptId: stackd, name: 'Specials' } })).id
+    const id2 = (await call(mgrA, 'POST', '/recipes', { newMenuItem: { conceptId: stackd, categoryId: gone2, name: 'Tart' }, ingredients: [lines().beef, lines().box] })).json().id
+    await call(mgrA, 'POST', `/recipes/${id2}/submit`, {})
+    await prisma.category.update({ where: { id: gone2 }, data: { deletedAt: new Date() } })
+    const ok2 = await call(ceoA, 'POST', `/recipes/${id2}/approve`, {})
+    expect(ok2.statusCode).toBe(200)
+    const item2 = await prisma.menuItem.findUniqueOrThrow({ where: { id: ok2.json().menuItemId } })
+    const live = await prisma.category.findMany({ where: { conceptId: stackd, deletedAt: null }, select: { id: true } })
+    expect(live.map((c) => c.id)).toContain(item2.categoryId)
+  })
+
   it('by-item groups the dish\'s lines by section (what to pack in)', async () => {
     const r = (await call(mgrA, 'GET', `/recipes/by-item/${A.items.nihari}`)).json()
     expect(r.sections.ingredients.map((l: { name: string }) => l.name).sort()).toEqual([`Beef ${stamp}`, `Cola ${stamp}`])
