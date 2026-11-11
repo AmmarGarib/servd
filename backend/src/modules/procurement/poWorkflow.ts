@@ -67,7 +67,9 @@ export interface Actor { id: string; role: string }
 const isCeo = (a: Actor) => a.role === 'admin'
 
 /** A rate the buyer actually paid, per the unit the line was ordered in (poUnits.ts). */
-export interface LineRate { poLineId: string; rateCents: number }
+/** quantity (owner, 2026-11-11: "how he can edit/revise amounts/quantities/rates") = what the buyer really bought,
+ *  in the line's order unit — only when completing (never below what has already been received). */
+export interface LineRate { poLineId: string; rateCents: number; quantity?: number | null }
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/
 function invoiceDateOf(s: string): Date {
@@ -107,8 +109,8 @@ async function lockPoTx(tx: Tx, poId: string) {
  * The buyer's actual rates (per each line's order unit): the line's stored costs and the PO total are recomputed;
  * returns what changed (old → new) for the activity log. 422 LINE_NOT_ON_PO / AMOUNT_TOO_LARGE.
  */
-async function applyLineRatesTx(tx: Tx, po: { id: string; lines: Array<{ id: string; quantityOrdered: number; unitCostCents: number; orderUnit: string | null; orderUnitFactor: number; orderUnitCostCents: number | null }> }, rates: readonly LineRate[] | undefined) {
-  const changes: Array<{ poLineId: string; fromRateCents: number; toRateCents: number; unit: string | null }> = []
+async function applyLineRatesTx(tx: Tx, po: { id: string; lines: Array<{ id: string; quantityOrdered: number; quantityReceived: number; unitCostCents: number; orderUnit: string | null; orderUnitFactor: number; orderUnitCostCents: number | null }> }, rates: readonly LineRate[] | undefined, opts: { allowQuantity?: boolean } = {}) {
+  const changes: Array<{ poLineId: string; fromRateCents: number; toRateCents: number; unit: string | null; fromQuantity?: number; toQuantity?: number }> = []
   if (!rates || rates.length === 0) return changes
   const seen = new Set<string>()
   const lines = po.lines.map((l) => ({ ...l }))
@@ -120,20 +122,33 @@ async function applyLineRatesTx(tx: Tx, po: { id: string; lines: Array<{ id: str
     if (!Number.isInteger(r.rateCents) || r.rateCents < 0) throw new AppError('INVALID_AMOUNT', 'A rate is whole paisa, zero or more', 400)
     assertInt4Fits(r.rateCents, 'The rate')
     const ordered = l.orderUnitCostCents != null && l.orderUnitFactor > 0
+    const factor = ordered ? l.orderUnitFactor : 1
     const from = ordered ? l.orderUnitCostCents! : l.unitCostCents
-    if (from === r.rateCents) continue
+    const fromQty = Math.round((l.quantityOrdered / factor) * 1e6) / 1e6
+    let toQty = fromQty
+    if (r.quantity != null) {
+      if (!opts.allowQuantity) throw new AppError('QUANTITY_NOT_EDITABLE', 'The quantity is changed only when the PO is marked completed', 422)
+      if (!Number.isFinite(r.quantity) || r.quantity <= 0) throw new AppError('INVALID_QUANTITY', 'A quantity bought is more than zero', 400)
+      toQty = Math.round(r.quantity * 1e6) / 1e6
+      if (toQty * factor + 1e-9 < l.quantityReceived) {
+        throw new AppError('QUANTITY_BELOW_RECEIVED', `${l.quantityReceived / factor} ${l.orderUnit ?? ''} of this line has already been received — the quantity cannot be lower`.replace('  ', ' '), 422)
+      }
+    }
+    const qtyChanged = Math.abs(toQty - fromQty) > 1e-9
+    if (from === r.rateCents && !qtyChanged) continue
     if (ordered) {
       l.orderUnitCostCents = r.rateCents
       l.unitCostCents = Math.round(r.rateCents / l.orderUnitFactor)
     } else {
       l.unitCostCents = r.rateCents
     }
+    if (qtyChanged) l.quantityOrdered = Math.round(toQty * factor * 1e6) / 1e6
     assertInt4Fits(l.unitCostCents, 'The unit cost')
     assertMoneyFits(lineValueCents(l), 'The line (quantity × rate)')
-    changes.push({ poLineId: l.id, fromRateCents: from, toRateCents: r.rateCents, unit: ordered ? l.orderUnit : null })
+    changes.push({ poLineId: l.id, fromRateCents: from, toRateCents: r.rateCents, unit: ordered ? l.orderUnit : null, ...(qtyChanged ? { fromQuantity: fromQty, toQuantity: toQty } : {}) })
     await tx.purchaseOrderLine.update({
       where: { id: l.id },
-      data: { unitCostCents: l.unitCostCents, ...(ordered ? { orderUnitCostCents: l.orderUnitCostCents } : {}) },
+      data: { unitCostCents: l.unitCostCents, ...(ordered ? { orderUnitCostCents: l.orderUnitCostCents } : {}), ...(qtyChanged ? { quantityOrdered: l.quantityOrdered } : {}) },
     })
   }
   if (changes.length > 0) {
@@ -215,7 +230,7 @@ export async function completePo(poId: string, actor: Actor, input: CompleteInpu
     if (!(BUYER_STAGE as readonly string[]).includes(po.status)) throw new AppError('INVALID_STATE', 'This PO changed meanwhile — reload it', 409)
     if (!isCeo(actor) && po.buyerUserId !== actor.id) throw new AppError('PO_NOT_YOUR_TASK', 'Only the buyer of this PO (or the CEO) marks it completed', 403)
     if (po.supplier.systemKind === CASH_PURCHASE_SUPPLIER_KIND) throw supplierNotChosenError('completed')
-    const changes = await applyLineRatesTx(tx, po, input.lines)
+    const changes = await applyLineRatesTx(tx, po, input.lines, { allowQuantity: true })
     await tx.purchaseOrder.update({
       where: { id: poId },
       data: { status: 'completed', invoiceNumber, invoiceDate, invoiceTaxCents: taxCents, invoiceTaxAuthority: input.taxAuthority ?? null, completedById: actor.id, completedAt: now, receiptReturnNote: null },

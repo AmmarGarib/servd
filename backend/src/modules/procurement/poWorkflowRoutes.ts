@@ -40,7 +40,7 @@ import {
 
 type GuardPo = (req: FastifyRequest, poId: string) => Promise<{ id: string; status: string; createdBy: string | null; supplier: { tenantId: string | null } }>
 
-const zRate = z.object({ poLineId: z.string().uuid(), rateCents: z.number().int().min(0) })
+const zRate = z.object({ poLineId: z.string().uuid(), rateCents: z.number().int().min(0), quantity: z.number().positive().max(1e9).nullable().optional() })
 const zYmd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'A date is YYYY-MM-DD')
 const financeAccounting = requireModule('accounting')
 

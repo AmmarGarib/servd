@@ -325,6 +325,31 @@ describe('the requester sends it back; a partial delivery makes a second GRN', (
     expect((await call('storeA', 'GET', '/procurement/my-tasks')).json().toBuy.map((p: { id: string }) => p.id)).toContain(po.id)
   })
 
+  it('the buyer changes the quantity bought as well as the rate (owner, 2026-11-11); never below what came', async () => {
+    const po = await chefPo()
+    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+    await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`, { payByCash: false })
+    await upload('buyerA', po.id)
+    const flourLine = po.lines.find((l) => l.inventoryItemId === flour)!
+    const base = { invoiceNumber: `${P}-Q1`, invoiceDate: today() }
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { ...base, lines: [{ poLineId: flourLine.id, rateCents: 200, quantity: 0 }] })).statusCode).toBe(400)
+    const done = await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { ...base, lines: [{ poLineId: flourLine.id, rateCents: 220, quantity: 8 }] })
+    expect(done.statusCode, done.body).toBe(200)
+    const row = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } })
+    expect(row.lines.find((l) => l.id === flourLine.id)!.quantityOrdered).toBe(8)
+    expect(Number(row.totalCents)).toBe(8 * 220 + 5 * 300)
+    const log = await prisma.poActivityLog.findFirstOrThrow({ where: { purchaseOrderId: po.id, action: 'completed' } })
+    expect(log.details).toMatchObject({ rateChanges: [{ fromRateCents: 200, toRateCents: 220, fromQuantity: 10, toQuantity: 8 }] })
+    // Part of it arrives; the next completion cannot go below what came.
+    const first = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, {
+      locationId: locA, lines: po.lines.map((l) => ({ poLineId: l.id, quantityReceived: l.id === flourLine.id ? 6 : 5 })),
+    })
+    expect(first.json().status).toBe('partial')
+    await upload('buyerA', po.id)
+    const low = await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-Q2`, invoiceDate: today(), lines: [{ poLineId: flourLine.id, rateCents: 220, quantity: 5 }] })
+    expect(code(low)).toBe('QUANTITY_BELOW_RECEIVED')
+  })
+
   it('a part delivery: GRN 1 for what came, back to the buyer, a NEW invoice for GRN 2', async () => {
     const po = await chefPo()
     await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)

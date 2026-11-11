@@ -126,23 +126,44 @@ function Card({ title, sub, children }: { title: React.ReactNode; sub?: React.Re
 /** Actual price paid per line (owner, 2026-11-10: "Buyer should have option to put the actual price of items
  *  purchased because rates of items can fluctuate") — rupees per the line's order unit, prefilled with the estimate
  *  the PO was raised with; only changed ones are sent. */
-function RateFields({ lines, rates, setRates }: { lines: WfLine[]; rates: Record<string, number>; setRates: (r: Record<string, number>) => void }) {
-  const qtyOf = (l: WfLine) => round6(l.quantityOrdered / shown(l).factor)
-  const estimate = lines.reduce((t, l) => t + Math.round(qtyOf(l) * shown(l).rate), 0)
+function RateFields({ lines, rates, setRates, qtys, setQtys }: {
+  lines: WfLine[]; rates: Record<string, number>; setRates: (r: Record<string, number>) => void
+  /** The buyer's quantities bought (owner, 2026-11-11) — only when completing a PO; omitted = quantities fixed. */
+  qtys?: Record<string, string>; setQtys?: (q: Record<string, string>) => void
+}) {
+  const orderedOf = (l: WfLine) => round6(l.quantityOrdered / shown(l).factor)
+  const qtyOf = (l: WfLine) => {
+    const t = qtys?.[l.id]
+    const n = t != null && t.trim() !== '' ? Number(t) : NaN
+    return Number.isFinite(n) && n > 0 ? n : orderedOf(l)
+  }
+  const estimate = lines.reduce((t, l) => t + Math.round(orderedOf(l) * shown(l).rate), 0)
   const actual = lines.reduce((t, l) => t + Math.round(qtyOf(l) * (rates[l.id] ?? shown(l).rate)), 0)
+  const editQty = !!(qtys && setQtys)
   return (
     <div className="space-y-2">
-      <p className="text-sm font-bold text-s-text">Actual price paid</p>
-      <p className="text-[11px] text-s-muted">Each line starts at the estimated rate the PO was raised with. Type the price you really paid per unit, as on the supplier&apos;s invoice.</p>
+      <p className="text-sm font-bold text-s-text">{editQty ? 'What you bought — quantity and price paid' : 'Actual price paid'}</p>
+      <p className="text-[11px] text-s-muted">Each line starts at what the PO was raised with. {editQty ? 'Change the quantity if you bought more or less, and ' : ''}Type the price you really paid per unit, as on the supplier&apos;s invoice.</p>
       {lines.map((l) => {
         const s = shown(l)
         const changed = rates[l.id] != null && rates[l.id] !== s.rate
+        const q = qtyOf(l)
+        const qtyChanged = editQty && Math.abs(q - orderedOf(l)) > 1e-9
         return (
-          <div key={l.id} className="grid grid-cols-1 sm:grid-cols-[1fr_12rem] gap-1 sm:gap-3 items-center">
+          <div key={l.id} className={`grid grid-cols-1 gap-1 items-center ${editQty ? 'sm:grid-cols-[1fr_8rem_12rem] sm:gap-3' : 'sm:grid-cols-[1fr_12rem] sm:gap-3'}`}>
             <span className="text-xs text-s-text break-words">
-              {l.inventoryItem?.name ?? 'Item'} · {qtyOf(l)} {s.unit}
-              <span className="block text-[11px] text-s-muted">Estimated {fmtPkrWhole(s.rate)} / {s.unit}{changed ? ` → actual ${fmtPkrWhole(rates[l.id]!)}` : ''}</span>
+              {l.inventoryItem?.name ?? 'Item'}{editQty ? '' : ` · ${q} ${s.unit}`}
+              <span className="block text-[11px] text-s-muted">
+                {editQty ? `Ordered ${orderedOf(l)} ${s.unit}${qtyChanged ? ` → bought ${q} ${s.unit}` : ''} · ` : ''}Estimated {fmtPkrWhole(s.rate)} / {s.unit}{changed ? ` → actual ${fmtPkrWhole(rates[l.id]!)}` : ''}
+              </span>
             </span>
+            {editQty && (
+              <label className="flex items-center gap-1.5 text-[11px] text-s-muted">
+                <Input type="number" inputMode="decimal" min={0} step="any" value={qtys![l.id] ?? String(orderedOf(l))}
+                  onChange={(e) => setQtys!({ ...qtys!, [l.id]: e.target.value })} aria-label={`Quantity bought of ${l.inventoryItem?.name ?? 'item'} in ${s.unit}`} className="w-full" />
+                <span className="whitespace-nowrap">{s.unit}</span>
+              </label>
+            )}
             <MoneyInput value={rates[l.id] ?? s.rate} onChange={(c) => setRates({ ...rates, [l.id]: c })} ariaLabel={`Actual price per ${s.unit} for ${l.inventoryItem?.name ?? 'item'}`} className="s-input w-full" />
           </div>
         )
@@ -156,6 +177,18 @@ function RateFields({ lines, rates, setRates }: { lines: WfLine[]; rates: Record
 }
 const changedRates = (lines: WfLine[], rates: Record<string, number>) =>
   lines.filter((l) => rates[l.id] != null && rates[l.id] !== shown(l).rate).map((l) => ({ poLineId: l.id, rateCents: rates[l.id]! }))
+/** Lines whose rate or quantity bought changed — the quantity in the line's order unit. */
+const changedLines = (lines: WfLine[], rates: Record<string, number>, qtys: Record<string, string>) =>
+  lines.flatMap((l) => {
+    const ordered = round6(l.quantityOrdered / shown(l).factor)
+    const t = qtys[l.id]
+    const q = t != null && t.trim() !== '' ? Number(t) : ordered
+    const qtyChanged = Number.isFinite(q) && Math.abs(q - ordered) > 1e-9
+    const rateChanged = rates[l.id] != null && rates[l.id] !== shown(l).rate
+    if (!qtyChanged && !rateChanged) return []
+    return [{ poLineId: l.id, rateCents: rates[l.id] ?? shown(l).rate, ...(qtyChanged ? { quantity: q } : {}) }]
+  })
+const badQty = (qtys: Record<string, string>) => Object.values(qtys).some((t) => t.trim() === '' || !(Number(t) > 0))
 
 /** The sales tax on the supplier's invoice (owner, 2026-11-05) — booked as input tax on the bill at the CEO's GRN approval. */
 const TAX_BY: Record<string, string> = { fbr: 'FBR (federal)', srb: 'SRB (Sindh)' }
@@ -181,11 +214,12 @@ function BuyCard({ po }: { po: WfPo }) {
   const [invoiceNumber, setInvoiceNumber] = useState('')
   const [invoiceDate, setInvoiceDate] = useState(todayPktIso())
   const [rates, setRates] = useState<Record<string, number>>({})
+  const [qtys, setQtys] = useState<Record<string, string>>({})
   const [taxCents, setTaxCents] = useState(0)
   const [taxBy, setTaxBy] = useState('')
   const [tried, setTried] = useState(false)
   const done = useMutation({
-    mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedRates(po.lines, rates) }),
+    mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedLines(po.lines, rates, qtys) }),
     onSuccess: () => { setOpen(false); invalidateAll(qc, po.id) },
   })
   const noSupplier = !!po.supplier?.systemKind
@@ -197,11 +231,12 @@ function BuyCard({ po }: { po: WfPo }) {
       <RecordFiles ownerType="purchase_order" ownerId={po.id} canUpload title="Supplier's invoice / bill" tenantId={po.supplier?.tenantId ?? undefined}
         emptyText="Attach the supplier's invoice or bill (photo, PDF or Office file)." />
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => { setOpen(true); setTried(false); done.reset() }} disabled={noSupplier}>Mark completed</Button>
+        <Button size="sm" onClick={() => { setOpen(true); setTried(false); done.reset() }} disabled={noSupplier}>Enter quantities &amp; prices, mark completed</Button>
       </div>
+      <p className="text-[11px] text-s-muted">Bought a different quantity or paid a different price? Change them in the next step, line by line.</p>
       {open && (
         <Modal title={`Mark ${ref(po)} completed`} onClose={() => setOpen(false)} dirty={invoiceNumber !== ''}>
-          <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!invoiceNumber.trim() || !invoiceDate || done.isPending) return; done.mutate() }}>
+          <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!invoiceNumber.trim() || !invoiceDate || badQty(qtys) || done.isPending) return; done.mutate() }}>
             <p className="text-xs text-s-muted">It goes to whoever raised it to confirm what arrived. The invoice must be attached first.</p>
             <Field label="Invoice / bill number" required error={tried && !invoiceNumber.trim() ? "Enter the supplier's invoice number." : null}>
               <Input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} maxLength={100} className="w-full" autoFocus />
@@ -209,7 +244,8 @@ function BuyCard({ po }: { po: WfPo }) {
             <Field label="Invoice date" required>
               <Input type="date" value={invoiceDate} max={todayPktIso()} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full" />
             </Field>
-            <RateFields lines={po.lines} rates={rates} setRates={setRates} />
+            <RateFields lines={po.lines} rates={rates} setRates={setRates} qtys={qtys} setQtys={setQtys} />
+            {tried && badQty(qtys) && <p role="alert" className="text-xs text-s-red">Every quantity bought must be more than zero.</p>}
             <TaxFields cents={taxCents} setCents={setTaxCents} authority={taxBy} setAuthority={setTaxBy} />
             {done.error && <p role="alert" className="text-xs text-s-red">{errOf(done.error)}</p>}
             <div className="flex flex-wrap gap-2">
