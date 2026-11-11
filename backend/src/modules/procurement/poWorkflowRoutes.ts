@@ -40,7 +40,7 @@ import {
 
 type GuardPo = (req: FastifyRequest, poId: string) => Promise<{ id: string; status: string; createdBy: string | null; supplier: { tenantId: string | null } }>
 
-const zRate = z.object({ poLineId: z.string().uuid(), rateCents: z.number().int().min(0), quantity: z.number().positive().max(1e9).nullable().optional() })
+const zRate = z.object({ poLineId: z.string().uuid(), rateCents: z.number().int().min(0).nullable().optional(), quantity: z.number().positive().max(1e9).nullable().optional(), amountCents: z.number().int().min(0).nullable().optional() })
 const zYmd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'A date is YYYY-MM-DD')
 const financeAccounting = requireModule('accounting')
 
@@ -249,6 +249,14 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
       where: { id: g.poId! },
       include: { lines: { include: { inventoryItem: { select: { name: true, unit: true } } } }, activityLog: { include: { user: { select: { name: true } } }, orderBy: { createdAt: 'desc' } } },
     })
+    // What the CEO approved, per line (owner, 2026-11-11): the "from" side of the line's FIRST change by the buyer
+    // (activity 'completed' / 'grn_resubmitted' rateChanges); no change = it was bought as approved.
+    type Change = { poLineId: string; fromRateCents: number; fromQuantity?: number; fromUnit?: string | null; unit?: string | null }
+    const firstChange = new Map<string, Change>()
+    for (const a of [...poFull.activityLog].reverse()) {
+      const rc = (a.details as { rateChanges?: Change[] } | null)?.rateChanges
+      for (const c of rc ?? []) if (!firstChange.has(c.poLineId)) firstChange.set(c.poLineId, c)
+    }
     const lines = poFull.lines.map((pl) => {
       const rl = g.lines.filter((l) => l.poLineId === pl.id)
       const here = rl.reduce((s, l) => s + l.receivedQty, 0)
@@ -259,6 +267,15 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
         ordered: pl.quantityOrdered, orderedInUnit: d.quantity, receivedAllGrns: pl.quantityReceived,
         receivedHere: here, receivedHereInUnit: Math.round((here / per) * 1e6) / 1e6,
         invoicedCents: lineValueCents({ quantityOrdered: here, unitCostCents: pl.unitCostCents, orderUnitFactor: pl.orderUnitFactor, orderUnitCostCents: pl.orderUnitCostCents }),
+        approved: (() => {
+          const c = firstChange.get(pl.id)
+          if (!c) return null
+          const unit = c.fromUnit ?? c.unit ?? d.unit
+          // Older entries (rate only) carry no quantity: the quantity was not changed then.
+          const qty = c.fromQuantity ?? (unit === d.unit ? d.quantity : null)
+          return { quantity: qty, unit, rateCents: c.fromRateCents, valueCents: qty != null ? Math.round(qty * c.fromRateCents) : null }
+        })(),
+        boughtValueCents: lineValueCents(pl),
       }
     })
     const files = await prisma.cashVoucherAttachment.findMany({

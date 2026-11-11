@@ -6,7 +6,7 @@
 //   GrnsTab — every GRN of the companies in view, with its PO lines ordered vs received vs invoiced, the invoice files
 //     and the bill. Finance verifies and the CEO approves from the approvals inbox (or here, when it is theirs).
 // ERP tokens only; dropdowns are the shared Select; every action calls the module's own route.
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
@@ -126,48 +126,64 @@ function Card({ title, sub, children }: { title: React.ReactNode; sub?: React.Re
 /** Actual price paid per line (owner, 2026-11-10: "Buyer should have option to put the actual price of items
  *  purchased because rates of items can fluctuate") — rupees per the line's order unit, prefilled with the estimate
  *  the PO was raised with; only changed ones are sent. */
-function RateFields({ lines, rates, setRates, qtys, setQtys }: {
+function RateFields({ lines, rates, setRates, qtys, setQtys, amounts, setAmounts }: {
   lines: WfLine[]; rates: Record<string, number>; setRates: (r: Record<string, number>) => void
-  /** The buyer's quantities bought (owner, 2026-11-11) — only when completing a PO; omitted = quantities fixed. */
+  /** Completing a PO (owner, 2026-11-11): the quantity bought and the WHOLE amount paid per line — the rate is worked
+   *  out from them ("put amount as whole not per gram, it should calculate per gram amount on auto"). */
   qtys?: Record<string, string>; setQtys?: (q: Record<string, string>) => void
+  amounts?: Record<string, number>; setAmounts?: (a: Record<string, number>) => void
 }) {
   const orderedOf = (l: WfLine) => round6(l.quantityOrdered / shown(l).factor)
-  const qtyOf = (l: WfLine) => {
-    const t = qtys?.[l.id]
-    const n = t != null && t.trim() !== '' ? Number(t) : NaN
-    return Number.isFinite(n) && n > 0 ? n : orderedOf(l)
-  }
+  const qtyOf = (l: WfLine) => qtyTyped(l, qtys)
+  const editWhole = !!(qtys && setQtys && amounts && setAmounts)
   const estimate = lines.reduce((t, l) => t + Math.round(orderedOf(l) * shown(l).rate), 0)
-  const actual = lines.reduce((t, l) => t + Math.round(qtyOf(l) * (rates[l.id] ?? shown(l).rate)), 0)
-  const editQty = !!(qtys && setQtys)
+  const amountOf = (l: WfLine) => amounts?.[l.id] ?? Math.round(qtyOf(l) * (rates[l.id] ?? shown(l).rate))
+  const actual = lines.reduce((t, l) => t + (editWhole ? amountOf(l) : Math.round(qtyOf(l) * (rates[l.id] ?? shown(l).rate))), 0)
   return (
     <div className="space-y-2">
-      <p className="text-sm font-bold text-s-text">{editQty ? 'What you bought — quantity and price paid' : 'Actual price paid'}</p>
-      <p className="text-[11px] text-s-muted">Each line starts at what the PO was raised with. {editQty ? 'Change the quantity if you bought more or less, and ' : ''}Type the price you really paid per unit, as on the supplier&apos;s invoice.</p>
+      <p className="text-sm font-bold text-s-text">{editWhole ? 'What you bought — quantity and amount paid' : 'Actual price paid'}</p>
+      <p className="text-[11px] text-s-muted">
+        {editWhole
+          ? "Each line starts at what the PO was raised with. Change the quantity if you bought more or less, and type the WHOLE amount you paid for the line, as on the supplier's invoice — the rate is worked out for you."
+          : "Each line starts at the estimated rate the PO was raised with. Type the price you really paid per unit, as on the supplier's invoice."}
+      </p>
       {lines.map((l) => {
         const s = shown(l)
-        const changed = rates[l.id] != null && rates[l.id] !== s.rate
         const q = qtyOf(l)
-        const qtyChanged = editQty && Math.abs(q - orderedOf(l)) > 1e-9
-        return (
-          <div key={l.id} className={`grid grid-cols-1 gap-1 items-center ${editQty ? 'sm:grid-cols-[1fr_8rem_12rem] sm:gap-3' : 'sm:grid-cols-[1fr_12rem] sm:gap-3'}`}>
-            <span className="text-xs text-s-text break-words">
-              {l.inventoryItem?.name ?? 'Item'}{editQty ? '' : ` · ${q} ${s.unit}`}
-              <span className="block text-[11px] text-s-muted">
-                {editQty ? `Ordered ${orderedOf(l)} ${s.unit}${qtyChanged ? ` → bought ${q} ${s.unit}` : ''} · ` : ''}Estimated {fmtPkrWhole(s.rate)} / {s.unit}{changed ? ` → actual ${fmtPkrWhole(rates[l.id]!)}` : ''}
+        if (editWhole) {
+          const amt = amountOf(l)
+          const per = perUnitText(amt, q, s.unit)
+          const qtyChanged = Math.abs(q - orderedOf(l)) > 1e-9
+          return (
+            <div key={l.id} className="grid grid-cols-1 sm:grid-cols-[1fr_8rem_10rem] gap-1 sm:gap-3 items-center">
+              <span className="text-xs text-s-text break-words">
+                {l.inventoryItem?.name ?? 'Item'}
+                <span className="block text-[11px] text-s-muted">
+                  Ordered {orderedOf(l)} {s.unit}{qtyChanged ? ` → bought ${q} ${s.unit}` : ''} · estimated {fmtPkrWhole(Math.round(orderedOf(l) * s.rate))}
+                </span>
+                {per && <span className="block text-[11px] text-s-text">= {per}</span>}
               </span>
-            </span>
-            {editQty && (
               <label className="flex items-center gap-1.5 text-[11px] text-s-muted">
                 <Input type="number" inputMode="decimal" min={0} step="any" value={qtys![l.id] ?? String(orderedOf(l))}
                   onChange={(e) => setQtys!({ ...qtys!, [l.id]: e.target.value })} aria-label={`Quantity bought of ${l.inventoryItem?.name ?? 'item'} in ${s.unit}`} className="w-full" />
                 <span className="whitespace-nowrap">{s.unit}</span>
               </label>
-            )}
+              <MoneyInput value={amt} onChange={(c) => setAmounts!({ ...amounts!, [l.id]: c })} ariaLabel={`Amount paid for ${l.inventoryItem?.name ?? 'item'} in rupees`} className="s-input w-full" />
+            </div>
+          )
+        }
+        const changed = rates[l.id] != null && rates[l.id] !== s.rate
+        return (
+          <div key={l.id} className="grid grid-cols-1 sm:grid-cols-[1fr_12rem] gap-1 sm:gap-3 items-center">
+            <span className="text-xs text-s-text break-words">
+              {l.inventoryItem?.name ?? 'Item'} · {q} {s.unit}
+              <span className="block text-[11px] text-s-muted">Estimated {fmtRate(s.rate)} / {s.unit}{changed ? ` → actual ${fmtRate(rates[l.id]!)}` : ''}</span>
+            </span>
             <MoneyInput value={rates[l.id] ?? s.rate} onChange={(c) => setRates({ ...rates, [l.id]: c })} ariaLabel={`Actual price per ${s.unit} for ${l.inventoryItem?.name ?? 'item'}`} className="s-input w-full" />
           </div>
         )
       })}
+      {editWhole && <p className="text-[11px] text-s-muted">Gram and ml lines are kept per kg / litre, so the line adds up to exactly what you typed.</p>}
       <p className="text-xs text-s-muted">
         Estimated total {fmtPkrWhole(estimate)} · <span className="font-bold text-s-text">Actual total {fmtPkrWhole(actual)}</span>
         {actual !== estimate && <span className={actual > estimate ? ' text-s-red' : ' text-success'}> ({actual > estimate ? '+' : '−'}{fmtPkrWhole(Math.abs(actual - estimate))})</span>}
@@ -175,18 +191,35 @@ function RateFields({ lines, rates, setRates, qtys, setQtys }: {
     </div>
   )
 }
+/** A rate with paisa when it has them (a per-gram rate is often under a rupee). */
+const fmtRate = (cents: number) => `PKR ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: cents % 100 === 0 ? 0 : 2, maximumFractionDigits: 2 })}`
+function qtyTyped(l: WfLine, qtys?: Record<string, string>) {
+  const ordered = round6(l.quantityOrdered / shown(l).factor)
+  const t = qtys?.[l.id]
+  const n = t != null && t.trim() !== '' ? Number(t) : NaN
+  return Number.isFinite(n) && n > 0 ? n : ordered
+}
+/** "PKR 433.33 / kg" for grams / ml, else per the line's unit. */
+function perUnitText(amountCents: number, qty: number, unit: string) {
+  if (!(qty > 0)) return null
+  const u = unit.trim().toLowerCase()
+  const big = ['g', 'gm', 'gms', 'gram', 'grams'].includes(u) ? 'kg' : ['ml', 'millilitre', 'milliliter'].includes(u) ? 'l' : null
+  const per = big ? (amountCents / qty) * 1000 : amountCents / qty
+  return `${fmtRate(Math.round(per))} / ${big ?? unit}`
+}
 const changedRates = (lines: WfLine[], rates: Record<string, number>) =>
   lines.filter((l) => rates[l.id] != null && rates[l.id] !== shown(l).rate).map((l) => ({ poLineId: l.id, rateCents: rates[l.id]! }))
-/** Lines whose rate or quantity bought changed — the quantity in the line's order unit. */
-const changedLines = (lines: WfLine[], rates: Record<string, number>, qtys: Record<string, string>) =>
+/** The lines whose quantity bought or amount paid changed — a typed amount goes as amountCents (the rate is worked out
+ *  on the server), a quantity in the line's order unit. */
+const changedLines = (lines: WfLine[], qtys: Record<string, string>, amounts: Record<string, number>) =>
   lines.flatMap((l) => {
     const ordered = round6(l.quantityOrdered / shown(l).factor)
-    const t = qtys[l.id]
-    const q = t != null && t.trim() !== '' ? Number(t) : ordered
-    const qtyChanged = Number.isFinite(q) && Math.abs(q - ordered) > 1e-9
-    const rateChanged = rates[l.id] != null && rates[l.id] !== shown(l).rate
-    if (!qtyChanged && !rateChanged) return []
-    return [{ poLineId: l.id, rateCents: rates[l.id] ?? shown(l).rate, ...(qtyChanged ? { quantity: q } : {}) }]
+    const q = qtyTyped(l, qtys)
+    const qtyChanged = Math.abs(q - ordered) > 1e-9
+    const amt = amounts[l.id]
+    const amtChanged = amt != null && amt !== Math.round(ordered * shown(l).rate)
+    if (!qtyChanged && !amtChanged) return []
+    return [{ poLineId: l.id, ...(amt != null ? { amountCents: amt } : { rateCents: shown(l).rate }), ...(qtyChanged ? { quantity: q } : {}) }]
   })
 const badQty = (qtys: Record<string, string>) => Object.values(qtys).some((t) => t.trim() === '' || !(Number(t) > 0))
 
@@ -215,11 +248,12 @@ function BuyCard({ po }: { po: WfPo }) {
   const [invoiceDate, setInvoiceDate] = useState(todayPktIso())
   const [rates, setRates] = useState<Record<string, number>>({})
   const [qtys, setQtys] = useState<Record<string, string>>({})
+  const [amounts, setAmounts] = useState<Record<string, number>>({})
   const [taxCents, setTaxCents] = useState(0)
   const [taxBy, setTaxBy] = useState('')
   const [tried, setTried] = useState(false)
   const done = useMutation({
-    mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedLines(po.lines, rates, qtys) }),
+    mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedLines(po.lines, qtys, amounts) }),
     onSuccess: () => { setOpen(false); invalidateAll(qc, po.id) },
   })
   const noSupplier = !!po.supplier?.systemKind
@@ -231,9 +265,9 @@ function BuyCard({ po }: { po: WfPo }) {
       <RecordFiles ownerType="purchase_order" ownerId={po.id} canUpload title="Supplier's invoice / bill" tenantId={po.supplier?.tenantId ?? undefined}
         emptyText="Attach the supplier's invoice or bill (photo, PDF or Office file)." />
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => { setOpen(true); setTried(false); done.reset() }} disabled={noSupplier}>Enter quantities &amp; prices, mark completed</Button>
+        <Button size="sm" onClick={() => { setOpen(true); setTried(false); done.reset() }} disabled={noSupplier}>Enter quantities &amp; amounts, mark completed</Button>
       </div>
-      <p className="text-[11px] text-s-muted">Bought a different quantity or paid a different price? Change them in the next step, line by line.</p>
+      <p className="text-[11px] text-s-muted">Bought a different quantity or paid a different amount? Change them in the next step — type the whole amount per line, the rate is worked out.</p>
       {open && (
         <Modal title={`Mark ${ref(po)} completed`} onClose={() => setOpen(false)} dirty={invoiceNumber !== ''}>
           <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!invoiceNumber.trim() || !invoiceDate || badQty(qtys) || done.isPending) return; done.mutate() }}>
@@ -244,7 +278,7 @@ function BuyCard({ po }: { po: WfPo }) {
             <Field label="Invoice date" required>
               <Input type="date" value={invoiceDate} max={todayPktIso()} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full" />
             </Field>
-            <RateFields lines={po.lines} rates={rates} setRates={setRates} qtys={qtys} setQtys={setQtys} />
+            <RateFields lines={po.lines} rates={rates} setRates={setRates} qtys={qtys} setQtys={setQtys} amounts={amounts} setAmounts={setAmounts} />
             {tried && badQty(qtys) && <p role="alert" className="text-xs text-s-red">Every quantity bought must be more than zero.</p>}
             <TaxFields cents={taxCents} setCents={setTaxCents} authority={taxBy} setAuthority={setTaxBy} />
             {done.error && <p role="alert" className="text-xs text-s-red">{errOf(done.error)}</p>}
@@ -419,7 +453,8 @@ export function GrnsTab({ initialId }: { initialId?: string | null }) {
 }
 
 interface GrnDetailRow extends WfGrnRow {
-  lines: Array<{ poLineId: string; item: string; unit: string; stockUnit: string; rateCents: number; orderedInUnit: number; receivedHereInUnit: number; receivedAllGrns: number; invoicedCents: number }>
+  lines: Array<{ poLineId: string; item: string; unit: string; stockUnit: string; rateCents: number; orderedInUnit: number; receivedHereInUnit: number; receivedAllGrns: number; invoicedCents: number
+    approved?: { quantity: number | null; unit: string; rateCents: number; valueCents: number | null } | null; boughtValueCents?: number }>
   files: Array<{ id: string }>
   activity: Array<{ id: string; action: string; createdAt: string; user: { name: string | null } | null; details: { note?: string } | null }>
 }
@@ -464,13 +499,24 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
           </thead>
           <tbody>
             {g.lines.map((l) => (
-              <tr key={l.poLineId} className={`border-b border-s-border/30 last:border-0 ${Math.abs(l.receivedHereInUnit - l.orderedInUnit) > 1e-9 ? 'bg-s-amber-dim/30' : ''}`}>
+              <Fragment key={l.poLineId}>
+              <tr className={`border-b border-s-border/30 last:border-0 ${Math.abs(l.receivedHereInUnit - l.orderedInUnit) > 1e-9 ? 'bg-s-amber-dim/30' : ''}`}>
                 <td className="py-1.5 text-s-text">{l.item}</td>
                 <td className="py-1.5 text-right text-s-text whitespace-nowrap">{l.orderedInUnit} {l.unit}</td>
                 <td className="py-1.5 text-right text-s-text whitespace-nowrap">{l.receivedHereInUnit} {l.unit}</td>
-                <td className="py-1.5 text-right text-s-muted whitespace-nowrap">{fmtPkrWhole(l.rateCents)} / {l.unit}</td>
+                <td className="py-1.5 text-right text-s-muted whitespace-nowrap">{fmtRate(l.rateCents)} / {l.unit}</td>
                 <td className="py-1.5 text-right font-semibold text-s-text">{fmtPkrWhole(l.invoicedCents)}</td>
               </tr>
+              {l.approved && (
+                <tr className="bg-s-amber-dim/40">
+                  <td colSpan={5} className="py-1.5 px-1 text-[11px] text-s-amber break-words">
+                    Changed by the buyer — approved {l.approved.quantity != null ? `${l.approved.quantity} ${l.approved.unit} @ ` : ''}{fmtRate(l.approved.rateCents)} / {l.approved.unit}
+                    {l.approved.valueCents != null ? ` (${fmtPkrWhole(l.approved.valueCents)})` : ''}
+                    {' → bought '}{l.orderedInUnit} {l.unit} @ {fmtRate(l.rateCents)} / {l.unit}{l.boughtValueCents != null ? ` (${fmtPkrWhole(l.boughtValueCents)})` : ''}
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
         </table>

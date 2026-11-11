@@ -203,8 +203,8 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
   },
   grn_finance: {
     // Finance verifies a GRN (POST /procurement/grns/:id/finance-pass | return at grnStatus finance_review): role
-    // finance holding the accounting module, a member of the GRN's company, never the PO's requester or buyer
-    // (403 SELF_APPROVAL_BLOCKED). The CEO as an override. Never handed over.
+    // finance holding the accounting module, a member of the GRN's company — also on a PO finance raised or bought
+    // (owner, 2026-11-11; the CEO's GRN approval is the check). The CEO as an override. Never handed over.
     label: 'GRNs — finance check', section: 'finance', queueModule: 'accounting', roles: ['finance', 'admin'],
     overrideRoles: ['admin'], delegable: false, mustHoldModule: null, ownership: 'company', exemptThroughHeadOffice: true,
   },
@@ -1112,9 +1112,10 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const g = await db.goodsReceipt.findUnique({ where: { id }, select: { tenantId: true, grnNumber: true, grnStatus: true, poId: true, receivedAt: true, financeCheckedById: true } })
       if (!g?.grnNumber || !g.poId) return null
       const p = await db.purchaseOrder.findUnique({ where: { id: g.poId }, select: { createdBy: true, buyerUserId: true, completedById: true } })
-      // Separation of duties (owner, 2026-11-05): the PO's requester and buyer never verify or approve its GRN;
-      // finance's checker never gives the CEO's approval (the CEO exempt).
-      const submitterIds = [p?.createdBy, p?.buyerUserId, p?.completedById, ...(type === 'grn' ? [g.financeCheckedById] : [])]
+      // Separation of duties: the PO's requester and buyer never give the CEO's approval of its GRN, nor does finance's
+      // checker (the CEO exempt). Finance verifies a GRN even on a PO it raised or bought (owner, 2026-11-11: "Finance
+      // should do it with CEO's approval") — the CEO's approval that follows is the check.
+      const submitterIds = type === 'grn' ? [p?.createdBy, p?.buyerUserId, p?.completedById, g.financeCheckedById] : []
       return subject({ companyIds: [g.tenantId], ownerTenantId: g.tenantId, submitterIds, viaHeadOfficeId: null, status: g.grnStatus ?? 'none', submittedAt: g.receivedAt })
     }
     case 'recipe': {

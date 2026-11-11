@@ -2026,6 +2026,12 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `/procurement/purchase-orders`, 422 `BUYER_NOT_LISTED`); the CEO's approval keeps it unless the CEO names another
   (`resolvePoBuyer`: the CEO's pick → the raiser's → the only listed buyer → the only `procurement` login → the
   requester). The buyer sees the PO in My tasks only once the CEO approves. Tests: `tests/poApprovalChain.test.ts`.
+- **The buyer enters what was really bought (owner, 2026-11-11).** Completing a PO takes, per line, the quantity bought
+  (`quantity`, in the line's order unit; never below what was received — 422 `QUANTITY_BELOW_RECEIVED`) and the WHOLE
+  amount paid (`amountCents`; the rate is worked out — a g / ml line moves to kg / litre so quantity × rate = the amount;
+  `poWorkflow.ts applyLineRatesTx`). Every change logs the full before / after; the GRN shows "approved → bought" per
+  changed line (`approved`, `boughtValueCents` on `GET /procurement/grns/:id`). Finance verifies a GRN even on a PO it
+  raised or bought — the CEO's GRN approval is the check (`approvalRights.ts` grn_finance has no self block).
 - **Finance raises POs (owner, 2026-11-10: "Allow finance to create POs" — REPLACES "POs stay closed to finance").**
   `procurement/routes.ts PO_RAISERS` (procurement team + finance) on POST / PATCH `/purchase-orders`, `/submit`,
   `/cancel`; finance works only the POs it raised (403 `PO_FINANCE_OWN_ONLY`; cancel only draft / waiting for the

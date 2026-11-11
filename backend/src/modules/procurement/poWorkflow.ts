@@ -18,7 +18,7 @@
 //          ──requester: "Not received" (rejectReceipt, note)──▶ back to the buyer's stage
 //
 //   GRN  (GoodsReceipt.grnNumber, made by the confirmation: Dr 12x0 / Cr 2015 GRNI — 'procurement.receipt:<id>')
-//        finance_review ──finance passes (role finance + accounting; never the requester / buyer)──▶ ceo_review
+//        finance_review ──finance passes (role finance + accounting; also its own PO — the CEO approves next)──▶ ceo_review
 //        ceo_review ──CEO approves (approveGrn)──▶ approved: the supplier BILL is created in the same transaction
 //            through procurement's bill engine (prepareBill + insertBillTx + afterBillCreated): number = the invoice
 //            number, date = the invoice date, due = date + the supplier's terms, a line per GRN receipt line at the PO
@@ -69,7 +69,13 @@ const isCeo = (a: Actor) => a.role === 'admin'
 /** A rate the buyer actually paid, per the unit the line was ordered in (poUnits.ts). */
 /** quantity (owner, 2026-11-11: "how he can edit/revise amounts/quantities/rates") = what the buyer really bought,
  *  in the line's order unit — only when completing (never below what has already been received). */
-export interface LineRate { poLineId: string; rateCents: number; quantity?: number | null }
+export interface LineRate {
+  poLineId: string; rateCents?: number | null; quantity?: number | null
+  /** The whole amount paid for the line (owner, 2026-11-11: "put amount as whole not per gram, it should calculate per
+   *  gram amount on auto") — wins over rateCents; the rate is worked out from it. A gram / ml line is then kept per kg /
+   *  litre, so the line's value is the amount exactly (a per-gram rate in whole paisa cannot be). */
+  amountCents?: number | null
+}
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/
 function invoiceDateOf(s: string): Date {
@@ -109,8 +115,8 @@ async function lockPoTx(tx: Tx, poId: string) {
  * The buyer's actual rates (per each line's order unit): the line's stored costs and the PO total are recomputed;
  * returns what changed (old → new) for the activity log. 422 LINE_NOT_ON_PO / AMOUNT_TOO_LARGE.
  */
-async function applyLineRatesTx(tx: Tx, po: { id: string; lines: Array<{ id: string; quantityOrdered: number; quantityReceived: number; unitCostCents: number; orderUnit: string | null; orderUnitFactor: number; orderUnitCostCents: number | null }> }, rates: readonly LineRate[] | undefined, opts: { allowQuantity?: boolean } = {}) {
-  const changes: Array<{ poLineId: string; fromRateCents: number; toRateCents: number; unit: string | null; fromQuantity?: number; toQuantity?: number }> = []
+async function applyLineRatesTx(tx: Tx, po: { id: string; lines: Array<{ id: string; inventoryItemId: string; quantityOrdered: number; quantityReceived: number; unitCostCents: number; orderUnit: string | null; orderUnitFactor: number; orderUnitCostCents: number | null }> }, rates: readonly LineRate[] | undefined, opts: { allowQuantity?: boolean } = {}) {
+  const changes: Array<{ poLineId: string; fromRateCents: number; toRateCents: number; unit: string | null; fromUnit?: string | null; toUnit?: string | null; amountCents?: number; fromQuantity?: number; toQuantity?: number }> = []
   if (!rates || rates.length === 0) return changes
   const seen = new Set<string>()
   const lines = po.lines.map((l) => ({ ...l }))
@@ -119,8 +125,10 @@ async function applyLineRatesTx(tx: Tx, po: { id: string; lines: Array<{ id: str
     seen.add(r.poLineId)
     const l = lines.find((x) => x.id === r.poLineId)
     if (!l) throw new AppError('LINE_NOT_ON_PO', 'That line is not on this purchase order', 422)
-    if (!Number.isInteger(r.rateCents) || r.rateCents < 0) throw new AppError('INVALID_AMOUNT', 'A rate is whole paisa, zero or more', 400)
-    assertInt4Fits(r.rateCents, 'The rate')
+    if (r.amountCents == null && (r.rateCents == null || !Number.isInteger(r.rateCents) || r.rateCents < 0)) throw new AppError('INVALID_AMOUNT', 'A rate is whole paisa, zero or more', 400)
+    if (r.amountCents != null && (!Number.isInteger(r.amountCents) || r.amountCents < 0)) throw new AppError('INVALID_AMOUNT', 'An amount is whole paisa, zero or more', 400)
+    if (r.rateCents != null) assertInt4Fits(r.rateCents, 'The rate')
+    if (r.amountCents != null) assertMoneyFits(r.amountCents, 'The amount')
     const ordered = l.orderUnitCostCents != null && l.orderUnitFactor > 0
     const factor = ordered ? l.orderUnitFactor : 1
     const from = ordered ? l.orderUnitCostCents! : l.unitCostCents
@@ -135,20 +143,56 @@ async function applyLineRatesTx(tx: Tx, po: { id: string; lines: Array<{ id: str
       }
     }
     const qtyChanged = Math.abs(toQty - fromQty) > 1e-9
-    if (from === r.rateCents && !qtyChanged) continue
-    if (ordered) {
-      l.orderUnitCostCents = r.rateCents
-      l.unitCostCents = Math.round(r.rateCents / l.orderUnitFactor)
-    } else {
-      l.unitCostCents = r.rateCents
-    }
     if (qtyChanged) l.quantityOrdered = Math.round(toQty * factor * 1e6) / 1e6
+    const fromUnit = ordered ? l.orderUnit : (await tx.inventoryItem.findUnique({ where: { id: l.inventoryItemId }, select: { unit: true } }))?.unit ?? null
+    let unitChanged = false
+    let toRate: number
+    if (r.amountCents != null) {
+      // From the whole amount: a gram / ml line moves to kg / litre (1,000 of the unit), so quantity × rate = amount.
+      const u = (fromUnit ?? '').trim().toLowerCase()
+      const big = ['g', 'gm', 'gms', 'gram', 'grams'].includes(u) ? 'kg' : ['ml', 'millilitre', 'milliliter'].includes(u) ? 'l' : null
+      const newFactor = big ? factor * 1000 : factor
+      const qtyNew = l.quantityOrdered / newFactor
+      if (!(qtyNew > 0)) throw new AppError('INVALID_QUANTITY', 'A quantity bought is more than zero', 400)
+      toRate = Math.round(r.amountCents / qtyNew)
+      assertInt4Fits(toRate, 'The rate')
+      if (big || ordered) {
+        unitChanged = !!big
+        l.orderUnit = big ?? l.orderUnit
+        l.orderUnitFactor = newFactor
+        l.orderUnitCostCents = toRate
+        l.unitCostCents = Math.round(toRate / newFactor)
+      } else {
+        l.unitCostCents = toRate
+      }
+    } else {
+      toRate = r.rateCents!
+      if (from === toRate && !qtyChanged) continue
+      if (ordered) {
+        l.orderUnitCostCents = toRate
+        l.unitCostCents = Math.round(toRate / l.orderUnitFactor)
+      } else {
+        l.unitCostCents = toRate
+      }
+    }
+    if (!unitChanged && from === toRate && !qtyChanged) continue
     assertInt4Fits(l.unitCostCents, 'The unit cost')
     assertMoneyFits(lineValueCents(l), 'The line (quantity × rate)')
-    changes.push({ poLineId: l.id, fromRateCents: from, toRateCents: r.rateCents, unit: ordered ? l.orderUnit : null, ...(qtyChanged ? { fromQuantity: fromQty, toQuantity: toQty } : {}) })
+    // The whole before / after (quantity, unit, rate) — the GRN shows "Approved → Bought" from the first change.
+    const toUnitShown = l.orderUnitCostCents != null ? l.orderUnit : fromUnit
+    const toQtyShown = Math.round((l.quantityOrdered / (l.orderUnitCostCents != null ? l.orderUnitFactor : 1)) * 1e6) / 1e6
+    changes.push({
+      poLineId: l.id, fromRateCents: from, toRateCents: toRate, unit: l.orderUnitCostCents != null ? l.orderUnit : null,
+      fromUnit, toUnit: toUnitShown, fromQuantity: fromQty, toQuantity: toQtyShown,
+      ...(r.amountCents != null ? { amountCents: r.amountCents } : {}),
+    })
     await tx.purchaseOrderLine.update({
       where: { id: l.id },
-      data: { unitCostCents: l.unitCostCents, ...(ordered ? { orderUnitCostCents: l.orderUnitCostCents } : {}), ...(qtyChanged ? { quantityOrdered: l.quantityOrdered } : {}) },
+      data: {
+        unitCostCents: l.unitCostCents,
+        ...(l.orderUnitCostCents != null ? { orderUnitCostCents: l.orderUnitCostCents, orderUnit: l.orderUnit, orderUnitFactor: l.orderUnitFactor } : {}),
+        ...(qtyChanged ? { quantityOrdered: l.quantityOrdered } : {}),
+      },
     })
   }
   if (changes.length > 0) {

@@ -514,4 +514,28 @@ describe('finance raises POs (owner, 2026-11-10: "Allow finance to create POs")'
     expect((await call('finA', 'POST', '/procurement/buyers', { userId: U.buyerA!.id })).statusCode).toBe(403)
     expect((await call('finA', 'GET', '/procurement/my-tasks')).statusCode).toBe(200)
   })
+
+  it('finance verifies the GRN of a PO it raised (owner, 2026-11-11); the CEO approves it', async () => {
+    const r = await call('finA', 'POST', '/procurement/purchase-orders', { supplierId: supA, lines: line() })
+    const id = r.json().id
+    await call('finA', 'POST', `/procurement/purchase-orders/${id}/submit`)
+    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${id}/approve`, { payByCash: false, buyerUserId: U.buyerA!.id })).statusCode).toBe(200)
+    await upload('buyerA', id)
+    // The buyer types the whole amount; the rate is worked out.
+    const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id }, include: { lines: true } })
+    const done = await call('buyerA', 'POST', `/procurement/purchase-orders/${id}/complete`, { invoiceNumber: `${P}-FIN1`, invoiceDate: today(), lines: [{ poLineId: po.lines[0]!.id, amountCents: 500 }] })
+    expect(done.statusCode, done.body).toBe(200)
+    expect(Number((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id } })).totalCents)).toBe(500)
+    const conf = await call('finA', 'POST', `/procurement/purchase-orders/${id}/confirm-receipt`, { locationId: locA, lines: [{ poLineId: po.lines[0]!.id, quantityReceived: 2 }] })
+    expect(conf.statusCode, conf.body).toBe(201)
+    const g = conf.json().grn.id
+    // The GRN shows what the CEO approved next to what was bought.
+    const detail = (await call('finA', 'GET', `/procurement/grns/${g}`)).json() as { lines: Array<{ approved: { quantity: number; rateCents: number; valueCents: number } | null; boughtValueCents: number }> }
+    expect(detail.lines[0]!.approved).toMatchObject({ quantity: 2, rateCents: 200, valueCents: 400 })
+    expect(detail.lines[0]!.boughtValueCents).toBe(500)
+    const pass = await call('finA', 'POST', `/procurement/grns/${g}/finance-pass`)
+    expect(pass.statusCode, pass.body).toBe(200)
+    const ok = await call('ceoA', 'POST', `/procurement/grns/${g}/approve`)
+    expect(ok.statusCode, ok.body).toBe(200)
+  })
 })
