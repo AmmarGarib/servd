@@ -1196,6 +1196,37 @@ function recipeRowWithoutCosts<R extends { ingredients: Array<Record<string, unk
   }
 }
 
+// ─── The brands a person writes recipes for (owner, 2026-11-12: "Hanif's brand list show only G's Kitchen") ───
+// User.recipeConceptIds: empty = every brand in reach (as before). Set by the CEO (PUT /recipes/brand-access/:userId);
+// a plate / add-on recipe of another brand is 403 RECIPE_BRAND_NOT_YOURS; a sub-recipe (no brand) is never limited.
+
+async function recipeBrandsOf(userId: string): Promise<string[]> {
+  return (await prisma.user.findUnique({ where: { id: userId }, select: { recipeConceptIds: true } }))?.recipeConceptIds ?? []
+}
+
+async function assertRecipeBrandAllowed(req: FastifyRequest, conceptId: string | null | undefined): Promise<void> {
+  if (!conceptId || req.staffUser!.role === 'admin') return
+  const allowed = await recipeBrandsOf(req.staffUser!.id)
+  if (allowed.length > 0 && !allowed.includes(conceptId)) {
+    throw new AppError('RECIPE_BRAND_NOT_YOURS', 'You write recipes for other brands only — ask the CEO to add this brand to yours (Workforce)', 403)
+  }
+}
+
+/** The brand a new recipe is for (plate: its dish or the new dish's brand; add-on: its dish's brand). */
+async function brandOfNewRecipe(body: { kind?: string; menuItemId?: string | null; newMenuItem?: { conceptId: string } | null; modifierId?: string | null }): Promise<string | null> {
+  if (body.menuItemId) return (await prisma.menuItem.findUnique({ where: { id: body.menuItemId }, select: { conceptId: true } }))?.conceptId ?? null
+  if (body.newMenuItem) return body.newMenuItem.conceptId
+  if (body.modifierId) return (await prisma.modifier.findUnique({ where: { id: body.modifierId }, select: { group: { select: { menuItem: { select: { conceptId: true } } } } } }))?.group.menuItem.conceptId ?? null
+  return null
+}
+
+/** The brand of an existing recipe. */
+async function brandOfRecipe(recipeId: string): Promise<string | null> {
+  const r = await prisma.recipe.findUnique({ where: { id: recipeId }, select: { pendingMenuItem: true, modifierId: true, menuItem: { select: { conceptId: true } } } })
+  if (!r) return null
+  return r.menuItem?.conceptId ?? (r.pendingMenuItem as { conceptId?: string } | null)?.conceptId ?? (r.modifierId ? await brandOfNewRecipe({ modifierId: r.modifierId }) : null)
+}
+
 export async function recipeRoutes(fastify: FastifyInstance) {
 
   // ── Recipes ────────────────────────────────────────────────────────────────
@@ -2005,12 +2036,39 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // The brands a person writes recipes for: mine (the recipe form's brand list), and the CEO's setting per person.
+  fastify.get('/brand-access/me', { preHandler: requireAuth(...MANAGERS) }, async (req) => {
+    return { conceptIds: req.staffUser!.role === 'admin' ? [] : await recipeBrandsOf(req.staffUser!.id) }
+  })
+  fastify.get<{ Params: { userId: string } }>('/brand-access/:userId', { preHandler: requireAuth('admin') }, async (req) => {
+    const u = await prisma.user.findFirst({ where: { id: req.params.userId, OR: [{ tenantId: { in: req.staffUser!.memberTenantIds ?? [] } }, { tenantMemberships: { some: { tenantId: { in: req.staffUser!.memberTenantIds ?? [] } } } }] }, select: { id: true, recipeConceptIds: true } })
+    if (!u) throw new NotFoundError('User', req.params.userId)
+    return { conceptIds: u.recipeConceptIds }
+  })
+  fastify.put<{ Params: { userId: string } }>('/brand-access/:userId', { preHandler: requireAuth('admin') }, async (req) => {
+    const { conceptIds } = z.object({ conceptIds: z.array(z.string().min(1).max(64)).max(50) }).parse(req.body ?? {})
+    const mine = req.staffUser!.memberTenantIds ?? []
+    const u = await prisma.user.findFirst({ where: { id: req.params.userId, OR: [{ tenantId: { in: mine } }, { tenantMemberships: { some: { tenantId: { in: mine } } } }] }, select: { id: true, email: true, recipeConceptIds: true } })
+    if (!u) throw new NotFoundError('User', req.params.userId)
+    const ids = [...new Set(conceptIds)]
+    const ok = await prisma.concept.count({ where: { id: { in: ids }, deletedAt: null, OR: [{ tenantId: { in: mine } }, { recipeOwnerTenantId: { in: mine } }] } })
+    if (ok !== ids.length) throw new AppError('BRAND_NOT_IN_COMPANY', 'Pick brands of your own companies', 422)
+    await prisma.user.update({ where: { id: u.id }, data: { recipeConceptIds: ids } })
+    await audit({
+      category: 'identity', action: 'staff.recipe_brands', entity: 'User', entityId: u.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: req.staffUser!.tenantId ?? null,
+      before: { recipeConceptIds: u.recipeConceptIds }, after: { recipeConceptIds: ids, targetEmail: u.email },
+    })
+    return { conceptIds: ids }
+  })
+
   // POST /recipes — plate, component and modifier recipes (kind defaults to plate).
   // Answers 201 with the recipe plus `warnings` (codes, never a block):
   // PACKAGING_MISSING when a plate of a packaging-vessel brand has no
   // Packaging line.
   fastify.post('/', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = recipeSchema.parse(req.body)
+    await assertRecipeBrandAllowed(req, await brandOfNewRecipe(body))
 
     // Company checks first (before the 409s below, which would otherwise
     // confirm that another company's item or add-on has a recipe). A new
@@ -2184,6 +2242,7 @@ export async function recipeRoutes(fastify: FastifyInstance) {
     async (req) => {
       const body = recipeUpdateSchema.parse(req.body)
       const owned = await assertRecipeInScope(req, req.params.id)
+      await assertRecipeBrandAllowed(req, await brandOfRecipe(req.params.id))
       // Prep as stock (2026-10-24): once a prep recipe has its stock item, its yield unit is that item's unit — fixed.
       if (body.yieldUnit !== undefined) {
         const cur = await prisma.recipe.findUnique({ where: { id: req.params.id }, select: { yieldUnit: true, prepItems: { select: { id: true }, take: 1 } } })

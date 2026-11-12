@@ -160,7 +160,7 @@ const CATEGORIES: Category[] = [
  * The brands a director login may be given: every live brand of the CEO's
  * companies (GET /director/brands answers the CEO with exactly that list).
  */
-function DirectorBrandPicker({ value, onChange }: { value: string[]; onChange: (next: string[]) => void }) {
+function DirectorBrandPicker({ value, onChange, label, note }: { value: string[]; onChange: (next: string[]) => void; label?: string; note?: string }) {
   const { data, isLoading } = useQuery<{ brands: Array<{ id: string; name: string }> }>({
     queryKey: ['director', 'brands'],
     queryFn: () => api.get('/director/brands'),
@@ -174,9 +174,9 @@ function DirectorBrandPicker({ value, onChange }: { value: string[]; onChange: (
     <div>
       <div className="flex items-center justify-between mb-1">
         <span className="text-[11px] font-bold uppercase tracking-wider text-s-muted">
-          Brands they may see <span className="text-red-700">*</span>
+          {label ?? <>Brands they may see <span className="text-red-700">*</span></>}
         </span>
-        <span className="text-[10px] text-s-muted/70">Read-only. Nothing about any other brand.</span>
+        <span className="text-[10px] text-s-muted/70">{note ?? 'Read-only. Nothing about any other brand.'}</span>
       </div>
       <div className="flex flex-wrap gap-2 rounded-lg border border-s-border bg-s-bg p-2">
         {isLoading && <span className="text-xs text-s-muted">Loading brands…</span>}
@@ -195,6 +195,31 @@ function DirectorBrandPicker({ value, onChange }: { value: string[]; onChange: (
             </button>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+/** The brands a person writes recipes for (owner, 2026-11-12: "Hanif's brand list show only G's Kitchen"). None ticked =
+ *  every brand. The CEO's only (PUT /recipes/brand-access/:userId). */
+function RecipeBrands({ userId }: { userId: string }) {
+  const qc = useQueryClient()
+  const { data } = useQuery<{ conceptIds: string[] }>({ queryKey: ['recipe-brands', userId], queryFn: () => api.get(`/recipes/brand-access/${userId}`) })
+  const [picked, setPicked] = useState<string[] | null>(null)
+  const value = picked ?? data?.conceptIds ?? []
+  const save = useMutation({
+    mutationFn: () => api.put(`/recipes/brand-access/${userId}`, { conceptIds: value }),
+    onSuccess: () => { setPicked(null); void qc.invalidateQueries({ queryKey: ['recipe-brands', userId] }) },
+  })
+  const dirty = picked !== null && picked.slice().sort().join(',') !== (data?.conceptIds ?? []).slice().sort().join(',')
+  return (
+    <div className="space-y-2">
+      <DirectorBrandPicker value={value} onChange={setPicked} label="Brands" note="None ticked = every brand." />
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" disabled={!dirty || save.isPending} onClick={() => save.mutate()}
+          className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-primary-on disabled:opacity-50">{save.isPending ? 'Saving…' : 'Save brands'}</button>
+        {save.isSuccess && !dirty && <span className="text-xs text-success">Saved</span>}
+        {save.error && <span role="alert" className="text-xs text-s-red">{(save.error as Error).message}</span>}
       </div>
     </div>
   )
@@ -892,6 +917,12 @@ function InlineEditor({
         <details open className="rounded-lg border border-s-border bg-s-surface px-3 py-2">
           <summary className="cursor-pointer text-xs font-black text-s-text">What they can open</summary>
           <div className="mt-2"><PersonModules userId={user.id} /></div>
+        </details>
+      )}
+      {iAmCeo && (
+        <details className="rounded-lg border border-s-border bg-s-surface px-3 py-2">
+          <summary className="cursor-pointer text-xs font-black text-s-text">Brands they write recipes for</summary>
+          <div className="mt-2"><RecipeBrands userId={user.id} /></div>
         </details>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

@@ -236,10 +236,20 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
     queryKey: ['recipes', 'inventory'],
     queryFn: () => api.get('/inventory'),
   })
-  const { data: concepts = [] } = useQuery<Concept[]>({
+  const { data: allConcepts = [] } = useQuery<Concept[]>({
     queryKey: ['recipes', 'concepts'],
     queryFn: () => api.get('/concepts'),
   })
+  // The brands this person writes recipes for (owner, 2026-11-12; empty = all) — set by the CEO on Workforce.
+  const { data: myBrands } = useQuery<{ conceptIds: string[] }>({
+    queryKey: ['recipes', 'brand-access', 'me'],
+    queryFn: () => api.get('/recipes/brand-access/me'),
+    staleTime: 60_000,
+  })
+  const concepts = useMemo(() => {
+    const allow = myBrands?.conceptIds ?? []
+    return allow.length > 0 ? allConcepts.filter((c) => allow.includes(c.id)) : allConcepts
+  }, [allConcepts, myBrands])
   const { data: menuItems = [] } = useQuery<MenuItem[]>({
     queryKey: ['recipes', 'menu-items'],
     queryFn: () => api.get('/menu/items'),
@@ -301,6 +311,9 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
     }
   }, [menuItemId, menuItems, isEdit, kind, brandId])
 
+  useEffect(() => {
+    if (!isEdit && !brandId && concepts.length === 1 && (myBrands?.conceptIds.length ?? 0) > 0) setBrandId(concepts[0]!.id)
+  }, [isEdit, brandId, concepts, myBrands])
   const activeConcept = concepts.find((c) => c.id === brandId)
 
   // The picked brand's menu tree: its categories (the "new menu item" mode's

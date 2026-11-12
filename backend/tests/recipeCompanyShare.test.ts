@@ -465,3 +465,17 @@ describe('portfolio pricing and legacy duplicates (owner review N1, N5)', () => 
     expect(r.json().totalCents).toBe(9_000)
   })
 })
+
+describe('the brands a person writes recipes for (owner, 2026-11-12)', () => {
+  it('the CEO limits a chef to brands; another brand\'s recipe is 403; none ticked = every brand', async () => {
+    expect((await call(u.chefGS!, 'PUT', `/recipes/brand-access/${u.chefGS!.id}`, { conceptIds: [GS.conceptId] })).statusCode).toBe(403)
+    const set = await call(u.ceo!, 'PUT', `/recipes/brand-access/${u.chefGS!.id}`, { conceptIds: [GS.conceptId] })
+    expect(set.statusCode, set.body).toBe(200)
+    expect((await call(u.chefGS!, 'GET', '/recipes/brand-access/me')).json().conceptIds).toEqual([GS.conceptId])
+    const dish = await prisma.menuItem.create({ data: { conceptId: FL.conceptId, categoryId: (await prisma.category.findFirstOrThrow({ where: { conceptId: FL.conceptId } })).id, name: 'Flipd limited', priceCents: 10_000 } })
+    const r = await call(u.chefGS!, 'POST', '/recipes', { kind: 'plate', menuItemId: dish.id, servings: 1, ingredients: [{ masterIngredientId: M.beef, quantity: 100, unit: 'g' }] })
+    expect(r.statusCode, r.body).toBe(403)
+    expect(r.json().error.code).toBe('RECIPE_BRAND_NOT_YOURS')
+    expect((await call(u.ceo!, 'PUT', `/recipes/brand-access/${u.chefGS!.id}`, { conceptIds: [] })).statusCode).toBe(200)
+  })
+})

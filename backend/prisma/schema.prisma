@@ -1494,6 +1494,8 @@ model User {
   // Set only by the CEO; each id is a brand of one of the CEO's companies.
   // Deliberately NOT `conceptIds` above (decision 35: no longer read).
   directorConceptIds  String[]               @default([])
+  /// Brands this person writes recipes for (owner, 2026-11-12); empty = every brand in reach. recipes/routes.ts.
+  recipeConceptIds    String[]               @default([])
   // ─── Per-user permission + module overrides ─────────────────────────
   // The role gives a baseline (set in /configuration/roles for actions and
   // /configuration/role-modules for sidebar visibility). These four arrays
