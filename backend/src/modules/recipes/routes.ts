@@ -1256,7 +1256,13 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       // used to overwrite each other: ?season&q dropped the season filter).
       const and: Prisma.RecipeWhereInput[] = []
       // A brand's recipes: its dishes and its add-ons (modifier recipes).
-      if (conceptId) and.push({ OR: [{ menuItem: { conceptId } }, { modifier: { group: { menuItem: { conceptId } } } }] })
+      // A new dish not on the menu yet (opens at approval) carries its brand in pendingMenuItem (owner, 2026-11-12: a
+      // submitted Flipd mousse did not show under Flipd).
+      if (conceptId) and.push({ OR: [
+        { menuItem: { conceptId } },
+        { menuItemId: null, pendingMenuItem: { path: ['conceptId'], equals: conceptId } },
+        { modifier: { group: { menuItem: { conceptId } } } },
+      ] })
       if (activeOnly === 'true') and.push({ isActive: true })
       // Season filter: include the requested season OR explicit "year-round" OR
       // empty seasons array (which we treat as year-round).

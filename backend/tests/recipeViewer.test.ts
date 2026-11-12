@@ -118,6 +118,21 @@ describe('the read-only view', () => {
   })
 })
 
+describe('brand filter', () => {
+  it('a new dish waiting for approval (not on the menu yet) is listed under its brand', async () => {
+    const cat = await prisma.category.findFirstOrThrow({ where: { conceptId: FL.conceptId } })
+    const pending = (await prisma.recipe.create({ data: {
+      tenantId: FL.tenantId, kind: 'plate', name: 'Chocolate mousse', status: 'pending_approval', yieldGrams: 100,
+      pendingMenuItem: { conceptId: FL.conceptId, categoryId: cat.id, name: 'Chocolate mousse', description: null },
+    } as never })).id
+    const fl = ((await app.inject({ method: 'GET', url: `/recipes?conceptId=${FL.conceptId}`, headers: { authorization: `Bearer ${u.chefFL!.token}` } })).json() as Array<{ id: string }>).map((r) => r.id)
+    expect(fl).toContain(pending)
+    expect(fl).toContain(R.flPlate)
+    const gsBrand = ((await app.inject({ method: 'GET', url: `/recipes?conceptId=${GS.conceptId}`, headers: { authorization: `Bearer ${u.chefGS!.token}` } })).json() as Array<{ id: string }>).map((r) => r.id)
+    expect(gsBrand).not.toContain(pending)
+  })
+})
+
 describe('the CEO field', () => {
   it('only the CEO sets it, only to one of the CEO\'s companies; clearing hides the view', async () => {
     expect((await call(u.mgmtFL!, 'PATCH', `/concepts/${FL.conceptId}`, { recipeViewerTenantId: null })).statusCode).toBe(403)
