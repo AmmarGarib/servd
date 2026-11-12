@@ -93,6 +93,20 @@ describe('delete from the Ingredients sheet', () => {
     expect((await call(u.fnb!, 'DELETE', `/ingredient-master/${id}`)).statusCode).toBe(200)
   })
 
+  it('a line on a CANCELLED purchase order does not block the delete; an open PO line does', async () => {
+    const id = await ingredient('Bun')
+    const item = await stockItemFor(id, A.tenantId)
+    const sup = await prisma.supplier.create({ data: { tenantId: A.tenantId, name: `Bun supplier ${Date.now()}` } as never })
+    const po = await prisma.purchaseOrder.create({ data: { supplierId: sup.id, status: 'draft' } as never })
+    await prisma.purchaseOrderLine.create({ data: { purchaseOrderId: po.id, inventoryItemId: item, quantityOrdered: 10, unitCostCents: 100 } as never })
+    const open = await call(u.ceo!, 'DELETE', `/ingredient-master/${id}`)
+    expect(open.statusCode).toBe(409)
+    expect(open.json().error.details.reasons.join(' ')).toMatch(/purchase order/i)
+    await prisma.purchaseOrder.update({ where: { id: po.id }, data: { status: 'cancelled' } })
+    const r = await call(u.ceo!, 'DELETE', `/ingredient-master/${id}`)
+    expect(r.statusCode, r.body).toBe(200)
+  })
+
   it('in a recipe, or a company holds stock for it → 409 MASTER_IN_USE, nothing changes', async () => {
     const inRecipe = await ingredient('Cocoa')
     const rec = await prisma.recipe.create({ data: { tenantId: A.tenantId, kind: 'component', name: 'Cocoa mix', status: 'iteration' } as never })

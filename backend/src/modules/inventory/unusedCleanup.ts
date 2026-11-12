@@ -18,7 +18,7 @@
 //   inputs (prep_batches.inputs JSON).
 // "Stock" = currentStock ≠ 0 or any lot with remainingQty > 0.
 // "Purchase / stock history" = PO lines, goods-receipt lines, supplier bill
-//   lines, petty-cash spend lines, stock lots, stock movements, count lines,
+//   lines (not on a cancelled PO), petty-cash spend lines, stock lots, stock movements, count lines,
 //   waste logs, stock transfers, or a non-manual price-history row.
 //
 // Apply runs ONE transaction PER ITEM: lock the item row (lib/stockLedger.ts
@@ -78,7 +78,8 @@ export async function itemUsage(db: Db, items: Array<{ id: string; currentStock:
     db.stockLot.groupBy({ by: ['inventoryItemId'], where: { inventoryItemId: inIds, remainingQty: { gt: EPS } }, _count: { _all: true } }),
     db.stockLot.groupBy({ by: ['inventoryItemId'], where: { inventoryItemId: inIds }, _count: { _all: true } }),
     db.stockMovement.groupBy({ by: ['inventoryItemId'], where: { inventoryItemId: inIds }, _count: { _all: true } }),
-    db.purchaseOrderLine.groupBy({ by: ['inventoryItemId'], where: { inventoryItemId: inIds }, _count: { _all: true } }),
+    // A line on a CANCELLED purchase order is not history (owner, 2026-11-12: "I canceled all POs and still can't delete").
+    db.purchaseOrderLine.groupBy({ by: ['inventoryItemId'], where: { inventoryItemId: inIds, purchaseOrder: { status: { not: 'cancelled' } } }, _count: { _all: true } }),
     db.goodsReceiptLine.groupBy({ by: ['inventoryItemId'], where: { inventoryItemId: inIds }, _count: { _all: true } }),
     db.supplierBillLine.groupBy({ by: ['inventoryItemId'], where: { inventoryItemId: inIds }, _count: { _all: true } }),
     db.pettyCashSpendLine.groupBy({ by: ['inventoryItemId'], where: { inventoryItemId: inIds }, _count: { _all: true } }),
