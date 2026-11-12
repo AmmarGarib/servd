@@ -1055,7 +1055,7 @@ const MGMT_APPROVERS = ['admin', 'owner', 'management']
  * still do either, and that too is recorded as an override.
  */
 export function canActOnStep(
-  role: 'hod' | 'hr' | 'management' | 'ceo',
+  role: 'hod' | 'hr' | 'management' | 'finance' | 'ceo',
   actor: { id: string; role: string },
   subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[] },
 ): { ok: boolean; override: boolean; reason?: string } {
@@ -1079,8 +1079,10 @@ export function canActOnStep(
   }
   if (role === 'hr' && HR_APPROVERS.includes(actor.role)) return { ok: true, override: false }
   if (role === 'management' && MGMT_APPROVERS.includes(actor.role)) return { ok: true, override: false }
+  // Finance's check (owner, 2026-11-12): a finance login (its accounting module is checked by the decide route).
+  if (role === 'finance' && actor.role === 'finance') return { ok: true, override: false }
   if (actor.role === 'admin') return { ok: true, override: true }
-  return { ok: false, override: false, reason: `This step needs ${role === 'hod' ? 'the reporting manager' : role === 'hr' ? 'HR' : 'management'}` }
+  return { ok: false, override: false, reason: `This step needs ${role === 'hod' ? 'the reporting manager' : role === 'hr' ? 'HR' : role === 'finance' ? 'finance' : 'management'}` }
 }
 
 // ─── Head office: who may decide a step (D3, spec §7.4.3 + A20) ─────────────
@@ -1135,7 +1137,7 @@ export interface DecideRecord {
 export async function decideRight(
   req: FastifyRequest,
   rec: DecideRecord,
-  step: { role: 'hod' | 'hr' | 'management' | 'ceo' },
+  step: { role: 'hod' | 'hr' | 'management' | 'finance' | 'ceo' },
   isLast: boolean,
   ctx: {
     subject: { employeeUserId: string | null; managerUserId: string | null; createdById?: string | null; priorApproverIds?: string[]; raisedByHr?: boolean }

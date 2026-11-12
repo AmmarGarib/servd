@@ -60,7 +60,7 @@ export interface HrField {
   system?: boolean
 }
 
-export type ApproverRole = 'hod' | 'hr' | 'management' | 'ceo'
+export type ApproverRole = 'hod' | 'hr' | 'management' | 'finance' | 'ceo'
 export interface WorkflowStep { key: string; label: string; role: ApproverRole }
 
 export interface HrSection {
@@ -106,6 +106,8 @@ const HR: WorkflowStep = { key: 'hr', label: 'HR approval', role: 'hr' }
 const MGMT: WorkflowStep = { key: 'management', label: 'Management approval', role: 'management' }
 /** The CEO only (role admin) — never HR, management or a hand-over delegate (owner, 2026-10-20). */
 export const CEO_STEP: WorkflowStep = { key: 'ceo', label: 'CEO approval', role: 'ceo' }
+/** Finance's check — a finance login holding `accounting`, or the CEO (owner, 2026-11-12: full & final settlement). */
+export const FINANCE_STEP: WorkflowStep = { key: 'finance', label: 'Finance check', role: 'finance' }
 
 // 'intern' is RETIRED for new entries (owner, 2026-11-06): interns are a separate category — HR → Interns
 // (interns.ts). Old employee rows keep the value readable (reports.ts labels it); an employee create / edit that
@@ -658,8 +660,9 @@ export const HR_SECTIONS: HrSection[] = [
       f('notes', 'Notes', 'textarea'),
     ] },
 
+  // HR raises → finance checks → the CEO approves (approval books it) → finance pays (owner, 2026-11-12).
   { key: 'final_settlement', specNo: 25, title: 'Full & final settlement', group: 'Separation', kind: 'record',
-    workflow: [HR, MGMT], requires: ['employeeId', 'endDate'],
+    workflow: [HR, FINANCE_STEP, CEO_STEP], requires: ['employeeId', 'endDate'],
     effect: 'Use "Calculate" to fill the figures from salary, OT, leave balance, gratuity, open loans, income tax and EOBI / SESSI; adjust, then approve. Approval books it; "Mark paid" records the payment.',
     fields: [
       emp(),

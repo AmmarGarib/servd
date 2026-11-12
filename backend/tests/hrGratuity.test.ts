@@ -154,6 +154,7 @@ beforeAll(async () => {
   await mkUser('ceo', 'admin', tenantA)
   await mkUser('hr', 'hr', tenantA)
   await mkUser('mgmt', 'management', tenantA)
+  await mkUser('fin', 'finance', tenantA)
   await mkUser('hrB', 'hr', tenantB)
   await mkUser('ceoB', 'admin', tenantB)
   await mkUser('hrC', 'hr', tenantC)
@@ -233,7 +234,8 @@ describe('gratuity on a full & final', () => {
     // HR raised it, so its HR step is signed by raising: it already waits on management.
     const at = await prisma.hrRecord.findUniqueOrThrow({ where: { id: fnf } })
     expect([at.status, at.currentStep]).toEqual(['submitted', 1])
-    const ok = await call('mgmt', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
+    expect((await call('fin', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })).statusCode).toBe(200)
+    const ok = await call('ceo', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     expect(ok.statusCode, ok.body).toBe(200)
     expect(ok.json().status).toBe('approved')
 

@@ -470,7 +470,7 @@ describe('the old (transferred) record: no exit, F&F, leave encashment or gratui
   it('approving one raised before the move is refused (checked at approval, nothing booked)', async () => {
     for (const section of ['resignation', 'final_settlement']) {
       const r = await prisma.hrRecord.create({
-        data: { tenantId: A, section, formVersion: 0, employeeId: emp.mgr, status: 'submitted', currentStep: section === 'resignation' ? 2 : 1 /* at the final step (a resignation ends with the CEO) */, startDate: new Date(Date.UTC(2026, 9, 1)), endDate: new Date(Date.UTC(2026, 9, 31)), amountCents: 6_000_000, data: { employee: emp.mgr, lastWorkingDay: '2026-10-31', gratuity: 5_000_000, leaveEncashment: 1_000_000 } },
+        data: { tenantId: A, section, formVersion: 0, employeeId: emp.mgr, status: 'submitted', currentStep: 2 /* at the final step (both end with the CEO) */, startDate: new Date(Date.UTC(2026, 9, 1)), endDate: new Date(Date.UTC(2026, 9, 31)), amountCents: 6_000_000, data: { employee: emp.mgr, lastWorkingDay: '2026-10-31', gratuity: 5_000_000, leaveEncashment: 1_000_000 } },
       })
       await transferred(await req('POST', `/records/${section}/${r.id}/decide`, { decision: 'approved' }))
       expect((await prisma.hrRecord.findUniqueOrThrow({ where: { id: r.id } })).status).toBe('submitted')

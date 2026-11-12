@@ -126,6 +126,15 @@ async function raise(section: string, data: Record<string, unknown>) {
 }
 const decide = (who: string, section: string, id: string, extra: Record<string, unknown> = {}) =>
   call(who, 'POST', `/records/${section}/${id}/decide`, { decision: 'approved', ...extra })
+/** A full & final (owner, 2026-11-12): finance checks it, then the CEO approves — the final step's checks run there. */
+async function decideFnf(id: string, extra: Record<string, unknown> = {}) {
+  const rec = await prisma.hrRecord.findUniqueOrThrow({ where: { id } })
+  if (rec.status === 'submitted' && rec.currentStep === 1) {
+    const f = await decide('fin', 'final_settlement', id)
+    if (f.statusCode !== 200) return f
+  }
+  return decide('ceo', 'final_settlement', id, extra)
+}
 /** HR sends the run to finance and it is checked (here by the CEO) before it is approved (owner, 2026-10-30). */
 async function toApprover(runId: string) {
   const sent = await call('hr', 'POST', `/payroll/runs/${runId}/send-to-finance`)
@@ -150,6 +159,7 @@ beforeAll(async () => {
   await mkUser('ceo', 'admin', tenantA)
   await mkUser('hr', 'hr', tenantA)
   await mkUser('mgmt', 'management', tenantA)
+  await mkUser('fin', 'finance', tenantA)
   await mkUser('ceoB', 'admin', tenantB)
 
   await mkEmp('Leaver', tenantA, { departmentId: kitchen, paymentMethod: 'bank' })
@@ -327,7 +337,7 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
   it('is approved only once every payroll with the leaver is locked', async () => {
     const at = await prisma.hrRecord.findUniqueOrThrow({ where: { id: fnf } })
     expect([at.status, at.currentStep]).toEqual(['submitted', 1]) // HR step signed by raising
-    const open = await decide('mgmt', 'final_settlement', fnf)
+    const open = await decideFnf(fnf)
     expect(open.statusCode).toBe(409)
     expect(open.json().error.code).toBe('FNF_PAYROLL_OPEN')
     expect(await entry(tenantA, `hr.final_settlement.accrual:${fnf}`)).toBeNull()
@@ -335,7 +345,7 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     await toApprover(sep)
     expect((await call('ceo', 'POST', `/payroll/runs/${sep}/approve`)).statusCode).toBe(200)
     expect((await call('ceo', 'POST', `/payroll/runs/${sep}/lock`)).statusCode).toBe(200)
-    const ok = await decide('mgmt', 'final_settlement', fnf)
+    const ok = await decideFnf(fnf)
     expect(ok.statusCode, ok.body).toBe(200)
     expect(ok.json().status).toBe('approved')
     expect(ok.json().data._salaryFrom).toBe('2026-10-01T00:00:00.000Z')
@@ -415,7 +425,7 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     // October is deleted instead of locked: the settlement would leave
     // October unpaid, so its approval is refused.
     expect((await call('hr', 'DELETE', `/payroll/runs/${oct.id}`)).statusCode).toBe(204)
-    const r = await decide('mgmt', 'final_settlement', stale)
+    const r = await decideFnf(stale)
     expect(r.statusCode).toBe(409)
     expect(r.json().error.code).toBe('FNF_STALE')
     expect((await call('hr', 'POST', `/records/final_settlement/${stale}/cancel`)).statusCode).toBe(200)
@@ -426,7 +436,7 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     expect(c2.salaryFrom).toBe('2026-10-01T00:00:00.000Z')
     expect(c2.salaryPayable).toBe(toRupee(RS(52000) * 20 / 31))
     await call('hr', 'PATCH', `/records/final_settlement/${id}`, { data: { salaryPayable: c2.salaryPayable, incomeTax: c2.incomeTax, eobiEmployee: c2.eobiEmployee, eobiEmployer: c2.eobiEmployer, sessiEmployer: c2.sessiEmployer } })
-    expect((await decide('mgmt', 'final_settlement', id)).json().status).toBe('approved')
+    expect((await decideFnf(id)).json().status).toBe('approved')
     const booked = await entry(tenantA, `hr.final_settlement.accrual:${id}`)
     expect(balanced(booked!.lines)).toBe(true)
     // Approved, it cannot be edited — the books hold these figures.
@@ -448,7 +458,7 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     await prisma.hrEmployee.update({ where: { id: emps['Cheque Cook']! }, data: { status: 'resigned', lastWorkingDay: D('2026-10-05') } })
     const owing = (await raise('final_settlement', { employee: emps['Cheque Cook'], lastWorkingDay: '2026-10-05' })).id
     await call('hr', 'PATCH', `/records/final_settlement/${owing}`, { data: { salaryPayable: RS(1000), deductions: RS(5000) } })
-    const neg = await decide('mgmt', 'final_settlement', owing)
+    const neg = await decideFnf(owing)
     expect(neg.statusCode).toBe(422)
     expect(neg.json().error.code).toBe('FNF_NEGATIVE')
     expect((await call('hr', 'POST', `/records/final_settlement/${owing}/cancel`)).statusCode).toBe(200)
@@ -458,14 +468,14 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     await call('hr', 'PATCH', `/records/final_settlement/${id}`, { data: { salaryPayable: c.salaryPayable, incomeTax: c.incomeTax, eobiEmployee: c.eobiEmployee, eobiEmployer: c.eobiEmployer, sessiEmployer: c.sessiEmployer } })
     const lock = await prisma.periodLock.create({ data: { tenantId: tenantA, lockedThrough: new Date(pktToday().getTime() + 86_400_000 - 5 * 3_600_000 - 1), lockedBy: users['ceo']!.id } })
     try {
-      const closed = await decide('mgmt', 'final_settlement', id)
+      const closed = await decideFnf(id)
       expect(closed.statusCode).toBe(422)
       expect(closed.json().error.code).toBe('PERIOD_LOCKED')
       expect((await prisma.hrRecord.findUniqueOrThrow({ where: { id } })).status).toBe('submitted')
     } finally {
       await prisma.periodLock.delete({ where: { id: lock.id } })
     }
-    expect((await decide('mgmt', 'final_settlement', id)).json().status).toBe('approved')
+    expect((await decideFnf(id)).json().status).toBe('approved')
   })
 
   it('books settlements approved before approval booked them, once', async () => {
@@ -524,7 +534,7 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     const id = (await raise('final_settlement', { employee: who, lastWorkingDay: '2026-10-15' })).id
     const c = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: who, lastWorkingDay: '2026-10-15', recordId: id })).json()
     await call('hr', 'PATCH', `/records/final_settlement/${id}`, { data: { salaryPayable: c.salaryPayable, incomeTax: c.incomeTax, eobiEmployee: c.eobiEmployee, eobiEmployer: c.eobiEmployer, sessiEmployer: c.sessiEmployer } })
-    const ok = await decide('mgmt', 'final_settlement', id)
+    const ok = await decideFnf(id)
     expect(ok.statusCode, ok.body).toBe(200)
     expect(ok.json().status).toBe('approved')
     const booked = await entry(tenantA, `hr.final_settlement.accrual:${id}`)
@@ -539,7 +549,7 @@ describe('a full & final is booked, paid and never pays a month twice', () => {
     const third = (await raise('final_settlement', { employee: who, lastWorkingDay: '2026-10-15' })).id
     const c3 = (await call('hr', 'POST', '/final-settlement/calculate', { employeeId: who, lastWorkingDay: '2026-10-15', recordId: third })).json()
     await call('hr', 'PATCH', `/records/final_settlement/${third}`, { data: { salaryPayable: c3.salaryPayable, incomeTax: c3.incomeTax, eobiEmployee: c3.eobiEmployee, eobiEmployer: c3.eobiEmployer, sessiEmployer: c3.sessiEmployer } })
-    expect((await decide('mgmt', 'final_settlement', third)).json().status).toBe('approved')
+    expect((await decideFnf(third)).json().status).toBe('approved')
     expect(await entry(tenantA, `hr.final_settlement.accrual:${third}`)).not.toBeNull()
   })
 })

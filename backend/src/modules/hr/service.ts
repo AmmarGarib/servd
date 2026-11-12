@@ -10,7 +10,7 @@ import { accountStateOf } from '../auth/accountStatus.js'
 import {
   HR_SECTIONS, sectionByKey, EMPLOYEE_MASTER_FIELDS, withSystemFields, transferTargetsOutsideCompany,
   type HrField, type HrSection, type WorkflowStep,
-  CEO_STEP,
+  CEO_STEP, FINANCE_STEP,
 } from './forms.js'
 import {
   mergeSettings, type HrSettings, type PayrollInputs, EMPTY_INPUTS, deductionItemsOf, allocateRecoveries, type DeductionItem,
@@ -71,8 +71,16 @@ function enforcedWorkflow(section: string, wf: WorkflowStep[]): WorkflowStep[] {
   if (section === 'attendance') return [CEO_STEP]
   if (section === 'salary_revision') return withCeoLast(wf)
   if (section === 'resignation') return resignationWorkflow(wf)
+  if (section === 'final_settlement') return FINAL_SETTLEMENT_WORKFLOW
   return wf
 }
+
+/** A full & final settlement (owner, 2026-11-12: "HR raises, Finance check, CEO approve, Finance Pay"): whatever a
+ *  saved format or an older record says. A record still waiting at its old second step (management) now waits on
+ *  finance, then the CEO. */
+export const FINAL_SETTLEMENT_WORKFLOW: WorkflowStep[] = [
+  { key: 'hr', label: 'HR approval', role: 'hr' }, FINANCE_STEP, CEO_STEP,
+]
 
 /** A resignation: the line manager, then HR, then the CEO's final approval (owner, 2026-11-07: "after HR submits it
  *  should go to CEO for final approval, should not go directly from line manager to CEO"). Any workflow (a saved
@@ -760,6 +768,7 @@ export function workflowOf(rec: { section: string; data: unknown; amountCents?: 
   if (rec.section === 'profile_update' && ((rec.data ?? {}) as Record<string, unknown>)['_ceoOnly'] === true) return [CEO_STEP]
   // A wage change ends with the CEO (owner, 2026-10-27).
   if (rec.section === 'resignation') return resignationWorkflow(fmt.workflow)
+  if (rec.section === 'final_settlement') return FINAL_SETTLEMENT_WORKFLOW
   return isWageChange(rec) ? withCeoLast(fmt.workflow) : fmt.workflow
 }
 

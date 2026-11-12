@@ -37,7 +37,7 @@ export interface HrField {
   system?: boolean
 }
 
-export interface WorkflowStep { key: string; label: string; role: 'hod' | 'hr' | 'management' }
+export interface WorkflowStep { key: string; label: string; role: 'hod' | 'hr' | 'management' | 'finance' | 'ceo' }
 
 export interface HrFormat {
   section: string
@@ -172,7 +172,7 @@ export const STATUS_BADGE: Record<string, string> = {
   finance_review: 's-badge-amber', finance_checked: 's-badge-purple',
 }
 
-export const ROLE_LABEL: Record<string, string> = { hod: 'Reporting manager', hr: 'HR', management: 'Management' }
+export const ROLE_LABEL: Record<string, string> = { hod: 'Reporting manager', hr: 'HR', management: 'Management', finance: 'Finance', ceo: 'CEO' }
 
 // The API's role gates (backend/src/modules/hr/routes.ts HR_ADMIN and
 // PAYROLL_APPROVERS). Screens use them only to hide what would be refused.

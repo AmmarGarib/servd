@@ -1626,6 +1626,7 @@ export async function hrStepApprovers(id: string): Promise<string[]> {
     const subject = { employeeUserId: emp?.userId ?? null, managerUserId: managerUserId ?? null, createdById: rec.createdById, priorApproverIds: prior, raisedByHr: raiser?.role === 'hr' }
     const ids = uniq([
       ...(await staffOfCompanies([rec.tenantId], HR_STEP_ROLES)),
+      ...(step.role === 'finance' ? await staffOfCompanies([rec.tenantId], ['finance'] as const) : []),
       ...(managerUserId ? [managerUserId] : []),
       ...(await headOfficeStaffServing([rec.tenantId], HR_STEP_ROLES)),
       ...(await delegatesNaming('hr_request')),
@@ -1633,6 +1634,7 @@ export async function hrStepApprovers(id: string): Promise<string[]> {
     const through = await throughHeadOfficeIds({ tenantId: rec.tenantId, submittedByIds: [rec.createdById], submittedAt: rec.createdAt, viaHeadOfficeId: rec.viaHeadOfficeId })
     const cands = await loadCandidates(ids)
     const staffHr = await holdingModule(cands.map((c) => c.id), 'staff_hr')
+    const accountingHolders = step.role === 'finance' ? await holdingModule(cands.map((c) => c.id), 'accounting') : new Set<string>()
     const admins: string[] = []
     const overrideAdmins: string[] = []
     const others: string[] = []
@@ -1643,6 +1645,8 @@ export async function hrStepApprovers(id: string): Promise<string[]> {
       // HR back-office work (an 'hr' step, or HR standing in for a missing HOD) needs staff_hr.
       const hrWork = c.role !== 'admin' && (step.role === 'hr' || (step.role === 'hod' && !(managerUserId && managerUserId === c.id)))
       if (hrWork && !staffHr.has(c.id)) continue
+      // Finance's step (owner, 2026-11-12): a finance login holding accounting.
+      if (step.role === 'finance' && c.role === 'finance' && !accountingHolders.has(c.id)) continue
       if (c.role === 'admin') (right.override ? overrideAdmins : admins).push(c.id)
       else if (right.via === 'delegation') delegates.push(c.id)
       else if (!right.override) others.push(c.id)

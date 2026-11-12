@@ -311,6 +311,15 @@ function todayStatusOf(category: string | null | undefined): 'present' | 'late' 
 /** Does the caller hold the HR back-office module ('staff_hr')? The CEO always
  *  does. Same source of truth as the central gate (role override ?? default,
  *  + moduleAllow − moduleDeny). */
+/** Finance's step of an HR record (owner, 2026-11-12: full & final) is finance's back office: it needs `accounting`. */
+async function holdsAccounting(req: FastifyRequest): Promise<boolean> {
+  const su = req.staffUser!
+  if (su.role === 'admin') return true
+  const u = await prisma.user.findUnique({ where: { id: su.id }, select: { moduleAllow: true, moduleDeny: true } })
+  const modules = await effectiveModulesForUser({ role: su.role as UserRole, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
+  return modules.has('accounting')
+}
+
 async function holdsStaffHr(req: FastifyRequest): Promise<boolean> {
   const su = req.staffUser!
   if (su.role === 'admin') return true
@@ -1039,7 +1048,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     const body = z.object({
       title: z.string().min(1).max(160).optional(),
       fields: z.array(fieldSchema).min(1).max(200),
-      workflow: z.array(z.object({ key: z.string().min(1).max(40), label: z.string().min(1).max(80), role: z.enum(['hod', 'hr', 'management']) })).max(6).optional(),
+      workflow: z.array(z.object({ key: z.string().min(1).max(40), label: z.string().min(1).max(80), role: z.enum(['hod', 'hr', 'management', 'finance', 'ceo']) })).max(6).optional(),
       stages: z.array(z.string().min(1).max(60)).max(30).optional(),
       note: z.string().max(300).optional(),
     }).parse(req.body)
@@ -2277,6 +2286,9 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // own step and a management step stay with their approvers.
     if (stepIsHrWork(step.role, req.staffUser!, subject.managerUserId) && !(await holdsStaffHr(req))) {
       throw new ForbiddenError('Your account does not have access to this module (staff_hr). Ask the CEO to enable it in Module Access.')
+    }
+    if (step.role === 'finance' && req.staffUser!.role === 'finance' && !(await holdsAccounting(req))) {
+      throw new ForbiddenError('Your account does not have access to this module (accounting). Ask the CEO to enable it in Module Access.')
     }
     // A swap moves a colleague's shift: it is approved only once that
     // colleague has accepted it (HR-R5). Rejecting needs no answer.
@@ -3588,6 +3600,7 @@ export async function hrRoutes(fastify: FastifyInstance) {
     // HR steps wait on HR only while HR holds the back-office module — the
     // same rule /decide applies (PPL-R2-01). Read once, only if needed.
     let staffHr: boolean | null = null
+    let accounting: boolean | null = null
     // One read per (company, section, version) — bulk-keyed days share it.
     const formats = new Map<string, ReturnType<typeof getFormat>>()
     const formatOf = (r: { tenantId: string; section: string; formVersion: number }) => {
@@ -3614,6 +3627,10 @@ export async function hrRoutes(fastify: FastifyInstance) {
       if (stepIsHrWork(step.role, req.staffUser!, subject.managerUserId)) {
         if (staffHr === null) staffHr = await holdsStaffHr(req)
         if (!staffHr) continue
+      }
+      if (step.role === 'finance' && su.role === 'finance') {
+        if (accounting === null) accounting = await holdsAccounting(req)
+        if (!accounting) continue
       }
       out.push({ ...rec, label: recordLabel(rec, fmt.fields), sectionTitle: isOutOfAreaHold(rec) ? 'Punch outside the work location' : (sectionByKey(rec.section)?.title ?? rec.section), step, format: { ...fmt, workflow: workflowOf(rec, fmt) }, waitingOnPartner: swapAwaitsPartner(rec),
         // The CEO's last step of a wage change: approval type wage_change in the inbox (owner, 2026-10-27).

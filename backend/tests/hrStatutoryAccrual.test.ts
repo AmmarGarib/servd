@@ -96,6 +96,7 @@ beforeAll(async () => {
   await mkUser('ceo', 'admin', tenantA)
   await mkUser('hr', 'hr', tenantA)
   await mkUser('mgmt', 'management', tenantA)
+  await mkUser('fin', 'finance', tenantA)
   await mkUser('ceoB', 'admin', tenantB)
   await mkUser('hrB', 'hr', tenantB)
 
@@ -146,7 +147,8 @@ describe('payroll and F&F credit the statutory payables', () => {
     expect(c.salaryFrom).toBe('2026-08-01T00:00:00.000Z')
     const keys = ['salaryPayable', 'otPayable', 'leaveEncashment', 'gratuity', 'loanRecovery', 'incomeTax', 'eobiEmployee', 'eobiEmployer', 'sessiEmployer']
     expect((await call('hr', 'PATCH', `/records/final_settlement/${fnf}`, { data: Object.fromEntries(keys.map((k) => [k, c[k]])) })).statusCode).toBe(200)
-    const ok = await call('mgmt', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
+    expect((await call('fin', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })).statusCode).toBe(200)
+    const ok = await call('ceo', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     expect(ok.statusCode, ok.body).toBe(200)
     const e = await entry(tenantA, `hr.final_settlement.accrual:${fnf}`)
     expect(balanced(e!.lines)).toBe(true)

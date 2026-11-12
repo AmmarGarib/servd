@@ -85,6 +85,7 @@ beforeAll(async () => {
   await mkUser('ceo', 'admin', tenantA)
   await mkUser('hr', 'hr', tenantA)
   await mkUser('mgmt', 'management', tenantA)
+  await mkUser('fin', 'finance', tenantA)
   await mkUser('hrB', 'hr', tenantB)
 
   // July 2026 (31 days): one person absent or on unpaid leave all month.
@@ -230,7 +231,8 @@ describe('full & final applies the final month\'s attendance', () => {
   it('once approved, its figures never change — added attendance does not move it', async () => {
     const saved = await call('hr', 'PATCH', `/records/final_settlement/${fnf}`, { data: Object.fromEntries(FNF_KEYS.map((k) => [k, calc[k]])) })
     expect(saved.statusCode, saved.body).toBe(200)
-    const ok = await call('mgmt', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
+    expect((await call('fin', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })).statusCode).toBe(200)
+    const ok = await call('ceo', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     expect(ok.statusCode, ok.body).toBe(200)
     const before = await prisma.hrRecord.findUniqueOrThrow({ where: { id: fnf } })
     expect(before.status).toBe('approved')
@@ -284,7 +286,8 @@ describe('full & final over several months: window edges and a month with no pai
 
     const saved = await call('hr', 'PATCH', `/records/final_settlement/${fnf}`, { data: Object.fromEntries(FNF_KEYS.map((k) => [k, c[k]])) })
     expect(saved.statusCode, saved.body).toBe(200)
-    const ok = await call('mgmt', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
+    expect((await call('fin', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })).statusCode).toBe(200)
+    const ok = await call('ceo', 'POST', `/records/final_settlement/${fnf}/decide`, { decision: 'approved' })
     expect(ok.statusCode, ok.body).toBe(200)
     const e = await entry(tenantA, `hr.final_settlement.accrual:${fnf}`)
     expect(e).not.toBeNull()

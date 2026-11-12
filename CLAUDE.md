@@ -278,6 +278,12 @@ module id must be placed in a workspace in the same change.
   before the CEO and the CEO last on any saved format and on records raised before (read through `workflowOf` and
   `enforcedWorkflow`). HR's approval never applies a resignation; the CEO's does. A resignation HR raises still has its HR step
   signed by raising (`signHrStepRaisedByHr`). Tests: `tests/hrResignationWorkflow.test.ts`.
+- **Full & final: HR raises → finance checks → the CEO approves → finance pays (owner, 2026-11-12: "CEO's approval will
+  be after finance approval").** The final_settlement workflow is HR, FINANCE_STEP (`forms.ts`, role `finance`), CEO
+  (`service.ts FINAL_SETTLEMENT_WORKFLOW`, enforced through `workflowOf` / `enforcedWorkflow` on saved formats and older
+  records — one waiting at the old management step now waits on finance). The finance step is taken by role `finance`
+  holding `accounting` (`decideOne` 403 otherwise; `hrStepApprovers` / `/hr/approvals` list it for them); the CEO's
+  approval books it; finance marks it paid as before (`PAYROLL_PAYERS`). Tests: `tests/hrFinalSettlementLedger.test.ts`.
 - **HODs raise manpower requisitions for their own department (owner,
   2026-10-22: "Give manpower requisition option on screen of all HODs, for
   their own department only").** An HOD = a login whose own active employee
