@@ -23,6 +23,7 @@ import { useAuthStore } from '../../../store/auth'
 import { useManagerRoles } from '../../../lib/roles'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { INVENTORY_CATEGORY_OPTIONS, categoryLabel, stockErrorText } from '../../../lib/stockUi'
+import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { Button, Dialog, DialogFooter, ErrorBanner, Field, Input, SidePanel, Textarea } from '../../../components/finance/ui'
 import type { IngredientGroup, MasterPrice, MasterRow } from '../../../components/kitchen/MasterIngredientPicker'
 
@@ -259,6 +260,24 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
       ? `${e.message}. On Inventory, move the stock of one item into the other (count one to zero and the other up), then merge here.`
       : stockErrorText(e)),
   })
+  // Delete (owner, 2026-11-12): CEO / F&B manager, unused ingredients only — the API says why when it is in use.
+  const confirm = useConfirm()
+  const [delErr, setDelErr] = useState('')
+  const del = useMutation({
+    mutationFn: () => api.delete(`/ingredient-master/${master.id}`),
+    meta: { inlineErrors: true },
+    onSuccess: () => { refresh(); onClose() },
+    onError: (e) => setDelErr(e instanceof ApiError ? e.message : stockErrorText(e)),
+  })
+  const askDelete = async () => {
+    setDelErr('')
+    const ok = await confirm({
+      title: `Delete ${master.name}?`,
+      body: 'It leaves the Ingredients sheet. Any company stock item for it that was never used goes to the Trash with it. You can restore it from the Trash.',
+      confirmLabel: 'Delete', danger: true,
+    })
+    if (ok) del.mutate()
+  }
   const set = (k: keyof Draft) => (e: { target: { value: string } }) => setD({ ...d, [k]: e.target.value })
 
   return (
@@ -331,6 +350,14 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
               ))}
             </ul>
             {mergeErr && <ErrorBanner message={mergeErr} />}
+          </div>
+        )}
+        {isReviewer && (
+          <div className="border-t border-s-border pt-3">
+            <p className="text-sm font-semibold text-s-text">Delete ingredient</p>
+            <p className="text-xs text-s-muted mb-2">Only for an ingredient no recipe uses and no company has bought, counted or holds stock of. Otherwise merge it into the right one above.</p>
+            <Button variant="danger" disabled={del.isPending} onClick={() => { void askDelete() }}>{del.isPending ? 'Deleting…' : 'Delete ingredient'}</Button>
+            {delErr && <div className="mt-2"><ErrorBanner message={delErr} /></div>}
           </div>
         )}
       </div>

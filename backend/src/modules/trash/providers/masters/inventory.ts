@@ -16,6 +16,8 @@
 import type { UserRole } from '@prisma/client'
 import { PROCUREMENT_TEAM } from '../../../auth/middleware.js'
 import type { Reference, TrashProvider } from '../../types.js'
+import { AppError } from '../../../../lib/errors.js'
+import { restoreSnapshot, type Snapshot } from '../../snapshot.js'
 
 // = the item master's own edit guard (inventory/routes.ts ITEM_MASTER_EDITORS).
 const editors: readonly UserRole[] = PROCUREMENT_TEAM
@@ -97,4 +99,59 @@ const inventoryItem: TrashProvider = {
   erasable: (_e, refs) => refs.length === 0,
 }
 
-export const INVENTORY_TRASH_PROVIDERS: TrashProvider[] = [inventoryItem]
+// ── servd ingredient (owner, 2026-11-12: delete from the Ingredients sheet) ───────────────────────────────────
+//
+//   ingredient_master   strategy snapshot (IngredientMaster + its typed IngredientMasterPrice rows)
+//
+// Written by DELETE /ingredient-master/:id (modules/ingredientMaster/routes.ts) for an UNUSED ingredient only, under the
+// deleter's active company. Restore re-creates it with the same id and re-links the company stock items it had
+// (meta.linkedItemIds) that are still unlinked — a stock item restored before it stays unlinked only if its company
+// linked another item to this ingredient meanwhile. Clash: a live ingredient with the same name and unit (409).
+// Roles = ingredientMaster/routes.ts MASTER_REVIEWERS (literal here: that route file imports lib/trash — a cycle).
+const INGREDIENT_REVIEWERS: readonly UserRole[] = ['admin', 'fnb_manager']
+const snapOf = (e: { snapshot: unknown }) => e.snapshot as Snapshot | null
+
+const ingredientMaster: TrashProvider = {
+  key: 'ingredient_master',
+  label: 'servd ingredient',
+  moduleId: 'recipes',
+  roles: { list: INGREDIENT_REVIEWERS, restore: INGREDIENT_REVIEWERS },
+  kind: 'master',
+  strategy: 'snapshot',
+  auditCategory: 'identity',
+  model: 'IngredientMaster',
+  linkOf: () => '/kitchen/ingredients',
+  async clashOf(tx, entry) {
+    const row = snapOf(entry)?.row
+    if (!row) return null
+    const twin = await tx.ingredientMaster.findFirst({
+      where: { mergedIntoId: null, normalizedName: String(row.normalizedName ?? ''), stockUnit: String(row.stockUnit ?? '') },
+      select: { id: true },
+    })
+    if (!twin) return null
+    return {
+      field: 'name', value: String(row.name ?? ''), renamable: false, code: 'INGREDIENT_EXISTS',
+      message: `servd already has "${String(row.name ?? '')}" (${String(row.stockUnit ?? '')}) — use that one`,
+    }
+  },
+  async restore(tx, _ctx, entry) {
+    const snap = snapOf(entry)
+    if (!snap) throw new AppError('PURGED', 'This item was deleted forever', 409)
+    const id = await restoreSnapshot(tx, snap)
+    const linked = ((entry.meta as { linkedItemIds?: unknown } | null)?.linkedItemIds ?? []) as string[]
+    if (Array.isArray(linked) && linked.length) {
+      // One live stock item per ingredient per company: never re-link where the company already linked another.
+      const items = await tx.inventoryItem.findMany({ where: { id: { in: linked }, masterIngredientId: null }, select: { id: true, tenantId: true, deletedAt: true } })
+      const taken = new Set((await tx.inventoryItem.findMany({ where: { masterIngredientId: id, deletedAt: null }, select: { tenantId: true } })).map((i) => i.tenantId))
+      for (const it of items) {
+        if (!it.deletedAt && taken.has(it.tenantId)) continue
+        await tx.inventoryItem.update({ where: { id: it.id }, data: { masterIngredientId: id } })
+        if (!it.deletedAt) taken.add(it.tenantId)
+      }
+    }
+    return { id, link: '/kitchen/ingredients' }
+  },
+  erasable: () => true,
+}
+
+export const INVENTORY_TRASH_PROVIDERS: TrashProvider[] = [inventoryItem, ingredientMaster]

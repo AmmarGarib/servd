@@ -57,6 +57,9 @@ import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { INVENTORY_CATEGORIES } from '../../lib/inventoryClass.js'
 import { audit } from '../../lib/audit.js'
 import { ensureFifoReady, lockItemsTx } from '../../lib/stockLedger.js'
+import { moveToTrash } from '../../lib/trash.js'
+import { takeSnapshot } from '../trash/snapshot.js'
+import { itemUsage, INVENTORY_ITEM_TRASH } from '../inventory/unusedCleanup.js'
 import { cleanIngredientName, factorForItemUnit, findOrCreateMasterTx, normalizeIngredientName, sameUnitFamily, unitFamily } from '../../lib/ingredientMaster.js'
 import { moveItemLotsToCategoryTx, costsHiddenFor } from '../inventory/routes.js'
 import { AVERAGE_DAYS, displayUnitOf, masterPriceHistory, masterPricesMany, type MasterPrice } from '../../lib/ingredientPrices.js'
@@ -452,6 +455,64 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     })
     const mine = await companyItems(req, [after.id])
     return shape(after, mine.get(after.id) ?? null, costsHiddenFor(req) ? null : (await masterPricesMany([after.id])).get(after.id))
+  })
+
+  // DELETE /:id — remove an ingredient from servd's sheet (owner, 2026-11-12: "Give me access to delete ingredients from
+  // here. Or the needs review page"). CEO / F&B manager (the reviewers, like merge). Only an ingredient nothing really
+  // uses: no recipe line names it (or one of its company stock items), and every company's stock item for it has no
+  // stock and no purchase / stock history (inventory/unusedCleanup.ts itemUsage — the ONE "unused" rule). Otherwise 409
+  // MASTER_IN_USE with the reasons (merge it into the right one instead). Those empty stock items go to the Trash with
+  // it (inventory_item, each its own company); the ingredient itself is parked as a snapshot (`ingredient_master`,
+  // with its typed prices) under the ACTIVE company and comes back from the Trash with its stock items re-linked.
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MASTER_REVIEWERS) }, async (req) => {
+    const m = await loadLive(req.params.id)
+    if (m.mergedIntoId) throw new AppError('MASTER_MERGED', 'This ingredient was already merged into another', 409, { mergedIntoId: m.mergedIntoId })
+    const result = await prisma.$transaction(async (tx) => {
+      const live = await tx.inventoryItem.findMany({
+        where: { masterIngredientId: m.id, deletedAt: null }, orderBy: { id: 'asc' },
+        select: { id: true, name: true, unit: true, tenantId: true, currentStock: true, tenant: { select: { name: true } } },
+      })
+      if (live.length) await lockItemsTx(tx, live.map((i) => i.id))
+      const [recipeLines, mergedFrom] = await Promise.all([
+        tx.recipeIngredient.count({ where: { masterIngredientId: m.id } }),
+        tx.ingredientMaster.count({ where: { mergedIntoId: m.id } }),
+      ])
+      const reasons: string[] = []
+      if (recipeLines) reasons.push(`In ${recipeLines} recipe line${recipeLines === 1 ? '' : 's'}`)
+      if (mergedFrom) reasons.push(`${mergedFrom} other ingredient${mergedFrom === 1 ? ' was' : 's were'} merged into it`)
+      const usage = await itemUsage(tx, live.map((i) => ({ id: i.id, currentStock: Number(i.currentStock) })))
+      for (const i of live) {
+        const u = usage.get(i.id)!
+        const why = [...u.used, ...u.stock, ...u.history]
+        if (why.length) reasons.push(`${i.tenant?.name ?? 'A company'}: ${why.join(', ')}`)
+      }
+      if (reasons.length) {
+        throw new AppError('MASTER_IN_USE', `${m.name} is in use, so it can't be deleted — merge it into the right ingredient instead. ${reasons.join('; ')}`, 409, { reasons })
+      }
+      const trashedItems = await tx.inventoryItem.findMany({ where: { masterIngredientId: m.id, deletedAt: { not: null } }, select: { id: true } })
+      for (const i of live) {
+        await moveToTrash(tx, req, { type: INVENTORY_ITEM_TRASH, entityId: i.id, tenantId: i.tenantId, title: i.name, subtitle: i.unit, reason: `Ingredient "${m.name}" deleted from the Ingredients sheet` })
+        await tx.inventoryItem.update({ where: { id: i.id }, data: { deletedAt: new Date() } })
+      }
+      const linked = [...live.map((i) => i.id), ...trashedItems.map((i) => i.id)]
+      await tx.inventoryItem.updateMany({ where: { id: { in: linked } }, data: { masterIngredientId: null } })
+      const prices = await tx.ingredientMasterPrice.findMany({ where: { masterIngredientId: m.id } })
+      await moveToTrash(tx, req, {
+        type: 'ingredient_master', entityId: m.id, tenantId: req.staffUser!.tenantId ?? null,
+        title: m.name, subtitle: m.stockUnit, reason: 'Deleted from the Ingredients sheet',
+        snapshot: takeSnapshot('IngredientMaster', m as unknown as Record<string, unknown>, { IngredientMasterPrice: prices as unknown as Array<Record<string, unknown>> }),
+        meta: { linkedItemIds: linked },
+      })
+      await tx.ingredientMasterPrice.deleteMany({ where: { masterIngredientId: m.id } })
+      await tx.ingredientMaster.delete({ where: { id: m.id } })
+      return { stockItemsParked: live.length }
+    }, { maxWait: 10_000, timeout: 30_000 })
+    await audit({
+      category: 'identity', action: 'ingredient_master.delete', entity: 'IngredientMaster', entityId: m.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
+      before: { name: m.name, stockUnit: m.stockUnit, status: m.status }, after: result,
+    })
+    return { deleted: m.id, ...result }
   })
 
   fastify.post<{ Params: { id: string } }>('/:id/merge', { preHandler: requireAuth(...MASTER_REVIEWERS) }, async (req) => {
