@@ -199,9 +199,12 @@ export async function menuRoutes(fastify: FastifyInstance) {
     '/:conceptId',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req, reply) => {
-      // Tenant scope: requested concept must belong to the active tenant.
+      // Tenant scope: the brand belongs to the active company — or the active company OWNS its recipes (owner,
+      // 2026-11-12: the recipe form's menu categories were empty for a Flipd dish while working in GS Foods, which
+      // owns Flipd's recipes and must be the active company to write them — RECIPE_OWNER_NOT_ACTIVE).
+      const scope = await scopeTenantWhere(req, 'read')
       const concept = await prisma.concept.findFirst({
-        where: { id: req.params.conceptId, tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        where: { id: req.params.conceptId, deletedAt: null, OR: [scope, { recipeOwnerTenantId: scope.tenantId }] },
       })
       if (!concept) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your active company' } })
       const categories = await prisma.category.findMany({

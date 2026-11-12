@@ -22,6 +22,7 @@ import { AppError } from '../src/lib/errors.js'
 import { addLotTx, ensureFifoReady, siteOnHand } from '../src/lib/stockLedger.js'
 import { ingestOrder, deductInventoryForOrder } from '../src/modules/orders/service.js'
 import { recipeRoutes } from '../src/modules/recipes/routes.js'
+import { menuRoutes } from '../src/modules/menu/routes.js'
 import { conceptRoutes } from '../src/modules/concepts/routes.js'
 import { crosschecksRoutes } from '../src/modules/crosschecks/routes.js'
 import { inventoryRoutes } from '../src/modules/inventory/routes.js'
@@ -84,6 +85,7 @@ beforeAll(async () => {
   await app.register(inventoryRoutes, { prefix: '/inventory' })
   await app.register(ingredientMasterRoutes, { prefix: '/ingredient-master' })
   await app.register(kitchenRoutes, { prefix: '/kitchen' })
+  await app.register(menuRoutes, { prefix: '/menu' })
   await app.ready()
 
   const cat = await prisma.category.findFirstOrThrow({ where: { conceptId: FL.conceptId } })
@@ -114,6 +116,13 @@ describe('the brand\'s recipe owner (CEO field)', () => {
 })
 
 describe('GS Foods writes Flipd\'s recipes', () => {
+  it('the GS chef sees Flipd\'s menu categories for a new dish (owner, 2026-11-12); a third company does not', async () => {
+    const r = await call(u.chefGS!, 'GET', `/menu/${FL.conceptId}`)
+    expect(r.statusCode, r.body).toBe(200)
+    expect((r.json() as unknown[]).length).toBeGreaterThan(0)
+    expect((await call(u.chefGS!, 'GET', `/menu/${C3.conceptId}`)).statusCode).toBe(404)
+  })
+
   it('a GS chef creates the sub-recipe and Flipd\'s dish from servd\'s master; both are GS Foods\'', async () => {
     const sauce = await call(u.chefGS!, 'POST', '/recipes', {
       kind: 'component', name: 'Smash sauce', yieldGrams: 1000, portionsPerBatch: 20, portionLabel: 'cup',

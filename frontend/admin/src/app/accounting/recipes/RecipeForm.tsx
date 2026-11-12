@@ -306,7 +306,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
   // The picked brand's menu tree: its categories (the "new menu item" mode's
   // category dropdown) and its dishes' add-on groups (the add-on pickers).
   // Fetched lazily when a brand is selected.
-  const { data: brandMenu = [] } = useQuery<MenuTreeCategory[]>({
+  const { data: brandMenu = [], isLoading: brandMenuLoading, error: brandMenuError } = useQuery<MenuTreeCategory[]>({
     queryKey: ['recipes', 'brand-menu', brandId],
     queryFn: () => api.get<MenuTreeCategory[]>(`/menu/${brandId}`),
     enabled: !!brandId,
@@ -840,7 +840,9 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
               {/* New plate only: description + category for the menu item it'll open */}
               {kind === 'plate' && !isEdit && (
                 <>
-                  <Field label="Menu category *" hint={brandId ? '' : 'Pick a brand first'}>
+                  <Field label="Menu category *" hint={!brandId ? 'Pick a brand first'
+                    : brandMenuError ? `Could not load this brand's categories: ${(brandMenuError as Error).message}`
+                    : !brandMenuLoading && brandCategories.length === 0 ? 'This brand has no menu categories yet — add one in Menu → Items first.' : ''}>
                     <Select value={newItemCategoryId} onChange={(e) => setNewItemCategoryId(e.target.value)}
                       className={inputCls} disabled={!brandId}>
                       <option value="">{brandId ? '— Pick category —' : '— Pick brand first —'}</option>
