@@ -419,6 +419,16 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
             ...(body.shelfLifeDays !== undefined && { shelfLifeDays: body.shelfLifeDays }),
           },
         })
+        // A rename reaches every company's linked stock item (owner, 2026-11-12: "I pick birds eye chili from the list
+        // and it inputs red Onion") — unless that company already has ANOTHER live item of the new name (left as it is).
+        if (name !== before.name) {
+          for (const it of linked) {
+            const clash = await tx.inventoryItem.findFirst({
+              where: { id: { not: it.id }, tenantId: it.tenantId, deletedAt: null, name: { equals: name, mode: 'insensitive' } }, select: { id: true },
+            })
+            if (!clash) await tx.inventoryItem.update({ where: { id: it.id }, data: { name } })
+          }
+        }
         // The buying unit + factor reach ONLY items that buy in the master's (old) buying unit; the factor is in base
         // units on the master and in each item's OWN unit on the item (kg vs g).
         if (buyingChanges) {
