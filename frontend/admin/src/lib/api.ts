@@ -446,7 +446,7 @@ export const api = {
   download,
   fetchBlob,
   // `options.headers` override the defaults (e.g. `{ 'x-servd-brand': '' }` = no global brand filter on this read).
-  get:    <T>(path: string, options?: { headers?: Record<string, string> }) => request<T>(path, options ? { headers: options.headers } : {}),
+  get:    <T>(path: string, options?: { headers?: Record<string, string>; signal?: AbortSignal }) => request<T>(path, options ? { ...(options.headers ? { headers: options.headers } : {}), ...(options.signal ? { signal: options.signal } : {}) } : {}),
   // Mutations accept an optional second arg shape: either the body alone
   // (legacy callers) or `{ tenantId }` to pin the write to a specific company
   // — used by inline pickers in /workforce, /procurement, /settings etc. so

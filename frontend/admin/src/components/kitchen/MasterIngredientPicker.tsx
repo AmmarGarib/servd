@@ -6,7 +6,7 @@
 // it, K3) and hands that item back. "Add new ingredient" puts a name that is not there yet into servd's master at
 // once, flagged for review (K2), then does the same. Prices are servd's (Operations → Ingredients); supplier and par stay the company's.
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { INVENTORY_CATEGORY_OPTIONS } from '../../lib/stockUi'
 import { stockErrorText } from '../../lib/stockUi'
@@ -78,14 +78,21 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
   const btn = useRef<HTMLInputElement>(null)
   const closeMenu = useCallback(() => setOpen(false), [])
 
-  useEffect(() => { const t = setTimeout(() => setDebounced(q.trim()), 200); return () => clearTimeout(t) }, [q])
+  useEffect(() => { const t = setTimeout(() => setDebounced(q.trim()), 150); return () => clearTimeout(t) }, [q])
 
-  const { data: rows = [], isFetching } = useQuery<MasterRow[]>({
+  // No lag while typing (owner, 2026-11-12): the last answer stays on screen while the next one loads, narrowed at
+  // once to what is typed now, so the list never blanks between keystrokes.
+  const { data: fetched = [], isFetching } = useQuery<MasterRow[]>({
     queryKey: ['ingredient-master', 'search', debounced, groupFilter],
-    queryFn: () => api.get<MasterRow[]>(`/ingredient-master?q=${encodeURIComponent(debounced)}&limit=${groupFilter ? 200 : 25}${groupFilter ? `&groupId=${encodeURIComponent(groupFilter)}` : ''}`),
+    queryFn: ({ signal }) => api.get<MasterRow[]>(`/ingredient-master?q=${encodeURIComponent(debounced)}&limit=${groupFilter ? 200 : 25}${groupFilter ? `&groupId=${encodeURIComponent(groupFilter)}` : ''}`, { signal }),
     enabled: open,
-    staleTime: 30_000,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   })
+  const typed = q.trim().toLowerCase().replace(/\s+/g, ' ')
+  const rows = typed && typed !== debounced.toLowerCase().replace(/\s+/g, ' ')
+    ? fetched.filter((r) => r.name.toLowerCase().replace(/\s+/g, ' ').includes(typed))
+    : fetched
   const { data: groups = [], refetch: refetchGroups } = useQuery<IngredientGroup[]>({
     queryKey: ['ingredient-master', 'groups'],
     queryFn: () => api.get<IngredientGroup[]>('/ingredient-master/groups'),
@@ -189,7 +196,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
                 </button>
               </li>
             ))}
-            {!isFetching && rows.length === 0 && <li className="px-2 py-1.5 text-xs text-s-muted">{q.trim() ? 'No ingredient by that name yet.' : 'Nothing in this group yet.'}</li>}
+            {!isFetching && debounced === q.trim() && rows.length === 0 && <li className="px-2 py-1.5 text-xs text-s-muted">{q.trim() ? 'No ingredient by that name yet.' : 'Nothing in this group yet.'}</li>}
           </ul>
           {q.trim() && !exact && (
             <div className="mt-2 border-t border-s-border pt-2">

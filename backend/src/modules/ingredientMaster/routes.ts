@@ -249,20 +249,26 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     const q = normalizeIngredientName(req.query.q ?? '')
     const status = req.query.status === 'needs_review' || req.query.status === 'approved' ? req.query.status : undefined
     const limit = Math.min(Math.max(parseInt(req.query.limit ?? '30', 10) || 30, 1), 500)
-    const rows = await prisma.ingredientMaster.findMany({
-      where: {
-        mergedIntoId: null, ...(status ? { status } : {}), ...(q ? { normalizedName: { contains: q } } : {}),
-        ...(req.query.groupId === 'none' ? { groupId: null } : req.query.groupId ? { groupId: req.query.groupId } : {}),
-      },
-      orderBy: [{ name: 'asc' }],
-      take: limit,
+    const base: Prisma.IngredientMasterWhereInput = {
+      mergedIntoId: null, ...(status ? { status } : {}),
+      ...(req.query.groupId === 'none' ? { groupId: null } : req.query.groupId ? { groupId: req.query.groupId } : {}),
+    }
+    // Names that START with the query first (what a cook typing "chick" wants), then the rest — fetched as two
+    // queries so the limit never cuts a starts-with match off behind alphabetically earlier "contains" ones.
+    const starts = q ? await prisma.ingredientMaster.findMany({ where: { ...base, normalizedName: { startsWith: q } }, orderBy: [{ name: 'asc' }], take: limit }) : []
+    const rest = starts.length >= limit ? [] : await prisma.ingredientMaster.findMany({
+      where: { ...base, ...(q ? { normalizedName: { contains: q }, id: { notIn: starts.map((r) => r.id) } } : {}) },
+      orderBy: [{ name: 'asc' }], take: limit - starts.length,
     })
-    // Names that start with the query first (what a cook typing "chick" wants), then the rest.
-    if (q) rows.sort((a, b) => Number(!a.normalizedName.startsWith(q)) - Number(!b.normalizedName.startsWith(q)))
-    const mine = await companyItems(req, rows.map((r) => r.id))
+    const rows = [...starts, ...rest]
+    const ids = rows.map((r) => r.id)
     const hide = costsHiddenFor(req)
-    const prices = hide ? new Map<string, MasterPrice>() : await masterPricesMany(rows.map((r) => r.id))
-    const groups = await groupsById(rows.map((r) => r.groupId))
+    // Independent reads in parallel (owner, 2026-11-12: the ingredient drop-down lagged while typing).
+    const [mine, prices, groups] = await Promise.all([
+      companyItems(req, ids),
+      hide ? Promise.resolve(new Map<string, MasterPrice>()) : masterPricesMany(ids),
+      groupsById(rows.map((r) => r.groupId)),
+    ])
     return rows.map((r) => shape(r, mine.get(r.id) ?? null, hide ? null : prices.get(r.id), r.groupId ? groups.get(r.groupId) : null))
   })
 
