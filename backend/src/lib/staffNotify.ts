@@ -73,6 +73,7 @@ export type NotificationKind =
   | 'marketing.weekly'        // Monday: last week's published vs slipped per board — marketing leads + the CEO (owner, 2026-11-03)
   | 'cost_split.posted'       // finance (or the CEO) split a booked cost between companies — each company's CEO(s) (owner, 2026-11-07)
   | 'cost_split.reversed'     // a cost split was reversed — each company's CEO(s)
+  | 'journal.intercompany'    // another company booked a journal with you: your draft is waiting / was booked / dismissed (owner, 2026-11-12)
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical'
 

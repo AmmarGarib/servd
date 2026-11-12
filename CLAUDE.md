@@ -1759,6 +1759,20 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `cost_split.posted` / `.reversed` to each company's CEO(s). Tables `cost_splits` / `cost_split_shares` (tenantId =
   source / receiver, RLS, merge repoint; migration `20261107140000_cost_splits`). Not built: sub-account tags on the
   split lines. Tests: `tests/costSplit.test.ts`.
+- **Journals between companies (owner, 2026-11-12: "When i pass journal in GS which is related to Flipd, it should also
+  appear in FLIPD to book same entry as receiving voucher with same details (editable)"; "It should not require CEO's
+  approval, CEO should get a notification instead"; answer: EXTEND — a draft in the other company, the inter-company
+  transfers stay as they are).** Contract: header of `accounting/mirrorDrafts.ts`. An account may be linked to another
+  company + its account (`Account.relatedTenantId` / `relatedAccountCode`, both or neither — CHECK; chart PATCH by
+  CHART_EDITORS who belong to both, 403 `NOT_IN_BOTH_COMPANIES`, 422 `RELATED_ACCOUNT_NOT_FOUND`). A MANUAL journal with a
+  line on a linked account raises ONE pending draft per other company (`intercompany_journal_drafts`, tenantId = that
+  company, RLS for either side, merge repoint; migration `20261112100000`): lines flipped, the linked line on the
+  counterpart account, PV ↔ RV, same date; its finance (accounting) + CEO(s) get bell `journal.intercompany`. That
+  company books it through the ONE manual path (`POST /accounting/journal {mirrorDraftId}`, claimed in the posting's
+  transaction, 409 `DRAFT_NOT_PENDING`) or dismisses it (`POST /accounting/journal-drafts/:id/dismiss {note ≥10}`);
+  the CEO(s) are told either way. A booked draft never raises one back. Cancelling / editing the source withdraws a
+  pending draft and warns both sides about a booked one. Admin: Journals → New entry → "From other companies"; chart
+  account form "Linked to company". Tests: `tests/intercompanyJournalDrafts.test.ts`.
 - **Every report exports CSV / Excel / PDF (owner, 2026-10-20: "Add option
   to export BS, P&L, GL, and any other report/account statement in PDF and
   Excel also").** ONE renderer, `backend/src/lib/reportExport.ts`: a route

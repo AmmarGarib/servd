@@ -35,6 +35,7 @@ import {
 import { journalRequestRoutes } from './journalRequestRoutes.js'
 import { raiseChangeRequest, type JournalRequestDto } from './journalRequests.js'
 import { journalsRoutes } from './journalsRoutes.js'
+import { mirrorDraftRoutes } from './mirrorDraftRoutes.js'
 import { annotateEntries, viewerOf } from './journalsRegister.js'
 import { tagLineTx } from '../../lib/subAccounts.js'
 import { closedBooksThrough } from './closedBooks.js'
@@ -290,6 +291,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       postedBy: req.staffUser!.id,
       voucherKind: body.voucherKind ?? null,
       registerOverride: body.registerOverride ?? null,
+      mirrorDraftId: body.mirrorDraftId ?? null,
       actor: { id: req.staffUser!.id, email: req.staffUser!.email, ip: req.ip },
     })))
     await sideEffects()
@@ -485,6 +487,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
 
   // The Journals tab: every entry, Manual / Payment / Receipt / All (journalsRegister.ts).
   await fastify.register(journalsRoutes, { prefix: '/journals' })
+  // Journals between companies: the other company's pre-filled drafts (mirrorDraftRoutes.ts).
+  await fastify.register(mirrorDraftRoutes, { prefix: '/journal-drafts' })
 
   // Journal requests: Finance prepares, the CEO approves (journalRequestRoutes.ts).
   await fastify.register(journalRequestRoutes, { prefix: '/journal-requests' })

@@ -6,6 +6,7 @@ import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
 import { NavIcon } from '../../../components/ui/NavIcon'
 import { SubAccounts } from './SubAccounts'
+import { useMyTenants } from '../../../components/ui/TenantPicker'
 
 type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
 interface Account {
@@ -20,6 +21,10 @@ interface Account {
   /** Current / non-current for assets and liabilities (owner, 2026-10-31; backend lib/accountTerm.ts): the
    *  stored pick, else the default by code. Null for equity / revenue / expense. */
   term?: Term | null
+  tenantId?: string | null
+  /** Linked to another company (owner, 2026-11-12): a journal on it drafts the other company's side. */
+  relatedTenantId?: string | null
+  relatedAccountCode?: string | null
 }
 type Term = 'current' | 'non_current'
 const TERM_TITLE: Record<Term, string> = { current: 'Current', non_current: 'Non-current' }
@@ -122,10 +127,19 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
   const [isActive, setIsActive] = useState(account?.isActive ?? true)
   const [term, setTerm] = useState<Term>(account?.term ?? 'current')
   const hasTerm = type === 'asset' || type === 'liability'
+  // Linked to another company (owner, 2026-11-12): journals on this account draft the other company's side.
+  const { data: companies = [] } = useMyTenants()
+  const others = companies.filter((c) => c.id !== account?.tenantId)
+  const [relatedTenantId, setRelatedTenantId] = useState(account?.relatedTenantId ?? '')
+  const [relatedAccountCode, setRelatedAccountCode] = useState(account?.relatedAccountCode ?? '')
+  const linkChanged = (relatedTenantId || null) !== (account?.relatedTenantId ?? null) || (relatedAccountCode.trim() || null) !== (account?.relatedAccountCode ?? null)
 
   const save = useMutation({
     mutationFn: () => {
-      if (account) return api.patch(`/setup/chart-of-accounts/${account.id}`, { name: name.trim(), description: description || null, isActive, ...(hasTerm && { classification: term }) })
+      if (account) return api.patch(`/setup/chart-of-accounts/${account.id}`, {
+        name: name.trim(), description: description || null, isActive, ...(hasTerm && { classification: term }),
+        ...(linkChanged && { relatedTenantId: relatedTenantId || null, relatedAccountCode: relatedTenantId ? (relatedAccountCode.trim() || null) : null }),
+      })
       return api.post('/setup/chart-of-accounts', { code: code.trim(), name: name.trim(), type, description: description || null, ...(hasTerm && { classification: term }) })
     },
     onSuccess: () => onSaved(),
@@ -165,6 +179,22 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
           )}
           <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Marketing software" className={fieldCls} /></Field>
           <Field label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={fieldCls} placeholder="What goes here vs other accounts" /></Field>
+          {account && others.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-3">
+              <Field label="Linked to company (optional)">
+                <Select value={relatedTenantId} onChange={(e) => setRelatedTenantId(e.target.value)} className={fieldCls}>
+                  <option value="">— Not linked —</option>
+                  {others.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </Select>
+              </Field>
+              <Field label="Their account code">
+                <input value={relatedAccountCode} onChange={(e) => setRelatedAccountCode(e.target.value)} disabled={!relatedTenantId} placeholder="2290" className={fieldCls + ' font-mono'} />
+              </Field>
+              {relatedTenantId && (
+                <p className="sm:col-span-2 text-[11px] text-white/55">A journal on this account puts a ready-made voucher in that company&apos;s Journals (its side, on their account), for its finance to check and post. The CEO is told.</p>
+              )}
+            </div>
+          )}
           {account && (
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="accent-accent" />

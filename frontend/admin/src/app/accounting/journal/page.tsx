@@ -33,6 +33,7 @@ import { dateBounds } from '../../finance/cash-vouchers/ui'
 import { JournalsTab } from './JournalsTab'
 import { AccountsTab } from './AccountsTab'
 import { EntryPanel } from './EntryPanel'
+import { MirrorDrafts, type MirrorDraft } from './MirrorDrafts'
 import { PENDING_MSG, isPending, type RegRow } from './journalTypes'
 import { JournalRequests, type JournalRequest } from './JournalRequests'
 import { RecordFiles } from '@/components/files/RecordFiles'
@@ -117,6 +118,8 @@ function JournalsPage() {
   }
   /** The request being edited in the form (a draft or returned one of mine). */
   const [editing, setEditing] = useState<JournalRequest | null>(null)
+  /** Another company's draft being booked (owner, 2026-11-12; MirrorDrafts.tsx). */
+  const [mirror, setMirror] = useState<MirrorDraft | null>(null)
   const [reqRefresh, setReqRefresh] = useState(0)
   const { data: myTenants = [] } = useMyTenants()
 
@@ -249,6 +252,7 @@ function JournalsPage() {
       const pin = amending?.tenantId ?? company
       const entry = await api.post<{ id: string; voucherNo?: string | null; pendingApproval?: boolean; edited?: string }>(amending ? `/accounting/journal/${amending.id}/amend` : '/accounting/journal', {
       ...(amending && { reason: amendReason.trim() }),
+      ...(mirror && !amending && { mirrorDraftId: mirror.id }),
       description: description.trim(),
       ...(reference.trim() && { reference: reference.trim() }),
       ...(entryInstant(date) && { entryDate: entryInstant(date) }),
@@ -280,7 +284,8 @@ function JournalsPage() {
         ? `Corrected — the old entry is reversed and the corrected one is posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} (${fmtPkr(debitTotal)} on ${date}).`
         : `Posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} — ${fmtPkr(debitTotal)} on ${date}. It is in the Exceptions inbox for review.`
       setResult({ ok: !fileError, msg: fileError ? `${done} The documents did not upload (${fileError}) — attach them from the entry's panel on the Journals tab.` : done, entryId: isPending(entry) ? undefined : entry.id })
-      setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION); setVoucherPick('')
+      setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION); setVoucherPick(''); setMirror(null)
+      void qc.invalidateQueries({ queryKey: ['journal-drafts'] })
       void qc.invalidateQueries({ queryKey: ['record-files'] })
       void qc.invalidateQueries({ queryKey: ['journals'] })
       void qc.invalidateQueries({ queryKey: ['journal-entry'] })
@@ -300,7 +305,26 @@ function JournalsPage() {
     ...(p.line.subAccountId && { subAccountId: p.line.subAccountId }),
   }))
   function resetForm() {
-    setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setEditing(null); setDate(todayPktIso()); setVoucherPick('')
+    setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setEditing(null); setDate(todayPktIso()); setVoucherPick(''); setMirror(null)
+  }
+
+  /** Load another company's draft into the form — editable, posted as this company's own entry. */
+  function openMirror(d: MirrorDraft) {
+    setEditing(null); setAmending(null); setAmendReason('')
+    setMirror(d)
+    setPickedCompany(d.tenantId)
+    setDescription(d.description)
+    setReference(d.sourceVoucherNo ? `${d.sourceCompanyName ?? 'Other company'} ${d.sourceVoucherNo}`.slice(0, 100) : '')
+    setDate(pktDate(d.entryDate))
+    setVoucherPick((['PV', 'JV', 'RV', 'AV'] as const).includes(d.voucherKind as VoucherType) ? (d.voucherKind as VoucherType) : '')
+    setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION)
+    setLines(d.lines.map((l) => ({
+      key: ++lineSeq, accountId: l.accountId ?? '', memo: l.memo ?? '', conceptId: '', subAccountId: '',
+      debit: l.type === 'debit' ? (l.amountCents / 100).toFixed(2) : '',
+      credit: l.type === 'credit' ? (l.amountCents / 100).toFixed(2) : '',
+    })))
+    setResult({ ok: true, msg: `Loaded ${d.sourceCompanyName ?? 'the other company'}'s ${d.sourceVoucherNo ?? 'entry'} as your ${d.voucherKind}. Check the accounts and amounts, change anything you need, then Post.` })
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   /** Save the request (create or edit) and, when `send`, submit it. Never touches the books. */
@@ -335,7 +359,7 @@ function JournalsPage() {
   /** Duplicate (owner, 2026-10-23): a NEW entry with this one's type, text and lines, dated today; nothing posts until Post. */
   function duplicateEntry(e: RegRow) { loadEntry(e, 'copy') }
   function loadEntry(e: RegRow, as: 'amend' | 'copy') {
-    setEditing(null)
+    setEditing(null); setMirror(null)
     setAmending(as === 'amend' ? e : null)
     setAmendReason('')
     if (e.tenantId) setPickedCompany(e.tenantId)
@@ -360,7 +384,7 @@ function JournalsPage() {
   /** Load a draft / returned request of mine back into the form. */
   function editRequest(r: JournalRequest) {
     const ls = Array.isArray(r.lines) ? r.lines : []
-    setEditing(r)
+    setEditing(r); setMirror(null)
     setPickedCompany(r.tenantId)
     setDescription(r.description)
     setReference(r.reference ?? '')
@@ -431,8 +455,16 @@ function JournalsPage() {
             onOpen={(id) => setPanel({ id, tenantId: null })} />
         )}
 
+        {canPost && tab === 'entry' && <MirrorDrafts onOpen={openMirror} openId={mirror?.id ?? null} />}
+
         {canPrepare && tab === 'entry' && (
           <section className="s-card p-4 space-y-4 min-w-0" aria-label="New journal entry">
+            {mirror && (
+              <p className="text-xs text-s-muted">
+                Booking your side of {mirror.sourceCompanyName ?? 'another company'}&apos;s {mirror.sourceVoucherNo ?? 'entry'} — posting it marks that draft as booked and tells the CEO.
+                {' '}<LinkButton size="md" type="button" onClick={resetForm}>Start a new entry instead</LinkButton>
+              </p>
+            )}
             {amending && (
               <div className="rounded-lg border border-s-border p-3 space-y-2">
                 <p className="text-xs text-s-muted">

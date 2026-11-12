@@ -1318,11 +1318,27 @@ export async function setupRoutes(fastify: FastifyInstance) {
       isActive:    z.boolean().optional(),
       // Current / non-current (owner, 2026-10-31); null = back to the default by code.
       classification: z.enum(['current', 'non_current']).nullable().optional(),
+      // Linked to another company (owner, 2026-11-12; accounting/mirrorDrafts.ts): a journal on this account raises a
+      // pre-filled draft there, on its account `relatedAccountCode`. Both, or null to unlink.
+      relatedTenantId:    z.string().min(1).max(64).nullable().optional(),
+      relatedAccountCode: z.string().trim().min(1).max(20).nullable().optional(),
     }).parse(req.body)
     const existing = await prisma.account.findFirst({
       where: { id: req.params.id, ...(await scopeTenantWhere(req, 'write')) },
     })
     if (!existing) throw new NotFoundError('Account', req.params.id)
+    if (body.relatedTenantId !== undefined || body.relatedAccountCode !== undefined) {
+      const tid = body.relatedTenantId ?? null
+      const code = body.relatedAccountCode ?? null
+      if ((tid === null) !== (code === null)) throw new AppError('RELATED_BOTH_OR_NONE', 'Pick the other company AND its account, or clear both', 422)
+      if (tid) {
+        if (tid === existing.tenantId) throw new AppError('RELATED_SAME_COMPANY', 'Link the account to ANOTHER company', 422)
+        const su = req.staffUser!
+        if (su.role !== 'admin' && !(su.memberTenantIds ?? []).includes(tid)) throw new AppError('NOT_IN_BOTH_COMPANIES', 'You must belong to both companies to link their accounts', 403)
+        const other = await prisma.account.findFirst({ where: { tenantId: tid, code: code! }, select: { id: true } })
+        if (!other) throw new AppError('RELATED_ACCOUNT_NOT_FOUND', `The other company has no account ${code} — add it to its chart first`, 422)
+      }
+    }
     if (body.classification && existing.type !== 'asset' && existing.type !== 'liability') {
       throw new AppError('TERM_ONLY_ASSET_LIABILITY', 'Current / non-current is only for asset and liability accounts', 422)
     }

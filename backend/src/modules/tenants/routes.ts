@@ -809,6 +809,9 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.costSplit, tx.costSplitShare,
     // The buyers list (owner, 2026-11-10): follows its company (twins dropped above).
     tx.poBuyer,
+    // Journals between companies (owner, 2026-11-12): a draft follows the company it waits in (sourceTenantId and an
+    // account's relatedTenantId are moved below).
+    tx.intercompanyJournalDraft,
     // Performance appraisal (owner, 2026-11-06): cycles, templates and evaluations follow their company.
     tx.performanceCycle, tx.performanceTemplate, tx.performanceEvaluation,
     // Intern Management (owner, 2026-11-06): the register, history, attendance, stipend runs / slips and certificates
@@ -835,6 +838,12 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
   for (const model of repoint) {
     await model.updateMany({ where: { tenantId: src }, data: { tenantId: dst } })
   }
+  // Journals between companies: the other side of a draft, and accounts linked to the merged company, follow it; a
+  // draft that now sits in its own source company is no longer between companies.
+  await tx.intercompanyJournalDraft.updateMany({ where: { sourceTenantId: src }, data: { sourceTenantId: dst } })
+  await tx.intercompanyJournalDraft.updateMany({ where: { tenantId: dst, sourceTenantId: dst, status: 'pending' }, data: { status: 'withdrawn', note: 'The two companies were combined' } })
+  await tx.account.updateMany({ where: { relatedTenantId: src }, data: { relatedTenantId: dst } })
+  await tx.account.updateMany({ where: { tenantId: dst, relatedTenantId: dst }, data: { relatedTenantId: null, relatedAccountCode: null } })
   return { loyaltyAccountsCombined, walletsCombined, taxInvoiceNumbersRenamed, employeeCodesRenamed }
 }
 

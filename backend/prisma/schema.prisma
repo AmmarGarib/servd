@@ -3748,11 +3748,16 @@ model Account {
   /// company pair) are SQL only (migration 20261014090000; not declared here).
   controlledBy         String?
   counterpartyTenantId String?
+  /// Linked to another company (owner, 2026-11-12): a manual journal on this account raises a draft in that company
+  /// on its account `relatedAccountCode` (accounting/mirrorDrafts.ts). Both or neither (CHECK accounts_related_pair_chk).
+  relatedTenantId      String?
+  relatedAccountCode   String?
 
-  tenant       Tenant?       @relation("TenantAccounts", fields: [tenantId], references: [id])
-  counterparty Tenant?       @relation("AccountCounterparty", fields: [counterpartyTenantId], references: [id], onDelete: Restrict)
-  journalLines JournalLine[]
-  subAccounts  SubAccount[]
+  tenant        Tenant?       @relation("TenantAccounts", fields: [tenantId], references: [id])
+  counterparty  Tenant?       @relation("AccountCounterparty", fields: [counterpartyTenantId], references: [id], onDelete: Restrict)
+  relatedTenant Tenant?       @relation("AccountRelatedTenant", fields: [relatedTenantId], references: [id], onDelete: SetNull)
+  journalLines  JournalLine[]
+  subAccounts   SubAccount[]
 
   // Head office (D1): the company-chart "Head office charges" account of a link, and the HO-chart recharge account.
   headOfficeLinkCharges HeadOfficeLink[]  @relation("HoLinkCharges")
@@ -6710,6 +6715,7 @@ model Tenant {
 
   // Inter-company (wave B, H30)
   counterpartyAccounts  Account[]              @relation("AccountCounterparty")
+  relatedAccounts       Account[]              @relation("AccountRelatedTenant")
   icTransfersAsDebtor   IntercompanyTransfer[] @relation("IcTransferDebtor")
   icTransfersAsCreditor IntercompanyTransfer[] @relation("IcTransferCreditor")
   fleetRatesProvided    FleetRate[]            @relation("FleetRateProvider")
@@ -10092,4 +10098,31 @@ model DatabaseBackup {
 
   @@index([startedAt])
   @@map("database_backups")
+}
+
+/// A journal booked in one company on an account linked to another (owner, 2026-11-12) waits here, pre-filled, in the
+/// OTHER company (`tenantId`) for its finance to edit and post (RV for a PV and back), or dismiss. No CEO approval —
+/// the CEO is told. accounting/mirrorDrafts.ts. RLS lets either company read it; merge repoints both columns.
+model IntercompanyJournalDraft {
+  id              String    @id @default(uuid())
+  tenantId        String
+  sourceTenantId  String
+  sourceEntryId   String
+  sourceVoucherNo String?
+  status          String    @default("pending") // pending | posted | dismissed | withdrawn
+  voucherKind     String
+  entryDate       DateTime
+  description     String
+  lines           Json
+  postedEntryId   String?   @unique
+  decidedById     String?
+  decidedAt       DateTime?
+  note            String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([sourceEntryId, tenantId])
+  @@index([tenantId, status])
+  @@index([sourceTenantId])
+  @@map("intercompany_journal_drafts")
 }

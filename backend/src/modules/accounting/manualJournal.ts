@@ -75,6 +75,8 @@ export const journalEntrySchema = z.object({
   // fixed_asset_gl_mismatch so the register tie-out explains it. The reason's
   // length is checked by the posting engine (422 REGISTER_CONTROLLED_ACCOUNT).
   registerOverride: z.object({ reason: z.string().trim().max(500) }).optional(),
+  // Booking another company's draft (journals between companies, owner 2026-11-12; mirrorDrafts.ts).
+  mirrorDraftId: z.string().uuid().optional(),
 })
 
 export const reverseSchema = z.object({
@@ -175,6 +177,8 @@ export interface PostManualJournalInput {
   flagNote?: string
   /** PV / JV / RV / AV (none = JV); PV must pay money out, RV bring it in (422 VOUCHER_TYPE_MISMATCH). */
   voucherKind?: ManualVoucherKind | null
+  /** Booking another company's draft (mirrorDrafts.ts): claimed in this posting's transaction (409 DRAFT_NOT_PENDING). */
+  mirrorDraftId?: string | null
 }
 
 export type ManualEntry = Prisma.JournalEntryGetPayload<{ include: { lines: { include: { account: true } } } }>
@@ -235,6 +239,11 @@ export async function postManualJournal(db: Db, input: PostManualJournalInput): 
   }
 
   await tagPostedManualLinesTx(db, { tenantId, entryId: posted.entryId, actorId: input.postedBy, lines: input.lines })
+  if (input.mirrorDraftId) {
+    if (!isTx(db)) throw new AppError('INTERNAL', 'A draft is booked inside a transaction', 500)
+    const { claimMirrorDraftTx } = await import('./mirrorDrafts.js')
+    await claimMirrorDraftTx(db, { draftId: input.mirrorDraftId, tenantId, postedEntryId: posted.entryId, actorId: input.postedBy })
+  }
   const entry = await db.journalEntry.findUniqueOrThrow({
     where: { id: posted.entryId },
     include: { lines: { include: { account: true } } },
@@ -297,6 +306,16 @@ export async function postManualJournal(db: Db, input: PostManualJournalInput): 
       amountCents: debits,
       metadata: { reference, debits, credits, lineCount: input.lines.length, ip: actor.ip ?? null, ...(input.metadata ?? {}) },
     })
+
+    // Journals between companies (owner, 2026-11-12): a line on an account linked to another company raises that
+    // company's pre-filled draft; booking a draft tells the CEO(s). Never fails the posting.
+    try {
+      const m = await import('./mirrorDrafts.js')
+      if (input.mirrorDraftId) await m.draftDecidedNotice(input.mirrorDraftId, actor.id)
+      else await m.raiseMirrorDrafts(entry.id, actor.id)
+    } catch (err) {
+      console.error('[mirrorDrafts] after manual journal', entry.id, err)
+    }
   }
 
   let ran = false
@@ -492,6 +511,13 @@ export async function reverseManualJournal(db: Db, input: ReverseManualJournalIn
       amountCents,
       metadata: { reversedEntryId: original.id, reason, ip, amountCents, ...(input.metadata ?? {}) },
     })
+    // The other company's draft of this entry (mirrorDrafts.ts): withdrawn if still waiting, flagged if booked.
+    try {
+      const { sourceEntryGone } = await import('./mirrorDrafts.js')
+      await sourceEntryGone(original.id, reason.startsWith('Edited:') ? 'edited' : 'cancelled', input.actorId)
+    } catch (err) {
+      console.error('[mirrorDrafts] after reversal', original.id, err)
+    }
   }
 
   let ran = false
