@@ -1232,6 +1232,8 @@ export async function tenantRoutes(fastify: FastifyInstance) {
       // Brands whose recipes the source owned are now owned by the target (none left pointing at itself).
       await tx.concept.updateMany({ where: { recipeOwnerTenantId: src }, data: { recipeOwnerTenantId: dst } })
       await tx.$executeRaw`UPDATE concepts SET "recipeOwnerTenantId" = NULL WHERE "recipeOwnerTenantId" = "tenantId"`
+      await tx.concept.updateMany({ where: { recipeViewerTenantId: src }, data: { recipeViewerTenantId: dst } })
+      await tx.$executeRaw`UPDATE concepts SET "recipeViewerTenantId" = NULL WHERE "recipeViewerTenantId" = "tenantId"`
       // Guest tag catalogue (B8, 2026-10-26): a tag name both companies have is ONE tag after the merge — the
       // source's tag on a guest moves to the target's entry, then the source's twin entry goes.
       const srcTagTypes = await tx.guestTagType.findMany({ where: { tenantId: src } })

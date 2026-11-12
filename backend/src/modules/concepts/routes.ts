@@ -100,6 +100,8 @@ export const BRAND_CEO_FIELDS: readonly string[] = [
   'isActive', 'serviceVessel', 'forecastPortionsPerMonth', 'storefrontLayout',
   // Kitchen flow (owner, 2026-10-26, K4): which company OWNS the brand's recipes (Flipd → GS Foods).
   'recipeOwnerTenantId',
+  // Recipe view (owner, 2026-11-12): a company that reads this brand's company's recipes (Flipd → GS Foods).
+  'recipeViewerTenantId',
   ...KIT_CONCEPT_FIELDS,
 ]
 
@@ -319,6 +321,7 @@ const updateConceptSchema = createConceptSchema.partial().omit({ slug: true }).e
   isActive: z.boolean().optional(),
   // K4: the company that owns this brand's recipes when it is not the brand's own (null = its own). CEO only.
   recipeOwnerTenantId: z.string().min(1).nullable().optional(),
+  recipeViewerTenantId: z.string().min(1).nullable().optional(),
   storefrontLayout: z.array(z.record(z.string(), z.unknown())).optional().nullable(),
   // Public-facing contact — per brand (decision 18). Surfaces on the
   // storefront /visit page, schema.org Restaurant JSON-LD, the brand
@@ -583,6 +586,17 @@ export async function conceptRoutes(fastify: FastifyInstance) {
         }
       }
     }
+    // Recipe view: one of the CEO's live trading companies, never the brand's own.
+    if (body.recipeViewerTenantId !== undefined) {
+      if (body.recipeViewerTenantId === owned.tenantId) body.recipeViewerTenantId = null
+      if (body.recipeViewerTenantId) {
+        const t = await prisma.tenant.findFirst({ where: { id: body.recipeViewerTenantId, deletedAt: null, kind: 'company' }, select: { id: true } })
+        if (!t || !req.staffUser!.memberTenantIds.includes(t.id)) {
+          throw new AppError('RECIPE_VIEWER_NOT_IN_COMPANIES', 'The company that sees these recipes must be one of your trading companies', 422)
+        }
+      }
+    }
+    const viewerChanges = body.recipeViewerTenantId !== undefined && body.recipeViewerTenantId !== owned.recipeViewerTenantId
     const ownerChanges = body.recipeOwnerTenantId !== undefined && body.recipeOwnerTenantId !== owned.recipeOwnerTenantId
     const { storefrontLayout, ...rest } = body
     const data: Prisma.ConceptUpdateInput = { ...rest }
@@ -630,6 +644,13 @@ export async function conceptRoutes(fastify: FastifyInstance) {
         metadata: {
           note: 'Applies to order lines rung up from now on. Lines already rung up keep the vessel snapshotted on them, so past food cost is not restated.',
         },
+      })
+    }
+    if (viewerChanges) {
+      await audit({
+        category: 'identity', action: 'concept.recipe_viewer', entity: 'Concept', entityId: owned.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: owned.tenantId,
+        before: { recipeViewerTenantId: owned.recipeViewerTenantId }, after: { recipeViewerTenantId: concept.recipeViewerTenantId },
       })
     }
     if (ownerChanges) {

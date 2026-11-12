@@ -24,6 +24,7 @@ interface Concept {
   serviceVessel?: 'plate' | 'packaging'
   /** Kitchen flow (2026-10-26): the company that owns this brand's recipes when not its own (Flipd → GS Foods). */
   recipeOwnerTenantId?: string | null
+  recipeViewerTenantId?: string | null
   heroTagline: string | null
   // Brand microsite artwork. Null = the storefront falls back to the file
   // bundled in its build, which is how every brand behaved before these
@@ -283,6 +284,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
   const [isActive, setIsActive] = useState(concept.isActive)
   const [serviceVessel, setServiceVessel] = useState<'plate' | 'packaging' | ''>(concept.serviceVessel ?? '')
   const [recipeOwner, setRecipeOwner] = useState(concept.recipeOwnerTenantId ?? '')
+  const [recipeViewer, setRecipeViewer] = useState(concept.recipeViewerTenantId ?? '')
   const { data: myTenants = [] } = useMyTenants()
 
   const [phone, setPhone] = useState(concept.phone ?? '')
@@ -331,7 +333,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
     mutationFn: () => api.patch(`/concepts/${concept.id}`, {
       name, description: description || null, isActive,
       ...(serviceVessel ? { serviceVessel } : {}),
-      ...(ceo ? { recipeOwnerTenantId: recipeOwner || null } : {}),
+      ...(ceo ? { recipeOwnerTenantId: recipeOwner || null, recipeViewerTenantId: recipeViewer || null } : {}),
       phone: phone.trim() || null,
       // wa.me wants digits only — strip what people paste (+, spaces, dashes).
       whatsapp: whatsapp.replace(/[^\d]/g, '') || null,
@@ -492,6 +494,12 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
               {(concept.recipeOwnerTenantId ?? '') !== recipeOwner && (
                 <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>On save, this brand&rsquo;s dish and add-on recipes move to the new owner. Its own kitchen can still read them.</p>
               )}
+              <Field label="Recipes also shown to (read only)" hint="Another of your companies that can read every recipe of this brand's company, but never edit them (e.g. GS Foods sees Flipd's).">
+                <Select value={recipeViewer} onChange={(e) => setRecipeViewer(e.target.value)} className="s-input w-full max-w-md" aria-label="Recipes also shown to">
+                  <option value="">Nobody else</option>
+                  {myTenants.filter((t) => t.id !== concept.tenantId).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </Select>
+              </Field>
             </fieldset>
             {ceoNote}
           </Section>

@@ -454,17 +454,31 @@ interface RecipeScope {
   conceptIds: Set<string>
   tenantIds:  Set<string>
   components: () => Promise<ComponentCompanies>
+  /** Companies whose recipes a company in scope may READ (Concept.recipeViewerTenantId — GS Foods reads Flipd's). */
+  viewedOwners: () => Promise<Set<string>>
+}
+
+/** Owner companies the given companies read through the recipe view (owner, 2026-11-12: Flipd → GS Foods). */
+async function viewedOwnersOf(tenantIds: Set<string>): Promise<Set<string>> {
+  if (tenantIds.size === 0) return new Set()
+  const rows = await prisma.concept.findMany({
+    where: { recipeViewerTenantId: { in: [...tenantIds] }, deletedAt: null, tenantId: { not: null } },
+    select: { tenantId: true },
+  })
+  return new Set(rows.map((c) => c.tenantId!))
 }
 
 async function recipeScope(req: FastifyRequest, mode: ScopeMode = 'read'): Promise<RecipeScope> {
   const where = await scopeTenantWhere(req, mode)
   const tenantIds = new Set(typeof where.tenantId === 'string' ? [where.tenantId] : where.tenantId.in)
   let index: Promise<ComponentCompanies> | null = null
+  let viewed: Promise<Set<string>> | null = null
   return {
     mode,
     conceptIds: await scopedConceptIdSet(req, mode),
     tenantIds,
     components: () => (index ??= loadComponentCompanies()),
+    viewedOwners: () => (viewed ??= viewedOwnersOf(tenantIds)),
   }
 }
 
@@ -504,6 +518,8 @@ async function recipeInScope(r: ScopableRecipe, scope: RecipeScope): Promise<boo
       return [...users].every((t) => t === owner || shared.has(t) || scope.tenantIds.has(t))
     }
     if (scope.mode !== 'read') return false
+    // The recipe view (owner, 2026-11-12): a company reads EVERY recipe of a company whose brand names it — read only.
+    if ((await scope.viewedOwners()).has(owner)) return true
     // Another company reads an OWNED sub-recipe only when one of its own dishes / add-ons uses it (owner,
     // 2026-11-12: GS Foods sub-recipes were showing in Flipd). Never through the stock it is made from, and never
     // the old "no derivable company → everyone" fallback — that is for recipes with no owner only.
@@ -710,6 +726,8 @@ async function recipeScopeFor(tenantIds: string[], mode: ScopeMode): Promise<Rec
     conceptIds: new Set(concepts.map((c) => c.id)),
     tenantIds: new Set(tenantIds),
     components: () => (index ??= loadComponentCompanies()),
+    // The approvals queue: never through the read-only recipe view (a viewing company does not approve).
+    viewedOwners: async () => new Set<string>(),
   }
 }
 

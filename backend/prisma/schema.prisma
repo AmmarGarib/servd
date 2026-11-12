@@ -242,6 +242,10 @@ model Concept {
   // A CEO field (BRAND_CEO_FIELDS); setting it re-owns the brand's dish and add-on recipes. Stock and sales stay the
   // brand's company's (a Flipd sale deducts Flipd's outlet stock, in Flipd's books).
   recipeOwnerTenantId      String?
+  // Recipe view (owner, 2026-11-12: "make them in flipd. But add all flipd recipes to gs foods because I own a stake in
+  // flipd and I am gs foods"): a company that READS every recipe this brand's company owns, never writes them (Flipd →
+  // GS Foods). Null = none. A CEO field (BRAND_CEO_FIELDS).
+  recipeViewerTenantId     String?
   name                     String
   slug                     String           @unique
   type                     ConceptType
@@ -412,6 +416,7 @@ model Concept {
 
   @@index([tenantId])
   @@index([recipeOwnerTenantId])
+  @@index([recipeViewerTenantId])
   @@map("concepts")
 }
 
