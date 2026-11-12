@@ -714,6 +714,23 @@ async function recipeScopeFor(tenantIds: string[], mode: ScopeMode): Promise<Rec
 }
 
 /**
+ * A brand the operator belongs to but cannot write a NEW dish for from the active company (owner, 2026-11-12: "Concept
+ * … not found" on saving a Flipd dish): 422 naming the company to switch to — its recipe owner, else its own company.
+ * A brand outside the operator's companies stays 404.
+ */
+async function explainBrandNotActive(req: FastifyRequest, conceptId: string): Promise<never> {
+  const member = new Set(req.staffUser?.memberTenantIds ?? [])
+  const c = await prisma.concept.findFirst({
+    where: { id: conceptId, deletedAt: null },
+    select: { name: true, tenantId: true, recipeOwnerTenantId: true },
+  })
+  const writer = c?.recipeOwnerTenantId ?? c?.tenantId ?? null
+  if (!c || !c.tenantId || !(member.has(c.tenantId) || (writer && member.has(writer)))) throw new NotFoundError('Concept', conceptId)
+  const name = await companyName(writer)
+  throw new AppError('RECIPE_OWNER_NOT_ACTIVE', `${c.name}'s recipes are written in ${name} — switch the company at the top to ${name}, then save`, 422)
+}
+
+/**
  * K4 (owner review): a brand whose recipes another company OWNS takes recipe writes only from the OWNER company as
  * the ACTIVE company (stock items are made in the owner's books) — anyone else, a Flipd-only login included, 422
  * RECIPE_OWNER_NOT_ACTIVE. Never makes stock items in another company.
@@ -2003,7 +2020,11 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         where: { id: body.newMenuItem.conceptId, ...brandForCreate },
         select: { id: true, tenantId: true, recipeOwnerTenantId: true, serviceVessel: true },
       })
-      if (!concept?.tenantId) throw new NotFoundError('Concept', body.newMenuItem.conceptId)
+      if (!concept?.tenantId) {
+        await explainBrandNotActive(req, body.newMenuItem.conceptId)
+        throw new NotFoundError('Concept', body.newMenuItem.conceptId)
+      }
+      if (concept.recipeOwnerTenantId && !whereHas(createWhere, concept.recipeOwnerTenantId)) await explainBrandNotActive(req, concept.id)
       assertOwnerActive(createWhere, concept.recipeOwnerTenantId)
       const cat = await prisma.category.findFirst({
         where: { id: body.newMenuItem.categoryId, conceptId: concept.id, deletedAt: null },

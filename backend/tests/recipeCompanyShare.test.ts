@@ -157,6 +157,40 @@ describe('GS Foods writes Flipd\'s recipes', () => {
     expect((await call(u.chefGS!, 'PUT', `/recipes/${plateId}`, { servings: 1 })).statusCode).toBe(200)
   })
 
+  it('a GS chef opens a NEW Flipd dish from the recipe form (newMenuItem): saved, owned by GS Foods', async () => {
+    const cat = await prisma.category.findFirstOrThrow({ where: { conceptId: FL.conceptId } })
+    const r = await call(u.chefGS!, 'POST', '/recipes', {
+      kind: 'plate', servings: 1, newMenuItem: { conceptId: FL.conceptId, categoryId: cat.id, name: 'Flipd new smash' },
+      ingredients: [{ masterIngredientId: M.beef, quantity: 150, unit: 'g' }],
+    })
+    expect(r.statusCode, r.body).toBe(201)
+    expect((await prisma.recipe.findUniqueOrThrow({ where: { id: r.json().id } })).tenantId).toBe(GS.tenantId)
+  })
+
+  it('a new dish for a brand the active company cannot write: 422 naming the company to switch to; a stranger 404', async () => {
+    const cat = await prisma.category.findFirstOrThrow({ where: { conceptId: FL.conceptId } })
+    const prev = (await prisma.concept.findUniqueOrThrow({ where: { id: FL.conceptId }, select: { recipeOwnerTenantId: true } })).recipeOwnerTenantId
+    await prisma.concept.update({ where: { id: FL.conceptId }, data: { recipeOwnerTenantId: null } })
+    try {
+      const body = { kind: 'plate', servings: 1, newMenuItem: { conceptId: FL.conceptId, categoryId: cat.id, name: 'Wrong company dish' }, ingredients: [{ masterIngredientId: M.beef, quantity: 150, unit: 'g' }] }
+      const r = await call(u.ceo!, 'POST', '/recipes', body)   // CEO working in GS Foods, Flipd writes its own
+      expect(r.statusCode, r.body).toBe(422)
+      expect(r.json().error.code).toBe('RECIPE_OWNER_NOT_ACTIVE')
+      const flName = (await prisma.tenant.findUniqueOrThrow({ where: { id: FL.tenantId } })).name
+      expect(r.json().error.message).toContain(flName)
+      expect((await call(u.chefC3!, 'POST', '/recipes', body)).statusCode).toBe(404)
+    } finally {
+      await prisma.concept.update({ where: { id: FL.conceptId }, data: { recipeOwnerTenantId: prev } })
+    }
+  })
+
+  it('working in Flipd on a new Flipd dish whose recipes GS Foods owns: 422 names GS Foods', async () => {
+    const cat = await prisma.category.findFirstOrThrow({ where: { conceptId: FL.conceptId } })
+    const r = await call(u.ceoFL!, 'POST', '/recipes', { kind: 'plate', servings: 1, newMenuItem: { conceptId: FL.conceptId, categoryId: cat.id, name: 'In Flipd' }, ingredients: [{ masterIngredientId: M.beef, quantity: 150, unit: 'g' }] })
+    expect(r.statusCode, r.body).toBe(422)
+    expect(r.json().error.message).toContain((await prisma.tenant.findUniqueOrThrow({ where: { id: GS.tenantId } })).name)
+  })
+
   it('a GS Foods sub-recipe no Flipd dish uses is not listed for Flipd (not through a Flipd stock line, not when empty)', async () => {
     // Legacy shapes: owned by GS Foods, but a line on a FLIPD stock item / no lines at all.
     const flItem = await prisma.inventoryItem.create({ data: { tenantId: FL.tenantId, name: `Fl sugar ${Date.now()}`, unit: 'g', category: 'dry_goods' } as never })
