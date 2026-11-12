@@ -311,11 +311,11 @@ export async function prepareOrderLines(
   // An add-on's id is kept only when it is one of THIS dish's live modifier
   // groups' modifiers (its modifier recipe is what the sale consumes); any
   // other id — another dish's, another brand's or company's, a deleted
-  // group's — is stored as null (the name and price still ride on the line).
+  // group's or a removed option's — is stored as null (the name and price still ride on the line).
   const sentModifierIds = [...new Set(items.flatMap((i) => (i.modifiers ?? []).map((m) => m.modifierId).filter((x): x is string => !!x)))]
   const modifierDish = new Map((sentModifierIds.length > 0
     ? await prisma.modifier.findMany({
-        where: { id: { in: sentModifierIds }, group: { deletedAt: null } },
+        where: { id: { in: sentModifierIds }, deletedAt: null, group: { deletedAt: null } },
         select: { id: true, group: { select: { menuItemId: true } } },
       })
     : []).map((m) => [m.id, m.group.menuItemId]))

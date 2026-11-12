@@ -13,6 +13,7 @@ import { useConfirm } from '../../components/ui/ConfirmDialog'
 import { Modal } from '../../components/ui/Modal'
 import { FormField } from '../../components/ui/FormField'
 import { MoneyInput } from '../../components/ui/MoneyInput'
+import { DishOptions } from '../../components/menu/DishOptions'
 
 
 // Categories as GET /menu/:conceptId returns them — the shared Category type
@@ -787,6 +788,9 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
             <MoneyInput value={priceCents} onChange={setPriceCents}
               className="w-full rounded-lg border border-s-border bg-s-bg px-3 py-2 text-s-text focus:border-primary focus:outline-none" />
           </FormField>
+
+          {/* Options (owner, 2026-11-12): single / double patty… each group saves on its own. */}
+          <DishOptions item={item} />
 
           {/* Instructions */}
           <div className="border-t border-s-border pt-3">

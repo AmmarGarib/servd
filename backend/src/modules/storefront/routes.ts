@@ -120,7 +120,7 @@ async function resolveCheckoutItems(
     const menuItem = await prisma.menuItem.findFirst({
       where: { id: item.menuItemId, conceptId, isAvailable: true, deletedAt: null },
       include: {
-        modifierGroups: { include: { modifiers: { where: { deletedAt: null } } } },
+        modifierGroups: { where: { deletedAt: null }, include: { modifiers: { where: { deletedAt: null } } } },
         category: { select: { timeRestrictionStart: true, timeRestrictionEnd: true } },
       },
     })

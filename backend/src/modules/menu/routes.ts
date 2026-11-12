@@ -8,6 +8,8 @@ import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { emitItem86d } from '../../lib/ws.js'
 import { seedAvailability } from '../../lib/reservation.js'
 import { removableIngredients } from '../../lib/lineRemovals.js'
+import { zInt4Cents } from '../../lib/money.js'
+import { audit } from '../../lib/audit.js'
 
 const createItemSchema = z.object({
   conceptId: z.string().uuid(),
@@ -124,22 +126,45 @@ async function assertNoOverlap(conceptId: string, start: string, end: string, se
   }
 }
 
+// Dish options (owner, 2026-11-12: "single patty and double patty version"):
+// a group ("Patty") and its options ("Single" +0, "Double" +PKR 400).
+const optionSchema = z.object({
+  name: z.string().trim().min(1, 'Give the option a name').max(80),
+  priceDeltaCents: zInt4Cents('The option price change', { sign: 'any' }).default(0),
+  isDefault: z.boolean().default(false),
+  sortOrder: z.number().int().min(0).max(10_000).default(0),
+})
+
 const createModifierGroupSchema = z.object({
   menuItemId: z.string().uuid(),
-  name: z.string().min(1),
-  minSelect: z.number().int().min(0).default(0),
-  maxSelect: z.number().int().min(1).default(1),
+  name: z.string().trim().min(1).max(80),
+  minSelect: z.number().int().min(0).max(50).default(0),
+  maxSelect: z.number().int().min(1).max(50).default(1),
   isRequired: z.boolean().default(false),
   sortOrder: z.number().int().default(0),
-  modifiers: z.array(
-    z.object({
-      name: z.string().min(1),
-      priceDeltaCents: z.number().int().default(0),
-      isDefault: z.boolean().default(false),
-      sortOrder: z.number().int().default(0),
-    }),
-  ),
+  modifiers: z.array(optionSchema).max(50),
 })
+
+const updateModifierGroupSchema = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  minSelect: z.number().int().min(0).max(50).optional(),
+  maxSelect: z.number().int().min(1).max(50).optional(),
+  isRequired: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+  // The FULL list when given: ids update in place, new rows are created, the
+  // group's rows left out are soft-deleted (order history and add-on recipes
+  // point at them — never a hard delete).
+  modifiers: z.array(optionSchema.extend({ id: z.string().uuid().optional() })).max(50).optional(),
+})
+
+/** The rules every saved group keeps (create and edit). */
+function assertGroupRules(g: { minSelect: number; maxSelect: number }, options: Array<{ isDefault: boolean }>) {
+  if (g.maxSelect < g.minSelect) throw new AppError('MAX_BELOW_MIN', 'The most a customer may pick cannot be less than the least they must pick', 422)
+  if (options.length === 0) throw new AppError('OPTIONS_REQUIRED', 'Add at least one option to the group', 422)
+  if (g.maxSelect === 1 && options.filter((o) => o.isDefault).length > 1) {
+    throw new AppError('ONE_DEFAULT_ONLY', 'Only one option can be the default when the customer picks one', 422)
+  }
+}
 
 // ── Brand integrity ──────────────────────────────────────────────────────────
 // A menu item lives under ONE brand, and its category and station must be that
@@ -507,21 +532,87 @@ export async function menuRoutes(fastify: FastifyInstance) {
 
   fastify.post('/modifier-groups', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
     const body = createModifierGroupSchema.parse(req.body)
+    // Binds to the ACTIVE company: another company's dish is 404.
     const ownedItem = await prisma.menuItem.findFirst({
       where: {
         id: body.menuItemId,
         deletedAt: null,
-        concept: { tenantId: req.staffUser!.tenantFilter, deletedAt: null },
+        concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'create')) },
       },
+      select: { id: true, name: true, concept: { select: { tenantId: true } } },
     })
     if (!ownedItem) throw new NotFoundError('MenuItem', body.menuItemId)
+    assertGroupRules(body, body.modifiers)
     const { modifiers, ...groupData } = body
     const group = await prisma.modifierGroup.create({
       data: { ...groupData, modifiers: { create: modifiers } },
       include: { modifiers: true },
     })
+    await audit({
+      category: 'identity', action: 'menu.option_group.create', entity: 'modifier_group', entityId: group.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: ownedItem.concept.tenantId,
+      after: group, metadata: { menuItemId: ownedItem.id, menuItemName: ownedItem.name },
+    })
     return reply.status(201).send(group)
   })
+
+  fastify.patch<{ Params: { id: string } }>(
+    '/modifier-groups/:id',
+    { preHandler: requireAuth(...MANAGERS) },
+    async (req) => {
+      const body = updateModifierGroupSchema.parse(req.body)
+      const owned = await prisma.modifierGroup.findFirst({
+        where: {
+          id: req.params.id,
+          deletedAt: null,
+          menuItem: { deletedAt: null, concept: { deletedAt: null, ...(await scopeTenantWhere(req, 'write')) } },
+        },
+        include: {
+          modifiers: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' } },
+          menuItem: { select: { id: true, name: true, concept: { select: { tenantId: true } } } },
+        },
+      })
+      if (!owned) throw new NotFoundError('ModifierGroup', req.params.id)
+      const { modifiers, ...groupData } = body
+      const next = { minSelect: groupData.minSelect ?? owned.minSelect, maxSelect: groupData.maxSelect ?? owned.maxSelect }
+      const liveIds = new Set(owned.modifiers.map((m) => m.id))
+      if (modifiers) {
+        for (const m of modifiers) {
+          if (m.id && !liveIds.has(m.id)) throw new AppError('OPTION_NOT_IN_GROUP', `Option ${m.id} is not one of this group's options`, 422)
+        }
+        const ids = modifiers.map((m) => m.id).filter(Boolean)
+        if (new Set(ids).size !== ids.length) throw new AppError('OPTION_NOT_IN_GROUP', 'An option is listed twice', 422)
+      }
+      assertGroupRules(next, modifiers ?? owned.modifiers)
+
+      const updated = await prisma.$transaction(async (tx) => {
+        await tx.modifierGroup.update({ where: { id: owned.id }, data: groupData })
+        if (modifiers) {
+          const keep = new Set(modifiers.map((m) => m.id).filter((x): x is string => !!x))
+          const gone = owned.modifiers.filter((m) => !keep.has(m.id)).map((m) => m.id)
+          if (gone.length > 0) {
+            await tx.modifier.updateMany({ where: { id: { in: gone }, groupId: owned.id }, data: { deletedAt: new Date() } })
+          }
+          for (const m of modifiers) {
+            const { id, ...data } = m
+            if (id) await tx.modifier.update({ where: { id }, data })
+            else await tx.modifier.create({ data: { ...data, groupId: owned.id } })
+          }
+        }
+        return tx.modifierGroup.findUniqueOrThrow({
+          where: { id: owned.id },
+          include: { modifiers: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' } } },
+        })
+      })
+      const { menuItem, ...before } = owned
+      await audit({
+        category: 'identity', action: 'menu.option_group.update', entity: 'modifier_group', entityId: owned.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: menuItem.concept.tenantId,
+        before, after: updated, metadata: { menuItemId: menuItem.id, menuItemName: menuItem.name },
+      })
+      return updated
+    },
+  )
 
   fastify.delete<{ Params: { id: string } }>(
     '/modifier-groups/:id',

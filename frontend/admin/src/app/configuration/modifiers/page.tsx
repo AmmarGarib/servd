@@ -154,7 +154,7 @@ function AddOnIngredients() {
       {!activeBrand && <CompactEmptyState message="Pick a brand in the bar at the top to see its add-on ingredients." />}
       {isLoading && <p className="text-sm text-white/40">Loading…</p>}
       {!isLoading && activeBrand && dishes.length === 0 && (
-        <Empty label="No add-ons on this brand's menu" hint="Add modifier groups to a dish in the menu editor first." />
+        <Empty label="No add-ons on this brand's menu" hint="Add options to a dish first: Menu → edit the dish → Options." />
       )}
       {dishes.map((d) => (
         <div key={d.id} className="rounded-2xl p-4"
