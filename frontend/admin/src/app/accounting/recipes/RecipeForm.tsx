@@ -432,8 +432,9 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
         const costCents = Math.round(cpgCents * qty)
         return {
           ...row, inv: null, name: prep?.name ?? '— component —', isCount: false, measure: 'g' as Measure,
-          // A component with portions is typed in portions ("1 × Patty (100 g)"; owner, 2026-11-12).
-          piece: prep?.portionGrams && prep.portionGrams > 0 ? { grams: prep.portionGrams, label: prep.portionLabel?.trim() || 'portion' } : null,
+          // Typed by weight like every other line (owner, 2026-11-12: "It shouldnt be 'x portion'"), unless the
+          // component NAMES its portion (e.g. "patty") — then "1 × patty (100 g)", with grams one tap away.
+          piece: prep?.portionGrams && prep.portionGrams > 0 && prep.portionLabel?.trim() ? { grams: prep.portionGrams, label: prep.portionLabel.trim() } : null,
           cpgCents, yieldPctApplied: 100, rawUsedG: qty,
           costCents, portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
           allergens: [] as string[],
