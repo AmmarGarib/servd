@@ -2761,4 +2761,122 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       return reply.status(204).send()
     },
   )
+
+  // ── Copy a dish to another brand (owner, 2026-11-12: "make the transfer/copy recipe to another company button") ──
+  // POST /recipes/:id/copy-to-brand {conceptId, categoryId, name?, submit?}. Makes a NEW dish recipe for the picked
+  // brand through THIS module's own create route (POST /recipes), as the caller, in the company that writes that
+  // brand's recipes (recipeOwnerTenantId ?? the brand's company — the x-servd-active-tenant header, honoured only for a
+  // member) — so every create rule applies (brand access, company items, packaging, scope). Raw lines go by their servd
+  // ingredient (the target company's own stock item is found / made); a line on a stock item with no servd ingredient
+  // gets one (needs review). A sub-recipe the target company does not own is reused when it has a live sub-recipe of the
+  // same name, else copied too (same way). The source never changes. By default the copies are submitted for approval
+  // (the CEO's approval opens the dish on the brand's menu, in the picked category).
+  fastify.post<{ Params: { id: string } }>('/:id/copy-to-brand', { preHandler: requireAuth(...MANAGERS) }, async (req, reply) => {
+    const body = z.object({
+      conceptId:  z.string().uuid(),
+      categoryId: z.string().uuid(),
+      name:       z.string().trim().min(1).max(200).optional(),
+      submit:     z.boolean().default(true),
+    }).parse(req.body ?? {})
+    const src = await prisma.recipe.findUnique({
+      where: { id: req.params.id },
+      include: { menuItem: { select: { name: true, description: true, conceptId: true } }, ingredients: true },
+    })
+    if (!src || !(await recipeInScope(src, await recipeScope(req, 'read')))) throw new NotFoundError('Recipe', req.params.id)
+    if (src.kind !== 'plate') throw new AppError('COPY_DISHES_ONLY', 'Only a dish recipe can be copied to another brand', 422)
+    const pending = src.pendingMenuItem as { conceptId?: string; name?: string; description?: string | null } | null
+    const srcBrand = src.menuItem?.conceptId ?? pending?.conceptId ?? null
+    if (srcBrand === body.conceptId) throw new AppError('SAME_BRAND', 'This dish is already on that brand — pick another brand', 422)
+    const target = await prisma.concept.findFirst({ where: { id: body.conceptId, deletedAt: null }, select: { name: true, tenantId: true, recipeOwnerTenantId: true } })
+    const writer = target?.recipeOwnerTenantId ?? target?.tenantId ?? null
+    if (!target || !writer || !(req.staffUser!.memberTenantIds ?? []).includes(writer)) throw new NotFoundError('Concept', body.conceptId)
+
+    const headers: Record<string, string> = { 'x-servd-active-tenant': writer }
+    for (const h of ['authorization', 'cookie'] as const) { const v = req.headers[h]; if (typeof v === 'string') headers[h] = v }
+    const call = async <T>(method: 'POST', url: string, payload: unknown): Promise<T> => {
+      const res = await fastify.inject({ method, url: `${fastify.prefix}${url}`, headers, payload: payload as Record<string, unknown> })
+      const json = res.body ? res.json() : null
+      if (res.statusCode >= 400) {
+        const err = (json as { error?: { code?: string; message?: string } } | null)?.error
+        throw new AppError(err?.code ?? 'COPY_FAILED', err?.message ?? `Copy failed (${res.statusCode})`, res.statusCode >= 500 ? 500 : res.statusCode)
+      }
+      return json as T
+    }
+
+    const { findOrCreateMasterTx } = await import('../../lib/ingredientMaster.js')
+    const copiedSubs: Array<{ id: string; name: string }> = []
+    const subFor = new Map<string, string>()
+    type SrcLine = (typeof src.ingredients)[number]
+    const linesFor = async (lines: SrcLine[], depth: number): Promise<IngredientInput[]> => {
+      const out: IngredientInput[] = []
+      for (const l of lines) {
+        const base = { quantity: l.quantity, unit: l.unit, yieldPct: l.yieldPct, ...(l.notes ? { notes: l.notes } : {}), section: (l.section ?? 'ingredients') as 'ingredients' | 'packaging' }
+        if (l.prepRecipeId) {
+          out.push({ ...base, prepRecipeId: await subRecipeFor(l.prepRecipeId, depth + 1) })
+          continue
+        }
+        let masterId = l.masterIngredientId
+        if (!masterId && l.inventoryItemId) {
+          const item = await prisma.inventoryItem.findUnique({ where: { id: l.inventoryItemId }, select: { name: true, unit: true, category: true, masterIngredientId: true } })
+          masterId = item?.masterIngredientId ?? null
+          if (!masterId && item) {
+            masterId = (await prisma.$transaction((tx) => findOrCreateMasterTx(tx, { name: item.name, unit: item.unit, category: item.category }, { userId: req.staffUser!.id, tenantId: writer }))).master.id
+          }
+        }
+        if (!masterId) throw new AppError('COPY_LINE_UNKNOWN', 'A line of this recipe names no ingredient — fix the recipe first', 422)
+        out.push({ ...base, masterIngredientId: masterId })
+      }
+      return out
+    }
+    const subRecipeFor = async (id: string, depth: number): Promise<string> => {
+      const hit = subFor.get(id)
+      if (hit) return hit
+      if (depth > 8) throw new AppError('COPY_TOO_DEEP', 'This recipe nests sub-recipes too deeply to copy', 422)
+      const sub = await prisma.recipe.findUnique({ where: { id }, include: { ingredients: true } })
+      if (!sub) throw new NotFoundError('Recipe', id)
+      let useId: string | null = sub.tenantId === writer ? sub.id : null
+      if (!useId && sub.name) {
+        const twin = await prisma.recipe.findFirst({ where: { tenantId: writer, kind: 'component', name: { equals: sub.name, mode: 'insensitive' } }, select: { id: true } })
+        useId = twin?.id ?? null
+      }
+      if (!useId) {
+        const made = await call<{ id: string }>('POST', '/', {
+          kind: 'component', name: sub.name ?? 'Sub-recipe', yieldGrams: sub.yieldGrams, yieldUnit: sub.yieldUnit ?? undefined,
+          portionsPerBatch: sub.portionsPerBatch, portionLabel: sub.portionLabel, notes: sub.notes, steps: sub.steps, stepsUrdu: sub.stepsUrdu,
+          servings: sub.servings, qFactorPct: sub.qFactorPct, targetProfitPct: sub.targetProfitPct, targetFoodCostPct: sub.targetFoodCostPct,
+          ingredients: await linesFor(sub.ingredients, depth),
+        })
+        useId = made.id
+        copiedSubs.push({ id: made.id, name: sub.name ?? 'Sub-recipe' })
+        if (body.submit) await call('POST', `/${made.id}/submit`, {})
+      }
+      subFor.set(id, useId)
+      return useId
+    }
+
+    const lines = await linesFor(src.ingredients, 0)
+    const created = await call<{ id: string }>('POST', '/', {
+      kind: 'plate',
+      newMenuItem: {
+        conceptId: body.conceptId, categoryId: body.categoryId,
+        name: body.name ?? src.menuItem?.name ?? pending?.name ?? src.name ?? 'Dish',
+        description: src.menuItem?.description ?? pending?.description ?? null,
+      },
+      servings: src.servings, yieldGrams: src.yieldGrams, portionSizeG: src.portionSizeG ?? undefined, laborMinutes: src.laborMinutes,
+      notes: src.notes, steps: src.steps, stepsUrdu: src.stepsUrdu, seasons: src.seasons, seasonStart: src.seasonStart, seasonEnd: src.seasonEnd,
+      isActive: src.isActive, qFactorPct: src.qFactorPct, targetProfitPct: src.targetProfitPct, targetFoodCostPct: src.targetFoodCostPct,
+      actualSellingPriceCents: src.actualSellingPriceCents, category: src.category, photoUrl: src.photoUrl,
+      methodSteps: (src.methodSteps as unknown) ?? null,
+      ingredients: lines,
+    })
+    let submitted = false
+    if (body.submit) { await call('POST', `/${created.id}/submit`, {}); submitted = true }
+    await audit({
+      category: 'identity', action: 'recipe.copy_to_brand', entity: 'Recipe', entityId: created.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: writer,
+      before: { sourceRecipeId: src.id }, after: { conceptId: body.conceptId, brand: target.name, submitted, copiedSubRecipes: copiedSubs },
+    })
+    return reply.status(201).send({ id: created.id, brand: target.name, submitted, copiedSubRecipes: copiedSubs })
+  })
+
 }

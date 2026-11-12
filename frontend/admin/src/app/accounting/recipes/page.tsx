@@ -160,6 +160,8 @@ export default function RecipesPage() {
   const [noPackagingOnly, setNoPackagingOnly] = useState(false)
   const [search,        setSearch]        = useState('')
   const [expanded,      setExpanded]      = useState<string | null>(null)
+  // Copy a dish to another brand (owner, 2026-11-12).
+  const [copyFor,       setCopyFor]       = useState<{ id: string; name: string; brandId: string | null } | null>(null)
   const [modal,         setModal]         = useState<'create' | Recipe | null>(null)
 
   // List filters
@@ -574,6 +576,12 @@ export default function RecipesPage() {
                           <Button variant="ghost" size="sm" type="submit" onClick={() => openEdit(r)}>
                             Edit
                           </Button>
+                          {r.kind === 'plate' && (
+                            <Button variant="ghost" size="sm" type="button" title="Make this dish's recipe for another brand"
+                              onClick={() => setCopyFor({ id: r.id, name: r.menuItem?.name ?? r.pendingMenuItem?.name ?? r.name ?? 'Dish', brandId: r.menuItem?.conceptId ?? r.pendingMenuItem?.conceptId ?? null })}>
+                              Copy to brand
+                            </Button>
+                          )}
                           <Button variant="ghost" size="sm" type="submit"
                             onClick={async () => {
                               const label = r.menuItem?.name ?? r.name ?? 'this recipe'
@@ -809,6 +817,7 @@ export default function RecipesPage() {
       {/* ── Create / Edit Modal ─────────────────────────────────────────────── */}
       {/* Managers only — never mounted for the kitchen floor (its saves and the
           RecipeStepsEditor are refused to them). */}
+      {copyFor && <CopyToBrandDialog source={copyFor} onClose={() => setCopyFor(null)} />}
       {modal !== null && !kitchenView && (
         <Dialog title={isEditing ? 'Edit Recipe' : 'New Recipe'} onClose={closeModal} wide>
 
@@ -1294,5 +1303,69 @@ function SheetBlock({ title, subtitle, children }: { title: string; subtitle?: s
       {subtitle && <p className="text-xs text-s-muted px-3 mb-1">{subtitle}</p>}
       {children}
     </div>
+  )
+}
+
+
+// ── Copy a dish to another brand (owner, 2026-11-12: "make the transfer/copy recipe to another company button") ──
+// POST /recipes/:id/copy-to-brand: a new recipe for the picked brand (in the company that writes its recipes), sent for
+// approval; the CEO's approval opens it on that brand's menu, in the picked category. The original never changes.
+function CopyToBrandDialog({ source, onClose }: { source: { id: string; name: string; brandId: string | null }; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [brandId, setBrandId] = useState('')
+  const [categoryId, setCategoryId] = useState('')
+  const [name, setName] = useState(source.name)
+  const [err, setErr] = useState('')
+  const { data: brands = [] } = useQuery<Array<{ id: string; name: string; tenantId: string | null }>>({
+    queryKey: ['concepts', 'picker', 'all-companies'],
+    queryFn: () => api.get('/concepts?view=picker', { headers: { 'x-servd-portfolio': '1', 'x-servd-brand': '' } }),
+  })
+  const brand = brands.find((b) => b.id === brandId)
+  const { data: categories = [], isLoading: catsLoading } = useQuery<Array<{ id: string; name: string; parentId?: string | null }>>({
+    queryKey: ['recipes', 'copy-categories', brandId],
+    queryFn: () => api.get(`/menu/${brandId}`, { headers: brand?.tenantId ? { 'x-servd-active-tenant': brand.tenantId } : {} }),
+    enabled: !!brandId,
+  })
+  const copy = useMutation({
+    mutationFn: () => api.post<{ id: string; brand: string; submitted: boolean; copiedSubRecipes: Array<{ name: string }> }>(
+      `/recipes/${source.id}/copy-to-brand`, { conceptId: brandId, categoryId, name: name.trim() || undefined },
+      brand?.tenantId ? { tenantId: brand.tenantId } : undefined),
+    meta: { inlineErrors: true },
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['recipes'] })
+      const subs = r.copiedSubRecipes.length ? ` (with ${r.copiedSubRecipes.length} sub-recipe${r.copiedSubRecipes.length === 1 ? '' : 's'})` : ''
+      toast.success(`Copied to ${r.brand}${subs}${r.submitted ? ' — sent for approval' : ''}`)
+      onClose()
+    },
+    onError: (e: Error) => setErr(e.message),
+  })
+  return (
+    <Dialog title={`Copy "${source.name}" to another brand`} onClose={onClose}>
+      <div className="space-y-3">
+        <p className="text-xs text-s-muted">Makes a new recipe for the brand you pick and sends it for approval. Once approved it opens on that brand&rsquo;s menu. The original stays as it is.</p>
+        <Field label="Brand">
+          <Select value={brandId} onChange={(e) => { setBrandId(e.target.value); setCategoryId(''); setErr('') }} className="s-input w-full" aria-label="Brand">
+            <option value="">— pick a brand —</option>
+            {brands.filter((b) => b.id !== source.brandId).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Menu category">
+          <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="s-input w-full" aria-label="Menu category" disabled={!brandId || catsLoading}>
+            <option value="">{!brandId ? 'Pick a brand first' : catsLoading ? 'Loading…' : categories.length ? '— pick a category —' : 'This brand has no categories yet'}</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Dish name on that menu">
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        {err && <p className="text-sm" style={{ color: 'var(--erp-danger)' }}>{err}</p>}
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
+          <Button type="button" disabled={!brandId || !categoryId || copy.isPending} onClick={() => { setErr(''); copy.mutate() }}>
+            {copy.isPending ? 'Copying…' : 'Copy and send for approval'}
+          </Button>
+        </div>
+      </div>
+    </Dialog>
   )
 }
