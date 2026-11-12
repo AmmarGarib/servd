@@ -79,6 +79,12 @@ describe('copy a dish to another brand', () => {
     expect(again.json().copiedSubRecipes).toHaveLength(0)
   })
 
+  it('works whichever company is picked at the top (Flipd picked, GS Foods dish)', async () => {
+    const r = await app.inject({ method: 'POST', url: `/recipes/${dish}/copy-to-brand`, payload: { conceptId: FL.conceptId, categoryId: flCat, name: `Mousse three ${stamp}` },
+      headers: { authorization: `Bearer ${u.ceo!.token}`, 'x-servd-active-tenant': FL.tenantId } })
+    expect(r.statusCode, r.body).toBe(201)
+  })
+
   it('same brand → 422; a stranger → 404', async () => {
     const same = await call(u.ceo!, `/recipes/${dish}/copy-to-brand`, { conceptId: GS.conceptId, categoryId: flCat })
     expect(same.statusCode).toBe(422)

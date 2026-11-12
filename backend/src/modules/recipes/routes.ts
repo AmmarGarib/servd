@@ -2782,7 +2782,9 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       where: { id: req.params.id },
       include: { menuItem: { select: { name: true, description: true, conceptId: true } }, ingredients: true },
     })
-    if (!src || !(await recipeInScope(src, await recipeScope(req, 'read')))) throw new NotFoundError('Recipe', req.params.id)
+    // Any company the caller belongs to, whichever is picked at the top (owner, 2026-11-12: copying a GS Foods dish
+    // with Flipd picked answered "Recipe not found").
+    if (!src || !(await recipeInScope(src, await recipeScopeFor(req.staffUser!.memberTenantIds ?? [], 'read')))) throw new NotFoundError('Recipe', req.params.id)
     if (src.kind !== 'plate') throw new AppError('COPY_DISHES_ONLY', 'Only a dish recipe can be copied to another brand', 422)
     const pending = src.pendingMenuItem as { conceptId?: string; name?: string; description?: string | null } | null
     const srcBrand = src.menuItem?.conceptId ?? pending?.conceptId ?? null
