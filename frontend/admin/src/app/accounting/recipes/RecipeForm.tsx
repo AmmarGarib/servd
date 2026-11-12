@@ -47,6 +47,9 @@ interface InventoryItem {
   /** null = a legacy item with no company (a sale never takes it) — fixable here. */
   tenantId?: string | null
   currentStock?: number
+  /** One piece of a weighed ingredient ("slice" = 20 g; Ingredients sheet) — lines can be typed in pieces. */
+  pieceGrams?: number | null
+  pieceLabel?: string | null
 }
 interface Concept { id: string; name: string; slug: string; forecastPortionsPerMonth: number; serviceVessel?: string; tenantId?: string | null }
 interface MenuItem { id: string; name: string; conceptId: string; priceCents: number }
@@ -65,6 +68,8 @@ interface IngredientRow {
   yieldPctOverride: number | null    // UI percent 0–100; null = use the inventory default
   section: LineSection               // a dish's Packaging section, or its ingredients
   removes: boolean                   // add-on recipes only: takes the quantity OFF the dish (sent negative)
+  /** Screen only: typed in grams / ml even though the line has a piece size (never sent). */
+  inGrams?: boolean
 }
 
 /** Packaging-class stock — the server's lib/inventoryClass.ts costClassOf (packing → packaging). */
@@ -105,7 +110,7 @@ interface PreviewResult extends McFields {
 // Component (sub-recipe) option for the ingredient picker. Cost-per-gram is
 // precomputed by GET /par-sheet/preps?for=recipe — the one component picker,
 // company-scoped (already batch-yield-adjusted).
-interface PrepOption { id: string; name: string; costPerGramCents: number; yieldGrams?: number | null; portionGrams?: number | null }
+interface PrepOption { id: string; name: string; costPerGramCents: number; yieldGrams?: number | null; portionGrams?: number | null; portionLabel?: string | null }
 
 export type RecipeStatus = 'iteration' | 'pending_approval' | 'production'
 
@@ -427,6 +432,8 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
         const costCents = Math.round(cpgCents * qty)
         return {
           ...row, inv: null, name: prep?.name ?? '— component —', isCount: false, measure: 'g' as Measure,
+          // A component with portions is typed in portions ("1 × Patty (100 g)"; owner, 2026-11-12).
+          piece: prep?.portionGrams && prep.portionGrams > 0 ? { grams: prep.portionGrams, label: prep.portionLabel?.trim() || 'portion' } : null,
           cpgCents, yieldPctApplied: 100, rawUsedG: qty,
           costCents, portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
           allergens: [] as string[],
@@ -434,7 +441,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
       }
       const inv = invById.get(row.inventoryItemId)
       if (!inv) {
-        return { ...row, inv: null, name: '—', isCount: false, measure: 'g' as Measure, cpgCents: 0,
+        return { ...row, inv: null, name: '—', isCount: false, measure: 'g' as Measure, cpgCents: 0, piece: null,
                  yieldPctApplied: 100, rawUsedG: 0, costCents: 0, portionCostCents: 0, allergens: [] as string[] }
       }
       const measure = measureOfUnit(inv.unit)
@@ -451,6 +458,8 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
       const costCents   = Math.round((qty * cpgCents) / yieldFactor)
       return {
         ...row, inv, name: inv.name, isCount, measure, cpgCents, yieldPctApplied: yieldPct,
+        // A weighed ingredient with a piece size is typed in pieces ("1 slice"); stored in g / ml all the same.
+        piece: !isCount && inv.pieceGrams && inv.pieceGrams > 0 ? { grams: inv.pieceGrams, label: inv.pieceLabel?.trim() || 'piece' } : null,
         rawUsedG: qty / yieldFactor, costCents,
         portionCostCents: Math.round(costCents / Math.max(portions ?? 1, 1)),
         allergens: inv.allergens,
@@ -675,16 +684,42 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                     </td>
                   )}
                   <td className="px-2 py-1.5 text-right font-mono text-s-muted">
-                    {cr.isCount ? `${fmtPkrWhole(cr.cpgCents)}/pcs` : `${fmtPkrPerG(cr.cpgCents)}/${MEASURE_LABEL[cr.measure]}`}
+                    {/* Nothing picked yet: no price to show (owner, 2026-11-12: "PKR 0.000/g looks wrong"). */}
+                    {!(isComp ? row.prepRecipeId : row.inventoryItemId) ? '—'
+                      : cr.piece ? `${fmtPkrWhole(Math.round(cr.cpgCents * cr.piece.grams / Math.max((cr.yieldPctApplied || 100) / 100, 0.01)))}/${cr.piece.label}`
+                      : cr.isCount ? `${fmtPkrWhole(cr.cpgCents)}/pcs` : `${fmtPkrPerG(cr.cpgCents)}/${MEASURE_LABEL[cr.measure]}`}
                   </td>
                   <td className="px-2 py-1.5 text-right">
                     {/* The quantity is in the line's own measure: grams, ml, or pieces (1 slice of cheese = 1). */}
-                    <div className="flex items-center justify-end gap-1">
-                      <NumInput value={row.quantity} placeholder="0"
-                        onChange={(v) => updateRow(row.key, { quantity: v })}
-                        className={inputCls + ' w-20 text-right'}/>
-                      <span className="w-6 text-left text-s-muted">{MEASURE_LABEL[cr.measure]}</span>
-                    </div>
+                    {cr.piece && !row.inGrams ? (
+                      // Typed in pieces (1 slice, 1 patty), kept in grams: pieces × the piece's weight.
+                      <div className="flex flex-col items-end gap-0.5">
+                        <div className="flex items-center justify-end gap-1">
+                          <NumInput value={row.quantity == null ? null : Math.round((row.quantity / cr.piece.grams) * 100) / 100} placeholder="0"
+                            onChange={(v) => updateRow(row.key, { quantity: v == null ? null : Math.round(v * cr.piece!.grams * 1000) / 1000 })}
+                            className={inputCls + ' w-16 text-right'}/>
+                          <span className="text-left text-s-muted whitespace-nowrap">× {cr.piece.label}</span>
+                        </div>
+                        <button type="button" className="text-[11px] text-s-dim hover:text-s-text"
+                          title="Type this line in grams instead" onClick={() => updateRow(row.key, { inGrams: true })}>
+                          = {(row.quantity ?? 0).toLocaleString('en', { maximumFractionDigits: 1 })} {MEASURE_LABEL[cr.measure]}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <div className="flex items-center justify-end gap-1">
+                          <NumInput value={row.quantity} placeholder="0"
+                            onChange={(v) => updateRow(row.key, { quantity: v })}
+                            className={inputCls + ' w-20 text-right'}/>
+                          <span className="w-6 text-left text-s-muted">{MEASURE_LABEL[cr.measure]}</span>
+                        </div>
+                        {cr.piece && (
+                          <button type="button" className="text-[11px] text-primary-ink hover:underline" onClick={() => updateRow(row.key, { inGrams: false })}>
+                            Type in {cr.piece.label}s
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </td>
                   {!isPack && (
                     <td className="px-2 py-1.5 text-right font-mono text-s-dim whitespace-nowrap">

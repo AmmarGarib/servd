@@ -36,12 +36,14 @@ interface Draft {
   name: string; unit: string; category: string; allergens: string; yieldPct: string
   purchaseUnit: string; purchaseUnitFactor: string; spec: string; specFields: Array<{ k: string; v: string }>
   perishable: boolean; shelfLifeDays: string
+  pieceGrams: string; pieceLabel: string
 }
 const draftOf = (m: MasterRow): Draft => ({
   name: m.name, unit: m.stockUnit, category: m.category ?? '', allergens: m.allergens.join(', '), yieldPct: String(m.yieldPct),
   purchaseUnit: m.purchaseUnit ?? '', purchaseUnitFactor: String(m.purchaseUnitFactor),
   spec: m.spec ?? '', specFields: Object.entries(m.specFields ?? {}).map(([k, v]) => ({ k, v })),
   perishable: !!m.perishable, shelfLifeDays: m.shelfLifeDays != null ? String(m.shelfLifeDays) : '',
+  pieceGrams: m.pieceGrams != null ? String(m.pieceGrams) : '', pieceLabel: m.pieceLabel ?? '',
 })
 
 export default function IngredientsPage() {
@@ -243,6 +245,7 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
       spec: d.spec.trim() || null,
       perishable: d.perishable,
       shelfLifeDays: d.perishable && Number(d.shelfLifeDays) >= 1 ? Math.round(Number(d.shelfLifeDays)) : null,
+      ...(d.unit === 'pcs' ? {} : { pieceGrams: Number(d.pieceGrams) > 0 ? Number(d.pieceGrams) : null, pieceLabel: d.pieceLabel.trim() || null }),
       specFields: d.specFields.filter((r) => r.k.trim()).length ? Object.fromEntries(d.specFields.filter((r) => r.k.trim()).map((r) => [r.k.trim(), r.v.trim()])) : null,
       ...extra,
     }),
@@ -305,6 +308,16 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
             <Input inputMode="numeric" value={d.shelfLifeDays} onChange={set('shelfLifeDays')} disabled={!canEdit || !d.perishable} />
           </Field>
         </div>
+        {d.unit !== 'pcs' && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="A piece is called" hint="Optional — e.g. slice, patty, bun">
+              <Input value={d.pieceLabel} onChange={set('pieceLabel')} disabled={!canEdit} maxLength={20} placeholder="slice" />
+            </Field>
+            <Field label={`One ${d.pieceLabel.trim() || 'piece'} weighs (${d.unit === 'ml' || d.unit === 'litres' ? 'ml' : 'g'})`} hint="Recipes can then say 1 slice instead of 20 g">
+              <Input inputMode="decimal" value={d.pieceGrams} onChange={set('pieceGrams')} disabled={!canEdit} placeholder="e.g. 20" />
+            </Field>
+          </div>
+        )}
         <Field label="Spec — what we buy" hint="Printed on purchase orders and the shopping list"><Textarea rows={3} value={d.spec} onChange={set('spec')} disabled={!canEdit} /></Field>
         <div>
           <p className="text-xs font-semibold text-s-text mb-1">Spec details</p>

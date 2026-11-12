@@ -361,7 +361,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   // come through tagged with a "No company" chip in the UI (managers only).
   // unitCostCents is the FIFO head cost; onHandValueCents (Σ open lot value)
   // only for the financial viewers and the stock keepers.
-  type ListedItem = Prisma.InventoryItemGetPayload<{ include: { supplier: { select: { name: true } }; tenant: { select: { id: true; name: true; slug: true } } } }> & { masterIngredient?: { group: { id: string; name: string; category: string } | null } | null }
+  type ListedItem = Prisma.InventoryItemGetPayload<{ include: { supplier: { select: { name: true } }; tenant: { select: { id: true; name: true; slug: true } } } }> & { masterIngredient?: { pieceGrams?: number | null; pieceLabel?: string | null; group: { id: string; name: string; category: string } | null } | null }
   async function shapeItems(req: FastifyRequest, items: ListedItem[]) {
     const hide = costsHiddenFor(req)
     const ids = items.map((i) => i.id)
@@ -384,6 +384,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         ...item,
         bySite: bySite.get(item.id) ?? [],
         group: item.masterIngredient?.group ?? null,
+        // One piece of a weighed ingredient ("1 slice" = pieceGrams g): the recipe form types lines in pieces.
+        pieceGrams: item.masterIngredient?.pieceGrams ?? null, pieceLabel: item.masterIngredient?.pieceLabel ?? null,
         latestCostCents: latest.get(item.id)?.cents ?? null,
         latestCostAt: latest.get(item.id)?.at ?? null,
         // 'deliveries' = the cost comes from FIFO lots / what deliveries cost;
@@ -401,7 +403,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     supplier: { select: { name: true } },
     tenant:   { select: { id: true, name: true, slug: true } },
     // Item group of the servd ingredient (owner, 2026-11-07: "Add groups to the Inventory page too").
-    masterIngredient: { select: { group: { select: { id: true, name: true, category: true } } } },
+    masterIngredient: { select: { pieceGrams: true, pieceLabel: true, group: { select: { id: true, name: true, category: true } } } },
   } as const
 
   fastify.get('/', { preHandler: requireAuth(...ITEM_READERS) }, async (req) => {

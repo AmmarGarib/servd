@@ -24,6 +24,8 @@ export interface MasterRow {
   /** Use-by (owner B6, 2026-10-26): deliveries carry a use-by date; shelf life (days) defaults it. */
   perishable?: boolean
   shelfLifeDays?: number | null
+  pieceGrams?: number | null
+  pieceLabel?: string | null
   spec: string | null
   specFields: Record<string, string> | null
   status: 'approved' | 'needs_review'

@@ -92,7 +92,12 @@ const createSchema = z.object({
   shelfLifeDays: z.number().int().min(1).max(3650).nullable().optional(),
   groupId: z.string().uuid().nullable().optional(),
 })
-const patchSchema = createSchema.omit({ groupId: true }).partial().extend({ status: z.enum(['approved', 'needs_review']).optional() })
+const patchSchema = createSchema.omit({ groupId: true }).partial().extend({
+  status: z.enum(['approved', 'needs_review']).optional(),
+  // One piece (a slice, a patty) of a weighed ingredient, in grams / ml — recipe lines can then be typed in pieces.
+  pieceGrams: z.number().positive().max(100_000).nullable().optional(),
+  pieceLabel: z.string().trim().max(20).nullable().optional(),
+})
 
 type MasterDb = Prisma.IngredientMasterGetPayload<object>
 type GroupRow = { id: string; name: string; category: string; active: boolean }
@@ -152,6 +157,7 @@ function shape(m: MasterDb, companyItemId: string | null, price?: MasterPrice | 
     groupId: m.groupId, group: group ? groupShape(group) : null, allergens: m.allergens, yieldPct: m.yieldPct,
     purchaseUnit: m.purchaseUnit, purchaseUnitFactor: m.purchaseUnitFactor, spec: m.spec, specFields: m.specFields,
     perishable: m.perishable, shelfLifeDays: m.shelfLifeDays,
+    pieceGrams: m.pieceGrams, pieceLabel: m.pieceLabel,
     status: m.status, mergedIntoId: m.mergedIntoId, createdAt: m.createdAt, updatedAt: m.updatedAt,
     companyItemId,
     price: priceOf(m, price),
@@ -357,6 +363,9 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     if (newPurchaseUnit !== before.purchaseUnit && body.purchaseUnitFactor === undefined) {
       throw new AppError('FACTOR_REQUIRED', 'Give how many stock units one new buying unit holds (purchaseUnitFactor) with the new buying unit', 400)
     }
+    if (body.pieceGrams != null && stockUnit === 'pcs') {
+      throw new AppError('PIECE_ON_COUNT_UNIT', 'This ingredient is already counted in pieces — a piece weight is only for ingredients kept in grams or ml', 422)
+    }
     const name = body.name !== undefined ? cleanIngredientName(body.name) : before.name
     const normalizedName = normalizeIngredientName(name)
     if (normalizedName !== before.normalizedName || stockUnit !== before.stockUnit) {
@@ -405,6 +414,8 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
           ...(body.status !== undefined && { status: body.status }),
           ...(body.perishable !== undefined && { perishable: body.perishable }),
           ...(body.shelfLifeDays !== undefined && { shelfLifeDays: body.shelfLifeDays }),
+          ...(body.pieceGrams !== undefined && { pieceGrams: body.pieceGrams }),
+          ...(body.pieceLabel !== undefined && { pieceLabel: body.pieceLabel?.trim() || null }),
         },
       })
       if (linkedIds.length > 0) {

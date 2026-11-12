@@ -119,7 +119,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
           OR: [{ id: { in: [...ids] } }, { usedInPlates: { none: {} } }],
         },
         select: {
-          id: true, name: true, yieldGrams: true, portionsPerBatch: true,
+          id: true, name: true, yieldGrams: true, portionsPerBatch: true, portionLabel: true,
           ingredients: { select: { inventoryItem: { select: { tenantId: true } } } },
         },
         orderBy: { name: 'asc' },
@@ -143,6 +143,7 @@ export async function parSheetRoutes(fastify: FastifyInstance) {
           // One portion's weight (yield ÷ portions per batch) — the recipe form's starting quantity when a
           // dish takes this component (owner, 2026-11-03); null when the component has no portions set.
           portionGrams:     p.yieldGrams && p.portionsPerBatch && p.portionsPerBatch >= 1 ? Math.round((p.yieldGrams / p.portionsPerBatch) * 10) / 10 : null,
+          portionLabel:     p.portionLabel ?? null,
           batchCostCents:   Math.round(cost.totalCents),
           costPerGramCents: cost.perGramCents ?? 0,   // sub-cent precision deliberately preserved
         }

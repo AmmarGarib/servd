@@ -2886,6 +2886,11 @@ model IngredientMaster {
   // company items mirror both (lib/ingredientMaster.ts MASTER_FIELDS). CHECK ingredient_masters_shelf_life_chk.
   perishable         Boolean  @default(false)
   shelfLifeDays      Int?
+  // One piece of a weighed ingredient (owner, 2026-11-12: "its 1 slice of nurpur cheese not 1g"): a recipe line may be
+  // typed in pieces ("1 slice"); it is still STORED in grams / ml (pieces × pieceGrams). Display only — never stock or
+  // costing. Only on a g / ml master (CHECK ingredient_masters_piece_chk: > 0).
+  pieceGrams         Float?
+  pieceLabel         String?
   status             String   @default("approved")
   createdByUserId    String?
   createdInTenantId  String?
