@@ -74,7 +74,7 @@ beforeAll(async () => {
   await uses(R.gsPlate, R.gsOnly)
 
   // The migration's data step, limited to this test's brand (the test DB is shared).
-  const sql = readFileSync(join(__dirname, '../prisma/migrations/20261112100000_recipe_viewer/migration.sql'), 'utf8')
+  const sql = readFileSync(join(__dirname, '../prisma/migrations/20261112110000_recipe_viewer/migration.sql'), 'utf8')
     .split('\n').filter((l) => !l.startsWith('--') && !l.startsWith('ALTER TABLE') && !l.startsWith('CREATE INDEX')).join('\n')
     .replace('WHERE "recipeOwnerTenantId" IS NOT NULL', `WHERE id = '${FL.conceptId}' AND "recipeOwnerTenantId" IS NOT NULL`)
   for (const stmt of sql.split(';').map((x) => x.trim()).filter(Boolean)) await prisma.$executeRawUnsafe(stmt)
