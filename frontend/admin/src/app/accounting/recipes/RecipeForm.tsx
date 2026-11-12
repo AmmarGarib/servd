@@ -848,6 +848,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
                       <option value="">{brandId ? '— Pick category —' : '— Pick brand first —'}</option>
                       {brandCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </Select>
+                    {brandId && <NewCategoryInline conceptId={brandId} onCreated={(id) => setNewItemCategoryId(id)} />}
                   </Field>
                   <div className="md:col-span-2">
                     <Field label="Menu description (optional)" hint="Shows under the item on the customer menu">
@@ -1351,3 +1352,32 @@ const inputCls = 's-input w-full'
 // width is governed by flex (w-40/flex-1). w-full there fights flex sizing and
 // collapses siblings (the method-step instruction box was being crushed).
 const controlCls = 's-input'
+
+/** "+ New category" for the brand (owner, 2026-11-12: Hanif found no category to pick) — the menu's own create route
+ *  (POST /menu/categories, managers, the brand's company active); the list refreshes and the new one is picked. */
+function NewCategoryInline({ conceptId, onCreated }: { conceptId: string; onCreated: (id: string) => void }) {
+  const qc = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  async function save() {
+    if (!name.trim()) return
+    setBusy(true); setErr('')
+    try {
+      const c = await api.post<{ id: string }>('/menu/categories', { conceptId, name: name.trim() })
+      await qc.invalidateQueries({ queryKey: ['recipes', 'brand-menu', conceptId] })
+      onCreated(c.id); setOpen(false); setName('')
+    } catch (e) { setErr((e as Error).message) } finally { setBusy(false) }
+  }
+  if (!open) return <button type="button" onClick={() => setOpen(true)} className="mt-1 text-xs font-semibold text-primary-ink hover:underline">+ New category</button>
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Burgers" maxLength={80} className="flex-1 min-w-[10rem]" autoFocus
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void save() } }} />
+      <button type="button" disabled={busy || !name.trim()} onClick={() => void save()} className="text-xs font-semibold text-primary-ink hover:underline disabled:opacity-50">{busy ? 'Adding…' : 'Add'}</button>
+      <button type="button" onClick={() => { setOpen(false); setErr('') }} className="text-xs text-s-muted hover:underline">Cancel</button>
+      {err && <p role="alert" className="w-full text-xs text-s-red">{err}</p>}
+    </div>
+  )
+}
