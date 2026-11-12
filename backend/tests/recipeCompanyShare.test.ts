@@ -156,6 +156,21 @@ describe('GS Foods writes Flipd\'s recipes', () => {
     expect((await call(u.chefC3!, 'PUT', `/recipes/${plateId}`, { servings: 2 })).statusCode).toBe(404)
     expect((await call(u.chefGS!, 'PUT', `/recipes/${plateId}`, { servings: 1 })).statusCode).toBe(200)
   })
+
+  it('a GS Foods sub-recipe no Flipd dish uses is not listed for Flipd (not through a Flipd stock line, not when empty)', async () => {
+    // Legacy shapes: owned by GS Foods, but a line on a FLIPD stock item / no lines at all.
+    const flItem = await prisma.inventoryItem.create({ data: { tenantId: FL.tenantId, name: `Fl sugar ${Date.now()}`, unit: 'g', category: 'dry_goods' } as never })
+    const viaStock = await prisma.recipe.create({ data: { tenantId: GS.tenantId, kind: 'component', name: 'Ladyfinger sponge', yieldGrams: 500, status: 'production' } as never })
+    await prisma.recipeIngredient.create({ data: { recipeId: viaStock.id, inventoryItemId: flItem.id, quantity: 100, unit: 'g' } as never })
+    const empty = await prisma.recipe.create({ data: { tenantId: GS.tenantId, kind: 'component', name: 'Empty base', yieldGrams: 100, status: 'production' } as never })
+    const fl = ((await call(u.chefFL!, 'GET', '/recipes')).json() as Array<{ id: string }>).map((r) => r.id)
+    expect(fl).not.toContain(viaStock.id)
+    expect(fl).not.toContain(empty.id)
+    expect(fl).toContain(sauceId)   // used by Flipd's dish — still readable
+    expect((await call(u.chefFL!, 'GET', `/recipes/${viaStock.id}`)).statusCode).toBe(404)
+    const gs = ((await call(u.chefGS!, 'GET', '/recipes')).json() as Array<{ id: string }>).map((r) => r.id)
+    expect(gs).toEqual(expect.arrayContaining([viaStock.id, empty.id]))
+  })
 })
 
 describe('Flipd\'s stock and books stay Flipd\'s', () => {

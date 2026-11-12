@@ -504,6 +504,13 @@ async function recipeInScope(r: ScopableRecipe, scope: RecipeScope): Promise<boo
       return [...users].every((t) => t === owner || shared.has(t) || scope.tenantIds.has(t))
     }
     if (scope.mode !== 'read') return false
+    // Another company reads an OWNED sub-recipe only when one of its own dishes / add-ons uses it (owner,
+    // 2026-11-12: GS Foods sub-recipes were showing in Flipd). Never through the stock it is made from, and never
+    // the old "no derivable company → everyone" fallback — that is for recipes with no owner only.
+    if (r.kind === 'component') {
+      const users = (await scope.components()).users(r.id)
+      return [...users].some((t) => scope.tenantIds.has(t))
+    }
   }
   return derivedInScope(r, scope)
 }
