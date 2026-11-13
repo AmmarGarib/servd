@@ -7,6 +7,7 @@ import { fmtPkrShort, startOfMonthPktIso, todayPktIso } from '../../lib/money'
 import { usePermissions } from '../../hooks/useCan'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { FIcon, type FIconName } from '../../components/finance/ui/icons'
+import { LoyaltySwitch } from '../../components/finance/LoyaltySwitch'
 
 // The books' own audit trail answers only these roles (backend
 // lib/moduleAccess.ts ACCOUNTING_AUDIT_ROLES) — the module alone is not enough.
@@ -194,6 +195,9 @@ export default function AccountingHubPage() {
       </header>
 
       <div className="p-6 space-y-6 max-w-6xl mx-auto">
+
+        {/* The loyalty switch (CEO or finance; owner, 2026-11-13) — renders nothing for other roles. */}
+        <LoyaltySwitch />
 
         {/* ── KPI row ───────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

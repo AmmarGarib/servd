@@ -17,7 +17,7 @@ import {
   newIdempotencyKey, paidCentsOf, printHtml, printPreBill, preBillErrorMessage, raastIntentBlocks, storedQuote, useOnAccountEnabled,
   useTerminalConfig, type FiscalView, type RaastIntentView, type TerminalChargeView, type TillBrand, type TillOrder, tableName } from '../tillApi'
 import {
-  checkKeenuPush, flowErrorMessage, getKeenuPush, getOrderInfo, patchOrderInfo, payServd, paySplitServd, pushToKeenu, setServdChannel,
+  checkKeenuPush, flowErrorMessage, getKeenuPush, getOrderInfo, loyaltyOn, patchOrderInfo, payServd, paySplitServd, pushToKeenu, setLoyaltyOptIn, setServdChannel,
   type KeenuAnswer, type KeenuPushView, type SplitTender,
 } from './flowApi'
 import { ErrorLine, ghostBtn, inputCls, labelCls, primaryBtn } from './ui'
@@ -551,7 +551,7 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
                   {!resumeSettled && <p className="mb-2 text-sm text-kds-subtext">Checking for a card charge or Raast payment already on this bill…</p>}
 
                   {tile === 'split' ? (
-                    <SplitPanel due={due} shown={!!shown} rows={splitRows} setRows={setSplitRows} busy={busy} error={error} printReceipt={printReceipt} setPrintReceipt={setPrintReceipt} onPay={() => void paySplit()} unavailable={unavailable} />
+                    <SplitPanel orderId={order.id} due={due} shown={!!shown} rows={splitRows} setRows={setSplitRows} busy={busy} error={error} printReceipt={printReceipt} setPrintReceipt={setPrintReceipt} onPay={() => void paySplit()} unavailable={unavailable} />
                   ) : tile === 'on_account' ? (
                     !onAccountWhy && shiftId ? <OnAccountPanel orderId={order.id} shiftId={shiftId} onBillChanged={() => void reloadBill()} onCharged={(r) => finish({ way: 'servd', changeCents: 0, keptTipCents: 0, fiscal: r.fiscal, completed: true, onAccount: r.client })} /> : null
                   ) : tile === 'raast' ? (
@@ -598,6 +598,7 @@ export function SettleScreen({ ticket, brand, onClose, startOnSplit }: {
                       <BillRows q={shown} unavailable={unavailable} loading={bill.isLoading} error={null} due />
                       {extraCash}
                       <label className="mt-3 flex min-h-11 items-center gap-2 text-sm text-kds-text"><input type="checkbox" checked={printReceipt} onChange={(e) => setPrintReceipt(e.target.checked)} className="h-5 w-5" /> Print Receipt</label>
+                      <LoyaltyTick orderId={order.id} />
                       <div className="mt-2"><ErrorLine text={error} /></div>
                       <button type="button" onClick={() => void payCash()} disabled={busy || !shown || due <= 0 || tendered < due || !shiftId || !resumeSettled}
                         className={`${primaryBtn} mt-2 w-full py-4 text-lg`}>{busy ? 'Processing…' : `Pay ${fmtPkrWhole(tendered > 0 ? (keepAsTip ? tendered : Math.min(tendered, due) || due) : due)}`}</button>
@@ -650,8 +651,9 @@ let splitId = 0
 // Split tender (TILL_FLOW §6a): several tenders in ONE payment that together cover what is due. Card is taken
 // by the machine slip reference and Raast by its bank reference here; the card-machine charge, the Raast QR
 // request and On account each take the whole bill on their own and cannot be part of a split.
-function SplitPanel({ due, shown, rows, setRows, busy, error, printReceipt, setPrintReceipt, onPay, unavailable }: {
+function SplitPanel({ orderId, due, shown, rows, setRows, busy, error, printReceipt, setPrintReceipt, onPay, unavailable }: {
   due: number; shown: boolean; rows: SplitRow[]; setRows: (f: (r: SplitRow[]) => SplitRow[]) => void; busy: boolean; error: string | null
+  orderId: string
   printReceipt: boolean; setPrintReceipt: (v: boolean) => void; onPay: () => void; unavailable: string | null
 }) {
   const sum = rows.reduce((n, r) => n + toCents(r.amount), 0)
@@ -686,8 +688,38 @@ function SplitPanel({ due, shown, rows, setRows, busy, error, printReceipt, setP
       </ul>
       <p className="text-xs text-kds-subtext">A card-machine charge, a Raast QR request and On account take the whole bill on their own: pick that tender instead of Split.</p>
       <label className="flex min-h-11 items-center gap-2 text-sm text-kds-text"><input type="checkbox" checked={printReceipt} onChange={(e) => setPrintReceipt(e.target.checked)} className="h-5 w-5" /> Print Receipt</label>
+      <LoyaltyTick orderId={orderId} />
       <ErrorLine text={error} />
       <button type="button" onClick={onPay} disabled={busy || !complete || !refsOk} className={`${primaryBtn} w-full py-4 text-lg`}>{busy ? 'Processing…' : `Pay ${fmtPkrWhole(sum)}`}</button>
+    </div>
+  )
+}
+
+/**
+ * "Add loyalty points" (owner, 2026-11-13: "Give option at settlement to add loyalty points"). Shown only while
+ * loyalty is switched on (the CEO or finance). Off by default: the bill earns points only when ticked, and only for a
+ * guest on the bill (the server answers NO_CUSTOMER otherwise).
+ */
+function LoyaltyTick({ orderId }: { orderId: string }) {
+  const { data } = useQuery({ queryKey: ['pos', 'loyalty-on'], queryFn: loyaltyOn, staleTime: 60_000 })
+  const [on, setOn] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  if (!data?.on) return null
+  return (
+    <div>
+      <label className="flex min-h-11 items-center gap-2 text-sm text-kds-text">
+        <input type="checkbox" checked={on} disabled={busy} className="h-5 w-5"
+          onChange={async (e) => {
+            const next = e.target.checked
+            setBusy(true); setErr(null)
+            try { await setLoyaltyOptIn(orderId, next); setOn(next) }
+            catch (x) { setErr(x instanceof ApiError ? x.message : 'Could not save — try again') }
+            finally { setBusy(false) }
+          }} />
+        Add loyalty points
+      </label>
+      {err && <p role="alert" className="text-xs text-kds-red">{err}</p>}
     </div>
   )
 }

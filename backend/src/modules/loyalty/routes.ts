@@ -185,9 +185,11 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
     return { values, defaults: LOYALTY_DEFAULTS, pause: await readLoyaltyPause() }
   })
 
-  // PUT /loyalty/pause { paused, reason } — CEO only, servd-wide, audited (owner, 2026-10-22:
-  // "stop the Loyalty points section for now … no amount should go to loyalty points account").
-  fastify.put('/pause', { preHandler: requireAuth('admin') }, async (req) => {
+  // PUT /loyalty/pause { paused, reason } — servd-wide, audited (owner, 2026-10-22: "stop the Loyalty points section
+  // for now … no amount should go to loyalty points account"). The CEO or finance holding `accounting` (owner,
+  // 2026-11-13: "no sale should book loyalty points until CEO or Finance turn it on").
+  fastify.get('/pause', { preHandler: [requireAuth('admin', 'finance'), requireModule('accounting')] }, async () => readLoyaltyPause())
+  fastify.put('/pause', { preHandler: [requireAuth('admin', 'finance'), requireModule('accounting')] }, async (req) => {
     const body = z.object({ paused: z.boolean(), reason: z.string().trim().min(10).max(300) }).parse(req.body)
     const before = await readLoyaltyPause()
     const after = await writeLoyaltyPause({ paused: body.paused, reason: body.reason, actorId: req.staffUser!.id })
@@ -195,7 +197,7 @@ export async function loyaltyRoutes(fastify: FastifyInstance) {
       category: 'accounting', action: body.paused ? 'loyalty.pause' : 'loyalty.resume',
       entity: 'Setting', entityId: 'loyalty.paused',
       userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: req.staffUser!.tenantId ?? null,
-      before: { paused: before.paused }, after: { paused: after.paused }, metadata: { reason: body.reason },
+      before: { paused: before.paused }, after: { paused: after.paused }, metadata: { reason: body.reason, actorRole: req.staffUser!.role },
     })
     return after
   })

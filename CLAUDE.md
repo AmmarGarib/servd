@@ -1983,8 +1983,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   reservations, reviews, bonuses, stamps), redeeming is 409 `LOYALTY_PAUSED` (quoteRedemption,
   claimRedemption, redeemPointsOnOrder), the expiry sweep does nothing and the point value cannot change
   (no revaluation) — nothing is booked to 2060. Balances are frozen, never erased; reversals of points earned
-  before the pause still run. Only the CEO switches it (`PUT /loyalty/pause {paused, reason ≥10}`, audited;
-  Configuration → Loyalty). The storefront hides points while `paused` (`/loyalty/program`, `/loyalty/status`).
+  before the pause still run. The CEO or finance with `accounting` switches it (owner, 2026-11-13; `PUT /loyalty/pause {paused, reason ≥10}`,
+  `GET /loyalty/pause`, audited; Configuration → Loyalty and the Accounting home). `postLoyaltyEarn` books nothing
+  while paused (`loyalty_paused`). A TILL bill earns only when the cashier ticks "Add loyalty points" at settlement
+  (`PUT /pos/orders/:id/loyalty-points {add}` → `Order.rawPayload.loyaltyOptIn`, read by `awardOrderPoints`; a guest
+  must be on the bill, 422 `NO_CUSTOMER`; `GET /pos/loyalty-on`). The storefront hides points while `paused` (`/loyalty/program`, `/loyalty/status`).
   Tests run with loyalty ON (tests/setup.ts); the pause is `tests/loyaltyPause.test.ts`.
 - **Withholding and statutory payables:** `lib/withholding.ts` is the one WHT
   resolver; `PUT /accounting/withholding/rates` the only writer of a

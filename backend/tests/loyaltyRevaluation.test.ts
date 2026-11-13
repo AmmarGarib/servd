@@ -55,7 +55,7 @@ async function customerWithPoints(tenantId: string, earn: number, redeem = 0) {
   const c = await prisma.customer.create({ data: { name: `Cust ${cust}`, phone: `92300${String(Date.now()).slice(-6)}${cust++}` } })
   const acc = await prisma.loyaltyAccount.create({ data: { tenantId, customerId: c.id, pointsBalance: earn - redeem, lifetimePoints: earn } })
   const e = await prisma.loyaltyTransaction.create({ data: { loyaltyAccountId: acc.id, type: 'earn', pointsDelta: earn } })
-  expect((await postLoyaltyEarn(e.id)).posted).toBe(true)
+  const pe = await postLoyaltyEarn(e.id); expect(pe.posted, JSON.stringify(pe)).toBe(true)
   if (redeem > 0) {
     const r = await prisma.loyaltyTransaction.create({ data: { loyaltyAccountId: acc.id, type: 'redeem', pointsDelta: -redeem } })
     expect((await postLoyaltyRedeem(r.id)).posted).toBe(true)
@@ -102,6 +102,10 @@ beforeAll(async () => {
   await app.register(loyaltyRoutes, { prefix: '/loyalty' })
   await app.ready()
 
+  // Loyalty on for this file's fixtures (setup's own switch can land after this beforeAll starts; a paused switch
+  // books no earn — lib/loyaltyPause.ts).
+  await prisma.setting.upsert({ where: { key: 'loyalty.paused' }, create: { key: 'loyalty.paused', value: '{"paused":false}' }, update: { value: '{"paused":false}' } })
+  ;(await import('../src/lib/loyaltyPause.js')).resetLoyaltyPauseCache()
   // A: 1,000 earned, 200 redeemed → 800 outstanding at PKR 0.10 (default). B: 500 outstanding.
   await customerWithPoints(A, 1_000, 200)
   await customerWithPoints(B, 500)

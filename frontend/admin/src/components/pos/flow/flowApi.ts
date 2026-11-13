@@ -284,6 +284,14 @@ export function setServdChannel(orderId: string): Promise<{ orderId: string; set
   return api.put<{ orderId: string; settlementChannel: string }>(`/pos/orders/${orderId}/settlement-channel`, { channel: 'servd' })
 }
 
+/** Loyalty at settlement (owner, 2026-11-13): whether loyalty is on, and the cashier's tick on the open bill. */
+export function loyaltyOn() {
+  return api.get<{ on: boolean }>('/pos/loyalty-on')
+}
+export function setLoyaltyOptIn(orderId: string, add: boolean) {
+  return api.put<{ orderId: string; loyaltyOptIn: boolean }>(`/pos/orders/${orderId}/loyalty-points`, { add })
+}
+
 /** POST /pos/payments, closed in servd (TILL_FLOW §6a). Cash may keep the excess as a tip. */
 export function payServd(body: {
   orderId: string

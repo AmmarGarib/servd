@@ -12,7 +12,10 @@
 // Customers' existing balances stay as they are (frozen, never erased).
 // Reversals of points earned BEFORE the pause (a refunded order's claw-back)
 // still run: they undo history, they do not add new loyalty money.
-// Only the CEO switches it (PUT /loyalty/pause, reason, audited).
+// The CEO or finance (with accounting) switches it (PUT /loyalty/pause, reason, audited; owner, 2026-11-13).
+// Belt and braces: postLoyaltyEarn books NOTHING while paused (an earn row from before the pause, re-posted by a
+// backfill, never reaches 2060 while it is off). A till bill earns only when the cashier ticks "Add loyalty points"
+// at settlement (Order.rawPayload.loyaltyOptIn; PUT /pos/orders/:id/loyalty-points; loyalty/service awardOrderPoints).
 
 import { serviceClient } from './prisma.js'
 

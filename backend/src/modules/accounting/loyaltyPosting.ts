@@ -23,6 +23,7 @@
 // earns, redemptions, expiries and reversals all land in that company's 2060.
 
 import { loadLoyaltySettings } from '../../lib/loyaltySettings.js'
+import { isLoyaltyPaused } from '../../lib/loyaltyPause.js'
 import { lockLoyaltyValueTx, pointValueCentsTx } from '../loyalty/revaluation.js'
 // serviceClient on purpose: a loyalty posting is a system action keyed by the
 // points transaction's id (server-side), booked in the company of that
@@ -76,6 +77,8 @@ export async function postLoyaltyEarn(loyaltyTxId: string, opts: RepostOptions =
   if (!tx) return { posted: false, entryId: null, reason: 'tx_not_found' }
   if (tx.type !== 'earn' || tx.pointsDelta <= 0) return { posted: false, entryId: null, reason: 'not_earn_tx' }
   if (tx.reversedAt) return { posted: false, entryId: null, reason: 'reversed' }
+  // Loyalty off (lib/loyaltyPause.ts): nothing reaches 2060, whatever path asks.
+  if (await isLoyaltyPaused()) return { posted: false, entryId: null, reason: 'loyalty_paused' }
 
   const tenantId = await loyaltyTenantId(tx.orderId, tx.loyaltyAccount?.customerId ?? null, tx.loyaltyAccount?.tenantId ?? null)
   if (!tenantId) return { posted: false, entryId: null, reason: 'no_company' }

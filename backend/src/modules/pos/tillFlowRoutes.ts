@@ -12,6 +12,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, assertShiftOf, scopeTenantWhere, shiftWhere } from '../../lib/tenantScope.js'
 import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { audit } from '../../lib/audit.js'
+import { isLoyaltyPaused } from '../../lib/loyaltyPause.js'
 import { assertDrawerOperator, lockOrderTx, getZReport } from './service.js'
 import {
   listWaiters, searchGuests, searchMenu, deliveryZonesFor, resolveWaiter, resolveGuest, assertCustomerAttachable,
@@ -150,6 +151,27 @@ export async function posTillFlowRoutes(fastify: FastifyInstance): Promise<void>
       await stampSettlementChannelTx(tx, o.id, body.channel)
     })
     return { orderId: o.id, settlementChannel: body.channel }
+  })
+
+  // Loyalty at settlement (owner, 2026-11-13: "Give option at settlement to add loyalty points"). GET says whether
+  // loyalty is on (lib/loyaltyPause.ts) — the settle screen shows the tick only then; PUT records the cashier's choice
+  // on the open bill (Order.rawPayload.loyaltyOptIn), read by loyalty/service awardOrderPoints when the bill completes.
+  fastify.get('/loyalty-on', { preHandler: requireAuth(...CASHIERS) }, async () => ({ on: !(await isLoyaltyPaused()) }))
+  fastify.put<{ Params: { orderId: string } }>('/orders/:orderId/loyalty-points', { preHandler: requireAuth(...CASHIERS) }, async (req) => {
+    const body = z.object({ add: z.boolean() }).parse(req.body ?? {})
+    const o = await orderInScope(req, z.string().uuid().parse(req.params.orderId))
+    if (body.add && await isLoyaltyPaused()) throw new AppError('LOYALTY_PAUSED', 'Loyalty points are switched off — the CEO or finance switches them on', 409)
+    const out = await prisma.$transaction(async (tx) => {
+      await lockOrderTx(tx, o.id)
+      const cur = await tx.order.findUniqueOrThrow({ where: { id: o.id }, select: { status: true, customerId: true, rawPayload: true } })
+      if (cur.status === 'completed' || cur.status === 'cancelled' || cur.status === 'refunded') throw new AppError('ORDER_CLOSED', 'This bill is already closed', 409)
+      if (body.add && !cur.customerId) throw new AppError('NO_CUSTOMER', 'Add the guest to the bill first — points go to their account', 422)
+      const raw = (cur.rawPayload && typeof cur.rawPayload === 'object' && !Array.isArray(cur.rawPayload) ? cur.rawPayload : {}) as Record<string, unknown>
+      await tx.order.update({ where: { id: o.id }, data: { rawPayload: { ...raw, loyaltyOptIn: body.add } as never } })
+      return { orderId: o.id, loyaltyOptIn: body.add }
+    })
+    await audit({ category: 'accounting', action: 'order.loyalty_opt_in', entity: 'Order', entityId: o.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: o.tenantId, metadata: { add: body.add } })
+    return out
   })
 
   // POST /pos/orders/:orderId/keenu-push { shiftId, method, tipCents? } — Push to Keenu.
