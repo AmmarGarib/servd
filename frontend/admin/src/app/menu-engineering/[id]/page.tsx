@@ -193,7 +193,7 @@ export default function PlatePricingPage() {
   const netPct  = priceCents > 0 ? (net / priceCents) * 100 : 0
   const platePct = priceCents > 0 ? (plate / priceCents) * 100 : null
   const byType: Array<{ label: string; mc: number }> = [
-    { label: 'Dine-in', mc: target.dine_in }, { label: 'Takeaway', mc: target.takeout }, { label: 'Delivery', mc: target.delivery },
+    { label: 'Dine-in', mc: target.dine_in }, { label: 'Pickup', mc: target.takeout }, { label: 'Delivery', mc: target.delivery },
   ]
   const verdict = priceCents <= 0
     ? { label: 'Set a selling price', color: 'rgb(var(--fg-rgb) / 0.4)', bg: 'rgb(var(--fg-rgb) / 0.04)' }
@@ -379,7 +379,7 @@ export default function PlatePricingPage() {
               value={`${fmtPkrWhole(net)} · ${fmtPct(netPct)}`} color={net >= 0 ? 'var(--erp-success)' : 'var(--erp-danger)'} />
             {hasMc && priceCents > 0 && !servesInPackaging && packCents > 0 && (
               <p className="text-[10px] text-s-dim mt-1">
-                Takeaway and delivery also use the packaging: contribution {fmtPkrWhole(priceCents - target.takeout - qCents)} a portion.
+                Pickup and delivery also use the packaging: contribution {fmtPkrWhole(priceCents - target.takeout - qCents)} a portion.
               </p>
             )}
 

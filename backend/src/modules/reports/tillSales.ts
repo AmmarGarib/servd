@@ -34,7 +34,7 @@ const TITLES: Record<TillSalesView, string> = {
   discounts: 'Discounted sales', no_charge: 'No Charge sales', waiters: 'Sales by waiter', order_type: 'Sales by order type',
 }
 const SETTLEMENT_LABEL: Record<string, string> = { keenu: 'Pushed to Keenu', servd: 'Closed in servd', none: 'Online / other' }
-const FULFILMENT_LABEL: Record<string, string> = { dine_in: 'Dine in', takeout: 'Takeaway', delivery: 'Delivery' }
+const FULFILMENT_LABEL: Record<string, string> = { dine_in: 'Dine in', takeout: 'Pickup', delivery: 'Delivery' }
 
 const pktTime = (d: Date | null) => d ? new Date(d.getTime() + 5 * 3600_000).toISOString().slice(0, 16).replace('T', ' ') : ''
 const sum = (rows: Array<Record<string, string | number | null>>, k: string) => rows.reduce((s, r) => s + (typeof r[k] === 'number' ? (r[k] as number) : 0), 0)

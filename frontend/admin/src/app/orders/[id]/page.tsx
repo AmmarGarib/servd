@@ -1194,7 +1194,7 @@ export default function OrderDetailPage() {
                   <p className="text-s-muted">Table {order.table.label}</p>
                 </div>
               ) : (
-                <p className="text-sm text-s-muted capitalize">{order.source === 'pos' ? 'Point of sale' : 'Takeaway / pickup'}</p>
+                <p className="text-sm text-s-muted capitalize">{order.source === 'pos' ? 'Point of sale' : 'Pickup'}</p>
               )}
               {order.deliveryNotes && (
                 <div className="mt-3 pt-3 border-t border-s-border/50">

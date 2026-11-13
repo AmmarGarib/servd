@@ -38,7 +38,7 @@ const tabOf = (s: OrderStatus): Exclude<SummaryTab, 'all'> =>
 
 export const SUMMARY_TYPES = ['dine_in', 'takeout', 'delivery', 'no_charge'] as const
 export type SummaryType = (typeof SUMMARY_TYPES)[number]
-const TYPE_LABEL: Record<SummaryType, string> = { dine_in: 'Dine In', takeout: 'Takeaway', delivery: 'Delivery', no_charge: 'No Charge' }
+const TYPE_LABEL: Record<SummaryType, string> = { dine_in: 'Dine In', takeout: 'Pickup', delivery: 'Delivery', no_charge: 'No Charge' }
 const STATUS_LABEL: Record<Exclude<SummaryTab, 'all'>, string> = { running: 'Running', settled: 'Settled', voided: 'Voided' }
 
 /** [start, end) of a Karachi calendar day (UTC+5, no DST). */

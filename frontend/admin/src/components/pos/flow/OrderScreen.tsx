@@ -291,7 +291,7 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
 
   const headline = fulfilment === 'dine_in'
     ? `${tableName(tableLabel ?? '—')}`
-    : fulfilment === 'delivery' ? `Delivery${delivery?.name ? ` · ${delivery.name}` : ''}` : 'Takeaway'
+    : fulfilment === 'delivery' ? `Delivery${delivery?.name ? ` · ${delivery.name}` : ''}` : 'Pickup'
   const sub = fulfilment === 'dine_in'
     ? [waiter?.name, partySize ? `${partySize} pax` : null].filter(Boolean).join(' · ') || 'No waiter or pax yet'
     : fulfilment === 'delivery' ? [delivery?.phone, delivery?.cod ? 'Cash on delivery' : 'Pay now'].filter(Boolean).join(' · ') : ''

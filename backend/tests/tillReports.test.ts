@@ -253,7 +253,7 @@ describe('run', () => {
     expect(nc.map((x) => x.title)).toEqual(['Receipt Summary', 'Sales Summary', 'Category Summary', 'Payment Summary', 'Order Type Summary', 'User Wise Sales'])
     expect(v(nc[0]!, '#Receipts')).toBe(4)
     expect(nc[3]!.rows.find((x) => x.method === 'No Charge')).toMatchObject({ count: 1, amountCents: 400_00 })
-    expect(nc[4]!.rows.map((x) => x.line).sort()).toEqual(['Dine In', 'No Charge', 'Takeaway'])
+    expect(nc[4]!.rows.map((x) => x.line).sort()).toEqual(['Dine In', 'No Charge', 'Pickup'])
     expect(nc[5]!.rows.find((x) => x.line === 'cashier2')).toMatchObject({ count: 1, amountCents: 1080_00 })
     // Who rang it: cashier2 only.
     const c2 = sectionsOf(await run('finA', 'cashier_sales_detail', `&users=${U.cashier2}`))

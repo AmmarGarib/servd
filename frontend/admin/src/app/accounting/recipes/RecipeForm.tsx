@@ -1270,7 +1270,7 @@ export function McBreakdown({ mc, kind }: { mc: McFields; kind: Kind }) {
       <div>
         <p className="text-xs font-bold uppercase tracking-wider text-s-muted mb-1">Target MC by order type</p>
         <Line label="Dine-in" value={fmtPkrWhole(mc.targetMcCents.dine_in)} highlight highlightColor="var(--erp-success)" />
-        <Line label="Takeaway" value={fmtPkrWhole(mc.targetMcCents.takeout)} highlight highlightColor="var(--erp-success)" />
+        <Line label="Pickup" value={fmtPkrWhole(mc.targetMcCents.takeout)} highlight highlightColor="var(--erp-success)" />
         <Line label="Delivery" value={fmtPkrWhole(mc.targetMcCents.delivery)} highlight highlightColor="var(--erp-success)" />
         <p className="text-xs text-s-muted mt-1">Food + drinks + the packaging where that order type uses it. A dine-in box handed over (Box given) shows in actual cost, not here.</p>
       </div>

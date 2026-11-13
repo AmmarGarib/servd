@@ -46,7 +46,7 @@ const FULFILMENT_META = {
     button: 'bg-kds-green text-primary-on',
   },
   takeout:  {
-    label: 'Takeout', short: 'PACK',
+    label: 'Pickup', short: 'PACK',
     chip: 'bg-kds-amber/10 text-kds-amber', text: 'text-kds-amber', bar: 'bg-kds-amber',
     border: 'border border-kds-amber/25', ready: 'bg-kds-amber/10 border-2 border-kds-amber',
     button: 'bg-kds-amber text-kds-bg',

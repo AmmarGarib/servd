@@ -258,7 +258,7 @@ export default function PosPage() {
     if (st.fulfilment === 'delivery') { setView('delivery'); return }
     setInfo({
       kind: 'new',
-      title: st.fulfilment === 'dine_in' ? `Table ${st.tableLabel ?? ''}` : 'Takeaway',
+      title: st.fulfilment === 'dine_in' ? `Table ${st.tableLabel ?? ''}` : 'Pickup',
       initial: { waiter: st.waiter, partySize: st.partySize, guest: st.guest },
     })
   }
@@ -353,7 +353,7 @@ export default function PosPage() {
           <div className="hidden flex-1 items-center justify-center p-8 text-center lg:flex">
             <div>
               <p className="text-2xl font-bold text-kds-text">{activeConcept?.name ?? 'The till'}</p>
-              <p className="mt-2 text-kds-subtext">Choose Dine In, Delivery or Takeaway from the menu to start an order.</p>
+              <p className="mt-2 text-kds-subtext">Choose Dine In, Delivery or Pickup from the menu to start an order.</p>
             </div>
           </div>
         )}

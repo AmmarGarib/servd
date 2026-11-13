@@ -12,7 +12,7 @@ export type StartAction = 'dine_in' | 'delivery' | 'no_charge' | 'summary' | 'ti
 interface Entry { id: StartAction | 'shift' | 'back' | 'waiter' | 'day_close' | 'dashboard'; label: string; icon: ReactNode; href?: string; badge?: number }
 
 // The till's start menu (owner's flow, step 1): ORDERING · MANAGER · OTHER.
-// Room Service and Take Away are NOT under ORDERING; Takeaway lives in OTHER.
+// Takeaway / Pickup sits right after Dine In (owner, 2026-11-13: "Add takeaway tab right after dine in").
 export function StartMenu({ onPick, ticketCount, active, onClose }: {
   onPick: (a: StartAction) => void
   ticketCount: number
@@ -29,6 +29,7 @@ export function StartMenu({ onPick, ticketCount, active, onClose }: {
 
   const ordering: Entry[] = [
     { id: 'dine_in', label: 'Dine In', icon: <UtensilsCrossed size={18} aria-hidden="true" /> },
+    { id: 'takeaway', label: 'Takeaway / Pickup', icon: <ShoppingBag size={18} aria-hidden="true" /> },
     { id: 'delivery', label: 'Delivery', icon: <Truck size={18} aria-hidden="true" /> },
     { id: 'no_charge', label: 'No Charge', icon: <Tag size={18} aria-hidden="true" /> },
     { id: 'summary', label: 'Order Summary', icon: <FileText size={18} aria-hidden="true" /> },
@@ -45,7 +46,6 @@ export function StartMenu({ onPick, ticketCount, active, onClose }: {
     { id: 'shift', label: 'Shift Manager', icon: <Timer size={18} aria-hidden="true" />, href: '/pos/shift' },
   ]
   const other: Entry[] = [
-    { id: 'takeaway', label: 'Takeaway', icon: <ShoppingBag size={18} aria-hidden="true" /> },
     { id: 'waiter', label: 'Waiter ordering', icon: <Receipt size={18} aria-hidden="true" />, href: '/pos/waiter' },
     { id: 'back', label: 'Back to admin', icon: <ArrowLeft size={18} aria-hidden="true" />, href: '/w' },
   ]

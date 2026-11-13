@@ -260,7 +260,7 @@ const unexplainedOf = (b: FoodCostBuckets) => b.countVariance.totalCents + b.not
 const pct = (n: number, d: number): number | null => (d > 0 ? Math.round((n / d) * 1000) / 10 : null)
 const isWasteReason = (r: string): r is WasteReason => (WASTE_REASONS as readonly string[]).includes(r)
 
-const FULFILMENT_LABEL: Readonly<Record<McByOrderType['fulfilmentType'], string>> = { dine_in: 'Dine-in', takeout: 'Takeaway', delivery: 'Delivery' }
+const FULFILMENT_LABEL: Readonly<Record<McByOrderType['fulfilmentType'], string>> = { dine_in: 'Dine-in', takeout: 'Pickup', delivery: 'Delivery' }
 const FULFILMENTS: ReadonlyArray<McByOrderType['fulfilmentType']> = ['dine_in', 'takeout', 'delivery']
 
 /** The sourceType of a journal entry reference '<sourceType>:<sourceId>'. */

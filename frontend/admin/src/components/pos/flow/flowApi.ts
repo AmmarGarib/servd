@@ -260,7 +260,7 @@ export function saveTicket(b: SaveBody): Promise<SavedOrder | OfflinePlaceholder
     ...(b.discountPin && { managerOverridePin: b.discountPin }),
     items: b.items,
   }
-  const label = b.fulfilment === 'dine_in' ? 'Dine in' : b.fulfilment === 'delivery' ? `Delivery${delivery ? ` — ${delivery.name.trim()}` : ''}` : 'Takeaway'
+  const label = b.fulfilment === 'dine_in' ? 'Dine in' : b.fulfilment === 'delivery' ? `Delivery${delivery ? ` — ${delivery.name.trim()}` : ''}` : 'Pickup'
   const summary = summariseLines(b.items, { brandName: b.brandName ?? null, label, discountCents: b.discountCents, totalCents: b.totalCents ?? null })
   return postOrderOrQueue<SavedOrder>(body, summary).then((r) => normaliseRungOrder(r) as SavedOrder | OfflinePlaceholder)
 }

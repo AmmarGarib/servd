@@ -418,7 +418,7 @@ const LABEL_EDITORS: UserRole[] = [...MANAGERS, 'expediter']
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!))
 const CHANNEL_LABEL: Record<string, string> = { pos: 'Till', servd: 'Online', whatsapp: 'WhatsApp', manual: 'Phone', reservation: 'Booking' }
-const FULFIL_LABEL: Record<string, string> = { dine_in: 'Dine-in', takeout: 'Takeaway', delivery: 'Delivery' }
+const FULFIL_LABEL: Record<string, string> = { dine_in: 'Dine-in', takeout: 'Pickup', delivery: 'Delivery' }
 const karachiTime = (d: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Karachi', hour: '2-digit', minute: '2-digit', hour12: false }).format(d)
 const karachiDate = (d: Date) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Karachi', day: '2-digit', month: 'short' }).format(d)
 

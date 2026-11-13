@@ -35,7 +35,7 @@ interface Row {
 }
 interface SummaryView { date: string; counts: Record<Tab, number>; rows: Row[] }
 
-const TYPE_LABEL: Record<Row['type'], string> = { dine_in: 'Dine In', takeout: 'Takeaway', delivery: 'Delivery', no_charge: 'No Charge' }
+const TYPE_LABEL: Record<Row['type'], string> = { dine_in: 'Dine In', takeout: 'Pickup', delivery: 'Delivery', no_charge: 'No Charge' }
 const STATUS_LABEL: Record<Row['status'], string> = { running: 'Running', settled: 'Settled', voided: 'Voided' }
 const TABS: Array<[Tab, string]> = [['all', 'All'], ['running', 'Running'], ['settled', 'Settled'], ['voided', 'Voided']]
 const karachiToday = () => new Date(Date.now() + 5 * 3600_000).toISOString().slice(0, 10)
@@ -139,7 +139,7 @@ export function OrderSummary({ conceptId, onMenu, onRecall, onChangeOwner }: {
           <Select aria-label="Order type" value={type} onChange={(e) => { setType(e.target.value as OrderType); setPicked(null) }} className={inputCls}>
             <option value="all">All</option>
             <option value="dine_in">Dine In</option>
-            <option value="takeout">Takeaway</option>
+            <option value="takeout">Pickup</option>
             <option value="delivery">Delivery</option>
             <option value="no_charge">No Charge</option>
           </Select>

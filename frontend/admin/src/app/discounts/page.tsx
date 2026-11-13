@@ -207,7 +207,7 @@ export default function DiscountsPage() {
             <div>
               <p className="text-xs text-s-muted mb-2">Order type</p>
               <div className="flex gap-2 flex-wrap">
-                {[['all','All'], ['dine-in','Dine-in'], ['takeaway','Takeaway'], ['online','Online']].map(([v, l]) => typeBtn('orderTypes', v!, l!))}
+                {[['all','All'], ['dine-in','Dine-in'], ['takeaway','Pickup'], ['online','Online']].map(([v, l]) => typeBtn('orderTypes', v!, l!))}
               </div>
             </div>
             <label className="flex items-center gap-2 text-sm text-s-text cursor-pointer">

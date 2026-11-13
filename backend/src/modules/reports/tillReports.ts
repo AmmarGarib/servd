@@ -42,7 +42,7 @@ export const SOURCES = ['servd', 'pos', 'cart', 'manual'] as const
 export const PAYMENT_METHODS = ['cash', 'card', 'raast', 'on_account', 'comp', 'keenu_qr'] as const
 export const PAYMENT_TYPES = ['sale', 'refund'] as const
 
-const ORDER_TYPE_LABEL: Record<OrderTypeKey, string> = { dine_in: 'Dine In', takeout: 'Takeaway', delivery: 'Delivery', no_charge: 'No Charge' }
+const ORDER_TYPE_LABEL: Record<OrderTypeKey, string> = { dine_in: 'Dine In', takeout: 'Pickup', delivery: 'Delivery', no_charge: 'No Charge' }
 const SOURCE_LABEL: Record<string, string> = { servd: 'servd online', pos: 'Till (POS)', cart: 'Storefront cart', manual: 'Manual / till delivery' }
 const GROUP_BY_LABEL: Record<GroupByKey, string> = {
   payment_method: 'Payment method', payment_type: 'Payment type', order_by: 'Order by', settle_by: 'Settle by', terminal: 'Terminal', order_type: 'Order type',
