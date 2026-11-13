@@ -301,18 +301,19 @@ describe('two companies', () => {
     expect(countOf(b, 'purchase_order')).toBe(1)
   })
 
-  it('the inbox covers every company the person belongs to, whichever is active (owner, 2026-11-12)', async () => {
-    // Two Flipd recipes waited unseen while the CEO worked in GS Foods: the inbox no longer follows the company pick.
+  it('counts are per company in view; "All companies" adds both up', async () => {
     const one = (await counts('ceoBoth')).json() as Inbox
+    expect(countOf(one, 'purchase_order')).toBe(1)
+    expect(countOf(one, 'staff_login')).toBe(1)
+    expect(countOf(one, 'cash_voucher')).toBe(1)
     const both = (await counts('ceoBoth', { 'x-servd-portfolio': '1' })).json() as Inbox
-    expect(one.types).toEqual(both.types)
-    expect(one.total).toBe(both.total)
     expect(countOf(both, 'purchase_order')).toBe(2)
     // Each company's managers decide its transfers (owner, 2026-10-30): never in the CEO's tab.
     expect(countOf(both, 'stock_transfer')).toBe(0)
     // Company B has no finance login: its payroll review is stranded → the CEO's; A's is finance's.
     expect(countOf(both, 'payroll_finance_review')).toBe(1)
     expect(countOf(both, 'cash_voucher')).toBe(2)
+    expect(both.total).toBeGreaterThan(one.total)
     // /counts carries no items.
     expect((both as unknown as { items?: unknown }).items).toBeUndefined()
     const full = (await inbox('ceoBoth', { 'x-servd-portfolio': '1' })).json() as Inbox
@@ -550,18 +551,18 @@ describe('finance wave B types', () => {
   const act = (key: string, a: { method: string; path: string; body: Record<string, unknown> }, extra: Record<string, unknown> = {}) =>
     app.inject({ method: a.method as 'POST', url: `/api/v1${a.path}`, headers: auth(key), payload: { ...a.body, ...extra } })
 
-  it("each new type is A's CEO's for A's rows only, B's CEO's for B's; a CEO of both sees both", async () => {
+  it("each new type is A's CEO's for A's rows only, B's CEO's for B's; counts per company", async () => {
     const a = (await inbox('admin')).json() as Inbox
     const b = (await inbox('adminB')).json() as Inbox
     for (const t of NEW_CEO_TYPES) {
       expect(a.items.filter((i) => i.type === t).map((i) => i.id), t).toEqual([ids.A[t]])
       expect(b.items.filter((i) => i.type === t).map((i) => i.id), t).toEqual([ids.B[t]])
     }
-    // The CEO of both companies: both companies' items, whichever company is active (owner, 2026-11-12).
+    // The CEO of both companies: one each per company in view, both in "All companies".
     const one = (await counts('ceoBoth')).json() as Inbox
     const both = (await counts('ceoBoth', { 'x-servd-portfolio': '1' })).json() as Inbox
     for (const t of NEW_CEO_TYPES) {
-      expect(countOf(one, t), t).toBe(2)
+      expect(countOf(one, t), t).toBe(1)
       expect(countOf(both, t), t).toBe(2)
     }
     // The inter-company transfer is ONE item, in whichever party is in view.

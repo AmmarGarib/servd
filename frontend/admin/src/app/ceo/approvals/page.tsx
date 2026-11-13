@@ -35,6 +35,7 @@ import { useAuthStore } from '../../../store/auth'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { Select } from '../../../components/ui/Select'
 import { CompactEmptyState } from '../../../components/ui/CompactEmptyState'
+import { writeViewAll } from '../../../components/ui/TenantSwitcher'
 
 interface Item {
   type: string
@@ -256,9 +257,15 @@ function ApprovalsInbox() {
         const n = filter === 'all' ? (data?.elsewhere ?? 0) : (data?.types.find((x) => x.type === filter)?.elsewhere ?? 0)
         if (n <= 0) return null
         return (
-          <p className="mt-2 text-xs text-white/55">
-            {n} more waiting in your other companies — switch the company view to All companies to see {n === 1 ? 'it' : 'them'}.
-          </p>
+          // Prominent (owner, 2026-11-13): the inbox follows the company picked at the top; this says what waits elsewhere.
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-3"
+            style={{ background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', border: '1px solid var(--erp-warning)' }}>
+            <p className="text-sm font-semibold text-s-text">{n} more waiting in your other companies.</p>
+            <button type="button" onClick={() => { writeViewAll(true); void qc.invalidateQueries() }}
+              className="rounded-lg px-3 py-2 text-sm font-bold" style={{ background: 'var(--erp-primary)', color: 'var(--erp-on-primary)' }}>
+              Show all companies
+            </button>
+          </div>
         )
       })()}
       {filter !== 'all' && (() => {

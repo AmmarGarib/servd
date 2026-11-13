@@ -13,7 +13,6 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
-import { testTenantIds } from '../../lib/testCompany.js'
 import { reachTenantIds } from '../../lib/headOffice.js'
 import { collectApprovals } from './service.js'
 import { LIVE_DELEGATIONS, type ApprovalDelegations } from './delegations.js'
@@ -45,15 +44,6 @@ export async function approvalsRoutes(fastify: FastifyInstance, opts: ApprovalsP
     for (const h of FORWARD) {
       const v = req.headers[h]
       if (typeof v === 'string' && v) headers[h] = v
-    }
-    // ONE inbox across every company the person belongs to (owner, 2026-11-12: two Flipd recipes waited unseen
-    // while the company picked at the top was GS Foods). Unless the caller already asked for a view (All companies, or a
-    // head-office lens) or works in a test company, the inbox reads as "All companies" — the same scope the bell uses.
-    const testActive = req.staffUser!.tenantId ? (await testTenantIds()).has(req.staffUser!.tenantId) : false
-    if (!headers['x-servd-portfolio'] && !headers['x-servd-active-tenant'] && !testActive && (req.staffUser!.memberTenantIds ?? []).length > 1) {
-      headers['x-servd-portfolio'] = '1'
-      req.headers['x-servd-portfolio'] = '1'
-      delete (req as FastifyRequest & { __tenantScope?: unknown }).__tenantScope
     }
     const scope = await resolveTenantScope(req)
     return {
