@@ -13,6 +13,7 @@ import { enableKdsSound, playNewOrderBeep, useKdsAudioState } from '../../hooks/
 import { useKdsStore } from '../../store/kds'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { BacklogStat, ReadyPrintControls, StickerSizeMenu, UnstartedAlert, stationQueueOf, useKitchenStatus } from '../../components/kds/ExpoKitchen'
+import { ParStockPanel } from '../../components/kds/ParStockPanel'
 
 /**
  * Expo — the pass-station's screen. Three columns:
@@ -201,6 +202,8 @@ export default function ExpoPage() {
   const qc = useQueryClient()
   const [rejecting, setRejecting] = useState<string | null>(null)
   const [rejectReason, setRejectReason] = useState('')
+  // Par stock today (owner, 2026-11-13) — expo sets the portions left per dish.
+  const [showPar, setShowPar] = useState(false)
 
   const { data, isLoading } = useQuery<ExpoQueue>({
     queryKey: ['expo', 'queue'],
@@ -415,6 +418,11 @@ export default function ExpoPage() {
             <Stat label="In progress" count={inProgress.length} tone="blue" />
             <Stat label="Ready" count={ready.length} tone="green" />
             {upcoming.length > 0 && <Stat label="Pre-orders" count={upcoming.length} tone="neutral" />}
+            <button type="button" onClick={() => setShowPar((v) => !v)} aria-pressed={showPar} aria-expanded={showPar}
+              className={`min-h-11 rounded-lg border px-3 text-xs font-black transition-colors ${
+                showPar ? 'border-kds-green bg-kds-green/15 text-kds-green' : 'border-kds-border text-kds-subtext hover:text-kds-text'}`}>
+              Par stock
+            </button>
             <StickerSizeMenu />
             <button type="button" onClick={() => setSoundEnabled(!soundEnabled)}
               title={soundEnabled ? 'Mute new-order chime' : 'Unmute new-order chime'}
@@ -427,6 +435,7 @@ export default function ExpoPage() {
         </div>
       </header>
       <UnstartedAlert status={kitchen} />
+      {showPar && <ParStockPanel />}
 
       {/* ── Upcoming pre-orders ─────────────────────────────────────────
           Scheduled orders before their prep window. The server holds them

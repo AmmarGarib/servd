@@ -371,144 +371,168 @@ export async function ingestOrder(dto: IngestOrderDTO, opts: {
     }
   }
 
-  const { stationMap, fallbackStationId, serviceVessel, modifierIdFor, removalsJson } = await prepareOrderLines(dto.concept_id, dto.items, dto.source, opts.correction)
-  if (dto.table_id) {
-    const table = await prisma.table.findFirst({
-      where: { id: dto.table_id, conceptId: dto.concept_id, deletedAt: null },
-      select: { id: true },
-    })
-    if (!table) throw new AppError('TABLE_NOT_IN_BRAND', 'Table does not belong to this brand', 422)
-  }
-  // Decide fulfilment type once, up front. Upstream channels may have
-  // already told us (storefront, POS), but most won't — infer from the
-  // source + tableId combination. The CEO needs every ticket to clearly
-  // show plate vs package, so we never leave this null.
-  const fulfilmentType: 'dine_in' | 'takeout' | 'delivery' =
-    dto.fulfilment_type ?? (dto.table_id ? 'dine_in' : 'takeout')
-
-  async function runTransaction() {
-    return prisma.$transaction(async (tx) => {
-      const newOrder = await tx.order.create({
-        data: {
-          conceptId: dto.concept_id,
-          source: dto.source,
-          fulfilmentType,
-          // The caller's idempotency key, or — when it sent none (or only a
-          // clock reading) — a fresh collision-free one of our own.
-          externalId: externalId ?? `${dto.source}-${randomUUID()}`,
-          status: 'received',
-          customerId: dto.customer_id,
-          customerName: dto.customer_name,
-          tableId: dto.table_id ?? null,
-          posStaffId: dto.pos_staff_id ?? null,
-          shiftId: dto.shift_id ?? null,
-          totalCents: dto.payment.amountCents,
-          tipCents,
-          // GST. Every storefront order charges it — it is folded into the
-          // total the customer pays — but it was never written to the order,
-          // so Order.taxCents sat at its default of 0 for the entire history.
-          // The fiscal POS document reads this field, and so does the sales-tax
-          // return, which means GST collected was being filed as zero.
-          taxCents: opts.price?.taxCents ?? dto.tax_cents ?? 0,
-          // The standard GST rate this order was priced at (tender rate,
-          // decision 9) — what the receipt, tax invoice and the fiscal POS document read.
-          // Null only for a channel that does not price through lib/pricing.
-          taxRatePct: opts.price?.taxRatePct ?? null,
-          ...(opts.price && {
-            discountCents: opts.price.discountCents,
-            serviceChargeCents: opts.price.serviceChargeCents,
-            // The delivery fee and its GST, added on top (owner, 2026-10-13; H9) —
-            // inside taxCents above, stored apart so receipts, the fiscal
-            // payload and the sales-tax return can show them.
-            deliveryFeeCents: opts.price.deliveryFeeCents,
-            deliveryFeeTaxCents: opts.price.deliveryFeeTaxCents,
-          }),
-          promoCodeId: dto.promo_code_id ?? null,
-          promoDiscountCents: dto.promo_discount_cents ?? 0,
-          walletAmountCents: dto.wallet_amount_cents ?? 0,
-          scheduledFor: dto.scheduled_for ? new Date(dto.scheduled_for) : null,
-          isPreOrder: dto.is_pre_order ?? false,
-          deliveryNotes: dto.delivery_notes,
-          estimatedPickup: dto.estimated_pickup ? new Date(dto.estimated_pickup) : null,
-          placedAt: new Date(dto.placed_at),
-          // Generate a 4-digit hand-off OTP for delivery orders. Customer
-          // sees it on the order page; rider verifies at dropoff. From a
-          // CSPRNG (lib/deliveryOtp.ts) — it used to be Math.random.
-          deliveryOtp: fulfilmentType === 'delivery' || dto.delivery_notes
-            ? generateDeliveryOtp()
-            : null,
-          rawPayload: dto.raw_payload as never ?? null,
-          items: {
-            create: dto.items.map((item, idx) => ({
-              menuItemId: item.menuItemId,
-              stationId: item.menuItemId ? (stationMap.get(item.menuItemId) ?? null) : fallbackStationId,
-              externalItemId: item.externalItemId,
-              name: item.name,
-              quantity: item.quantity,
-              unitPriceCents: item.unitPriceCents,
-              status: (opts.correction ? 'bumped' : 'pending') as ItemStatus,
-              ...(opts.correction && { completedAt: new Date(dto.placed_at) }),
-              notes: item.notes ?? null,
-              course: item.course ?? null,
-              serviceVessel,
-              ...removalsJson(idx),
-              modifiers: {
-                create: item.modifiers.map((mod) => ({
-                  modifierId: modifierIdFor(item.menuItemId, mod.modifierId),
-                  name: mod.name,
-                  priceDeltaCents: mod.priceDeltaCents,
-                })),
-              },
-            })),
-          },
-          payments: dto.payment.provider
-            ? {
-                create: {
-                  method: dto.payment.provider === 'cash' ? 'cash' : 'card',
-                  amountCents: dto.payment.amountCents,
-                  status: dto.payment.status === 'paid' ? 'paid' : 'pending',
-                },
-              }
-            : undefined,
-        },
-        include: { items: { include: { modifiers: true } }, concept: true },
-      })
-
-      const stationIds = new Set<string>()
-      for (const item of newOrder.items) {
-        if (item.stationId) stationIds.add(item.stationId)
-      }
-
-      return { order: newOrder, stationIds: Array.from(stationIds) }
-    }, {
-      // Default Prisma timeout is 5s — too tight for cold-start Neon under load.
-      // 15s gives the cloud DB time to warm up + still trips on real deadlocks.
-      maxWait: 10_000,
-      timeout: 15_000,
-    })
-  }
-
-  let txResult: Awaited<ReturnType<typeof runTransaction>>
+  // Par stock today (lib/parStock.ts — the rule of which orders take portions
+  // is in its header): taken before the order is written, all or nothing (409
+  // PAR_STOCK_SHORT), given back if the order is then not created. A held
+  // pre-order gives them back right after it is written (today's par is not
+  // its day's); a correction re-issue never takes.
+  const { takeLinePortions, giveBackPortions, sellOut, NO_TAKE } = await import('../../lib/parStock.js')
+  const portions = opts.correction ? NO_TAKE : await takeLinePortions(dto.concept_id, dto.items)
+  let portionsKept = false
   try {
-    txResult = await runTransaction()
-  } catch (err) {
-    // A concurrent request with the same key already created this order —
-    // return it, but only if it IS the same request (same brand, same
-    // staff). A different caller that happens to hold the same key gets a
-    // 409, never someone else's order (FOH-06).
-    const prismaErr = err as Prisma.PrismaClientKnownRequestError
-    if (prismaErr.code === 'P2002' && externalId) {
-      const existing = await prisma.order.findUnique({
-        where: { source_externalId: { source: dto.source, externalId } },
+    const { stationMap, fallbackStationId, serviceVessel, modifierIdFor, removalsJson } = await prepareOrderLines(dto.concept_id, dto.items, dto.source, opts.correction)
+    if (dto.table_id) {
+      const table = await prisma.table.findFirst({
+        where: { id: dto.table_id, conceptId: dto.concept_id, deletedAt: null },
+        select: { id: true },
       })
-      if (existing) {
-        assertSameRequest(existing, dto)
-        return { order: existing, created: false }
-      }
+      if (!table) throw new AppError('TABLE_NOT_IN_BRAND', 'Table does not belong to this brand', 422)
     }
-    throw err
-  }
+    // Decide fulfilment type once, up front. Upstream channels may have
+    // already told us (storefront, POS), but most won't — infer from the
+    // source + tableId combination. The CEO needs every ticket to clearly
+    // show plate vs package, so we never leave this null.
+    const fulfilmentType: 'dine_in' | 'takeout' | 'delivery' =
+      dto.fulfilment_type ?? (dto.table_id ? 'dine_in' : 'takeout')
 
+    async function runTransaction() {
+      return prisma.$transaction(async (tx) => {
+        const newOrder = await tx.order.create({
+          data: {
+            conceptId: dto.concept_id,
+            source: dto.source,
+            fulfilmentType,
+            // The caller's idempotency key, or — when it sent none (or only a
+            // clock reading) — a fresh collision-free one of our own.
+            externalId: externalId ?? `${dto.source}-${randomUUID()}`,
+            status: 'received',
+            customerId: dto.customer_id,
+            customerName: dto.customer_name,
+            tableId: dto.table_id ?? null,
+            posStaffId: dto.pos_staff_id ?? null,
+            shiftId: dto.shift_id ?? null,
+            totalCents: dto.payment.amountCents,
+            tipCents,
+            // GST. Every storefront order charges it — it is folded into the
+            // total the customer pays — but it was never written to the order,
+            // so Order.taxCents sat at its default of 0 for the entire history.
+            // The fiscal POS document reads this field, and so does the sales-tax
+            // return, which means GST collected was being filed as zero.
+            taxCents: opts.price?.taxCents ?? dto.tax_cents ?? 0,
+            // The standard GST rate this order was priced at (tender rate,
+            // decision 9) — what the receipt, tax invoice and the fiscal POS document read.
+            // Null only for a channel that does not price through lib/pricing.
+            taxRatePct: opts.price?.taxRatePct ?? null,
+            ...(opts.price && {
+              discountCents: opts.price.discountCents,
+              serviceChargeCents: opts.price.serviceChargeCents,
+              // The delivery fee and its GST, added on top (owner, 2026-10-13; H9) —
+              // inside taxCents above, stored apart so receipts, the fiscal
+              // payload and the sales-tax return can show them.
+              deliveryFeeCents: opts.price.deliveryFeeCents,
+              deliveryFeeTaxCents: opts.price.deliveryFeeTaxCents,
+            }),
+            promoCodeId: dto.promo_code_id ?? null,
+            promoDiscountCents: dto.promo_discount_cents ?? 0,
+            walletAmountCents: dto.wallet_amount_cents ?? 0,
+            scheduledFor: dto.scheduled_for ? new Date(dto.scheduled_for) : null,
+            isPreOrder: dto.is_pre_order ?? false,
+            deliveryNotes: dto.delivery_notes,
+            estimatedPickup: dto.estimated_pickup ? new Date(dto.estimated_pickup) : null,
+            placedAt: new Date(dto.placed_at),
+            // Generate a 4-digit hand-off OTP for delivery orders. Customer
+            // sees it on the order page; rider verifies at dropoff. From a
+            // CSPRNG (lib/deliveryOtp.ts) — it used to be Math.random.
+            deliveryOtp: fulfilmentType === 'delivery' || dto.delivery_notes
+              ? generateDeliveryOtp()
+              : null,
+            rawPayload: dto.raw_payload as never ?? null,
+            items: {
+              create: dto.items.map((item, idx) => ({
+                menuItemId: item.menuItemId,
+                stationId: item.menuItemId ? (stationMap.get(item.menuItemId) ?? null) : fallbackStationId,
+                externalItemId: item.externalItemId,
+                name: item.name,
+                quantity: item.quantity,
+                unitPriceCents: item.unitPriceCents,
+                status: (opts.correction ? 'bumped' : 'pending') as ItemStatus,
+                ...(opts.correction && { completedAt: new Date(dto.placed_at) }),
+                notes: item.notes ?? null,
+                course: item.course ?? null,
+                serviceVessel,
+                ...removalsJson(idx),
+                modifiers: {
+                  create: item.modifiers.map((mod) => ({
+                    modifierId: modifierIdFor(item.menuItemId, mod.modifierId),
+                    name: mod.name,
+                    priceDeltaCents: mod.priceDeltaCents,
+                  })),
+                },
+              })),
+            },
+            payments: dto.payment.provider
+              ? {
+                  create: {
+                    method: dto.payment.provider === 'cash' ? 'cash' : 'card',
+                    amountCents: dto.payment.amountCents,
+                    status: dto.payment.status === 'paid' ? 'paid' : 'pending',
+                  },
+                }
+              : undefined,
+          },
+          include: { items: { include: { modifiers: true } }, concept: true },
+        })
+
+        const stationIds = new Set<string>()
+        for (const item of newOrder.items) {
+          if (item.stationId) stationIds.add(item.stationId)
+        }
+
+        return { order: newOrder, stationIds: Array.from(stationIds) }
+      }, {
+        // Default Prisma timeout is 5s — too tight for cold-start Neon under load.
+        // 15s gives the cloud DB time to warm up + still trips on real deadlocks.
+        maxWait: 10_000,
+        timeout: 15_000,
+      })
+    }
+
+    let txResult: Awaited<ReturnType<typeof runTransaction>>
+    try {
+      txResult = await runTransaction()
+    } catch (err) {
+      // A concurrent request with the same key already created this order —
+      // return it, but only if it IS the same request (same brand, same
+      // staff). A different caller that happens to hold the same key gets a
+      // 409, never someone else's order (FOH-06).
+      const prismaErr = err as Prisma.PrismaClientKnownRequestError
+      if (prismaErr.code === 'P2002' && externalId) {
+        const existing = await prisma.order.findUnique({
+          where: { source_externalId: { source: dto.source, externalId } },
+        })
+        if (existing) {
+          assertSameRequest(existing, dto)
+          return { order: existing, created: false }
+        }
+      }
+      throw err
+    }
+    portionsKept = !heldAtCreation(txResult.order)
+    if (portionsKept && portions.soldOut.length > 0) {
+      await sellOut(portions.soldOut).catch((err: Error) => console.warn('[par-stock] sell-out failed:', err.message))
+    }
+    return await afterOrderCreated(txResult, opts)
+  } finally {
+    if (!portionsKept && portions.taken.length > 0) {
+      await giveBackPortions(portions.taken).catch((err: Error) => console.warn('[par-stock] give back failed:', err.message))
+    }
+  }
+}
+
+async function afterOrderCreated(
+  txResult: { order: Prisma.OrderGetPayload<{ include: { items: { include: { modifiers: true } }; concept: true } }>; stationIds: string[] },
+  opts: { correction?: IngestCorrection },
+) {
   const orderId = txResult.order.id
   // A pre-order for later than the prep window (O-RV-3) is HELD: the kitchen
   // is not told and its stock is not taken until the pre-order release worker
@@ -1540,7 +1564,9 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
     where: { id, deletedAt: null },
     select: {
       id: true, status: true, totalCents: true, conceptId: true, completedAt: true, scheduledFor: true, placedAt: true,
+      createdAt: true,
       concept: { select: { tenantId: true } },
+      items: { where: { voidedAt: null, status: { not: 'voided' } }, select: { menuItemId: true, quantity: true } },
     },
   })
   if (!before) throw new NotFoundError('Order', id)
@@ -1625,6 +1651,14 @@ export async function cancelOrder(id: string, input: CancelOrderInput) {
   // call that actually made the change; the restore is itself once-only, so
   // a retry after a failure is safe. A failure is flagged, never only logged.
   if (changed) {
+    // Par stock today (lib/parStock.ts): a ticket ended before its bill was
+    // final gives its live lines' portions back — once, on the call that made
+    // the change. A completed bill voided later (shift correction) gives
+    // nothing back (the food was served); a held pre-order never took any.
+    if (before.status !== 'completed' && !before.completedAt && !heldAtCreation(before)) {
+      const { giveBackLinePortions } = await import('../../lib/parStock.js')
+      await giveBackLinePortions(before.items).catch((err: Error) => console.warn('[par-stock] give back failed:', err.message))
+    }
     // (A void & re-issue keeps its stock: it moves to the re-issued bill.)
     if (!input.shiftCorrection?.keepStock) {
       try {

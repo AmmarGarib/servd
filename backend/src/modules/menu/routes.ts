@@ -6,7 +6,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { emitItem86d } from '../../lib/ws.js'
-import { seedAvailability } from '../../lib/reservation.js'
+import { seedAvailability, getBatchAvailability } from '../../lib/reservation.js'
 import { removableIngredients } from '../../lib/lineRemovals.js'
 import { zInt4Cents } from '../../lib/money.js'
 import { audit } from '../../lib/audit.js'
@@ -255,6 +255,23 @@ export async function menuRoutes(fastify: FastifyInstance) {
         },
       })
       return categories
+    },
+  )
+
+  // GET /menu/:conceptId/par-left — par stock today (lib/parStock.ts) for the
+  // till's dish buttons: only the dishes with a count set, what is left now and
+  // whether the dish is on. One Redis MGET; the till polls it.
+  fastify.get<{ Params: { conceptId: string } }>(
+    '/:conceptId/par-left',
+    { preHandler: requireAuth(...ALL_STAFF) },
+    async (req) => {
+      await assertConceptOwned(req, req.params.conceptId, 'read')
+      const dishes = await prisma.menuItem.findMany({
+        where: { conceptId: req.params.conceptId, deletedAt: null, portionsAvailable: { not: null } },
+        select: { id: true, isAvailable: true, portionsAvailable: true },
+      })
+      const left = await getBatchAvailability(dishes.map((d) => ({ id: d.id, portionsAvailable: d.portionsAvailable ?? null })))
+      return { items: dishes.map((d) => ({ menuItemId: d.id, portionsSet: d.portionsAvailable, left: left.get(d.id) ?? null, isAvailable: d.isAvailable })) }
     },
   )
 

@@ -3,7 +3,7 @@
 // null portionsAvailable = unlimited (no tracking needed).
 
 import { Queue, Worker } from 'bullmq'
-import { redis } from './redis.js'
+import { redis, redisFast } from './redis.js'
 import { emitAvailabilityChange } from './ws.js'
 
 const HOLD_TTL_MS  = 20 * 60 * 1000   // 20 min hold window
@@ -32,7 +32,7 @@ return 1
 
 /** Seed Redis when admin sets portionsAvailable. Must be called on every update. */
 export async function seedAvailability(menuItemId: string, portions: number): Promise<void> {
-  try { await redis.set(`${AVAIL_PREFIX}${menuItemId}`, portions) }
+  try { await redisFast.set(`${AVAIL_PREFIX}${menuItemId}`, portions) }
   catch (err) { console.warn('[reservation] seedAvailability skipped:', (err as Error).message) }
 }
 
@@ -40,7 +40,7 @@ export async function seedAvailability(menuItemId: string, portions: number): Pr
 export async function getAvailability(menuItemId: string, portionsAvailable: number | null): Promise<number | null> {
   if (portionsAvailable === null) return null
   try {
-    const val = await redis.get(`${AVAIL_PREFIX}${menuItemId}`)
+    const val = await redisFast.get(`${AVAIL_PREFIX}${menuItemId}`)
     return val === null ? portionsAvailable : Math.max(0, parseInt(val, 10))
   } catch {
     return portionsAvailable // Redis down — report full availability
@@ -65,7 +65,7 @@ export async function getBatchAvailability(
   let redisValues: (string | null)[] = limited.map(() => null)
   try {
     const keys = limited.map((i) => `${AVAIL_PREFIX}${i.id}`)
-    redisValues = (await redis.mget(...keys)) as (string | null)[]
+    redisValues = (await redisFast.mget(...keys)) as (string | null)[]
   } catch {
     // Redis down — fall back to portionsAvailable values
   }
@@ -196,4 +196,105 @@ export function startCartReleaseWorker() {
     console.warn('[reservation] cart release worker disabled (Redis unavailable):', (err as Error).message)
     return null
   }
+}
+
+// ── Par stock today (owner, 2026-11-13) ──────────────────────────────────────
+//
+// The SAME `avail:{menuItemId}` counter the cart uses: expo sets "what is left
+// now" (seedAvailability) and every sale counts it down through takePortions,
+// cancel / void gives back through givePortions. A service counter only — it
+// never touches stock, FIFO lots or the ledger. null portionsAvailable =
+// unlimited (no-op). Redis down = fail open (logged, allowed), like the cart.
+// Request paths, so the fail-fast client (redisFast) — the shared one hangs while
+// Redis is down. lib/parStock.ts is the caller that adds the sold-out / back-on switching.
+
+export interface PortionLine { menuItemId: string; qty: number; portionsAvailable: number | null }
+
+// KEYS[i] = avail:{id}; ARGV[i] = qty; ARGV[n+i] = the seed when the key is
+// missing (portionsAvailable — what getBatchAvailability reports then).
+// All-or-nothing: returns {1, left_1..left_n} after taking, or {0, have_1..have_n}.
+const luaTakeMany = `
+local n = #KEYS
+local have = {}
+for i = 1, n do
+  local cur = redis.call('GET', KEYS[i])
+  if cur == false then
+    redis.call('SET', KEYS[i], ARGV[n + i])
+    cur = ARGV[n + i]
+  end
+  have[i] = tonumber(cur)
+end
+for i = 1, n do
+  if have[i] < tonumber(ARGV[i]) then
+    local out = {0}
+    for j = 1, n do out[j + 1] = have[j] end
+    return out
+  end
+end
+local out = {1}
+for i = 1, n do out[i + 1] = redis.call('INCRBY', KEYS[i], -tonumber(ARGV[i])) end
+return out
+`
+
+/** Merge lines of the same dish and drop unlimited / empty ones. */
+function limitedLines(items: PortionLine[]): PortionLine[] {
+  const by = new Map<string, PortionLine>()
+  for (const i of items) {
+    if (i.portionsAvailable === null || !(i.qty > 0)) continue
+    const prev = by.get(i.menuItemId)
+    by.set(i.menuItemId, { menuItemId: i.menuItemId, qty: (prev?.qty ?? 0) + i.qty, portionsAvailable: i.portionsAvailable })
+  }
+  return [...by.values()]
+}
+
+/**
+ * Take portions for a whole ticket, all or nothing. `left` = what each
+ * limited dish has left after the take (so the caller can sell out at 0).
+ */
+export async function takePortions(items: PortionLine[]): Promise<
+  | { ok: true; left: Array<{ menuItemId: string; left: number }> }
+  | { ok: false; short: Array<{ menuItemId: string; available: number }> }
+> {
+  const lines = limitedLines(items)
+  if (lines.length === 0) return { ok: true, left: [] }
+  let res: number[]
+  try {
+    res = await redisFast.eval(
+      luaTakeMany, lines.length,
+      ...lines.map((l) => `${AVAIL_PREFIX}${l.menuItemId}`),
+      ...lines.map((l) => String(l.qty)),
+      ...lines.map((l) => String(l.portionsAvailable)),
+    ) as number[]
+  } catch (err) {
+    console.warn('[reservation] Redis error in takePortions, allowing the sale:', (err as Error).message)
+    return { ok: true, left: [] }
+  }
+  if (Number(res[0]) !== 1) {
+    const short = lines
+      .map((l, i) => ({ menuItemId: l.menuItemId, available: Math.max(0, Number(res[i + 1])), qty: l.qty }))
+      .filter((s) => s.available < s.qty)
+      .map(({ menuItemId, available }) => ({ menuItemId, available }))
+    return { ok: false, short }
+  }
+  const left = lines.map((l, i) => ({ menuItemId: l.menuItemId, left: Math.max(0, Number(res[i + 1])) }))
+  for (const l of left) void emitAvailabilityChange(l.menuItemId, l.left)
+  return { ok: true, left }
+}
+
+/** Give portions back (cancel / void / a refused order write). Returns what each dish has left after. */
+export async function givePortions(items: PortionLine[]): Promise<Array<{ menuItemId: string; left: number }>> {
+  const out: Array<{ menuItemId: string; left: number }> = []
+  for (const l of limitedLines(items)) {
+    try {
+      const key = `${AVAIL_PREFIX}${l.menuItemId}`
+      // A missing key already reads as the full set count — nothing to give back to.
+      if (!(await redisFast.exists(key))) continue
+      const left = Math.max(0, Number(await redisFast.incrby(key, l.qty)))
+      out.push({ menuItemId: l.menuItemId, left })
+      void emitAvailabilityChange(l.menuItemId, left)
+    } catch (err) {
+      console.warn('[reservation] Redis error in givePortions:', (err as Error).message)
+    }
+  }
+  return out
 }

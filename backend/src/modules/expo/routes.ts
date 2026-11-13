@@ -107,6 +107,9 @@ export async function expoRoutes(fastify: FastifyInstance) {
   // bag stickers (owner B12, 2026-10-26) — ./kitchenBoard.ts.
   const { kitchenBoardRoutes } = await import('./kitchenBoard.js')
   await fastify.register(kitchenBoardRoutes)
+  // Par stock today (owner, 2026-11-13) — ./parStock.ts.
+  const { parStockRoutes } = await import('./parStock.js')
+  await fastify.register(parStockRoutes)
 
 
   // GET /expo/queue — everything expo needs in one round-trip:

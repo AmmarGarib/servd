@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { prisma } from '../../lib/prisma.js'
 import { ingestOrder, prepareOrderLines, heldAtCreation } from '../orders/service.js'
+import { takeLinePortions, giveBackPortions, giveBackLinePortions, sellOut, NO_TAKE } from '../../lib/parStock.js'
 import { NotFoundError, AppError } from '../../lib/errors.js'
 import { getRefundPolicy, getOperationsConfig } from '../../lib/setup-config.js'
 import { audit } from '../../lib/audit.js'
@@ -494,7 +495,7 @@ export async function addItemsToPosOrder(input: AddItemsInput) {
   if (input.items.length === 0) throw new AppError('NO_ITEMS', 'Add at least one item', 400)
   const head = await prisma.order.findUnique({
     where: { id: input.orderId },
-    select: { id: true, conceptId: true, source: true, status: true, concept: { select: { tenantId: true } } },
+    select: { id: true, conceptId: true, source: true, status: true, scheduledFor: true, createdAt: true, concept: { select: { tenantId: true } } },
   })
   if (!head) throw new NotFoundError('Order', input.orderId)
   if (head.source !== 'pos') throw new AppError('NOT_A_TILL_TICKET', 'Items can be added only to a ticket rung up at the till', 422)
@@ -524,119 +525,134 @@ export async function addItemsToPosOrder(input: AddItemsInput) {
     notes: item.notes,
     course: item.course,
   }))
-  const lines = await prepareOrderLines(head.conceptId, dtoItems, 'pos')
-  const key = input.idempotencyKey?.trim() || null
+  // Par stock today (lib/parStock.ts): the new lines take their portions before
+  // they are written (409 PAR_STOCK_SHORT); given back if the write fails or the
+  // call was a replay. A held pre-order never takes.
+  const portions = heldAtCreation(head) ? NO_TAKE : await takeLinePortions(head.conceptId, dtoItems)
+  let portionsKept = false
+  try {
+    const lines = await prepareOrderLines(head.conceptId, dtoItems, 'pos')
+    const key = input.idempotencyKey?.trim() || null
 
-  const result = await prisma.$transaction(async (tx) => {
-    await lockOrderTx(tx, input.orderId)
-    if (key) {
-      const seen = await tx.auditLog.findFirst({
-        where: { entity: 'Order', entityId: input.orderId, action: ITEMS_ADDED_ACTION, metadata: { path: ['idempotencyKey'], equals: key } },
-        select: { metadata: true },
+    const result = await prisma.$transaction(async (tx) => {
+      await lockOrderTx(tx, input.orderId)
+      if (key) {
+        const seen = await tx.auditLog.findFirst({
+          where: { entity: 'Order', entityId: input.orderId, action: ITEMS_ADDED_ACTION, metadata: { path: ['idempotencyKey'], equals: key } },
+          select: { metadata: true },
+        })
+        if (seen) return { replayed: true as const, addedIds: ((seen.metadata as { itemIds?: string[] } | null)?.itemIds ?? []), stationIds: [] as string[] }
+      }
+      const order = await tx.order.findUniqueOrThrow({
+        where: { id: input.orderId },
+        include: { concept: { select: { id: true, tenantId: true, taxRateCash: true, taxRateCard: true } } },
       })
-      if (seen) return { replayed: true as const, addedIds: ((seen.metadata as { itemIds?: string[] } | null)?.itemIds ?? []), stationIds: [] as string[] }
-    }
-    const order = await tx.order.findUniqueOrThrow({
-      where: { id: input.orderId },
-      include: { concept: { select: { id: true, tenantId: true, taxRateCash: true, taxRateCard: true } } },
-    })
-    if (ENDED.has(order.status)) throw new AppError('ORDER_NOT_OPEN', `This ticket is ${order.status} — ring the items up on a new ticket`, 409)
-    const money = await tx.payment.count({ where: { orderId: order.id, status: { in: ['pending', 'paid'] } } })
-    const cards = await tx.giftCardRedemption.count({ where: { orderId: order.id } })
-    if (money > 0 || cards > 0 || order.promoDiscountCents > 0 || order.walletAmountCents > 0) {
-      throw new AppError('BILL_IN_PAYMENT', 'Payment has started on this bill — ring the extra items up on a new ticket', 409)
-    }
-    await assertNoActiveTerminalChargeTx(tx, order.id)
+      if (ENDED.has(order.status)) throw new AppError('ORDER_NOT_OPEN', `This ticket is ${order.status} — ring the items up on a new ticket`, 409)
+      const money = await tx.payment.count({ where: { orderId: order.id, status: { in: ['pending', 'paid'] } } })
+      const cards = await tx.giftCardRedemption.count({ where: { orderId: order.id } })
+      if (money > 0 || cards > 0 || order.promoDiscountCents > 0 || order.walletAmountCents > 0) {
+        throw new AppError('BILL_IN_PAYMENT', 'Payment has started on this bill — ring the extra items up on a new ticket', 409)
+      }
+      await assertNoActiveTerminalChargeTx(tx, order.id)
 
-    // What the new lines add to the bill: the order priced with and without them,
-    // at the rate it is billed at, with its discount (the mirror of voidBillDeltaTx).
-    const live = await tx.orderItem.findMany({
-      where: { orderId: order.id, status: { not: 'voided' } },
-      select: { menuItemId: true, unitPriceCents: true, quantity: true, modifiers: { select: { priceDeltaCents: true } } },
-    })
-    const added = items.map((i) => ({ menuItemId: i.menuItemId ?? null, unitPriceCents: i.unitPriceCents, quantity: i.quantity, modifiers: i.modifiers.map((m) => ({ priceDeltaCents: m.priceDeltaCents })) }))
-    const tender = tenderOfRate(order.concept, order.taxRatePct)
-    const channel = pricingChannelOf(order)
-    const fee = { discountCents: order.discountCents, deliveryFeeCents: order.deliveryFeeCents, db: tx }
-    const was = await priceOrder(live, tender, channel, order.concept, fee)
-    const now = await priceOrder([...live, ...added], tender, channel, order.concept, fee)
-    const itemsAdd = now.itemTotalCents - was.itemTotalCents
-    const taxAdd = Math.max(0, now.taxCents - was.taxCents)
-    const serviceAdd = Math.max(0, now.serviceChargeCents - was.serviceChargeCents)
-    const discountAdd = Math.max(0, now.discountCents - was.discountCents)
-    const addCents = itemsAdd + taxAdd + serviceAdd - discountAdd
-    assertAmountsFit(order.totalCents + addCents)
+      // What the new lines add to the bill: the order priced with and without them,
+      // at the rate it is billed at, with its discount (the mirror of voidBillDeltaTx).
+      const live = await tx.orderItem.findMany({
+        where: { orderId: order.id, status: { not: 'voided' } },
+        select: { menuItemId: true, unitPriceCents: true, quantity: true, modifiers: { select: { priceDeltaCents: true } } },
+      })
+      const added = items.map((i) => ({ menuItemId: i.menuItemId ?? null, unitPriceCents: i.unitPriceCents, quantity: i.quantity, modifiers: i.modifiers.map((m) => ({ priceDeltaCents: m.priceDeltaCents })) }))
+      const tender = tenderOfRate(order.concept, order.taxRatePct)
+      const channel = pricingChannelOf(order)
+      const fee = { discountCents: order.discountCents, deliveryFeeCents: order.deliveryFeeCents, db: tx }
+      const was = await priceOrder(live, tender, channel, order.concept, fee)
+      const now = await priceOrder([...live, ...added], tender, channel, order.concept, fee)
+      const itemsAdd = now.itemTotalCents - was.itemTotalCents
+      const taxAdd = Math.max(0, now.taxCents - was.taxCents)
+      const serviceAdd = Math.max(0, now.serviceChargeCents - was.serviceChargeCents)
+      const discountAdd = Math.max(0, now.discountCents - was.discountCents)
+      const addCents = itemsAdd + taxAdd + serviceAdd - discountAdd
+      assertAmountsFit(order.totalCents + addCents)
 
-    const createdIds: string[] = []
-    const stationIds = new Set<string>()
-    for (const [idx, item] of dtoItems.entries()) {
-      const stationId = item.menuItemId ? (lines.stationMap.get(item.menuItemId) ?? null) : lines.fallbackStationId
-      const row = await tx.orderItem.create({
-        data: {
-          orderId: order.id,
-          menuItemId: item.menuItemId,
-          stationId,
-          externalItemId: item.externalItemId,
-          name: item.name,
-          quantity: item.quantity,
-          unitPriceCents: item.unitPriceCents,
-          status: 'pending',
-          notes: item.notes ?? null,
-          course: item.course ?? null,
-          serviceVessel: lines.serviceVessel,
-          ...lines.removalsJson(idx),
-          modifiers: {
-            create: item.modifiers.map((mod) => ({
-              modifierId: lines.modifierIdFor(item.menuItemId, mod.modifierId),
-              name: mod.name,
-              priceDeltaCents: mod.priceDeltaCents,
-            })),
+      const createdIds: string[] = []
+      const stationIds = new Set<string>()
+      for (const [idx, item] of dtoItems.entries()) {
+        const stationId = item.menuItemId ? (lines.stationMap.get(item.menuItemId) ?? null) : lines.fallbackStationId
+        const row = await tx.orderItem.create({
+          data: {
+            orderId: order.id,
+            menuItemId: item.menuItemId,
+            stationId,
+            externalItemId: item.externalItemId,
+            name: item.name,
+            quantity: item.quantity,
+            unitPriceCents: item.unitPriceCents,
+            status: 'pending',
+            notes: item.notes ?? null,
+            course: item.course ?? null,
+            serviceVessel: lines.serviceVessel,
+            ...lines.removalsJson(idx),
+            modifiers: {
+              create: item.modifiers.map((mod) => ({
+                modifierId: lines.modifierIdFor(item.menuItemId, mod.modifierId),
+                name: mod.name,
+                priceDeltaCents: mod.priceDeltaCents,
+              })),
+            },
           },
+          select: { id: true, stationId: true },
+        })
+        createdIds.push(row.id)
+        if (row.stationId) stationIds.add(row.stationId)
+      }
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          totalCents: order.totalCents + addCents,
+          taxCents: order.taxCents + taxAdd,
+          serviceChargeCents: order.serviceChargeCents + serviceAdd,
+          discountCents: order.discountCents + discountAdd,
         },
-        select: { id: true, stationId: true },
       })
-      createdIds.push(row.id)
-      if (row.stationId) stationIds.add(row.stationId)
+      await tx.auditLog.create({
+        data: {
+          category: 'identity', action: ITEMS_ADDED_ACTION, entity: 'Order', entityId: order.id,
+          userId: input.staffId, tenantId: order.concept.tenantId,
+          metadata: {
+            ...(key && { idempotencyKey: key }), itemIds: createdIds, addCents, taxAdd, serviceAdd, discountAdd,
+            totalBefore: order.totalCents, totalAfter: order.totalCents + addCents,
+            lines: items.map((i) => ({ menuItemId: i.menuItemId ?? null, name: i.name, quantity: i.quantity, unitPriceCents: i.unitPriceCents })),
+          } as Prisma.InputJsonValue,
+        },
+      })
+      return { replayed: false as const, addedIds: createdIds, stationIds: [...stationIds], order }
+    })
+    portionsKept = !result.replayed
+    if (portionsKept && portions.soldOut.length > 0) {
+      await sellOut(portions.soldOut).catch((err: Error) => console.warn('[par-stock] sell-out failed:', err.message))
     }
-    await tx.order.update({
-      where: { id: order.id },
-      data: {
-        totalCents: order.totalCents + addCents,
-        taxCents: order.taxCents + taxAdd,
-        serviceChargeCents: order.serviceChargeCents + serviceAdd,
-        discountCents: order.discountCents + discountAdd,
-      },
-    })
-    await tx.auditLog.create({
-      data: {
-        category: 'identity', action: ITEMS_ADDED_ACTION, entity: 'Order', entityId: order.id,
-        userId: input.staffId, tenantId: order.concept.tenantId,
-        metadata: {
-          ...(key && { idempotencyKey: key }), itemIds: createdIds, addCents, taxAdd, serviceAdd, discountAdd,
-          totalBefore: order.totalCents, totalAfter: order.totalCents + addCents,
-          lines: items.map((i) => ({ menuItemId: i.menuItemId ?? null, name: i.name, quantity: i.quantity, unitPriceCents: i.unitPriceCents })),
-        } as Prisma.InputJsonValue,
-      },
-    })
-    return { replayed: false as const, addedIds: createdIds, stationIds: [...stationIds], order }
-  })
 
-  if (!result.replayed) {
-    if (flag) await flagException({ ...flag, entityType: 'Order', entityId: input.orderId })
-    const o = result.order
-    if (!heldAtCreation(o)) {
-      // The kitchen re-reads the ticket (the KDS replaces it) and the new lines' stations hear it.
-      emitOrderNew({ orderId: o.id, conceptId: o.conceptId, source: o.source, stationIds: result.stationIds, placedAt: o.placedAt.toISOString() })
-      try {
-        await deductInventoryForAddedLines(o.id, result.addedIds)
-      } catch (err) {
-        const { flagOrderStockFailure } = await import('../orders/stock.js')
-        await flagOrderStockFailure(o.id, 'deplete', err)
+    if (!result.replayed) {
+      if (flag) await flagException({ ...flag, entityType: 'Order', entityId: input.orderId })
+      const o = result.order
+      if (!heldAtCreation(o)) {
+        // The kitchen re-reads the ticket (the KDS replaces it) and the new lines' stations hear it.
+        emitOrderNew({ orderId: o.id, conceptId: o.conceptId, source: o.source, stationIds: result.stationIds, placedAt: o.placedAt.toISOString() })
+        try {
+          await deductInventoryForAddedLines(o.id, result.addedIds)
+        } catch (err) {
+          const { flagOrderStockFailure } = await import('../orders/stock.js')
+          await flagOrderStockFailure(o.id, 'deplete', err)
+        }
       }
     }
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: input.orderId }, include: RING_UP_INCLUDE })
+    return { ...order, addedItemIds: result.addedIds, replayed: result.replayed }
+  } finally {
+    if (!portionsKept && portions.taken.length > 0) {
+      await giveBackPortions(portions.taken).catch((err: Error) => console.warn('[par-stock] give back failed:', err.message))
+    }
   }
-  const order = await prisma.order.findUniqueOrThrow({ where: { id: input.orderId }, include: RING_UP_INCLUDE })
-  return { ...order, addedItemIds: result.addedIds, replayed: result.replayed }
 }
 
 /**
@@ -2418,7 +2434,7 @@ export async function voidOrderItem(input: VoidInput) {
     where: { id: input.orderItemId },
     include: {
       modifiers: { select: { priceDeltaCents: true } },
-      order: { select: { id: true, status: true, conceptId: true, completedAt: true, scheduledFor: true, placedAt: true, concept: { select: { tenantId: true } } } },
+      order: { select: { id: true, status: true, conceptId: true, completedAt: true, scheduledFor: true, placedAt: true, createdAt: true, concept: { select: { tenantId: true } } } },
     },
   })
   if (!item || item.orderId !== input.orderId) throw new NotFoundError('OrderItem', input.orderItemId)
@@ -2652,6 +2668,12 @@ export async function voidOrderItem(input: VoidInput) {
   // (the KDS status route no longer accepts 'voided'), so it carries the push
   // that route used to send.
   emitItemUpdated(voided.id, 'voided', voided.stationId)
+  // Par stock today (lib/parStock.ts): the voided line's portions go back —
+  // once (the claim above refuses a second void). A held pre-order never took any.
+  if (!heldAtCreation(item.order)) {
+    await giveBackLinePortions([{ menuItemId: item.menuItemId, quantity: item.quantity }])
+      .catch((err: Error) => console.warn('[par-stock] give back failed:', err.message))
+  }
   await audit({ category: 'identity',
     action: 'order_item_void',
     entity: 'OrderItem',

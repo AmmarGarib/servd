@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Menu, Receipt, ScanBarcode, Search, ShoppingCart, X } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Category, MenuItem, ModifierGroup } from '../../../lib/api'
-import { ApiError } from '../../../lib/api'
+import { api, ApiError } from '../../../lib/api'
 import { fmtPkr, fmtPkrWhole } from '../../../lib/money'
 import { orderRef } from '../../../lib/orderRef'
 import { useAuthStore } from '../../../store/auth'
@@ -103,6 +103,30 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
   }, [categories])
   const currentCategory = categories.find((c) => c.id === selectedCategory) ?? categories[0]
 
+  // Par stock today (owner, 2026-11-13): portions left per dish, set by expo (GET /menu/:conceptId/par-left —
+  // only dishes with a count). Polled; refreshed with the till's other queries after every send.
+  const par = useQuery({
+    queryKey: ['pos', 'par-left', conceptId],
+    queryFn: () => api.get<{ items: Array<{ menuItemId: string; left: number | null }> }>(`/menu/${conceptId}/par-left`),
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+    meta: { background: true },
+  })
+  const parLeft = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const i of par.data?.items ?? []) if (i.left !== null) m.set(i.menuItemId, i.left)
+    return m
+  }, [par.data])
+  /** "N left" / "Sold out" badge for a dish with a par count. */
+  const parBadge = (id: string) => {
+    const left = parLeft.get(id)
+    if (left === undefined) return null
+    return left <= 0
+      ? <span className="mt-1 rounded bg-kds-red/15 px-1.5 py-0.5 text-xs font-black text-kds-red">Sold out</span>
+      : <span className="mt-1 rounded bg-kds-amber/15 px-1.5 py-0.5 text-xs font-black tabular-nums text-kds-amber">{left} left</span>
+  }
+  const parOut = (id: string) => (parLeft.get(id) ?? 1) <= 0
+
   useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(null), 4000); return () => clearTimeout(t) }, [note])
 
   // Live name search (debounced); the Item Code / SKU box searches on Enter.
@@ -120,7 +144,7 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
 
   function tap(item: MenuItem | undefined, fallbackName?: string) {
     if (!item) { setError(`${fallbackName ?? 'That item'} is not on the loaded menu. Reload the till.`); return }
-    if (!item.isAvailable) { setNote(`${item.name} is sold out`); return }
+    if (!item.isAvailable || parOut(item.id)) { setNote(`${item.name} is sold out`); return }
     if (item.modifierGroups?.some((g: ModifierGroup) => g.isRequired || (g.modifiers?.length ?? 0) > 0)) setModifierItem(item)
     else addItem(item, [])
   }
@@ -159,6 +183,7 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
         return r
       } catch (e) {
         const code = e instanceof ApiError ? e.code : null
+        if (code === 'PAR_STOCK_SHORT') void qc.invalidateQueries({ queryKey: ['pos', 'par-left', conceptId] })
         if (code !== 'BILL_IN_PAYMENT' && code !== 'ORDER_NOT_OPEN') { setError(flowErrorMessage(e, 'Could not add the items')); return null }
         const ok = await confirm({ title: 'Send as a new ticket?', body: `Payment has started on ${orderRef(target.id)}, so items cannot be added to it. Send these items as a new ticket on the table?`, confirmLabel: 'New ticket', cancelLabel: 'Go back' })
         if (!ok) return null
@@ -179,6 +204,7 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
       setSentIds((ids) => [...ids, r.id])
       return r
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'PAR_STOCK_SHORT') void qc.invalidateQueries({ queryKey: ['pos', 'par-left', conceptId] })
       setError(flowErrorMessage(e, 'Could not send the order'))
       return null
     } finally { setBusy(false) }
@@ -320,23 +346,24 @@ export function OrderScreen({ conceptId, brand, categories, menuLoading, onMenu,
                 ? gridItems.map((r) => {
                     const item = menuItems.get(r.id)
                     return (
-                      <button key={r.id} type="button" onClick={() => tap(item, r.name)} aria-disabled={!r.isAvailable}
-                        className={`flex min-h-[88px] flex-col items-start rounded-lg border p-3 text-left active:scale-95 ${r.isAvailable ? 'border-kds-border bg-kds-card hover:border-kds-green' : 'border-kds-border bg-kds-border/30 opacity-40'}`}>
+                      <button key={r.id} type="button" onClick={() => tap(item, r.name)} aria-disabled={!r.isAvailable || parOut(r.id)}
+                        className={`flex min-h-[88px] flex-col items-start rounded-lg border p-3 text-left active:scale-95 ${r.isAvailable && !parOut(r.id) ? 'border-kds-border bg-kds-card hover:border-kds-green' : 'border-kds-border bg-kds-border/30 opacity-40'}`}>
                         <span className="font-semibold leading-tight text-kds-text">{r.name}</span>
                         <span className="text-xs text-kds-subtext">{r.itemCode ? `${r.itemCode} · ` : ''}{r.categoryName}</span>
+                        {parBadge(r.id)}
                         <span className="mt-auto pt-1 text-sm font-bold text-kds-green">{fmtPkrWhole(r.priceCents)}</span>
                       </button>
                     )
                   })
                 : currentCategory?.items.map((item) => {
                     return (
-                      <button key={item.id} type="button" onClick={() => tap(item)} aria-disabled={!item.isAvailable}
-                        className={`flex min-h-[88px] flex-col items-start rounded-lg border p-3 text-left active:scale-95 ${item.isAvailable ? 'border-kds-border bg-kds-card hover:border-kds-green' : 'border-kds-border bg-kds-border/30 opacity-40'}`}>
+                      <button key={item.id} type="button" onClick={() => tap(item)} aria-disabled={!item.isAvailable || parOut(item.id)}
+                        className={`flex min-h-[88px] flex-col items-start rounded-lg border p-3 text-left active:scale-95 ${item.isAvailable && !parOut(item.id) ? 'border-kds-border bg-kds-card hover:border-kds-green' : 'border-kds-border bg-kds-border/30 opacity-40'}`}>
                         {item.imageUrl && <img src={item.imageUrl} alt="" className="mb-2 h-12 w-full rounded object-cover" />}
                         <span className="font-semibold leading-tight text-kds-text">{item.name}</span>
                         {item.itemCode && <span className="text-xs text-kds-subtext">{item.itemCode}</span>}
                         <span className="mt-auto pt-1 text-sm font-bold text-kds-green">{fmtPkrWhole(item.priceCents)}</span>
-                        {!item.isAvailable && <span className="mt-1 text-xs font-bold text-kds-red">86&apos;d</span>}
+                        {!item.isAvailable && !parOut(item.id) ? <span className="mt-1 text-xs font-bold text-kds-red">86&apos;d</span> : parBadge(item.id)}
                       </button>
                     )
                   })}
