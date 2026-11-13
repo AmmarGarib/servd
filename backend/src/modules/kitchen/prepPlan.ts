@@ -18,6 +18,7 @@
 
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
+import { AppError } from '../../lib/errors.js'
 import { loadRecipeGraph, localiseGraph, measureToPurchaseUnits, prepItemFor, type CostLine, type RecipeGraph } from '../../lib/recipeCost.js'
 import { portionSizeOf } from '../../lib/portions.js'
 import { siteOnHandMany } from '../../lib/stockLedger.js'
@@ -120,17 +121,51 @@ function parentsFirst(graph: RecipeGraph, ids: string[]): string[] {
   return post.reverse()
 }
 
-export async function buildPrepPlan(input: { tenantId: string; locationId: string; date: string; db?: Db }): Promise<PrepPlan> {
+/** The live dishes of the brands cooked at an outlet, and whether each has a plate recipe (the planned-dishes picker). */
+export async function outletDishes(tenantId: string, locationId: string, db: Db = prisma) {
+  const brands = await outletBrands(db, tenantId, locationId)
+  const items = brands.length === 0 ? [] : await db.menuItem.findMany({
+    where: { conceptId: { in: brands.map((b) => b.id) }, deletedAt: null },
+    select: { id: true, name: true, conceptId: true, recipe: { select: { id: true, kind: true } } },
+    orderBy: { name: 'asc' },
+  })
+  const brandName = new Map(brands.map((b) => [b.id, b.name]))
+  return items.map((i) => ({ menuItemId: i.id, name: i.name, conceptId: i.conceptId, brand: brandName.get(i.conceptId) ?? '', hasRecipe: i.recipe?.kind === 'plate' }))
+}
+
+/**
+ * `planned` (owner, 2026-11-13: "Can po auto pickup items from recipe?" → planned dishes on the shopping list): the
+ * dishes the kitchen means to make (dish × quantity) REPLACE the forecast, and pars are left out — the plan is exactly
+ * what is to be made. Every dish must belong to a brand cooked at the outlet (422 DISH_NOT_AT_OUTLET).
+ */
+export async function buildPrepPlan(input: { tenantId: string; locationId: string; date: string; db?: Db; planned?: Array<{ menuItemId: string; qty: number }> }): Promise<PrepPlan> {
   const db = input.db ?? prisma
-  const { tenantId, locationId, date } = input
+  const { tenantId, locationId, date, planned } = input
   const weekday = pktWeekdayOf(date)
 
-  // 1. Demand per dish of the outlet's brands.
+  // 1. Demand per dish of the outlet's brands: the forecast, or the planned dishes.
   const brands = await outletBrands(db, tenantId, locationId)
   const fc = new Map<string, { name: string; qty: number; conceptId: string; brand: string }>()
-  for (const b of brands) {
-    for (const [id, v] of await forecastDishesForDay({ conceptId: b.id, locationId: b.outlets > 1 ? locationId : null, weekday })) {
-      fc.set(id, { ...v, conceptId: b.id, brand: b.name })
+  if (planned) {
+    const ids = [...new Set(planned.map((p) => p.menuItemId))]
+    const rows = ids.length === 0 ? [] : await db.menuItem.findMany({
+      where: { id: { in: ids }, deletedAt: null, conceptId: { in: brands.map((b) => b.id) } },
+      select: { id: true, name: true, conceptId: true },
+    })
+    if (rows.length !== ids.length) throw new AppError('DISH_NOT_AT_OUTLET', 'A planned dish is not on the menu of a brand cooked at this outlet', 422)
+    const byId = new Map(rows.map((r) => [r.id, r]))
+    const brandName = new Map(brands.map((b) => [b.id, b.name]))
+    for (const p of planned) {
+      if (!(p.qty > 0)) continue
+      const r = byId.get(p.menuItemId)!
+      const cur = fc.get(r.id)
+      fc.set(r.id, { name: r.name, qty: (cur?.qty ?? 0) + p.qty, conceptId: r.conceptId, brand: brandName.get(r.conceptId) ?? '' })
+    }
+  } else {
+    for (const b of brands) {
+      for (const [id, v] of await forecastDishesForDay({ conceptId: b.id, locationId: b.outlets > 1 ? locationId : null, weekday })) {
+        fc.set(id, { ...v, conceptId: b.id, brand: b.name })
+      }
     }
   }
 
@@ -163,7 +198,7 @@ export async function buildPrepPlan(input: { tenantId: string; locationId: strin
     if (!m || !m.isActive) continue
     const size = portionSizeOf(m)
     const needQty = need.get(id) ?? 0
-    const parPortions = pars.get(id) ?? null
+    const parPortions = planned ? null : pars.get(id) ?? null
     const parQty = parPortions != null && size ? parPortions * size : 0
     const targetQty = Math.max(parQty, needQty)
     const itemId = prepItems.get(id) ?? prepItemFor(r, tenantId)?.id ?? null

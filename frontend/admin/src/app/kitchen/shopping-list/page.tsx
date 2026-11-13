@@ -3,6 +3,9 @@
 // for the next day(s), minus this outlet's stock and what is already on order, by supplier — with each ingredient's
 // SPEC (what we buy). "Create draft POs" makes one draft purchase order per supplier through procurement's own PO
 // (they are then submitted, approved and sent there). GET /kitchen/shopping-list, POST …/draft-pos.
+// Planned dishes (owner, 2026-11-13: "Can po auto pickup items from recipe?"): instead of expected sales, the kitchen
+// types the dishes it means to make (dish × quantity) — same engine (recipes broken down, stock and orders taken off,
+// by supplier). GET /kitchen/outlet-dishes for the picker; `plan=` on the list, `planned` on draft POs.
 import { useState } from 'react'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -18,6 +21,8 @@ interface Group {
   lines: Array<{ inventoryItemId: string; name: string; unit: string; currentStock: number; onOrder: number; neededQty?: number; suggestedQty: number; unitCostCents: number | null; spec: string | null }>
 }
 interface NotStocked { masterIngredientId: string | null; name: string; unit: string; qty: number }
+interface OutletDish { menuItemId: string; name: string; brand: string; hasRecipe: boolean }
+interface PlanRow { key: number; menuItemId: string; qty: string }
 const n = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleString('en', { maximumFractionDigits: 3 }))
 
 export default function ShoppingListPage() {
@@ -27,15 +32,26 @@ export default function ShoppingListPage() {
   const branches = useScopeBranches()
   const [date, setDate] = useState(todayIso())
   const [days, setDays] = useState(1)
+  const [mode, setMode] = useState<'expected' | 'planned'>('expected')
+  const [rows, setRows] = useState<PlanRow[]>([{ key: 1, menuItemId: '', qty: '' }])
+  const planned = rows.filter((r) => r.menuItemId && Number(r.qty) > 0).map((r) => ({ menuItemId: r.menuItemId, qty: Number(r.qty) }))
+  const planParam = planned.map((p) => `${p.menuItemId}:${p.qty}`).join(',')
+  const usePlan = mode === 'planned'
+  const { data: dishes = [] } = useQuery<OutletDish[]>({
+    queryKey: ['kitchen', 'outlet-dishes', locationId],
+    queryFn: () => api.get(`/kitchen/outlet-dishes?locationId=${locationId}`),
+    enabled: !!locationId && usePlan,
+  })
   const { data, isLoading, error } = useQuery<{ groups: Group[]; notStocked: NotStocked[] }>({
-    queryKey: ['kitchen', 'shopping', locationId, date, days],
-    queryFn: () => api.get(`/kitchen/shopping-list?locationId=${locationId}&date=${date}&days=${days}`),
-    enabled: !!locationId,
+    queryKey: ['kitchen', 'shopping', locationId, date, days, usePlan ? planParam : ''],
+    queryFn: () => api.get(`/kitchen/shopping-list?locationId=${locationId}&date=${date}&days=${days}${usePlan ? `&plan=${encodeURIComponent(planParam)}` : ''}`),
+    enabled: !!locationId && (!usePlan || planned.length > 0),
   })
   const make = useMutation({
-    mutationFn: () => api.post<{ created: Array<{ purchaseOrderId: string; supplierName: string }>; unassigned: Array<{ name: string }> }>('/kitchen/shopping-list/draft-pos', { locationId, date, days }),
+    mutationFn: () => api.post<{ created: Array<{ purchaseOrderId: string; supplierName: string }>; unassigned: Array<{ name: string }> }>('/kitchen/shopping-list/draft-pos', { locationId, date, days, ...(usePlan ? { planned } : {}) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['kitchen'] }),
   })
+  const setRow = (key: number, patch: Partial<PlanRow>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)))
   const groups = data?.groups ?? []
   const notStocked = data?.notStocked ?? []
   // "Not stocked yet — create": this company's stock item from servd's ingredient (then it can be ordered).
@@ -52,14 +68,41 @@ export default function ShoppingListPage() {
           <p className="text-xs text-s-muted">What the <Link href="/kitchen/prep-list" className="text-primary-ink underline">prep list</Link> and the expected dishes need, less what is here and on order — with the <Link href="/kitchen/spec-list" className="text-primary-ink underline">spec</Link> of each.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="s-input w-auto" aria-label="From" />
-          <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="s-input w-auto" aria-label="Days">
-            {[1, 2, 3, 4, 5, 6, 7].map((d) => <option key={d} value={d}>{d} day{d > 1 ? 's' : ''}</option>)}
+          <select value={mode} onChange={(e) => setMode(e.target.value as 'expected' | 'planned')} className="s-input w-auto" aria-label="Based on">
+            <option value="expected">Based on expected sales</option>
+            <option value="planned">Based on dishes I plan to make</option>
           </select>
+          {!usePlan && <>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="s-input w-auto" aria-label="From" />
+            <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="s-input w-auto" aria-label="Days">
+              {[1, 2, 3, 4, 5, 6, 7].map((d) => <option key={d} value={d}>{d} day{d > 1 ? 's' : ''}</option>)}
+            </select>
+          </>}
           <button type="button" disabled={groups.length === 0 || make.isPending} onClick={() => make.mutate()} className="s-btn-primary px-4 py-2 text-sm font-bold disabled:opacity-40">Create draft POs</button>
         </div>
       </header>
-      <div className="p-6 max-w-6xl mx-auto space-y-4">
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-4">
+        {usePlan && locationId && (
+          <section className="s-card p-4 space-y-3">
+            <div>
+              <h2 className="text-sm font-bold text-s-text">Dishes you plan to make</h2>
+              <p className="text-xs text-s-muted">Each dish is broken down into its recipe (sub-recipes included). What this outlet already has, and what is already on order, is taken off.</p>
+            </div>
+            <ul className="space-y-2">
+              {rows.map((r) => (
+                <li key={r.key} className="flex flex-wrap items-center gap-2">
+                  <select value={r.menuItemId} onChange={(e) => setRow(r.key, { menuItemId: e.target.value })} className="s-input w-auto min-w-0 flex-1" aria-label="Dish">
+                    <option value="">— Pick a dish —</option>
+                    {dishes.map((d) => <option key={d.menuItemId} value={d.menuItemId} disabled={!d.hasRecipe}>{d.name}{d.brand ? ` · ${d.brand}` : ''}{d.hasRecipe ? '' : ' (no recipe)'}</option>)}
+                  </select>
+                  <input inputMode="numeric" value={r.qty} onChange={(e) => setRow(r.key, { qty: e.target.value.replace(/[^0-9.]/g, '') })} placeholder="How many" className="s-input w-28" aria-label="How many" />
+                  <button type="button" onClick={() => setRows((rs) => (rs.length > 1 ? rs.filter((x) => x.key !== r.key) : [{ key: r.key, menuItemId: '', qty: '' }]))} className="text-xs text-s-red hover:underline">Remove</button>
+                </li>
+              ))}
+            </ul>
+            <button type="button" onClick={() => setRows((rs) => [...rs, { key: Math.max(...rs.map((x) => x.key)) + 1, menuItemId: '', qty: '' }])} className="text-sm font-semibold text-primary-ink hover:underline">+ Add dish</button>
+          </section>
+        )}
         {make.data && (
           <div role="status" className="s-card p-3 text-sm">
             {make.data.created.length} draft PO{make.data.created.length === 1 ? '' : 's'} made ({make.data.created.map((c) => c.supplierName).join(', ') || 'none'}) — open <Link href="/procurement" className="text-primary-ink underline">Procurement</Link> to submit them.
@@ -87,7 +130,8 @@ export default function ShoppingListPage() {
         {!locationId ? <CompactEmptyState message={branches && branches.length === 0 ? 'No outlet yet.' : 'Pick a branch in the bar at the top to see its shopping list.'} />
           : isLoading ? <p className="text-sm text-s-muted">Loading…</p>
           : error ? <p className="text-sm text-s-red">{stockErrorText(error)}</p>
-          : groups.length === 0 ? (notStocked.length === 0 ? <CompactEmptyState message="Nothing to buy — stock covers the prep list." /> : null)
+          : usePlan && planned.length === 0 ? <CompactEmptyState message="Pick a dish and how many you plan to make." />
+          : groups.length === 0 ? (notStocked.length === 0 ? <CompactEmptyState message={usePlan ? 'Nothing to buy — stock covers these dishes.' : 'Nothing to buy — stock covers the prep list.'} /> : null)
           : groups.map((g) => (
             <section key={g.supplierId ?? 'none'} className="s-card overflow-x-auto">
               <h2 className="px-4 pt-3 text-sm font-bold text-s-text">{g.supplierName}</h2>

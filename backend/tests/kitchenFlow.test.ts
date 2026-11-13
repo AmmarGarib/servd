@@ -199,6 +199,36 @@ describe('shopping list → draft POs, with specs', () => {
   })
 })
 
+describe('planned dishes (owner, 2026-11-13: "Can po auto pickup items from recipe?")', () => {
+  it('the outlet\'s dishes for the picker; B 404', async () => {
+    const r = await call(u.buyerA!, 'GET', `/kitchen/outlet-dishes?locationId=${A.locationId}`)
+    expect(r.statusCode, r.body).toBe(200)
+    expect(r.json()).toEqual(expect.arrayContaining([expect.objectContaining({ menuItemId: dish, name: 'KF burger', hasRecipe: true })]))
+    expect((await call(u.chefB!, 'GET', `/kitchen/outlet-dishes?locationId=${A.locationId}`)).statusCode).toBe(404)
+  })
+
+  it('10 planned burgers replace the forecast: 1500 g beef needed, no par; another company\'s dish 422', async () => {
+    const r = await call(u.buyerA!, 'GET', `/kitchen/shopping-list?locationId=${A.locationId}&plan=${dish}:10`)
+    expect(r.statusCode, r.body).toBe(200)
+    const beef = r.json().groups.flatMap((g: { lines: unknown[] }) => g.lines).find((l: { inventoryItemId: string }) => l.inventoryItemId === I.beef)
+    expect(beef.neededQty).toBe(1500)
+    const catB = await prisma.category.findFirstOrThrow({ where: { conceptId: B.conceptId } })
+    const dishB = await prisma.menuItem.create({ data: { conceptId: B.conceptId, categoryId: catB.id, name: 'KF B dish', priceCents: 100 } })
+    const bad = await call(u.buyerA!, 'GET', `/kitchen/shopping-list?locationId=${A.locationId}&plan=${dishB.id}:2`)
+    expect(bad.statusCode).toBe(422)
+    expect(bad.json().error.code).toBe('DISH_NOT_AT_OUTLET')
+  })
+
+  it('draft POs from the plan', async () => {
+    const r = await call(u.buyerA!, 'POST', '/kitchen/shopping-list/draft-pos', { locationId: A.locationId, planned: [{ menuItemId: dish, qty: 10 }] })
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().created).toHaveLength(1)
+    const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: r.json().created[0].purchaseOrderId } })
+    expect(po.notes).toContain('planned dishes')
+    expect(po.status).toBe('draft')
+  })
+})
+
 describe('the spec list', () => {
   it('every ingredient the company buys with its spec, by supplier; PDF export; B sees none of A\'s', async () => {
     const rows = (await call(u.buyerA!, 'GET', '/kitchen/spec-list')).json().rows

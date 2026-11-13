@@ -27,7 +27,7 @@ import { toPurchaseUnits } from '../../lib/recipeCost.js'
 import { portionSizeOf } from '../../lib/portions.js'
 import { exportFormatOf, sendReportFor } from '../../lib/reportExport.js'
 import { costsHiddenFor } from '../inventory/routes.js'
-import { buildPrepPlan } from './prepPlan.js'
+import { buildPrepPlan, outletDishes } from './prepPlan.js'
 import { subRecipeIdsForCompany } from '../par-sheet/routes.js'
 import { createPo, reorderSuggestions } from '../procurement/service.js'
 
@@ -65,11 +65,12 @@ async function outletOf(req: FastifyRequest, locationId: string | undefined, mod
 }
 
 /** What the prep list and the forecast dishes need of raw stock over `days` days from `date` (stock units). */
-async function shoppingDemand(tenantId: string, locationId: string, date: string, days: number): Promise<{ demand: Map<string, number>; notStocked: Array<{ masterIngredientId: string | null; name: string; unit: string; qty: number }> }> {
+async function shoppingDemand(tenantId: string, locationId: string, date: string, days: number, planned?: Planned): Promise<{ demand: Map<string, number>; notStocked: Array<{ masterIngredientId: string | null; name: string; unit: string; qty: number }> }> {
   const demand = new Map<string, number>()
   const missing = new Map<string, { masterIngredientId: string | null; name: string; unit: string; qty: number }>()
-  for (let i = 0; i < days; i++) {
-    const plan = await buildPrepPlan({ tenantId, locationId, date: addDays(date, i) })
+  // Planned dishes are the whole order (one plan, no days, no pars); otherwise the forecast, day by day.
+  for (let i = 0; i < (planned ? 1 : days); i++) {
+    const plan = await buildPrepPlan({ tenantId, locationId, date: addDays(date, i), planned })
     for (const r of [...plan.rawForPrep, ...plan.directRaw]) demand.set(r.inventoryItemId, (demand.get(r.inventoryItemId) ?? 0) + r.qty)
     // Needed but never stocked by this company: listed ("Not stocked yet — create"), never dropped, never ordered.
     for (const n of plan.notStocked) {
@@ -87,6 +88,15 @@ async function shoppingDemand(tenantId: string, locationId: string, date: string
 }
 
 const listQuery = z.object({ locationId: z.string().min(1), date: dateSchema.optional() })
+
+/** Planned dishes (dish × quantity) for the shopping list — replace the forecast. */
+const plannedSchema = z.array(z.object({ menuItemId: z.string().uuid(), qty: z.number().positive().max(100_000) })).min(1).max(200)
+type Planned = z.infer<typeof plannedSchema>
+/** `?plan=<menuItemId>:<qty>,…` on the GET. */
+const planFromQuery = (raw: string | undefined): Planned | undefined => {
+  if (!raw) return undefined
+  return plannedSchema.parse(raw.split(',').filter(Boolean).map((p) => { const [menuItemId, qty] = p.split(':'); return { menuItemId, qty: Number(qty) } }))
+}
 
 export async function kitchenRoutes(fastify: FastifyInstance) {
   const readers = { preHandler: [requireAuth(...ALL_STAFF), requireModule(...KITCHEN_READ)] }
@@ -207,13 +217,21 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
   })
 
   // ── The shopping list (raw stock to buy, by supplier, with specs) ─────────
-  const shoppingQuery = listQuery.extend({ days: z.coerce.number().int().min(1).max(7).optional() })
+  const shoppingQuery = listQuery.extend({ days: z.coerce.number().int().min(1).max(7).optional(), plan: z.string().max(20_000).optional() })
+
+  // The dishes the planned-dishes picker offers: the outlet's brands' live dishes, with whether each has a recipe.
+  fastify.get('/outlet-dishes', { preHandler: [requireAuth(...ALL_STAFF), requireModule('procurement', 'inventory', 'par_sheet')] }, async (req) => {
+    const q = listQuery.parse(req.query)
+    const outlet = await outletOf(req, q.locationId)
+    return outletDishes(outlet.tenantId, outlet.id)
+  })
   fastify.get('/shopping-list', { preHandler: [requireAuth(...ALL_STAFF), requireModule('procurement', 'inventory', 'par_sheet')] }, async (req) => {
     const q = shoppingQuery.parse(req.query)
     const outlet = await outletOf(req, q.locationId)
     const date = q.date ?? pktToday()
     const days = q.days ?? 1
-    const { demand, notStocked } = await shoppingDemand(outlet.tenantId, outlet.id, date, days)
+    const planned = planFromQuery(q.plan)
+    const { demand, notStocked } = await shoppingDemand(outlet.tenantId, outlet.id, date, days, planned)
     const groups = await reorderSuggestions([outlet.tenantId], { demand, locationId: outlet.id })
     const hide = costsHiddenFor(req)
     return {
@@ -227,12 +245,12 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
   })
 
   fastify.post('/shopping-list/draft-pos', { preHandler: [requireAuth(...PROCUREMENT_TEAM), requireModule('procurement')] }, async (req, reply) => {
-    const body = z.object({ locationId: z.string().min(1), date: dateSchema.optional(), days: z.number().int().min(1).max(7).optional() }).parse(req.body)
+    const body = z.object({ locationId: z.string().min(1), date: dateSchema.optional(), days: z.number().int().min(1).max(7).optional(), planned: plannedSchema.optional() }).parse(req.body)
     // Draft POs bind to the ACTIVE company (create).
     const outlet = await outletOf(req, body.locationId, 'create')
     const date = body.date ?? pktToday()
     const days = body.days ?? 1
-    const { demand, notStocked } = await shoppingDemand(outlet.tenantId, outlet.id, date, days)
+    const { demand, notStocked } = await shoppingDemand(outlet.tenantId, outlet.id, date, days, body.planned)
     // Draft POs only for stocked items; the not-stocked ones come back to be created first.
     const groups = await reorderSuggestions([outlet.tenantId], { demand, locationId: outlet.id })
     const created: Array<{ purchaseOrderId: string; supplierId: string; supplierName: string; lineCount: number }> = []
@@ -242,7 +260,9 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
       const po = await createPo({
         supplierId: g.supplierId,
         createdBy: req.staffUser!.id,
-        notes: `Shopping list for ${outlet.name}, ${date}${days > 1 ? ` (+${days - 1} day${days > 2 ? 's' : ''})` : ''}`,
+        notes: body.planned
+          ? `Shopping list for ${outlet.name}: planned dishes (${body.planned.length})`
+          : `Shopping list for ${outlet.name}, ${date}${days > 1 ? ` (+${days - 1} day${days > 2 ? 's' : ''})` : ''}`,
         lines: g.lines.map((l) => ({ inventoryItemId: l.inventoryItemId, quantityOrdered: l.suggestedQty, unitCostCents: l.unitCostCents, notes: l.spec ? `Spec: ${l.spec}`.slice(0, 500) : null })),
       })
       created.push({ purchaseOrderId: po.id, supplierId: g.supplierId, supplierName: g.supplierName, lineCount: g.lines.length })
@@ -250,7 +270,7 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
     await audit({
       category: 'identity', action: 'kitchen.shopping_list_pos', entity: 'Location', entityId: outlet.id,
       userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: outlet.tenantId,
-      after: { date, days, purchaseOrderIds: created.map((c) => c.purchaseOrderId), unassigned: unassigned.length },
+      after: { date, days, planned: body.planned ?? null, purchaseOrderIds: created.map((c) => c.purchaseOrderId), unassigned: unassigned.length },
     })
     return reply.status(201).send({ created, unassigned, notStocked })
   })
