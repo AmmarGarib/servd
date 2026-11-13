@@ -29,7 +29,7 @@ import { exportFormatOf, sendReportFor } from '../../lib/reportExport.js'
 import { costsHiddenFor } from '../inventory/routes.js'
 import { buildPrepPlan, outletDishes } from './prepPlan.js'
 import { subRecipeIdsForCompany } from '../par-sheet/routes.js'
-import { createPo, reorderSuggestions } from '../procurement/service.js'
+import { createPo, noSupplierFor, reorderSuggestions } from '../procurement/service.js'
 
 /** Who sets the daily par: the kitchen managers (the recipe editors). */
 export const PAR_SETTERS = MANAGERS as UserRole[]
@@ -259,16 +259,20 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
     const created: Array<{ purchaseOrderId: string; supplierId: string; supplierName: string; lineCount: number }> = []
     const unassigned: Array<{ inventoryItemId: string; name: string; suggestedQty: number }> = []
     for (const g of groups) {
-      if (!g.supplierId) { unassigned.push(...g.lines.map((l) => ({ inventoryItemId: l.inventoryItemId, name: l.name, suggestedQty: l.suggestedQty }))); continue }
+      // Items with no supplier set go on ONE PO with "no supplier yet" (the company's placeholder; owner, 2026-11-03:
+      // "POs should be able to go thru without supplier attached") — the buyer picks the real supplier before buying
+      // (owner, 2026-11-13: "0 draft POs made … No supplier set for: …").
+      if (!g.supplierId) unassigned.push(...g.lines.map((l) => ({ inventoryItemId: l.inventoryItemId, name: l.name, suggestedQty: l.suggestedQty })))
+      const supplierId = g.supplierId ?? await noSupplierFor(outlet.tenantId)
       const po = await createPo({
-        supplierId: g.supplierId,
+        supplierId,
         createdBy: req.staffUser!.id,
         notes: body.planned
           ? `Shopping list for ${outlet.name}: planned dishes (${body.planned.length})`
           : `Shopping list for ${outlet.name}, ${date}${days > 1 ? ` (+${days - 1} day${days > 2 ? 's' : ''})` : ''}`,
         lines: g.lines.map((l) => ({ inventoryItemId: l.inventoryItemId, quantityOrdered: l.suggestedQty, unitCostCents: l.unitCostCents, notes: l.spec ? `Spec: ${l.spec}`.slice(0, 500) : null })),
       })
-      created.push({ purchaseOrderId: po.id, supplierId: g.supplierId, supplierName: g.supplierName, lineCount: g.lines.length })
+      created.push({ purchaseOrderId: po.id, supplierId, supplierName: g.supplierId ? g.supplierName : 'No supplier yet', lineCount: g.lines.length })
     }
     await audit({
       category: 'identity', action: 'kitchen.shopping_list_pos', entity: 'Location', entityId: outlet.id,

@@ -126,7 +126,7 @@ export default function ShoppingListPage() {
         {make.data && (
           <div role="status" className="s-card p-3 text-sm">
             {make.data.created.length} draft PO{make.data.created.length === 1 ? '' : 's'} made ({make.data.created.map((c) => c.supplierName).join(', ') || 'none'}) — open <Link href="/procurement" className="text-primary-ink underline">Procurement</Link> to submit them.
-            {make.data.unassigned.length > 0 && <span className="block text-s-muted">No supplier set for: {make.data.unassigned.map((u) => u.name).join(', ')}.</span>}
+            {make.data.unassigned.length > 0 && <span className="block text-s-muted">These have no supplier yet, so they went on the PO marked "No supplier yet" — the buyer picks the supplier on it before buying: {make.data.unassigned.map((u) => u.name).join(', ')}.</span>}
           </div>
         )}
         {make.error && <p role="alert" className="text-sm text-s-red">{stockErrorText(make.error)}</p>}
@@ -154,7 +154,7 @@ export default function ShoppingListPage() {
           : groups.length === 0 ? (notStocked.length === 0 ? <CompactEmptyState message={usePlan ? 'Nothing to buy — stock covers these dishes.' : 'Nothing to buy — stock covers the prep list.'} /> : null)
           : groups.map((g) => (
             <section key={g.supplierId ?? 'none'} className="s-card overflow-x-auto">
-              <h2 className="px-4 pt-3 text-sm font-bold text-s-text">{g.supplierName}</h2>
+              <h2 className="px-4 pt-3 text-sm font-bold text-s-text">{g.supplierId ? g.supplierName : <>No supplier yet <span className="font-normal text-xs text-s-muted">— goes on one PO; the buyer picks the supplier before buying</span></>}</h2>
               <table className="w-full text-sm">
                 <thead className="text-xs text-s-muted">
                   <tr>

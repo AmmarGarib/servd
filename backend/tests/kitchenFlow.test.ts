@@ -248,6 +248,25 @@ describe('planned dishes (owner, 2026-11-13: "Can po auto pickup items from reci
   })
 })
 
+describe('items with no supplier', () => {
+  it('go on ONE draft PO with "no supplier yet" instead of being dropped', async () => {
+    const m = (await call(u.chefA!, 'POST', '/ingredient-master', { name: `KF buns ${Date.now()}`, unit: 'pcs', category: 'bakery' })).json()
+    const bun = (await call(u.chefA!, 'POST', '/inventory/from-master', { masterIngredientId: m.id })).json().id
+    const cat = await prisma.category.findFirstOrThrow({ where: { conceptId: A.conceptId } })
+    const d = await prisma.menuItem.create({ data: { conceptId: A.conceptId, categoryId: cat.id, name: 'KF bun plate', priceCents: 100 } })
+    await prisma.recipe.create({ data: { kind: 'plate', menuItemId: d.id, servings: 1, status: 'production', tenantId: A.tenantId, ingredients: { create: [{ inventoryItemId: bun, quantity: 1, unit: 'pcs' }] } } })
+    const r = await call(u.buyerA!, 'POST', '/kitchen/shopping-list/draft-pos', { locationId: A.locationId, planned: [{ menuItemId: d.id, qty: 12 }] })
+    expect(r.statusCode, r.body).toBe(201)
+    expect(r.json().unassigned).toEqual([expect.objectContaining({ inventoryItemId: bun, suggestedQty: 12 })])
+    const made = r.json().created.find((c: { supplierName: string }) => c.supplierName === 'No supplier yet')
+    expect(made).toBeTruthy()
+    const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: made.purchaseOrderId }, include: { supplier: true, lines: true } })
+    expect(po.supplier.systemKind).toBe('cash_purchases')
+    expect(po.supplier.tenantId).toBe(A.tenantId)
+    expect(po.lines.map((l) => l.inventoryItemId)).toEqual([bun])
+  })
+})
+
 describe('the spec list', () => {
   it('every ingredient the company buys with its spec, by supplier; PDF export; B sees none of A\'s', async () => {
     const rows = (await call(u.buyerA!, 'GET', '/kitchen/spec-list')).json().rows
