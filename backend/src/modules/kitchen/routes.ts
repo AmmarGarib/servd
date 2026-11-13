@@ -90,12 +90,15 @@ async function shoppingDemand(tenantId: string, locationId: string, date: string
 const listQuery = z.object({ locationId: z.string().min(1), date: dateSchema.optional() })
 
 /** Planned dishes (dish × quantity) for the shopping list — replace the forecast. */
-const plannedSchema = z.array(z.object({ menuItemId: z.string().uuid(), qty: z.number().positive().max(100_000) })).min(1).max(200)
+const plannedSchema = z.array(z.object({ menuItemId: z.string().uuid(), qty: z.number().positive().max(100_000), modifierIds: z.array(z.string().uuid()).max(20).optional() })).min(1).max(200)
 type Planned = z.infer<typeof plannedSchema>
-/** `?plan=<menuItemId>:<qty>,…` on the GET. */
+/** `?plan=<menuItemId>:<qty>[:<modifierId>+<modifierId>],…` on the GET. */
 const planFromQuery = (raw: string | undefined): Planned | undefined => {
   if (!raw) return undefined
-  return plannedSchema.parse(raw.split(',').filter(Boolean).map((p) => { const [menuItemId, qty] = p.split(':'); return { menuItemId, qty: Number(qty) } }))
+  return plannedSchema.parse(raw.split(',').filter(Boolean).map((p) => {
+    const [menuItemId, qty, mods] = p.split(':')
+    return { menuItemId, qty: Number(qty), ...(mods ? { modifierIds: mods.split('+').filter(Boolean) } : {}) }
+  }))
 }
 
 export async function kitchenRoutes(fastify: FastifyInstance) {

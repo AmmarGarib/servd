@@ -219,6 +219,25 @@ describe('planned dishes (owner, 2026-11-13: "Can po auto pickup items from reci
     expect(bad.json().error.code).toBe('DISH_NOT_AT_OUTLET')
   })
 
+  it('an option picked on a planned dish adds its ingredients (Double: +150 g beef each); another dish\'s option 422', async () => {
+    const g = await prisma.modifierGroup.create({ data: { menuItemId: dish, name: 'Patty', minSelect: 1, maxSelect: 1, isRequired: true,
+      modifiers: { create: [{ name: 'Single', isDefault: true }, { name: 'Double', priceDeltaCents: 40_000 }] } }, include: { modifiers: true } })
+    const double = g.modifiers.find((m) => m.name === 'Double')!
+    await prisma.recipe.create({ data: { kind: 'modifier', modifierId: double.id, servings: 1, status: 'production', tenantId: A.tenantId,
+      ingredients: { create: [{ inventoryItemId: I.beef, quantity: 150, unit: 'g' }] } } })
+    const opts = (await call(u.buyerA!, 'GET', `/kitchen/outlet-dishes?locationId=${A.locationId}`)).json().find((d: { menuItemId: string }) => d.menuItemId === dish).options
+    expect(opts[0]).toMatchObject({ name: 'Patty', isRequired: true })
+    expect(opts[0].choices).toEqual(expect.arrayContaining([expect.objectContaining({ modifierId: double.id, hasRecipe: true })]))
+    const r = await call(u.buyerA!, 'GET', `/kitchen/shopping-list?locationId=${A.locationId}&plan=${dish}:10:${double.id},${dish}:5`)
+    expect(r.statusCode, r.body).toBe(200)
+    const beef = r.json().groups.flatMap((x: { lines: unknown[] }) => x.lines).find((l: { inventoryItemId: string }) => l.inventoryItemId === I.beef)
+    expect(beef.neededQty).toBe(15 * 150 + 10 * 150)
+    const other = await prisma.menuItem.create({ data: { conceptId: A.conceptId, categoryId: (await prisma.category.findFirstOrThrow({ where: { conceptId: A.conceptId } })).id, name: 'KF other', priceCents: 100 } })
+    const bad = await call(u.buyerA!, 'GET', `/kitchen/shopping-list?locationId=${A.locationId}&plan=${other.id}:1:${double.id}`)
+    expect(bad.statusCode).toBe(422)
+    expect(bad.json().error.code).toBe('OPTION_NOT_ON_DISH')
+  })
+
   it('draft POs from the plan', async () => {
     const r = await call(u.buyerA!, 'POST', '/kitchen/shopping-list/draft-pos', { locationId: A.locationId, planned: [{ menuItemId: dish, qty: 10 }] })
     expect(r.statusCode, r.body).toBe(201)

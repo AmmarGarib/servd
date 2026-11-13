@@ -21,8 +21,10 @@ interface Group {
   lines: Array<{ inventoryItemId: string; name: string; unit: string; currentStock: number; onOrder: number; neededQty?: number; suggestedQty: number; unitCostCents: number | null; spec: string | null }>
 }
 interface NotStocked { masterIngredientId: string | null; name: string; unit: string; qty: number }
-interface OutletDish { menuItemId: string; name: string; brand: string; hasRecipe: boolean }
-interface PlanRow { key: number; menuItemId: string; qty: string }
+interface OutletOption { groupId: string; name: string; isRequired: boolean; choices: Array<{ modifierId: string; name: string; isDefault: boolean; hasRecipe: boolean }> }
+interface OutletDish { menuItemId: string; name: string; brand: string; hasRecipe: boolean; options?: OutletOption[] }
+/** `mods`: the option picked per option group (e.g. Patty → Double); its ingredients join the plan. */
+interface PlanRow { key: number; menuItemId: string; qty: string; mods: Record<string, string> }
 const n = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleString('en', { maximumFractionDigits: 3 }))
 
 export default function ShoppingListPage() {
@@ -33,9 +35,12 @@ export default function ShoppingListPage() {
   const [date, setDate] = useState(todayIso())
   const [days, setDays] = useState(1)
   const [mode, setMode] = useState<'expected' | 'planned'>('expected')
-  const [rows, setRows] = useState<PlanRow[]>([{ key: 1, menuItemId: '', qty: '' }])
-  const planned = rows.filter((r) => r.menuItemId && Number(r.qty) > 0).map((r) => ({ menuItemId: r.menuItemId, qty: Number(r.qty) }))
-  const planParam = planned.map((p) => `${p.menuItemId}:${p.qty}`).join(',')
+  const [rows, setRows] = useState<PlanRow[]>([{ key: 1, menuItemId: '', qty: '', mods: {} }])
+  const planned = rows.filter((r) => r.menuItemId && Number(r.qty) > 0).map((r) => {
+    const modifierIds = Object.values(r.mods).filter(Boolean)
+    return { menuItemId: r.menuItemId, qty: Number(r.qty), ...(modifierIds.length ? { modifierIds } : {}) }
+  })
+  const planParam = planned.map((p) => `${p.menuItemId}:${p.qty}${p.modifierIds ? `:${p.modifierIds.join('+')}` : ''}`).join(',')
   const usePlan = mode === 'planned'
   const { data: dishes = [] } = useQuery<OutletDish[]>({
     queryKey: ['kitchen', 'outlet-dishes', locationId],
@@ -86,21 +91,36 @@ export default function ShoppingListPage() {
           <section className="s-card p-4 space-y-3">
             <div>
               <h2 className="text-sm font-bold text-s-text">Dishes you plan to make</h2>
-              <p className="text-xs text-s-muted">Each dish is broken down into its recipe (sub-recipes included). What this outlet already has, and what is already on order, is taken off.</p>
+              <p className="text-xs text-s-muted">Each dish is broken down into its recipe (sub-recipes included), plus the ingredients of the options you pick. What this outlet already has, and what is already on order, is taken off. Add the same dish twice for two versions (e.g. 30 single, 20 double).</p>
             </div>
             <ul className="space-y-2">
               {rows.map((r) => (
                 <li key={r.key} className="flex flex-wrap items-center gap-2">
-                  <select value={r.menuItemId} onChange={(e) => setRow(r.key, { menuItemId: e.target.value })} className="s-input w-auto min-w-0 flex-1" aria-label="Dish">
+                  <select value={r.menuItemId} onChange={(e) => {
+                    // A required option group starts on its default choice (e.g. Patty → Single).
+                    const d = dishes.find((x) => x.menuItemId === e.target.value)
+                    const mods: Record<string, string> = {}
+                    for (const g of d?.options ?? []) { const def = g.choices.find((c) => c.isDefault); if (g.isRequired && def) mods[g.groupId] = def.modifierId }
+                    setRow(r.key, { menuItemId: e.target.value, mods })
+                  }} className="s-input w-auto min-w-0 flex-1" aria-label="Dish">
                     <option value="">— Pick a dish —</option>
                     {dishes.map((d) => <option key={d.menuItemId} value={d.menuItemId} disabled={!d.hasRecipe}>{d.name}{d.brand ? ` · ${d.brand}` : ''}{d.hasRecipe ? '' : ' (no recipe)'}</option>)}
                   </select>
                   <input inputMode="numeric" value={r.qty} onChange={(e) => setRow(r.key, { qty: e.target.value.replace(/[^0-9.]/g, '') })} placeholder="How many" className="s-input w-28" aria-label="How many" />
-                  <button type="button" onClick={() => setRows((rs) => (rs.length > 1 ? rs.filter((x) => x.key !== r.key) : [{ key: r.key, menuItemId: '', qty: '' }]))} className="text-xs text-s-red hover:underline">Remove</button>
+                  <button type="button" onClick={() => setRows((rs) => (rs.length > 1 ? rs.filter((x) => x.key !== r.key) : [{ key: r.key, menuItemId: '', qty: '', mods: {} }]))} className="text-xs text-s-red hover:underline">Remove</button>
+                  {(dishes.find((x) => x.menuItemId === r.menuItemId)?.options ?? []).map((g) => (
+                    <label key={g.groupId} className="flex w-full items-center gap-2 pl-2 text-xs text-s-muted sm:w-auto">
+                      {g.name}
+                      <select value={r.mods[g.groupId] ?? ''} onChange={(e) => setRow(r.key, { mods: { ...r.mods, [g.groupId]: e.target.value } })} className="s-input w-auto min-w-0 flex-1 text-sm" aria-label={g.name}>
+                        {!g.isRequired && <option value="">None</option>}
+                        {g.choices.map((c) => <option key={c.modifierId} value={c.modifierId}>{c.name}{c.hasRecipe || c.isDefault ? '' : ' (no ingredients set)'}</option>)}
+                      </select>
+                    </label>
+                  ))}
                 </li>
               ))}
             </ul>
-            <button type="button" onClick={() => setRows((rs) => [...rs, { key: Math.max(...rs.map((x) => x.key)) + 1, menuItemId: '', qty: '' }])} className="text-sm font-semibold text-primary-ink hover:underline">+ Add dish</button>
+            <button type="button" onClick={() => setRows((rs) => [...rs, { key: Math.max(...rs.map((x) => x.key)) + 1, menuItemId: '', qty: '', mods: {} }])} className="text-sm font-semibold text-primary-ink hover:underline">+ Add dish</button>
           </section>
         )}
         {make.data && (

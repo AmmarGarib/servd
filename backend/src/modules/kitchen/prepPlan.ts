@@ -88,15 +88,16 @@ function addNotStocked(map: Map<string, { masterId: string | null; itemId: strin
   map.set(key, cur)
 }
 
-export function needsForDishes(graph: RecipeGraph, dishes: Array<{ recipeId: string; qty: number }>, notStocked = new Map<string, { masterId: string | null; itemId: string; qty: number }>()): { prep: Map<string, number>; raw: Map<string, number> } {
-  const prep = new Map<string, number>()
-  const raw = new Map<string, number>()
+export function needsForDishes(graph: RecipeGraph, dishes: Array<{ recipeId: string; qty: number }>, notStocked = new Map<string, { masterId: string | null; itemId: string; qty: number }>(), into?: { prep: Map<string, number>; raw: Map<string, number> }): { prep: Map<string, number>; raw: Map<string, number> } {
+  const prep = into?.prep ?? new Map<string, number>()
+  const raw = into?.raw ?? new Map<string, number>()
   for (const d of dishes) {
     const r = graph.get(d.recipeId)
     if (!r || !(d.qty > 0)) continue
     const batches = d.qty / Math.max(r.servings || 1, 1)
     for (const l of r.ingredients) {
-      if (l.section === 'packaging' || l.quantity <= 0) continue
+      // An add-on's 'removes' line (negative, modifier recipes only) takes its quantity back off the need.
+      if (l.section === 'packaging' || l.quantity === 0 || (l.quantity < 0 && r.kind !== 'modifier')) continue
       if (l.prepRecipeId) prep.set(l.prepRecipeId, (prep.get(l.prepRecipeId) ?? 0) + batches * l.quantity)
       else if (l.inventoryItem?.notStocked) addNotStocked(notStocked, l, batches)
       else if (l.inventoryItemId && l.inventoryItem) raw.set(l.inventoryItemId, (raw.get(l.inventoryItemId) ?? 0) + batches * linePurchaseQty(l))
@@ -126,11 +127,24 @@ export async function outletDishes(tenantId: string, locationId: string, db: Db 
   const brands = await outletBrands(db, tenantId, locationId)
   const items = brands.length === 0 ? [] : await db.menuItem.findMany({
     where: { conceptId: { in: brands.map((b) => b.id) }, deletedAt: null },
-    select: { id: true, name: true, conceptId: true, recipe: { select: { id: true, kind: true } } },
+    select: {
+      id: true, name: true, conceptId: true, recipe: { select: { id: true, kind: true } },
+      modifierGroups: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' }, select: {
+        id: true, name: true, isRequired: true, maxSelect: true,
+        modifiers: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' }, select: { id: true, name: true, isDefault: true, recipe: { select: { id: true } } } },
+      } },
+    },
     orderBy: { name: 'asc' },
   })
   const brandName = new Map(brands.map((b) => [b.id, b.name]))
-  return items.map((i) => ({ menuItemId: i.id, name: i.name, conceptId: i.conceptId, brand: brandName.get(i.conceptId) ?? '', hasRecipe: i.recipe?.kind === 'plate' }))
+  return items.map((i) => ({
+    menuItemId: i.id, name: i.name, conceptId: i.conceptId, brand: brandName.get(i.conceptId) ?? '', hasRecipe: i.recipe?.kind === 'plate',
+    // The dish's options ("Patty: Single / Double"); an option with ingredients adds them to the plan.
+    options: i.modifierGroups.filter((g) => g.modifiers.length > 0).map((g) => ({
+      groupId: g.id, name: g.name, isRequired: g.isRequired, maxSelect: g.maxSelect,
+      choices: g.modifiers.map((m) => ({ modifierId: m.id, name: m.name, isDefault: m.isDefault, hasRecipe: !!m.recipe })),
+    })),
+  }))
 }
 
 /**
@@ -138,7 +152,7 @@ export async function outletDishes(tenantId: string, locationId: string, db: Db 
  * dishes the kitchen means to make (dish × quantity) REPLACE the forecast, and pars are left out — the plan is exactly
  * what is to be made. Every dish must belong to a brand cooked at the outlet (422 DISH_NOT_AT_OUTLET).
  */
-export async function buildPrepPlan(input: { tenantId: string; locationId: string; date: string; db?: Db; planned?: Array<{ menuItemId: string; qty: number }> }): Promise<PrepPlan> {
+export async function buildPrepPlan(input: { tenantId: string; locationId: string; date: string; db?: Db; planned?: Array<{ menuItemId: string; qty: number; modifierIds?: string[] }> }): Promise<PrepPlan> {
   const db = input.db ?? prisma
   const { tenantId, locationId, date, planned } = input
   const weekday = pktWeekdayOf(date)
@@ -146,6 +160,7 @@ export async function buildPrepPlan(input: { tenantId: string; locationId: strin
   // 1. Demand per dish of the outlet's brands: the forecast, or the planned dishes.
   const brands = await outletBrands(db, tenantId, locationId)
   const fc = new Map<string, { name: string; qty: number; conceptId: string; brand: string }>()
+  const plannedMods = new Map<string, number>()
   if (planned) {
     const ids = [...new Set(planned.map((p) => p.menuItemId))]
     const rows = ids.length === 0 ? [] : await db.menuItem.findMany({
@@ -155,11 +170,23 @@ export async function buildPrepPlan(input: { tenantId: string; locationId: strin
     if (rows.length !== ids.length) throw new AppError('DISH_NOT_AT_OUTLET', 'A planned dish is not on the menu of a brand cooked at this outlet', 422)
     const byId = new Map(rows.map((r) => [r.id, r]))
     const brandName = new Map(brands.map((b) => [b.id, b.name]))
+    // Options picked on a planned dish (owner, 2026-11-13: "I cant pick variation … double patty burger"): each must be
+    // a live option of THAT dish (422 OPTION_NOT_ON_DISH); its add-on recipe × the quantity joins the need.
+    const modIds = [...new Set(planned.flatMap((p) => p.modifierIds ?? []))]
+    const mods = modIds.length === 0 ? [] : await db.modifier.findMany({
+      where: { id: { in: modIds }, deletedAt: null, group: { deletedAt: null } },
+      select: { id: true, group: { select: { menuItemId: true } } },
+    })
+    const modDish = new Map(mods.map((m) => [m.id, m.group.menuItemId]))
     for (const p of planned) {
       if (!(p.qty > 0)) continue
       const r = byId.get(p.menuItemId)!
       const cur = fc.get(r.id)
       fc.set(r.id, { name: r.name, qty: (cur?.qty ?? 0) + p.qty, conceptId: r.conceptId, brand: brandName.get(r.conceptId) ?? '' })
+      for (const m of new Set(p.modifierIds ?? [])) {
+        if (modDish.get(m) !== r.id) throw new AppError('OPTION_NOT_ON_DISH', 'A picked option is not one of that dish\'s options', 422)
+        plannedMods.set(m, (plannedMods.get(m) ?? 0) + p.qty)
+      }
     }
   } else {
     for (const b of brands) {
@@ -171,7 +198,7 @@ export async function buildPrepPlan(input: { tenantId: string; locationId: strin
 
   // 2. The company's preps and the dishes' plates, in the company (shared recipes localised).
   const companyPreps = [...(await subRecipeIdsForCompany(tenantId))]
-  const loaded = await loadRecipeGraph({ OR: [{ menuItemId: { in: [...fc.keys()] } }, { id: { in: companyPreps } }] }, db as Prisma.TransactionClient)
+  const loaded = await loadRecipeGraph({ OR: [{ menuItemId: { in: [...fc.keys()] } }, { id: { in: companyPreps } }, ...(plannedMods.size ? [{ modifierId: { in: [...plannedMods.keys()] } }] : [])] }, db as Prisma.TransactionClient)
   // strict: ONLY this company's items — a line it has never stocked is listed apart, never drawn from another company.
   const graph = await localiseGraph(loaded.graph, tenantId, db as Prisma.TransactionClient, { strict: true })
   const notStockedMap = new Map<string, { masterId: string | null; itemId: string; qty: number }>()
@@ -180,6 +207,9 @@ export async function buildPrepPlan(input: { tenantId: string; locationId: strin
     menuItemId, name: v.name, conceptId: v.conceptId, brand: v.brand, forecast: Math.round(v.qty * 10) / 10, hasRecipe: plateOf.has(menuItemId),
   })).sort((a, b) => b.forecast - a.forecast)
   const needs = needsForDishes(graph, dishes.filter((d) => d.hasRecipe).map((d) => ({ recipeId: plateOf.get(d.menuItemId)!, qty: d.forecast })), notStockedMap)
+  // Planned options' add-on recipes (one per option) — what each adds to (or takes off) the dish.
+  const addOns = loaded.roots.filter((r) => r.kind === 'modifier' && r.modifierId && plannedMods.has(r.modifierId))
+  if (addOns.length) needsForDishes(graph, addOns.map((r) => ({ recipeId: r.id, qty: plannedMods.get(r.modifierId!)! })), notStockedMap, needs)
 
   // 3. Per prep: par, need, on hand, to prep — parents first so a prep inside a prep is needed for what is made.
   const ids = [...new Set([...companyPreps, ...needs.prep.keys()])].filter((id) => graph.get(id)?.kind === 'component')
