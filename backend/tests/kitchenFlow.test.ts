@@ -255,6 +255,8 @@ describe('items with no supplier', () => {
     const cat = await prisma.category.findFirstOrThrow({ where: { conceptId: A.conceptId } })
     const d = await prisma.menuItem.create({ data: { conceptId: A.conceptId, categoryId: cat.id, name: 'KF bun plate', priceCents: 100 } })
     await prisma.recipe.create({ data: { kind: 'plate', menuItemId: d.id, servings: 1, status: 'production', tenantId: A.tenantId, ingredients: { create: [{ inventoryItemId: bun, quantity: 1, unit: 'pcs' }] } } })
+    // No price on the stock item: the line takes the servd price typed on the Ingredients sheet (PKR 50 a bun).
+    expect((await call(u.chefA!, 'PUT', `/ingredient-master/${m.id}/price`, { priceCents: 5000 })).statusCode).toBe(200)
     const r = await call(u.buyerA!, 'POST', '/kitchen/shopping-list/draft-pos', { locationId: A.locationId, planned: [{ menuItemId: d.id, qty: 12 }] })
     expect(r.statusCode, r.body).toBe(201)
     expect(r.json().unassigned).toEqual([expect.objectContaining({ inventoryItemId: bun, suggestedQty: 12 })])
@@ -264,6 +266,7 @@ describe('items with no supplier', () => {
     expect(po.supplier.systemKind).toBe('cash_purchases')
     expect(po.supplier.tenantId).toBe(A.tenantId)
     expect(po.lines.map((l) => l.inventoryItemId)).toEqual([bun])
+    expect(po.lines[0]!.unitCostCents).toBe(5000)
   })
 })
 

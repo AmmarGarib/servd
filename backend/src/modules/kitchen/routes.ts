@@ -30,6 +30,9 @@ import { costsHiddenFor } from '../inventory/routes.js'
 import { buildPrepPlan, outletDishes } from './prepPlan.js'
 import { subRecipeIdsForCompany } from '../par-sheet/routes.js'
 import { createPo, noSupplierFor, reorderSuggestions } from '../procurement/service.js'
+import { masterPricesMany } from '../../lib/ingredientPrices.js'
+import { latestCostsMany } from '../../lib/stockLedger.js'
+import { unitFamily } from '../../lib/ingredientMaster.js'
 
 /** Who sets the daily par: the kitchen managers (the recipe editors). */
 export const PAR_SETTERS = MANAGERS as UserRole[]
@@ -88,6 +91,32 @@ async function shoppingDemand(tenantId: string, locationId: string, date: string
 }
 
 const listQuery = z.object({ locationId: z.string().min(1), date: dateSchema.optional() })
+
+/**
+ * A line with no price of its own (owner, 2026-11-13: a shopping-list PO came out "worth nothing") takes the servd
+ * price of its ingredient (the Ingredients sheet — latest delivery anywhere in servd, else the typed price), else the
+ * company's latest cost, converted to the item's stock unit. A line still unpriced stays 0 for the buyer to fill.
+ */
+async function priceUnpriced<G extends { lines: Array<{ inventoryItemId: string; unitCostCents: number | null }>; estimatedTotalCents?: number | null }>(groups: G[]): Promise<G[]> {
+  const ids = groups.flatMap((g) => g.lines.filter((l) => !l.unitCostCents).map((l) => l.inventoryItemId))
+  if (ids.length === 0) return groups
+  const items = await prisma.inventoryItem.findMany({ where: { id: { in: ids } }, select: { id: true, unit: true, masterIngredientId: true } })
+  const [servd, latest] = await Promise.all([
+    masterPricesMany(items.map((i) => i.masterIngredientId).filter((m): m is string => !!m)),
+    latestCostsMany(prisma, ids),
+  ])
+  const price = new Map<string, number>()
+  for (const i of items) {
+    const perBase = i.masterIngredientId ? servd.get(i.masterIngredientId)?.latestPerBase ?? null : null
+    const cents = perBase != null ? perBase * (unitFamily(i.unit).perUnit || 1) : latest.get(i.id)?.cents ?? null
+    if (cents != null && cents > 0) price.set(i.id, Math.round(cents))
+  }
+  return groups.map((g) => {
+    const lines = g.lines.map((l) => (!l.unitCostCents && price.has(l.inventoryItemId) ? { ...l, unitCostCents: price.get(l.inventoryItemId)! } : l))
+    const total = lines.reduce((t, l) => t + Math.round((l.unitCostCents ?? 0) * ((l as { suggestedQty?: number }).suggestedQty ?? 0)), 0)
+    return { ...g, lines, ...('estimatedTotalCents' in g ? { estimatedTotalCents: total } : {}) }
+  })
+}
 
 /** Planned dishes (dish × quantity) for the shopping list — replace the forecast. */
 const plannedSchema = z.array(z.object({ menuItemId: z.string().uuid(), qty: z.number().positive().max(100_000), modifierIds: z.array(z.string().uuid()).max(20).optional() })).min(1).max(200)
@@ -235,7 +264,7 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
     const days = q.days ?? 1
     const planned = planFromQuery(q.plan)
     const { demand, notStocked } = await shoppingDemand(outlet.tenantId, outlet.id, date, days, planned)
-    const groups = await reorderSuggestions([outlet.tenantId], { demand, locationId: outlet.id })
+    const groups = await priceUnpriced(await reorderSuggestions([outlet.tenantId], { demand, locationId: outlet.id }))
     const hide = costsHiddenFor(req)
     return {
       outlet: { id: outlet.id, name: outlet.name }, date, days,
@@ -255,7 +284,7 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
     const days = body.days ?? 1
     const { demand, notStocked } = await shoppingDemand(outlet.tenantId, outlet.id, date, days, body.planned)
     // Draft POs only for stocked items; the not-stocked ones come back to be created first.
-    const groups = await reorderSuggestions([outlet.tenantId], { demand, locationId: outlet.id })
+    const groups = await priceUnpriced(await reorderSuggestions([outlet.tenantId], { demand, locationId: outlet.id }))
     const created: Array<{ purchaseOrderId: string; supplierId: string; supplierName: string; lineCount: number }> = []
     const unassigned: Array<{ inventoryItemId: string; name: string; suggestedQty: number }> = []
     for (const g of groups) {
