@@ -318,26 +318,9 @@ function assertItemsShape(items: ItemInput[], reason: string): void {
 
 // ─── Create ──────────────────────────────────────────────────────────────────
 
-/**
- * Separation of duties: finance never raises a correction on a drawer it ran
- * (Shift.userId) or closed (the close route's 'pos.shift.close' audit row) —
- * 403 SELF_CORRECTION_BLOCKED. The CEO is exempt (the CEO approves every set).
- */
-async function assertNotOwnDrawer(shift: ShiftRow, actor: Actor): Promise<void> {
-  if (actor.role === 'admin') return
-  const ran = shift.userId === actor.id
-  const closed = ran ? null : await prisma.auditLog.findFirst({
-    where: { action: 'pos.shift.close', entity: 'Shift', entityId: shift.id, userId: actor.id },
-    select: { id: true },
-  })
-  if (ran || closed) {
-    throw new AppError(
-      'SELF_CORRECTION_BLOCKED',
-      `You ${ran ? 'ran' : 'closed'} this drawer — another finance login or the CEO raises its correction`,
-      403,
-    )
-  }
-}
+// Finance may raise a correction on a drawer it ran or closed itself (owner, 2026-11-13: "Give finance access to send
+// for correction it's own opened things" — REPLACES SELF_CORRECTION_BLOCKED): nothing moves until the CEO approves the
+// set, and the CEO's approval is the check.
 
 export async function createCorrection(input: {
   shift: ShiftRow
@@ -348,7 +331,6 @@ export async function createCorrection(input: {
   const { shift, actor } = input
   if (shift.status !== 'closed') throw new AppError('SHIFT_NOT_CLOSED', 'Only a closed drawer is corrected — close it on the till first', 409)
   const { tenantId, businessDay, businessDate } = shiftFacts(shift)
-  await assertNotOwnDrawer(shift, actor)
   const reason = input.reason.trim()
   assertItemsShape(input.items, reason)
   await assertBooksOpen(prisma, tenantId, shift.id, businessDate)
@@ -397,7 +379,6 @@ export async function createCorrection(input: {
 // separation of duties as raising (never a drawer the caller ran or closed). The open-set rule counts a draft.
 
 export async function pullBackCorrection(id: string, shift: ShiftRow, actor: Actor): Promise<void> {
-  await assertNotOwnDrawer(shift, actor)
   const n = await prisma.shiftCorrection.updateMany({ where: { id, status: 'submitted' }, data: { status: 'draft' } })
   if (n.count === 0) throw new AppError('NOT_WAITING', 'Only a correction waiting for the CEO can be pulled back — reload it', 409)
   await audit({
@@ -411,7 +392,6 @@ export async function resubmitDraft(input: { id: string; shift: ShiftRow; reason
   const { id, shift, actor } = input
   if (shift.status !== 'closed') throw new AppError('SHIFT_NOT_CLOSED', 'Only a closed drawer is corrected', 409)
   const { tenantId, businessDate } = shiftFacts(shift)
-  await assertNotOwnDrawer(shift, actor)
   const reason = input.reason.trim()
   assertItemsShape(input.items, reason)
   await assertBooksOpen(prisma, tenantId, shift.id, businessDate)

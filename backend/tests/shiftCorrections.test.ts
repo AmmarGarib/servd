@@ -855,29 +855,21 @@ describe('shift corrections — own drawer, retry right, interrupted apply', () 
     expect(row).toMatchObject({ userId: cashierA.id, tenantId: A.tenantId })
   })
 
-  it('finance never raises a correction on a drawer it ran or closed (403 SELF_CORRECTION_BLOCKED); the CEO is exempt', async () => {
+  it('finance raises a correction on a drawer it ran or closed itself (owner, 2026-11-13); the CEO still approves', async () => {
     const { drawer, bill } = await closedDrawerWithBill()
     await prisma.shift.update({ where: { id: drawer }, data: { userId: financeRan.id } })
     const ran = await call()(financeRan, 'POST', '/pos/shift-corrections', body(drawer, bill.id))
-    expect(ran.statusCode, ran.body).toBe(403)
-    expect(ran.json().error.code).toBe('SELF_CORRECTION_BLOCKED')
+    expect(ran.statusCode, ran.body).toBe(201)
+    expect(ran.json().status).toBe('submitted')
+    await call()(ceoA, 'POST', `/pos/shift-corrections/${ran.json().id}/reject`, { note: 'Not needed after all, tested only' })
 
     const d2 = await closedDrawerWithBill()
     await prisma.auditLog.create({ data: { category: 'accounting', action: 'pos.shift.close', entity: 'Shift', entityId: d2.drawer, userId: financeClosed.id, tenantId: A.tenantId } })
     const closed = await call()(financeClosed, 'POST', '/pos/shift-corrections', body(d2.drawer, d2.bill.id))
-    expect(closed.statusCode, closed.body).toBe(403)
-    expect(closed.json().error.code).toBe('SELF_CORRECTION_BLOCKED')
-    // Another finance login may raise it.
-    const other = await call()(financeA, 'POST', '/pos/shift-corrections', body(d2.drawer, d2.bill.id))
-    expect(other.statusCode, other.body).toBe(201)
-    await call()(ceoA, 'POST', `/pos/shift-corrections/${other.json().id}/reject`, { note: 'Not needed after all, tested only' })
-
-    // The CEO is exempt: a drawer the CEO ran.
-    const d3 = await closedDrawerWithBill()
-    await prisma.shift.update({ where: { id: d3.drawer }, data: { userId: ceoA.id } })
-    const ceo = await call()(ceoA, 'POST', '/pos/shift-corrections', body(d3.drawer, d3.bill.id))
-    expect(ceo.statusCode, ceo.body).toBe(201)
-    await call()(ceoA, 'POST', `/pos/shift-corrections/${ceo.json().id}/reject`, { note: 'Not needed after all, tested only' })
+    expect(closed.statusCode, closed.body).toBe(201)
+    // Finance never approves its own set.
+    expect((await call()(financeClosed, 'POST', `/pos/shift-corrections/${closed.json().id}/approve`, {})).statusCode).toBe(403)
+    await call()(ceoA, 'POST', `/pos/shift-corrections/${closed.json().id}/reject`, { note: 'Not needed after all, tested only' })
   })
 
   it('an apply left "approved" is swept to failed after 5 minutes idle; Retry needs the approve right and finishes it', async () => {
