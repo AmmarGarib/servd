@@ -3621,9 +3621,13 @@ export async function hrRoutes(fastify: FastifyInstance) {
       // A step NOBODY else can take (the HOD has no login, the only HR login
       // raised it, …) is the CEO's — the same rule the bell uses
       // (approvalRights.ts hrStepApprovers), so a request is never stranded
-      // out of sight (owner, 2026-10-30).
+      // out of sight (owner, 2026-10-30). A2 (2026-11-14): the CEO's list IS the bell's — a step is listed for the
+      // CEO exactly when hrStepApprovers names the CEO (a CEO step always: nobody else can take one, so it is not
+      // re-read), never a step HR / management / the HOD can take themselves.
       if (!who.ok) continue
-      if (who.override && !(su.role === 'admin' && (await hrStepApprovers(rec.id)).includes(su.id))) continue
+      if (su.role === 'admin') {
+        if (step.role !== 'ceo' && !(await hrStepApprovers(rec.id)).includes(su.id)) continue
+      } else if (who.override) continue
       if (stepIsHrWork(step.role, req.staffUser!, subject.managerUserId)) {
         if (staffHr === null) staffHr = await holdsStaffHr(req)
         if (!staffHr) continue

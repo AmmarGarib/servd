@@ -1489,45 +1489,66 @@ export function adminIsOverride(type: string): boolean {
 }
 
 export interface CeoSeeItem {
+  /** The module's id of the item — the rule reads its approvalSubject (the approve route's own facts). */
+  id: string
+  /** Fallbacks for an item whose subject cannot be read (the provider's own row). */
   tenantId: string | null
   submittedByIds?: Array<string | null | undefined>
   viaHeadOfficeId?: string | null
   submittedAt?: Date | string | null
+  touchesTenantIds?: string[]
 }
 
 /**
- * The approvals inbox's rule for the CEO (owner, 2026-10-30: "Items pending
- * review or approval with Finance or any other designated user should not
- * appear in the CEO's Approval tab … Each request should appear exclusively
- * in the Approval tab of the user currently responsible"). For a type whose
- * CEO is only an override (adminIsOverride: payroll_finance_review,
- * cash_request_finance, stock_transfer), the CEO sees an item only when it is
- * at the CEO's end — section ceo, no company, came through a head office
- * (A3) — or when NOBODY else may decide it (stranded): no active login of the
- * type's designated roles (roles − overrideRoles), member of the item's
- * company, holding the queue module, who is not among its submitters. Every
- * other type: true. The bell's approverIdsFor applies the same rule
- * (byRole = the designated approvers decideApproval admits). Batched: one
- * user query, one module check per user, one head-office lookup.
+ * THE rule for the CEO on a waiting item — the approvals inbox's list and counts
+ * (modules/approvals/service.ts) AND the bell's recipients (approverIdsFor) both
+ * call it, on the same facts (clean-up step 1, A2, owner 2026-11-14: never an
+ * item hidden from the CEO's inbox while the bell sends the CEO there, or the
+ * reverse). Owner, 2026-10-30: "Items pending review or approval with Finance or
+ * any other designated user should not appear in the CEO's Approval tab … Each
+ * request should appear exclusively in the Approval tab of the user currently
+ * responsible". For a type whose CEO is only an override (adminIsOverride:
+ * payroll_finance_review, cash_request_finance, stock_transfer, grn_finance,
+ * intern_payroll_finance — none of them delegable, tested), the CEO sees an
+ * item only when it is at the CEO's end — section ceo (with the item's role /
+ * kind), an item-level CEO-only, no company, came through a head office (A3) —
+ * or when NOBODY else may decide it (stranded): no active login of the type's
+ * designated roles (roles − overrideRoles), member of EVERY company the item
+ * touches, holding the queue module, who is not among its submitters — exactly
+ * decideApproval's role path for such an item. Every other type: true.
+ * The facts are the item's approvalSubject (approvalInputOf), as the approve
+ * route reads them; the provider's row is only a fallback. Batched: one user
+ * query, one module check per user, one head-office lookup.
  */
 export async function ceoMustSee(type: string, items: readonly CeoSeeItem[]): Promise<boolean[]> {
   if (!adminIsOverride(type)) return items.map(() => true)
-  const r = APPROVAL_RIGHTS[type as ApprovalType]
-  const out = items.map((i) => i.tenantId === null || sectionOf(type, { tenantId: i.tenantId }) === 'ceo')
-  const open = items.map((i, n) => (out[n] ? -1 : n)).filter((n) => n >= 0)
+  const t = type as ApprovalType
+  const inputs: CanApproveInput[] = await Promise.all(items.map(async (i) => {
+    const s = await approvalSubject(t, i.id).catch(() => null)
+    if (s) return approvalInputOf(t, i.id, s)
+    const at = i.submittedAt == null ? null : new Date(i.submittedAt)
+    return {
+      type: t, tenantId: i.tenantId, touchesTenantIds: i.touchesTenantIds?.length ? i.touchesTenantIds : clean([i.tenantId]),
+      submittedByIds: i.submittedByIds ?? [], viaHeadOfficeId: i.viaHeadOfficeId ?? null, submittedAt: at && !Number.isNaN(at.getTime()) ? at : null,
+    }
+  }))
+  const r = APPROVAL_RIGHTS[t]
+  const out = inputs.map((i) => i.tenantId === null || !!i.ceoOnly || sectionOf(type, { role: i.role, tenantId: i.tenantId, kind: i.kind }) === 'ceo')
+  const open = inputs.map((_, n) => (out[n] ? -1 : n)).filter((n) => n >= 0)
   if (open.length === 0) return out
   if (!r.exemptThroughHeadOffice) {
     const through = await throughHeadOfficeBatch(open.map((n) => ({
-      tenantId: items[n]!.tenantId, submittedByIds: items[n]!.submittedByIds ?? [], viaHeadOfficeId: items[n]!.viaHeadOfficeId ?? null,
-      submittedAt: items[n]!.submittedAt ?? null,
+      tenantId: inputs[n]!.tenantId, submittedByIds: inputs[n]!.submittedByIds ?? [], viaHeadOfficeId: inputs[n]!.viaHeadOfficeId ?? null,
+      submittedAt: inputs[n]!.submittedAt ?? null,
     })))
     open.forEach((n, k) => { if ((through[k] ?? []).length > 0) out[n] = true })
   }
   const pending = open.filter((n) => !out[n])
   if (pending.length === 0) return out
   const designated = (r.roles as readonly string[]).filter((x) => !(r.overrideRoles ?? []).includes(x))
-  const companies = uniq(pending.map((n) => items[n]!.tenantId!))
-  const users = designated.length === 0 ? [] : await serviceClient.user.findMany({
+  const touchesOf = (n: number) => clean(inputs[n]!.touchesTenantIds.length ? inputs[n]!.touchesTenantIds : [inputs[n]!.tenantId])
+  const companies = uniq(pending.flatMap(touchesOf))
+  const users = designated.length === 0 || companies.length === 0 ? [] : await serviceClient.user.findMany({
     where: {
       isActive: true, accountStatus: 'active', deletedAt: null, role: { in: designated as never[] },
       OR: [{ tenantId: { in: companies } }, { tenantMemberships: { some: { tenantId: { in: companies } } } }],
@@ -1538,9 +1559,9 @@ export async function ceoMustSee(type: string, items: readonly CeoSeeItem[]): Pr
   const approvers = users.filter((u) => listing.has(u.id))
     .map((u) => ({ id: u.id, members: new Set(clean([u.tenantId, ...u.tenantMemberships.map((m) => m.tenantId)])) }))
   for (const n of pending) {
-    const i = items[n]!
-    const submitters = new Set(clean(i.submittedByIds ?? []))
-    out[n] = !approvers.some((a) => a.members.has(i.tenantId!) && !submitters.has(a.id))
+    const touches = touchesOf(n)
+    const submitters = new Set(clean(inputs[n]!.submittedByIds ?? []))
+    out[n] = !approvers.some((a) => touches.length > 0 && touches.every((c) => a.members.has(c)) && !submitters.has(a.id))
   }
   return out
 }
@@ -1559,7 +1580,6 @@ export async function approverIdsFor(type: ApprovalType, id: string): Promise<{ 
     const r = APPROVAL_RIGHTS[type]
     if (r.perItem) return { subject: s, userIds: [] }
     const input = approvalInputOf(type, id, s)
-    const section = sectionOf(type, { role: input.role, tenantId: input.tenantId, kind: input.kind })
     const ids = uniq([
       ...(await staffOfCompanies(s.companyIds, uniq([...r.roles, 'admin']))),
       ...(s.companyIds.length === 0 ? (await serviceClient.user.findMany({ where: { role: 'admin', isActive: true, accountStatus: 'active', deletedAt: null }, select: { id: true } })).map((u) => u.id) : []),
@@ -1580,13 +1600,9 @@ export async function approverIdsFor(type: ApprovalType, id: string): Promise<{ 
       else if (d.grant.via === 'delegation') byDelegation.push(c.id)
       else byRole.push(c.id)
     }
-    const through = input.tenantId && !r.exemptThroughHeadOffice
-      ? await throughHeadOfficeIds({ tenantId: input.tenantId, submittedByIds: input.submittedByIds, submittedAt: input.submittedAt, viaHeadOfficeId: input.viaHeadOfficeId })
-      : []
-    const ceoEnd = section === 'ceo' || !!input.ceoOnly || input.tenantId === null || through.length > 0
-    // The CEO's role path is one of the item's designated approvers (payroll_run, recipe, tip_pool, the ADMIN_ONLY
-    // types) unless 'admin' is an override role of the type (atOverrideEnd — the inbox's ceoMustSee is the same rule).
-    const keepCeo = ceoEnd || !adminIsOverride(type) || byRole.length === 0 || byDelegation.length > 0
+    // The CEO is told exactly when the CEO's inbox lists the item: ceoMustSee, THE one rule (A2) — at the CEO's end,
+    // a type where the CEO is a designated approver, or stranded (nobody else may decide it).
+    const [keepCeo] = await ceoMustSee(type, [{ id, tenantId: input.tenantId }])
     return { subject: s, userIds: uniq([...(keepCeo ? admins : []), ...byRole, ...byDelegation]) }
   })
 }
@@ -1599,7 +1615,8 @@ export async function approverIdsFor(type: ApprovalType, id: string): Promise<{ 
  * else's, on the final step of a record that came through a head office (A3),
  * with a live HR hand-over (owner: "Delegate and CEO"), or when nobody else
  * can decide the step at all. HR's own work needs the staff_hr module, the
- * same rule /hr/approvals applies (PPL-R2-01).
+ * same rule /hr/approvals applies (PPL-R2-01). /hr/approvals lists a step for
+ * the CEO exactly when this names the CEO (A2: inbox and bell, one rule).
  */
 export async function hrStepApprovers(id: string): Promise<string[]> {
   const rec = await serviceClient.hrRecord.findUnique({ where: { id } })
@@ -1651,8 +1668,8 @@ export async function hrStepApprovers(id: string): Promise<string[]> {
       else if (right.via === 'delegation') delegates.push(c.id)
       else if (!right.override) others.push(c.id)
     }
-    // The CEO: the step's own approver when nobody else is; every CEO on a
-    // handed-over item or the final step of one that came through a head office.
+    // The CEO (the SAME rule /hr/approvals lists the CEO's steps by — A2, owner 2026-11-14): the step's own approver
+    // when nobody else is; every CEO on a handed-over item or the final step of one that came through a head office.
     const ceoEnd = isLast && through.length > 0
     const ceo = others.length === 0 && delegates.length === 0
       ? (admins.length > 0 ? admins : overrideAdmins)

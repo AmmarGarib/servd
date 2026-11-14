@@ -8,7 +8,8 @@
 //    type where the CEO is only an override (APPROVAL_RIGHTS.overrideRoles:
 //    finance's payroll review / voucher approval, a manager's stock transfer)
 //    while someone else may decide it (lib/approvalRights.ts ceoMustSee, the
-//    bell's rule). HR steps: /hr/approvals already applies hrStepApprovers. Items a live hand-over covers
+//    bell's rule — the same function decides both). HR steps: /hr/approvals lists for the CEO exactly the steps
+//    hrStepApprovers (the bell) names the CEO on. Items a live hand-over covers
 //    (and whose delegate did not submit them) are "handed over": collapsed per
 //    section, counted in `handedOver`, never in `total`; the CEO can still act
 //    on them. `view: 'all'` lists them inline.
@@ -92,8 +93,10 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
       // the CEO's end or nobody else may decide it — never at someone else's step.
       let rows = loaded
       if (isAdmin && adminIsOverride(p.type)) {
+        // THE rule the bell uses too (approverIdsFor → ceoMustSee), on the item's own approvalSubject.
         const see = await ceoMustSee(p.type, loaded.map((i) => ({
-          tenantId: i.tenantId, submittedByIds: i.submittedByIds ?? [], viaHeadOfficeId: i.viaHeadOfficeId ?? null, submittedAt: i.waitingSince,
+          id: i.id, tenantId: i.tenantId, submittedByIds: i.submittedByIds ?? [], viaHeadOfficeId: i.viaHeadOfficeId ?? null,
+          submittedAt: i.waitingSince, touchesTenantIds: i.touchesTenantIds,
         })))
         rows = loaded.filter((_, n) => see[n])
       }

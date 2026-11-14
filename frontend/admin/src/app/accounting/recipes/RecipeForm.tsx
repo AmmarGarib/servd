@@ -31,6 +31,7 @@ import { MasterIngredientPicker } from '../../../components/kitchen/MasterIngred
 import { PACKAGING_USED_WHEN } from './KitchenRecipe'
 import { Select } from '@/components/ui/Select'
 import { FIcon } from '../../../components/finance/ui/icons'
+import { measuresPerStockUnit, unitFamily } from '@/lib/units'
 
 type Kind = 'plate' | 'component' | 'modifier'
 type LineSection = 'ingredients' | 'packaging'
@@ -177,18 +178,14 @@ const blankRow = (section: LineSection = 'ingredients'): IngredientRow => ({
 function fmtPkrPerG(cents: number): string { return `PKR ${(cents / 100).toFixed(3)}` }
 function fmtPct(pct: number): string { return `${pct.toFixed(1)}%` }
 
-// The measure a recipe line is written in, from its stock item's unit — the server's rule
-// (backend lib/recipeCost.ts measuresPerPurchaseUnit): items bought by count (pcs, each, dozen…)
-// are written in PIECES, by volume (ml, litres) in ml, everything else in grams.
+// The measure a recipe line is written in, from its stock item's unit — THE unit rule (lib/units.ts, the copy of
+// backend lib/units.ts): items kept by count (pcs, items, each, dozen…) are written in PIECES, by volume (ml,
+// litres) in ml, by weight in grams. Grams and millilitres never stand for each other.
 type Measure = 'g' | 'ml' | 'pcs'
-const BULK_UNITS  = new Set(['kg', 'kgs', 'kilo', 'kilos', 'kilogram', 'kilograms', 'l', 'lt', 'ltr', 'ltrs', 'litre', 'litres', 'liter', 'liters'])
-const DOZEN_UNITS = new Set(['dozen', 'doz', 'dz'])
-const COUNT_UNITS = new Set(['pcs', 'pc', 'piece', 'pieces', 'unit', 'units', 'each', 'ea', 'no', 'nos', ...DOZEN_UNITS])
-const VOLUME_UNITS = new Set(['ml', 'millilitre', 'millilitres', 'milliliter', 'milliliters', 'l', 'lt', 'ltr', 'ltrs', 'litre', 'litres', 'liter', 'liters'])
 function measureOfUnit(unit: string | null | undefined): Measure {
-  const u = (unit ?? '').trim().toLowerCase()
-  if (COUNT_UNITS.has(u)) return 'pcs'
-  if (VOLUME_UNITS.has(u)) return 'ml'
+  const fam = unitFamily(unit).family
+  if (fam === 'count') return 'pcs'
+  if (fam === 'volume') return 'ml'
   return 'g'
 }
 const MEASURE_LABEL: Record<Measure, string> = { g: 'g', ml: 'ml', pcs: 'pcs' }
@@ -196,9 +193,7 @@ const MEASURE_LABEL: Record<Measure, string> = { g: 'g', ml: 'ml', pcs: 'pcs' }
 // Raw inventory cost per recipe measure (paisa per g / ml / piece): items priced per kg / litre
 // divide by 1000, per dozen by 12, everything else is already per measure.
 function invCostPerMeasureCents(inv: InventoryItem): number {
-  const u = inv.unit.trim().toLowerCase()
-  const per = BULK_UNITS.has(u) ? 1000 : DOZEN_UNITS.has(u) ? 12 : 1
-  return (inv.unitCostCents ?? 0) / per
+  return (inv.unitCostCents ?? 0) / measuresPerStockUnit(inv.unit)
 }
 
 interface RecipeFormProps {

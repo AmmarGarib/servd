@@ -11,6 +11,7 @@ import { api } from '../../lib/api'
 import { INVENTORY_CATEGORY_OPTIONS } from '../../lib/stockUi'
 import { stockErrorText } from '../../lib/stockUi'
 import { AnchoredMenu } from '../ui/AnchoredMenu'
+import { unitFamily } from '@/lib/units'
 
 export interface MasterRow {
   id: string
@@ -57,7 +58,7 @@ export interface PickedItem { id: string; name: string; unit: string; category: 
 
 const UNITS = ['g', 'ml', 'pcs', 'kg', 'litres', 'each']
 /** servd prices are per kg / litre / pcs whatever the stock unit (lib/ingredientPrices.ts). */
-const priceUnitOf = (u: string) => (u === 'g' || u === 'kg' ? 'kg' : u === 'ml' || u === 'litres' ? 'litre' : 'pcs')
+const priceUnitOf = (u: string) => { const f = unitFamily(u).family; return f === 'mass' ? 'kg' : f === 'volume' ? 'litre' : 'pcs' }
 const inputCls = 'rounded-md border border-s-border bg-s-bg px-2 py-1 text-sm text-s-text focus:border-primary focus:outline-none'
 
 export function MasterIngredientPicker({ label, onPicked, className = '', tenantId }: {

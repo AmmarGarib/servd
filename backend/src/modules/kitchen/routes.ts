@@ -23,7 +23,7 @@ import { requireModule } from '../notifications/requireModule.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, resolveTenantScope, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
-import { toPurchaseUnits } from '../../lib/recipeCost.js'
+import { toPurchaseUnitsLegacy } from '../../lib/recipeCost.js'
 import { portionSizeOf } from '../../lib/portions.js'
 import { exportFormatOf, sendReportFor } from '../../lib/reportExport.js'
 import { costsHiddenFor } from '../inventory/routes.js'
@@ -156,7 +156,7 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
     const lastAt = new Map<string, Date>()
     for (const b of batches) {
       const c = plan.components.find((x) => x.recipeId === b.recipeId)!
-      const q2 = toPurchaseUnits(b.actualYieldQty, b.unit, c.unit) ?? 0
+      const q2 = toPurchaseUnitsLegacy(b.actualYieldQty, b.unit, c.unit) ?? 0 // stored batches: read as written
       madeQty.set(b.recipeId!, (madeQty.get(b.recipeId!) ?? 0) + q2)
       if (!lastAt.has(b.recipeId!) || lastAt.get(b.recipeId!)! < b.createdAt) lastAt.set(b.recipeId!, b.createdAt)
     }

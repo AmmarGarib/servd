@@ -45,6 +45,7 @@ import { lineValueCents } from './poUnits.js'
 import { isAuthorityKey, type AuthorityKey } from '../accounting/taxAuthorities.js'
 import { CASH_PURCHASE_SUPPLIER_KIND, receiveGoods } from './receiving.js'
 import { prepareBill, insertBillTx, afterBillCreated, supplierNotChosenError } from './service.js'
+import { bulkUnitOf } from '../../lib/units.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -149,8 +150,7 @@ async function applyLineRatesTx(tx: Tx, po: { id: string; lines: Array<{ id: str
     let toRate: number
     if (r.amountCents != null) {
       // From the whole amount: a gram / ml line moves to kg / litre (1,000 of the unit), so quantity × rate = amount.
-      const u = (fromUnit ?? '').trim().toLowerCase()
-      const big = ['g', 'gm', 'gms', 'gram', 'grams'].includes(u) ? 'kg' : ['ml', 'millilitre', 'milliliter'].includes(u) ? 'l' : null
+      const big = bulkUnitOf(fromUnit)
       const newFactor = big ? factor * 1000 : factor
       const qtyNew = l.quantityOrdered / newFactor
       if (!(qtyNew > 0)) throw new AppError('INVALID_QUANTITY', 'A quantity bought is more than zero', 400)

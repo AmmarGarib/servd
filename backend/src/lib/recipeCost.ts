@@ -19,8 +19,9 @@
 //     by weight, millilitres for items bought by volume, pieces for count
 //     items. (The line's own `unit` column is a display label — the recipe
 //     form writes the item's purchase unit there — so it is NOT used for
-//     conversion.) Grams and millilitres are treated alike (density 1), as the
-//     costing has always done.
+//     conversion.) Grams and millilitres are SEPARATE families (lib/units.ts,
+//     owner 2026-11-14): a new line labelled in another family than its item
+//     is refused at save; a legacy one is still read in the item's measure.
 //   • RecipeIngredient.yieldPct is a fraction (0.01–1): to end up with
 //     `quantity` usable you draw quantity ÷ yield. Sub-recipe lines are already
 //     yielded by their own batch and are not divided again.
@@ -72,18 +73,11 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { costClassOf, COST_CLASSES, zeroByClass, type CostClass } from './inventoryClass.js'
 import { isLineRemoved, type LineRemoval } from './lineRemovals.js'
+import { convertUnits, convertUnitsLegacy, measuresPerStockUnit, normalizeUnit, unitFamily } from './units.js'
 
 // ─── Units ────────────────────────────────────────────────────────────────────
 
-const BULK_UNITS = new Set([
-  'kg', 'kgs', 'kilo', 'kilos', 'kilogram', 'kilograms',
-  'l', 'lt', 'ltr', 'ltrs', 'litre', 'litres', 'liter', 'liters',
-])
-const DOZEN_UNITS = new Set(['dozen', 'doz', 'dz'])
-
-function norm(unit: string | null | undefined): string {
-  return (unit ?? '').trim().toLowerCase()
-}
+// THE unit rule is lib/units.ts (owner, 2026-11-14): g and ml are separate families (never converted), items = pcs.
 
 /**
  * How many recipe measure units (g / ml / pieces) make one purchase unit:
@@ -92,10 +86,7 @@ function norm(unit: string | null | undefined): string {
  * pack… — the recipe quantity is already in purchase units).
  */
 export function measuresPerPurchaseUnit(unit: string | null | undefined): number {
-  const u = norm(unit)
-  if (BULK_UNITS.has(u)) return 1000
-  if (DOZEN_UNITS.has(u)) return 12
-  return 1
+  return measuresPerStockUnit(unit)
 }
 
 /** Cost of ONE recipe measure unit (per g / ml / piece) of an item. */
@@ -103,39 +94,32 @@ export function costPerMeasureCents(unit: string | null | undefined, unitCostCen
   return (unitCostCents ?? 0) / measuresPerPurchaseUnit(unit)
 }
 
-/** A recipe-measure quantity (g / ml / pcs) expressed in the item's purchase unit. */
+/**
+ * A recipe-measure quantity expressed in the item's purchase unit. The measure is the item's OWN family base (g for
+ * kg, ml for litres, pcs for dozen) — a recipe line's `unit` column is only a label, so a legacy line labelled in
+ * another family (ml against a kg item) is read exactly as before (1:1). New lines in another family are refused when
+ * the recipe is saved (modules/recipes/routes.ts validateRecipeLines, 422 UNIT_MISMATCH).
+ */
 export function measureToPurchaseUnits(measureQty: number, itemUnit: string | null | undefined): number {
   return measureQty / measuresPerPurchaseUnit(itemUnit)
 }
 
-type Dim = 'mass' | 'count'
-const UNIT_TABLE: Record<string, { dim: Dim; base: number }> = (() => {
-  const t: Record<string, { dim: Dim; base: number }> = {}
-  // Mass and volume share one dimension (density 1) — see the header.
-  for (const u of ['mg']) t[u] = { dim: 'mass', base: 0.001 }
-  for (const u of ['g', 'gm', 'gms', 'gr', 'gram', 'grams', 'ml', 'millilitre', 'millilitres', 'milliliter', 'milliliters']) t[u] = { dim: 'mass', base: 1 }
-  for (const u of BULK_UNITS) t[u] = { dim: 'mass', base: 1000 }
-  for (const u of ['pcs', 'pc', 'piece', 'pieces', 'item', 'items', 'unit', 'units', 'each', 'ea', 'no', 'nos']) t[u] = { dim: 'count', base: 1 }
-  for (const u of DOZEN_UNITS) t[u] = { dim: 'count', base: 12 }
-  return t
-})()
-
 /**
- * Convert a quantity written in an explicit unit (a prep-batch input, a waste
- * log) into the item's purchase unit. An empty unit means the recipe measure
+ * Convert a NEW quantity written in an explicit unit (a prep-batch input, a waste
+ * log, a PO / receipt / transfer line) into the item's purchase unit. An empty unit means the recipe measure
  * convention. Returns null when the two can't be reconciled (pieces of an item
- * bought by the kilo, or a unit we don't know) — the caller should refuse
+ * bought by the kilo, millilitres of one kept in grams, or a unit we don't know) — the caller should refuse
  * rather than guess, since a guess is how stock ended up 1000x off.
  */
 export function toPurchaseUnits(qty: number, fromUnit: string | null | undefined, itemUnit: string | null | undefined): number | null {
-  const from = norm(fromUnit)
-  const to = norm(itemUnit)
-  if (!from) return measureToPurchaseUnits(qty, itemUnit)
-  if (from === to) return qty
-  const f = UNIT_TABLE[from]
-  const t = UNIT_TABLE[to]
-  if (!f || !t || f.dim !== t.dim) return null
-  return (qty * f.base) / t.base
+  if (!normalizeUnit(fromUnit)) return measureToPurchaseUnits(qty, itemUnit)
+  return convertUnits(qty, fromUnit, itemUnit)
+}
+
+/** toPurchaseUnits for a row STORED before the one-unit rule: mass ↔ volume still reads 1:1 (lib/units.ts). */
+export function toPurchaseUnitsLegacy(qty: number, fromUnit: string | null | undefined, itemUnit: string | null | undefined): number | null {
+  if (!normalizeUnit(fromUnit)) return measureToPurchaseUnits(qty, itemUnit)
+  return convertUnitsLegacy(qty, fromUnit, itemUnit)
 }
 
 // ─── Recipe graph ─────────────────────────────────────────────────────────────
@@ -630,7 +614,6 @@ export async function withLatestCosts(graph: RecipeGraph, db: Db = prisma): Prom
   if (masterIds.size === 0 && itemIds.size === 0) return graph
   const { masterPricesMany } = await import('./ingredientPrices.js')
   const { latestCostsMany } = await import('./stockLedger.js')
-  const { unitFamily } = await import('./ingredientMaster.js')
   const [servd, latest] = await Promise.all([masterPricesMany([...masterIds]), latestCostsMany(db, [...itemIds])])
   const inItemUnit = (perBase: number, unit: string | null) => perBase * (unitFamily(unit ?? '').perUnit || 1)
   const out: RecipeGraph = new Map()

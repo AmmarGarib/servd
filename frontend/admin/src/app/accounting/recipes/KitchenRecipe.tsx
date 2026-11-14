@@ -21,6 +21,7 @@ import { useState } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { recipeStatusMeta, type RecipeStatus } from './RecipeForm'
+import { normalizeUnit, unitFamily } from '../../../lib/units'
 
 // ─── Units ────────────────────────────────────────────────────────────────────
 // RecipeIngredient.quantity is in the MEASURE unit (g for items bought by
@@ -28,16 +29,11 @@ import { recipeStatusMeta, type RecipeStatus } from './RecipeForm'
 // is only a label holding the item's PURCHASE unit (backend lib/recipeCost.ts).
 // So a cook reads "150 g", never "150 kg": the measure unit comes from the
 // stock item's purchase unit. Mirrors measuresPerPurchaseUnit there.
-const BULK_MASS   = new Set(['kg', 'kgs', 'kilo', 'kilos', 'kilogram', 'kilograms'])
-const BULK_VOLUME = new Set(['l', 'lt', 'ltr', 'ltrs', 'litre', 'litres', 'liter', 'liters'])
-const DOZEN       = new Set(['dozen', 'doz', 'dz'])
-
 export function measureUnit(purchaseUnit: string | null | undefined): string {
-  const u = (purchaseUnit ?? '').trim().toLowerCase()
-  if (BULK_MASS.has(u)) return 'g'
-  if (BULK_VOLUME.has(u)) return 'ml'
-  if (DOZEN.has(u)) return 'pcs'
-  return u
+  // THE unit rule (lib/units.ts): kg → g, litres → ml, dozen / items → pcs; an unknown unit stays as it is, and a
+  // unit smaller than its base (mg) is read in itself (backend measuresPerStockUnit).
+  const f = unitFamily(purchaseUnit)
+  return f.perUnit < 1 ? normalizeUnit(purchaseUnit) : f.base
 }
 
 const qty = (n: number) => n.toLocaleString('en', { maximumFractionDigits: 2 })

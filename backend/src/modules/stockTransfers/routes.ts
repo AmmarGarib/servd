@@ -69,7 +69,7 @@ import { audit } from '../../lib/audit.js'
 import { approvalSubject, auditApproval } from '../../lib/approvalRights.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
-import { toPurchaseUnits } from '../../lib/recipeCost.js'
+import { toPurchaseUnits, toPurchaseUnitsLegacy } from '../../lib/recipeCost.js'
 import { assertInt4Fits } from '../../lib/money.js'
 import {
   assertBrandOfCompany, consumeFifoTx, ensureFifoReady, lockItemsTx, returnToLotsTx, settleTransferLotsTx, STOCK_EPS, STOCK_SOURCE, transferInTx, transferOutRowsTx,
@@ -173,11 +173,15 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
     // holds no lots in any company — assign it a company first.
     const item = await prisma.inventoryItem.findFirst({
       where: { id: body.inventoryItemId, deletedAt: null, OR: [createWhere, { tenantId: null }] },
-      select: { id: true, name: true, tenantId: true },
+      select: { id: true, name: true, tenantId: true, unit: true },
     })
     if (!item) throw new NotFoundError('InventoryItem', body.inventoryItemId)
     if (!item.tenantId) {
       throw new AppError('ITEM_HAS_NO_COMPANY', `${item.name} belongs to no company yet — assign it one (Inventory → Unassigned) before moving it.`, 422)
+    }
+    // THE unit rule (lib/units.ts): a new transfer is in a unit of the item's own family (g ≠ ml).
+    if (toPurchaseUnits(body.quantity, body.unit, item.unit) == null) {
+      throw new AppError('UNIT_MISMATCH', `${item.name} is stocked in ${item.unit}; ${body.unit} can't be converted to it`, 422)
     }
     // A brand move: both sides named (null = shared), different, brands of the item's company (never across companies).
     const brandMove = body.fromConceptId !== undefined || body.toConceptId !== undefined
@@ -315,7 +319,7 @@ export async function stockTransferRoutes(fastify: FastifyInstance) {
       }
       let lossQty = 0
       if (shortfall > 0) {
-        const q = toPurchaseUnits(shortfall, t.unit, item.unit)
+        const q = toPurchaseUnitsLegacy(shortfall, t.unit, item.unit) // a stored transfer (may predate the unit rule)
         if (q == null) throw new AppError('UNIT_MISMATCH', `${item.name} is stocked in ${item.unit}; the transfer's ${t.unit} can't be converted to it`, 422)
         lossQty = q
       }
@@ -575,7 +579,7 @@ async function transition(
 async function transferStock(t: { inventoryItemId: string; quantity: number; unit: string }) {
   const it = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: t.inventoryItemId }, select: { id: true, name: true, unit: true, tenantId: true } })
   if (!it.tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', `${it.name} belongs to no company yet — assign it one before moving it.`, 422)
-  const qty = toPurchaseUnits(t.quantity, t.unit, it.unit)
+  const qty = toPurchaseUnitsLegacy(t.quantity, t.unit, it.unit) // stored: read as it was written
   if (qty == null) throw new AppError('UNIT_MISMATCH', `${it.name} is stocked in ${it.unit}; the transfer's ${t.unit} can't be converted to it`, 422)
   return { item: { ...it, tenantId: it.tenantId }, qty }
 }

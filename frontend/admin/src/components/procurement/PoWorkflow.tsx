@@ -20,6 +20,7 @@ import { Modal } from '../ui/Modal'
 import { MoneyInput } from '../ui/MoneyInput'
 import { RecordFiles } from '@/components/files/RecordFiles'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
+import { bulkUnitOf } from '@/lib/units'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -209,8 +210,7 @@ function qtyTyped(l: WfLine, qtys?: Record<string, string>) {
 /** "PKR 433.33 / kg" for grams / ml, else per the line's unit. */
 function perUnitText(amountCents: number, qty: number, unit: string) {
   if (!(qty > 0)) return null
-  const u = unit.trim().toLowerCase()
-  const big = ['g', 'gm', 'gms', 'gram', 'grams'].includes(u) ? 'kg' : ['ml', 'millilitre', 'milliliter'].includes(u) ? 'l' : null
+  const big = bulkUnitOf(unit)
   const per = big ? (amountCents / qty) * 1000 : amountCents / qty
   return `${fmtRate(Math.round(per))} / ${big ?? unit}`
 }

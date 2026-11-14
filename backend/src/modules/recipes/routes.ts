@@ -26,6 +26,7 @@ import { audit } from '../../lib/audit.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 import { assertItemsNotTrashedTx } from '../inventory/unusedCleanup.js'
+import { isKnownUnit, measureOfUnit, sameUnitFamily, unitFamily } from '../../lib/units.js'
 
 // Every cost on this module comes from lib/recipeCost.ts — THE plate cost the
 // ledger books as COGS and the stock depletion explodes. That is: each
@@ -812,7 +813,8 @@ const lineKey = (l: { inventoryItemId?: string | null; prepRecipeId?: string | n
  *   • nothing else in Packaging (no food, drinks or sub-recipes) → else 422 NOT_PACKAGING;
  *   • a stock item of the recipe's company → else 422 ITEM_NOT_IN_COMPANY, or
  *     422 ITEM_HAS_NO_COMPANY for company-less stock (a sale never consumes it);
- *   • a sub-recipe the operator can see → else 422 INGREDIENT_NOT_IN_COMPANY.
+ *   • a sub-recipe the operator can see → else 422 INGREDIENT_NOT_IN_COMPANY;
+ *   • a raw line's unit of its item's own family (g / ml / pcs never mix) → else 422 UNIT_MISMATCH.
  * Only NEW or CHANGED lines are refused: a line already on the recipe (same
  * item or sub-recipe, same section — e.g. a packaging item the wave-B
  * backfill left in a sub-recipe's ingredients) passes with a warning, so a
@@ -822,7 +824,7 @@ const lineKey = (l: { inventoryItemId?: string | null; prepRecipeId?: string | n
 async function validateRecipeLines(
   req: FastifyRequest,
   owner: LineOwner,
-  lines: Array<Pick<IngredientInput, 'inventoryItemId' | 'prepRecipeId' | 'quantity' | 'section'>>,
+  lines: Array<Pick<IngredientInput, 'inventoryItemId' | 'prepRecipeId' | 'quantity' | 'section'> & { unit?: string | null }>,
   existing: ExistingLine[] = [],
 ): Promise<string[]> {
   const warnings = new Set<string>()
@@ -830,7 +832,7 @@ async function validateRecipeLines(
   const isPlate = owner.kind === 'plate'
   const itemIds = [...new Set(lines.map((l) => l.inventoryItemId).filter((x): x is string => !!x))]
   const items = new Map((itemIds.length
-    ? await prisma.inventoryItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, name: true, tenantId: true, category: true, deletedAt: true } })
+    ? await prisma.inventoryItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, name: true, unit: true, tenantId: true, category: true, deletedAt: true } })
     : []).map((i) => [i.id, i]))
   const allowed = new Set(owner.tenantIds)
   for (const l of lines) {
@@ -857,6 +859,12 @@ async function validateRecipeLines(
       // Parked in the Trash (Sourcing sheet clean-up) — restore it from the Trash first.
       refuse('ITEM_IN_TRASH', `${item.name} is in the Trash — restore it from the Trash before using it in a recipe`)
       continue
+    }
+    // THE unit rule (lib/units.ts, owner 2026-11-14): a line is written in a unit of its ingredient's own family —
+    // grams never stand for millilitres (or pieces). A legacy line already on the recipe passes with the warning and
+    // is still costed as before (lib/recipeCost.ts measureToPurchaseUnits reads the item's measure).
+    if (l.unit && isKnownUnit(l.unit) && isKnownUnit(item.unit) && !sameUnitFamily(l.unit, item.unit)) {
+      refuse('UNIT_MISMATCH', `${item.name} is kept in ${item.unit} — a recipe line for it is written in ${measureOfUnit(item.unit)}, not ${l.unit}`)
     }
     if (item.tenantId == null) {
       refuse('ITEM_HAS_NO_COMPANY', `${item.name} belongs to no company — a sale never uses it. Pick this company's own stock item.`)
@@ -2826,6 +2834,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           }
         }
         if (!masterId) throw new AppError('COPY_LINE_UNKNOWN', 'A line of this recipe names no ingredient — fix the recipe first', 422)
+        // A legacy line labelled in another unit family than its ingredient (ml on a gram item — read 1:1 by costing)
+        // is copied under the ingredient's own unit, so the copy passes the one-unit rule and costs the same.
+        const masterUnit = (await prisma.ingredientMaster.findUnique({ where: { id: masterId }, select: { stockUnit: true } }))?.stockUnit
+        if (masterUnit && isKnownUnit(base.unit) && unitFamily(base.unit).family !== unitFamily(masterUnit).family) base.unit = masterUnit
         out.push({ ...base, masterIngredientId: masterId })
       }
       return out

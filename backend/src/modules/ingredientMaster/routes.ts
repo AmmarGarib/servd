@@ -60,7 +60,7 @@ import { ensureFifoReady, lockItemsTx } from '../../lib/stockLedger.js'
 import { moveToTrash } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 import { itemUsage, INVENTORY_ITEM_TRASH } from '../inventory/unusedCleanup.js'
-import { cleanIngredientName, factorForItemUnit, findOrCreateMasterTx, normalizeIngredientName, sameUnitFamily, unitFamily } from '../../lib/ingredientMaster.js'
+import { applyMasterToItemsTx, cleanIngredientName, findOrCreateMasterTx, normalizeIngredientName, sameUnitFamily, unitFamily } from '../../lib/ingredientMaster.js'
 import { moveItemLotsToCategoryTx, costsHiddenFor } from '../inventory/routes.js'
 import { AVERAGE_DAYS, displayUnitOf, masterPriceHistory, masterPricesMany, type MasterPrice } from '../../lib/ingredientPrices.js'
 
@@ -419,41 +419,14 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
         },
       })
       if (linkedIds.length > 0) {
-        await tx.inventoryItem.updateMany({
-          where: { id: { in: linkedIds } },
-          data: {
-            ...(body.allergens !== undefined && { allergens: body.allergens }),
-            ...(body.yieldPct !== undefined && { yieldPct: body.yieldPct }),
-            ...(stockUnit !== before.stockUnit && { unit: stockUnit }),
-            // Use-by definition (owner B6): mirrored onto every linked item at once (lots already in keep their date).
-            ...(body.perishable !== undefined && { perishable: body.perishable }),
-            ...(body.shelfLifeDays !== undefined && { shelfLifeDays: body.shelfLifeDays }),
-          },
+        // THE copy rule (lib/ingredientMaster.ts applyMasterToItemsTx): every linked item mirrors the master's
+        // allergens, yield and use-by definition; a rename reaches each company's item (unless it has another item of
+        // that name); a unit change reaches all; the buying unit + factor reach only items buying in the old one.
+        await applyMasterToItemsTx(tx, row, linkedIds, {
+          rename: name !== before.name,
+          unit: stockUnit !== before.stockUnit,
+          ...(buyingChanges ? { buyingFrom: { purchaseUnit: before.purchaseUnit } } : {}),
         })
-        // A rename reaches every company's linked stock item (owner, 2026-11-12: "I pick birds eye chili from the list
-        // and it inputs red Onion") — unless that company already has ANOTHER live item of the new name (left as it is).
-        if (name !== before.name) {
-          for (const it of linked) {
-            const clash = await tx.inventoryItem.findFirst({
-              where: { id: { not: it.id }, tenantId: it.tenantId, deletedAt: null, name: { equals: name, mode: 'insensitive' } }, select: { id: true },
-            })
-            if (!clash) await tx.inventoryItem.update({ where: { id: it.id }, data: { name } })
-          }
-        }
-        // The buying unit + factor reach ONLY items that buy in the master's (old) buying unit; the factor is in base
-        // units on the master and in each item's OWN unit on the item (kg vs g).
-        if (buyingChanges) {
-          for (const it of linked) {
-            if ((it.purchaseUnit ?? null) !== (before.purchaseUnit ?? null)) continue
-            await tx.inventoryItem.update({
-              where: { id: it.id },
-              data: {
-                purchaseUnit: newPurchaseUnit,
-                purchaseUnitFactor: factorForItemUnit(body.purchaseUnitFactor ?? before.purchaseUnitFactor, stockUnit !== before.stockUnit ? stockUnit : it.unit),
-              },
-            })
-          }
-        }
         if (categoryChanges) {
           // Each company's lots move to the new cost class with their own posting (the inventory reclass).
           await lockItemsTx(tx, linkedIds)
@@ -572,8 +545,13 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
           },
         )
       }
-      // The moved items take the kept row's use-by definition (MASTER_FIELDS mirror; owner B6) — never a posting.
-      const moved = await tx.inventoryItem.updateMany({ where: { masterIngredientId: src.id }, data: { masterIngredientId: dst.id, perishable: dst.perishable, shelfLifeDays: dst.shelfLifeDays } })
+      // THE copy rule (applyMasterToItemsTx): the live moved items take the kept row's definition and name (unless
+      // their company has another item of that name) — never a posting (the categories already agree). Items in the
+      // Trash take the definition but keep their name.
+      const movedRows = await tx.inventoryItem.findMany({ where: { masterIngredientId: src.id }, select: { id: true, deletedAt: true } })
+      const moved = await tx.inventoryItem.updateMany({ where: { masterIngredientId: src.id }, data: { masterIngredientId: dst.id } })
+      await applyMasterToItemsTx(tx, dst, movedRows.filter((i) => i.deletedAt).map((i) => i.id))
+      await applyMasterToItemsTx(tx, dst, movedRows.filter((i) => !i.deletedAt).map((i) => i.id), { rename: true })
       const lines = await repointRecipeLinesTx(tx, src.id, dst.id)
       // A stricter definition never gets lost: the kept row takes the duplicate's spec when it has none.
       await tx.ingredientMaster.update({

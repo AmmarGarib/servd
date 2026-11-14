@@ -8,10 +8,10 @@
 // the paisa even though PKR 1.234/g rounds. Receiving against the line values the lot the same exact way.
 //
 // Which units a line may be ordered in: the item's stock unit, any unit of the same family (g / kg / mg, ml / l, …
-// — lib/recipeCost.ts toPurchaseUnits, the one conversion table), and the item's own buying unit (purchaseUnit, e.g.
-// "bag" = 25,000 g) with its factor. The factor is always the SERVER's, never the client's.
+// — lib/units.ts, THE unit rule: grams never convert to millilitres, items = pcs), and the item's own buying unit
+// (purchaseUnit, e.g. "bag" = 25,000 g) with its factor. The factor is always the SERVER's, never the client's.
 import { AppError } from '../../lib/errors.js'
-import { toPurchaseUnits } from '../../lib/recipeCost.js'
+import { convertUnits, unitFamily, type UnitFamilyName } from '../../lib/units.js'
 
 export interface UnitItem { name: string; unit: string; purchaseUnit: string | null; purchaseUnitFactor: number }
 
@@ -23,15 +23,18 @@ export function orderUnitFactor(item: UnitItem, orderUnit: string): number | nul
   if (!u) return null
   if (u === norm(item.unit)) return 1
   if (item.purchaseUnit && u === norm(item.purchaseUnit) && item.purchaseUnitFactor > 0) return item.purchaseUnitFactor
-  const f = toPurchaseUnits(1, u, item.unit)
+  const f = convertUnits(1, u, item.unit)
   return f != null && f > 0 ? f : null
 }
+
+/** The units of a family a PO line is offered in (lib/units.ts families). */
+const OFFERED: Record<UnitFamilyName, string[]> = { mass: ['g', 'kg'], volume: ['ml', 'l'], count: ['pcs', 'items', 'dozen'] }
 
 /** The units offered for an item (stock unit first). */
 export function orderUnitsFor(item: UnitItem): Array<{ unit: string; factor: number }> {
   const out: Array<{ unit: string; factor: number }> = [{ unit: item.unit, factor: 1 }]
-  const family: Record<string, string[]> = { g: ['kg', 'mg'], kg: ['g'], mg: ['g', 'kg'], ml: ['l'], l: ['ml'], ltr: ['ml', 'l'], litre: ['ml'], liter: ['ml'], pcs: ['items', 'dozen'], items: ['pcs', 'dozen'], item: ['pcs', 'dozen'], pieces: ['pcs', 'dozen'] }
-  for (const u of family[norm(item.unit)] ?? []) {
+  const fam = unitFamily(item.unit).family
+  for (const u of (fam in OFFERED ? OFFERED[fam as UnitFamilyName] : [])) {
     const f = orderUnitFactor(item, u)
     if (f != null && !out.some((o) => norm(o.unit) === u)) out.push({ unit: u, factor: f })
   }

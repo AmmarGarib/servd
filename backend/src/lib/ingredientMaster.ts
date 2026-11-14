@@ -22,13 +22,10 @@ import { AppError, NotFoundError } from './errors.js'
 
 type Db = Prisma.TransactionClient | typeof prisma
 
-/**
- * THE whitespace rule (JS `\s` as the master uses it): every character here is "space". The migration's SQL
- * (20261026120000_ingredient_master, pg_temp.im_norm) uses EXACTLY this class — change both or neither.
- * ASCII tab / LF / VT / FF / CR / space, NBSP, Ogham space, U+2000–U+200A, line / paragraph separators, NNBSP,
- * medium math space, ideographic space and the BOM.
- */
-export const WS_CLASS = '\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff'
+// The whitespace rule and the unit families live in lib/units.ts (THE unit rule, owner 2026-11-14) — re-exported here.
+import { WS_CLASS, normalizeUnit, unitFamily, sameUnitFamily } from './units.js'
+export { WS_CLASS, normalizeUnit, unitFamily, sameUnitFamily }
+export type { UnitFamily } from './units.js'
 const WS_EDGE = new RegExp(`^[${WS_CLASS}]+|[${WS_CLASS}]+$`, 'g')
 const WS_RUN = new RegExp(`[${WS_CLASS}]+`, 'g')
 
@@ -42,45 +39,31 @@ export function normalizeIngredientName(name: string): string {
   return cleanIngredientName(name).toLowerCase()
 }
 
-/** A stock unit as compared: edges trimmed, lower case ("Kg " → "kg"). */
-export function normalizeUnit(unit: string): string {
-  return unit.replace(WS_EDGE, '').toLowerCase()
-}
+/*
+ * Unit FAMILIES (owner review, 2026-10-26: "kg↔g, l↔ml are ONE master"; owner 2026-11-14: items = pcs, g ≠ ml). A
+ * master is kept in its family's BASE unit (g / ml / pcs); a company's item keeps its own stock unit of the same
+ * family. The table is lib/units.ts FAMILY_UNITS.
+ */
 
 /**
- * Unit FAMILIES (owner review, 2026-10-26: "kg↔g, l↔ml are ONE master"). A master is kept in its family's BASE unit
- * (g / ml / pcs); a company's item keeps its own stock unit of the same family (recipe quantities convert through
- * lib/recipeCost.ts measureToPurchaseUnits). Volume and weight are separate families here (no density guess). A unit
- * outside the table is its own family. The SQL backfill mirrors these lists exactly.
+ * The definition fields a company's stock item takes FROM its master — locked on a linked item (PATCH /inventory/:id
+ * answers 422 MASTER_FIELD_LOCKED). Its unit only needs the master's FAMILY.
+ * perishable + shelfLifeDays (owner B6, 2026-10-26): use-by dates on deliveries — the definition is servd's.
  */
-const FAMILY_UNITS: Record<'mass' | 'volume' | 'count', Record<string, number>> = {
-  mass:   { mg: 0.001, g: 1, gm: 1, gms: 1, gr: 1, gram: 1, grams: 1, kg: 1000, kgs: 1000, kilo: 1000, kilos: 1000, kilogram: 1000, kilograms: 1000 },
-  volume: { ml: 1, millilitre: 1, millilitres: 1, milliliter: 1, milliliters: 1, l: 1000, lt: 1000, ltr: 1000, ltrs: 1000, litre: 1000, litres: 1000, liter: 1000, liters: 1000 },
-  count:  { pcs: 1, pc: 1, piece: 1, pieces: 1, unit: 1, units: 1, each: 1, ea: 1, no: 1, nos: 1, dozen: 12, doz: 12, dz: 12 },
-}
-const BASE_OF = { mass: 'g', volume: 'ml', count: 'pcs' } as const
-
-export interface UnitFamily { family: string; base: string; perUnit: number }
-
-/** The family of a unit, its base unit and how many base units ONE of it is. */
-export function unitFamily(unit: string): UnitFamily {
-  const u = normalizeUnit(unit)
-  for (const fam of ['mass', 'volume', 'count'] as const) {
-    const f = FAMILY_UNITS[fam][u]
-    if (f != null) return { family: fam, base: BASE_OF[fam], perUnit: f }
-  }
-  return { family: `u:${u}`, base: u, perUnit: 1 }
-}
-
-/** True when two units are of one family (kg and g; litres and ml; pcs and dozen). */
-export function sameUnitFamily(a: string, b: string): boolean {
-  return unitFamily(a).family === unitFamily(b).family
-}
-
-/** The definition fields a company's stock item takes FROM its master (its unit only needs the master's FAMILY). */
-// perishable + shelfLifeDays (owner B6, 2026-10-26): use-by dates on deliveries — the definition is servd's.
 export const MASTER_FIELDS = ['category', 'allergens', 'yieldPct', 'purchaseUnit', 'purchaseUnitFactor', 'perishable', 'shelfLifeDays'] as const
 export type MasterField = (typeof MASTER_FIELDS)[number]
+
+/**
+ * The MASTER_FIELDS every linked item mirrors at once, with no posting (clean-up step 1, A3, owner 2026-11-14: ONE
+ * copy rule, so items never drift from the sheet). The other two travel by their own rule inside applyMasterToItemsTx:
+ *   • category moves a company's lots between cost classes — a POSTING (moveItemLotsToCategoryTx), so it is never
+ *     copied here: a new item is made in the master's category (itemFieldsFromMaster), a category change reclasses
+ *     each company's item (ingredient master PATCH), a merge needs the two to agree first, and a linked twin filed
+ *     differently is flagged for a reviewer;
+ *   • purchaseUnit + factor reach only items that buy in the master's buying unit (`buyingFrom`) — a company buying
+ *     in its own unit ("bag") keeps it.
+ */
+export const MIRRORED_FIELDS = ['allergens', 'yieldPct', 'perishable', 'shelfLifeDays'] as const satisfies readonly MasterField[]
 
 /** A master's buying-unit factor (base units per buying unit) in an item's own stock unit. */
 export function factorForItemUnit(masterFactor: number, itemUnit: string): number {
@@ -236,9 +219,11 @@ export async function ensureCompanyItemForMasterTx(db: Db, tenantId: string, mas
   const existing = await findCompanyItemForMaster(db, tenantId, m)
   if (existing?.linked) return { id: existing.id, name: existing.name, unit: existing.unit, tenantId, created: false, linked: false }
   if (existing) {
-    // The twin takes the master's use-by definition with the link (MASTER_FIELDS; owner B6).
-    const n = await db.inventoryItem.updateMany({ where: { id: existing.id, masterIngredientId: null }, data: { masterIngredientId: m.id, perishable: m.perishable, shelfLifeDays: m.shelfLifeDays } })
+    const n = await db.inventoryItem.updateMany({ where: { id: existing.id, masterIngredientId: null }, data: { masterIngredientId: m.id } })
     if (n.count > 0) {
+      // The twin takes the master's definition with the link — THE copy rule (applyMasterToItemsTx). It keeps its own
+      // name, unit and buying unit; a category that differs is flagged below (a reclass is a posting).
+      await applyMasterToItemsTx(db, m, [existing.id])
       const twin = await db.inventoryItem.findUniqueOrThrow({ where: { id: existing.id }, select: { category: true } })
       await db.auditLog.create({
         data: {
@@ -264,9 +249,10 @@ export async function ensureCompanyItemForMasterTx(db: Db, tenantId: string, mas
   const base = duplicateBaseName(m.normalizedName)
   const name = base ? cleanIngredientName(m.name).replace(/ \(duplicate \d+\)$/i, '') : m.name
   const id = randomUUID()
+  const def = itemFieldsFromMaster(m) // THE copy rule for a new item (in the master's base unit)
   const inserted = await db.$executeRaw`
     INSERT INTO inventory_items (id, "tenantId", name, unit, category, allergens, "yieldPct", "purchaseUnit", "purchaseUnitFactor", "masterIngredientId", perishable, "shelfLifeDays", kind, "updatedAt")
-    VALUES (${id}, ${tenantId}, ${name}, ${m.stockUnit}, ${m.category}, ${m.allergens}::text[], ${m.yieldPct}, ${m.purchaseUnit}, ${m.purchaseUnitFactor}, ${m.id}, ${m.perishable}, ${m.shelfLifeDays}::int, 'stock', now())
+    VALUES (${id}, ${tenantId}, ${name}, ${m.stockUnit}, ${def.category}, ${def.allergens}::text[], ${def.yieldPct}, ${def.purchaseUnit}, ${def.purchaseUnitFactor}, ${m.id}, ${def.perishable}, ${def.shelfLifeDays}::int, 'stock', now())
     ON CONFLICT ("tenantId", "masterIngredientId") WHERE "deletedAt" IS NULL AND "masterIngredientId" IS NOT NULL DO NOTHING`
   if (inserted > 0) {
     if (base) {
@@ -286,11 +272,60 @@ export async function ensureCompanyItemForMasterTx(db: Db, tenantId: string, mas
   return { ...won, tenantId, created: false, linked: false }
 }
 
-/** The definition an item takes from its master, for an item kept in `itemUnit` (same family as the master). */
+/** The definition a NEW item takes from its master, for an item kept in `itemUnit` (same family as the master). */
 export function itemFieldsFromMaster(m: MasterRow, itemUnit: string = m.stockUnit) {
   return {
-    category: m.category, allergens: m.allergens, yieldPct: m.yieldPct,
+    category: m.category, ...mirroredFieldsOf(m),
     purchaseUnit: m.purchaseUnit, purchaseUnitFactor: factorForItemUnit(m.purchaseUnitFactor, itemUnit),
-    perishable: m.perishable, shelfLifeDays: m.shelfLifeDays,
   }
+}
+
+/** The MIRRORED_FIELDS of a master as item columns. */
+export function mirroredFieldsOf(m: Pick<MasterRow, MirroredField>): Pick<MasterRow, MirroredField> {
+  return { allergens: m.allergens, yieldPct: m.yieldPct, perishable: m.perishable, shelfLifeDays: m.shelfLifeDays }
+}
+type MirroredField = (typeof MIRRORED_FIELDS)[number]
+
+export interface ApplyMasterOptions {
+  /** The items take the master's name — each unless its company already has ANOTHER live item of that name. */
+  rename?: boolean
+  /** The items take the master's stock unit (a unit change made before anything was stocked). */
+  unit?: boolean
+  /** The master's buying unit + factor reach the items that bought in this (the master's previous) buying unit. */
+  buyingFrom?: { purchaseUnit: string | null }
+}
+
+/**
+ * THE one way a master's definition reaches its company stock items (A3): every writer of a master — its PATCH /
+ * rename, a merge, the twin link in ensureCompanyItemForMasterTx — calls this; a NEW item is made from
+ * itemFieldsFromMaster. Always mirrors MIRRORED_FIELDS; name, unit and buying unit as `opts` says. Never touches
+ * category (a posting — see MIRRORED_FIELDS), price, supplier, par or stock. Returns the items renamed.
+ */
+export async function applyMasterToItemsTx(db: Db, m: MasterRow, itemIds: string[], opts: ApplyMasterOptions = {}): Promise<{ renamed: string[] }> {
+  const renamed: string[] = []
+  if (itemIds.length === 0) return { renamed }
+  await db.inventoryItem.updateMany({
+    where: { id: { in: itemIds } },
+    data: { ...mirroredFieldsOf(m), ...(opts.unit ? { unit: m.stockUnit } : {}) },
+  })
+  if (!opts.rename && !opts.buyingFrom) return { renamed }
+  const items = await db.inventoryItem.findMany({ where: { id: { in: itemIds } }, select: { id: true, name: true, tenantId: true, unit: true, purchaseUnit: true } })
+  for (const it of items) {
+    const data: Prisma.InventoryItemUpdateInput = {}
+    if (opts.rename && it.name !== m.name) {
+      // A rename reaches every company's linked stock item (owner, 2026-11-12: "I pick birds eye chili from the list
+      // and it inputs red Onion") — unless that company already has ANOTHER live item of the new name (left as it is).
+      const clash = await db.inventoryItem.findFirst({
+        where: { id: { not: it.id }, tenantId: it.tenantId, deletedAt: null, name: { equals: m.name, mode: 'insensitive' } }, select: { id: true },
+      })
+      if (!clash) { data.name = m.name; renamed.push(it.id) }
+    }
+    // The buying unit + factor: base units on the master, the item's OWN unit on the item (kg vs g).
+    if (opts.buyingFrom && (it.purchaseUnit ?? null) === (opts.buyingFrom.purchaseUnit ?? null)) {
+      data.purchaseUnit = m.purchaseUnit
+      data.purchaseUnitFactor = factorForItemUnit(m.purchaseUnitFactor, it.unit)
+    }
+    if (Object.keys(data).length > 0) await db.inventoryItem.update({ where: { id: it.id }, data })
+  }
+  return { renamed }
 }

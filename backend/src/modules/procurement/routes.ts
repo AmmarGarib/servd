@@ -67,6 +67,7 @@ import {
   CREDIT_NOTE_REASONS, createCreditNote, creditableBill, applyCreditNote, unapplyCreditNote, voidCreditNote,
 } from './creditNotes.js'
 import { receiveGoods } from './receiving.js'
+import { movePoToCompany } from './poMove.js'
 import { decodeRecordFiles, zRecordFile, RECORD_FILES_BODY_LIMIT, RECORD_FILES_MAX_PER_UPLOAD } from '../../lib/recordFiles.js'
 import { postedOpeningBalances, syncOpeningBalanceOrFlag } from './openingBalance.js'
 import { postSupplierBill, postSupplierPayment } from '../accounting/supplierPosting.js'
@@ -1027,6 +1028,33 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       }
       const { reason } = z.object({ reason: z.string().min(1) }).parse(req.body)
       return cancelPo(req.params.id, req.staffUser!.id, reason)
+    },
+  )
+
+  // Move a PO raised in the wrong company to another one (owner, 2026-11-14; ./poMove.ts): a new draft there, this one
+  // cancelled. Whoever may raise a PO, a member of BOTH companies (403 NOT_IN_BOTH_COMPANIES); another company's PO
+  // 404; only before the CEO's approval (409 PO_MOVE_TOO_LATE). Audited in both companies.
+  fastify.post<{ Params: { id: string } }>(
+    '/purchase-orders/:id/move-company',
+    { preHandler: requireAuth(...PO_RAISERS) },
+    async (req) => {
+      const po = await guardPo(req, req.params.id)
+      assertFinanceOwnPo(req, po, ['draft', 'pending_approval'])
+      const { tenantId } = z.object({ tenantId: z.string().min(1).max(64) }).parse(req.body ?? {})
+      const su = req.staffUser!
+      if (!su.memberTenantIds.includes(tenantId) || !po.supplier.tenantId || !su.memberTenantIds.includes(po.supplier.tenantId)) {
+        throw new AppError('NOT_IN_BOTH_COMPANIES', 'You can move a purchase order only between companies you belong to', 403)
+      }
+      const r = await movePoToCompany({ poId: po.id, toTenantId: tenantId, userId: su.id })
+      for (const t of [r.fromTenantId, r.toTenantId]) {
+        await audit({
+          category: 'accounting', action: 'po.move_company', entity: 'PurchaseOrder', entityId: t === r.toTenantId ? r.newId : r.oldId,
+          userId: su.id, userEmail: su.email ?? null, tenantId: t,
+          before: { poId: r.oldId, reference: r.oldReference, tenantId: r.fromTenantId },
+          after:  { poId: r.newId, reference: r.newReference, tenantId: r.toTenantId, supplierKept: r.supplierKept, buyerKept: r.buyerKept },
+        })
+      }
+      return r
     },
   )
 

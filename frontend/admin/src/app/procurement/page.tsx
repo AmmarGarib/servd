@@ -34,7 +34,9 @@ import { ExportMenu } from '@/components/ui/ExportMenu'
 import { FIcon } from '../../components/finance/ui/icons'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 import { useFormDraft, hasFormDraft } from '../../lib/formDraft'
+import { MovePoCompany } from '../../components/procurement/MovePoCompany'
 import { DraftNotice } from '@/components/ui/DraftNotice'
+import { bulkUnitOf, convertUnits, unitFamily, type UnitFamilyName } from '@/lib/units'
 import { MyTasksTab, GrnsTab, BuyerPicker, useMyPoTasks, taskCount } from '@/components/procurement/PoWorkflow'
 
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
@@ -189,15 +191,16 @@ const pktDate = (iso: string) => new Date(new Date(iso).getTime() + 5 * 3_600_00
 
 interface InventoryItem { id: string; name: string; unit: string; supplierId?: string | null; unitCostCents?: number | null; latestCostCents?: number | null; purchaseUnit?: string | null; purchaseUnitFactor?: number | null }
 
-/** The units a PO line may be ordered in — the same rule as backend procurement/poUnits.ts (the server's factor wins). */
-// Pieces and items are the same count (owner, 2026-11-10: "Qty should have UOM in grams, KGs, pieces, items").
-const UNIT_FAMILY: Record<string, Array<[string, number]>> = {
-  g: [['kg', 1000]], kg: [['g', 0.001]], ml: [['l', 1000]], l: [['ml', 0.001]],
-  pcs: [['items', 1], ['dozen', 12]], items: [['pcs', 1], ['dozen', 12]], item: [['pcs', 1], ['dozen', 12]], pieces: [['pcs', 1], ['dozen', 12]],
-}
+/** The units a PO line may be ordered in — the same rule as backend procurement/poUnits.ts (the server's factor wins).
+ *  Families from lib/units.ts (THE unit rule): g ↔ kg, ml ↔ l, pcs ↔ items ↔ dozen — grams never become millilitres. */
+const OFFERED: Record<UnitFamilyName, string[]> = { mass: ['g', 'kg'], volume: ['ml', 'l'], count: ['pcs', 'items', 'dozen'] }
 function orderUnitsOf(item: InventoryItem): Array<{ unit: string; factor: number }> {
   const out = [{ unit: item.unit, factor: 1 }]
-  for (const [u, f] of UNIT_FAMILY[item.unit.trim().toLowerCase()] ?? []) out.push({ unit: u, factor: f })
+  const fam = unitFamily(item.unit).family
+  for (const u of (fam in OFFERED ? OFFERED[fam as UnitFamilyName] : [])) {
+    const f = convertUnits(1, u, item.unit)
+    if (f != null && f > 0 && !out.some((o) => o.unit.trim().toLowerCase() === u)) out.push({ unit: u, factor: f })
+  }
   const pu = item.purchaseUnit?.trim()
   if (pu && (item.purchaseUnitFactor ?? 0) > 0 && !out.some((o) => o.unit.toLowerCase() === pu.toLowerCase())) out.push({ unit: pu, factor: item.purchaseUnitFactor! })
   return out
@@ -205,7 +208,7 @@ function orderUnitsOf(item: InventoryItem): Array<{ unit: string; factor: number
 const factorOf = (item: InventoryItem | undefined, unit: string | undefined) =>
   !item || !unit ? 1 : orderUnitsOf(item).find((o) => o.unit.toLowerCase() === unit.toLowerCase())?.factor ?? 1
 /** A new line is ordered in kg / litres when the item is kept in g / ml (owner, 2026-11-05). */
-const defaultOrderUnit = (item: InventoryItem) => ({ g: 'kg', ml: 'l' } as Record<string, string>)[item.unit.trim().toLowerCase()] ?? item.unit
+const defaultOrderUnit = (item: InventoryItem) => bulkUnitOf(item.unit) ?? item.unit
 /** A PO line's value as stored: the typed quantity × rate in its order unit, else stock quantity × unit cost. */
 const poLineValue = (l: PoLine) => l.orderUnit && l.orderUnitCostCents != null && (l.orderUnitFactor ?? 0) > 0
   ? Math.round((l.quantityOrdered / l.orderUnitFactor!) * l.orderUnitCostCents) : Math.round(l.quantityOrdered * l.unitCostCents)
@@ -644,6 +647,7 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
             </div>
           )}
           <PoChainPanel po={detail} />
+          <MovePoCompany poId={detail.id} status={detail.status} tenantId={detail.supplier?.tenantId} />
           {detail.notes && <p className="text-xs text-s-muted">Notes: {detail.notes}</p>}
           {detail.rejectedReason && <p className="text-xs text-s-red">Rejected: {detail.rejectedReason}</p>}
           {detail.cancelReason && <p className="text-xs text-s-muted">Cancelled: {detail.cancelReason}</p>}
@@ -862,10 +866,10 @@ function PoChainPanel({ po }: { po: PurchaseOrder }) {
 function costPerStockUnit(price: MasterPrice | null, unit: string): number | null {
   const c = price?.latestCents
   if (c == null || !(c > 0)) return null
-  const per = price!.displayUnit
-  if (per === 'kg') return unit === 'g' ? c / 1000 : unit === 'kg' ? c : null
-  if (per === 'litre') return unit === 'ml' ? c / 1000 : unit === 'litres' || unit === 'l' ? c : null
-  return unit === 'pcs' || unit === 'each' ? c : null
+  // Same family only (lib/units.ts): a per-kg price never costs a line kept in ml.
+  const per = price!.displayUnit === 'litre' ? 'l' : price!.displayUnit
+  const f = convertUnits(1, unit, per)
+  return f != null ? c * f : null
 }
 
 /** A PO raised with no supplier (owner, 2026-11-03) is held by the company's system supplier until one is chosen. */

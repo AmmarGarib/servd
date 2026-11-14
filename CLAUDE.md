@@ -2468,6 +2468,28 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   `20261114120000_supplier_master` (same name in two companies = one master; a second live one in the same company
   "<name> (duplicate n)"). Not switched yet: the supplier pickers on cash vouchers, CapEx, OpEx, bills and payments
   still list the company's own accounts. Tests: `tests/supplierMaster.test.ts`, `tests/poActiveCompany.test.ts`.
+- **Move a PO to another company (owner, 2026-11-14: "Give button to transfer to other company, she will do it
+  manually").** `POST /procurement/purchase-orders/:id/move-company {tenantId}` (`procurement/poMove.ts`; PO_RAISERS,
+  finance its own only, a member of BOTH companies — 403 `NOT_IN_BOTH_COMPANIES`; another company's PO 404). Only a
+  draft or one waiting for the CEO (409 `PO_MOVE_TOO_LATE`). A PO has no company column (it is its supplier's), so the
+  move is a NEW draft in the target through `createPo` (its own PO number; the servd supplier on the target's account,
+  else "no supplier yet"; every line on the target's item for the same servd ingredient, in the unit and at the rate
+  ordered — an item not on the sheet 422 `ITEM_NOT_ON_SHEET`; buyer kept only if the target lists them; brand cleared)
+  and the old PO cancelled ("Moved to … as PO-…"). Posts nothing; audit `po.move_company` in both companies. Admin:
+  "Move to another company" on the PO's detail (`components/procurement/MovePoCompany.tsx`). Tests:
+  `tests/poMoveCompany.test.ts`.
+- **ONE unit rule (clean-up step 1, owner 2026-11-14: grams and millilitres are SEPARATE; "items" = "pcs").**
+  `backend/src/lib/units.ts` (families + conversions; `frontend/admin/src/lib/units.ts` mirrors its table) is read by
+  the ingredient master, recipe costing and PO units. A NEW quantity in another family than its item (ml on a gram
+  item) is 422 `UNIT_MISMATCH` — recipe lines, PO lines, receipts, cash buys, prep batches, transfers. Lines stored
+  before keep their old 1:1 reading (costing unchanged; saving such a recipe warns, never refuses). Sub-recipe lines
+  are not unit-checked. Tests: `tests/unitRule.test.ts`.
+- **ONE master → item copy (step 1).** `lib/ingredientMaster.ts applyMasterToItemsTx` (+ `MIRRORED_FIELDS`,
+  `itemFieldsFromMaster`) is the only place a master's definition reaches linked stock items (edit, rename, merge, twin
+  link, new item); category never travels there (a reclass is a posting). Tests: `tests/masterItemCopy.test.ts`.
+- **The CEO's inbox and bell are ONE rule (step 1).** `approvalRights.ts ceoMustSee` reads the approve route's own
+  subject and `approverIdsFor` calls it; `/hr/approvals` lists a non-CEO step for the CEO exactly when
+  `hrStepApprovers` names the CEO. Tests: `tests/approvalsCeoOneRule.test.ts`.
 - **Item groups under a category (owner, 2026-11-07: "In PO, make item categories like Sea food … Meat …"; answer:
   groups UNDER the existing category, the PO maker can add groups).** `IngredientGroup` (`ingredient_groups`, servd-wide
   like the master — no tenantId, deliberately; unique by normalised name; under ONE `INVENTORY_CATEGORIES` category;
