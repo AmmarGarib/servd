@@ -11,7 +11,7 @@ import {
   type CostRecipe, type RecipeCost, type RecipeGraph, type RecipeLineCost,
 } from '../../lib/recipeCost.js'
 import { costClassOf, isNonFoodCategory } from '../../lib/inventoryClass.js'
-import { scopeTenantWhere, assertConceptOwned, resolveTenantScope, type ScopeMode, type TenantIdWhere } from '../../lib/tenantScope.js'
+import { scopeTenantWhere, assertConceptOwned, conceptIdsInScope, resolveTenantScope, type ScopeMode, type TenantIdWhere } from '../../lib/tenantScope.js'
 import { serviceClient } from '../../lib/prisma.js'
 import { ForbiddenError } from '../../lib/errors.js'
 import { assertHoMayPropose, isReachOnly, viaHeadOfficeForSubmit } from '../../lib/headOffice.js'
@@ -327,6 +327,10 @@ async function scopedConceptIdSet(req: FastifyRequest, mode: ScopeMode = 'read')
   // the guard added specifically to stop cross-company recipe writes — passed
   // for every recipe id, so edit, delete, approve and reject all went through.
   // Approving overwrites the live menu price of the other company's item.
+  // 'write' / 'create': exactly conceptIdsInScope. 'read' keeps its own
+  // query: conceptIdsInScope('read') narrows to the brand picked in the header,
+  // which would change what every recipe screen (and the company checks built on this set) sees.
+  if (mode !== 'read') return new Set(await conceptIdsInScope(req, mode))
   const concepts = await prisma.concept.findMany({
     where: { deletedAt: null, ...(await scopeTenantWhere(req, mode)) },
     select: { id: true },

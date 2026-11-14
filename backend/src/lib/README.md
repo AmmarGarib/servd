@@ -11,14 +11,13 @@ Cross-cutting infrastructure used by every module.
 - `errors.ts` — `AppError`, `UnauthorizedError`, `ForbiddenError`, `NotFoundError` + Fastify error formatter.
 - `storage.ts` — Cloudflare R2 presigned-URL generator.
 - `moduleAccess.ts` — Role → module defaults and the server-side module gate (`RoleModuleAccess`).
-- `tenantScope.ts` — Company scoping helpers (`scopeTenantWhere`, `assertConceptOwned`, `activeTenantId`, …). Empty scope denies.
+- `tenantScope.ts` — Company scoping helpers (`scopeTenantWhere`, `assertConceptOwned`, `activeTenantId`, members-only reads `memberConceptWhere` / `assertConceptOwnedAsMember`, …). Empty scope denies. The ONE brand-access rule: the old `conceptAccess.ts` was folded in here (2026-11-14).
 - `audit.ts` — Audit log helpers (used by refunds, voids, comps, config edits).
 - `notify.ts` — Email + SMS dispatchers (no-op when SMTP/Twilio aren't configured).
 - `whatsapp.ts` — Meta Cloud API client.
 - `reservation.ts` — Background cart-release worker for abandoned reservations.
 - `secretBox.ts` — AES-256-GCM encryption at rest for integration secrets (key from `SERVD_SECRET_KEY`).
 - `connectorRoles.ts` — Who may configure the API connectors (`CONNECTOR_ADMINS`).
-- `conceptAccess.ts` — Multi-tenant access control (which concepts a staff user can see).
 - `fleet.ts` — Fleet agreements: may this rider's company carry that order's company's orders? (the one rule — `docs/rider-app.md`).
 - `deliveryOtp.ts` — The delivery hand-over code: CSPRNG generation, constant-time compare, the 5-try limit, and who may read it (admin / management).
 - `stockLedger.ts` — **THE stock writer** (finance wave B, H16): FIFO `StockLot`s at the price paid and the append-only `StockMovement` ledger. `ensureFifoReady(tenantId)` before any stock transaction (runs the company's one-time cut-over), `addLotTx`, `consumeFifoTx`, `returnToLotsTx`, `relabelToWasteTx`, `lockItemsTx` (items locked in id order), `lotValuation`, `readFifoCutoverAt`. `InventoryItem.currentStock` is a cache of the lots; an item with no company is refused on every write (422 `ITEM_HAS_NO_COMPANY`). Details: `modules/inventory/README.md`.

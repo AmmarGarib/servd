@@ -5,7 +5,6 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, CASHIERS, MANAGERS, FINANCE_TEAM } from '../auth/middleware.js'
 import { createPosOrder, processPayment, settlePayment, openShift, closeShift, getZReport, voidOrderItem, refundOrder, compOrder, recordCashMovement, quoteOrderForTender, quotePosOrder, assertDrawerOperator, openTicketsOnDrawer, keenuQrRetired, addItemsToPosOrder } from './service.js'
 import { EXPENSE_PAYOUT_CATEGORIES, EXPENSE_PAYOUT_KEYS, type PayoutCategory } from '../accounting/expenseCategories.js'
-import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, assertConceptOwned, shiftWhere, findShiftInScope, assertShiftOf } from '../../lib/tenantScope.js'
 import { buildReceiptHtml, buildReceiptData } from './receipt.js'
@@ -188,10 +187,10 @@ const closeShiftSchema = z.object({
 
 export async function posRoutes(fastify: FastifyInstance) {
   // POST /pos/orders — create an order at the till
-  // Cashier must have access to the concept they're ringing under (IDOR §C6).
+  // Cashier must have access to the concept they're ringing under (IDOR §C6):
+  // the brand must be the ACTIVE company's ('create' below — 404 otherwise).
   fastify.post('/orders', { preHandler: requireAuth(...CASHIERS) }, async (req, reply) => {
     const body = posOrderSchema.parse(req.body)
-    await assertConceptAccess(req.staffUser!, body.conceptId)
     // A ring-up binds a NEW order to a brand, so the brand must belong to the
     // company the operator is acting in — not merely one they're a member of.
     const tenantId = req.staffUser!.tenantId
@@ -264,7 +263,6 @@ export async function posRoutes(fastify: FastifyInstance) {
       select: { id: true, conceptId: true },
     })
     if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-    await assertConceptAccess(req.staffUser!, order.conceptId)
     const r = await addItemsToPosOrder({
       orderId: order.id,
       items: body.items,
@@ -351,7 +349,6 @@ export async function posRoutes(fastify: FastifyInstance) {
     // Priced for the brand as a ring-up would bind it: the ACTIVE company's
     // (a foreign brand 404s).
     await assertConceptOwned(req, body.conceptId, 'create')
-    await assertConceptAccess(req.staffUser!, body.conceptId)
     const menuItemIds = Array.from(new Set(body.items.map((i) => i.menuItemId).filter((x): x is string => !!x)))
     if (menuItemIds.length > 0) {
       const owned = await prisma.menuItem.count({

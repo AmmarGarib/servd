@@ -2514,6 +2514,14 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   keeps its own workbook layout, `hr/reports.ts reportXlsx`). The Modules page has no "known gaps" notes. Dead code
   removed: the retired 2FA / staff-code bodies (routes still answer 410), five unused admin components, unused lib
   exports. The tables nothing uses keep their data and their company-merge repoint lines.
+- **Clean-up step 4 (2026-11-14): `lib/conceptAccess.ts` is GONE.** Floors, orders, reservations, the till and the
+  till flow resolve a brand ONLY through `lib/tenantScope.ts`: writes in 'write' mode, creates in 'create' mode, and
+  their reads through `assertConceptOwnedAsMember` / `memberConceptWhere` (read mode, then member companies only — a
+  company reached only through a head office never reads floors, orders or bookings; the CEO is not narrowed). Foreign
+  brand = 404 (it was 403 in places). Reservation seat / complete / cancel look the booking up in write scope (the old
+  `tenantId: tenantFilter` lookup failed open on a null filter). Never re-add a second brand check. Recipes'
+  `scopedConceptIdSet` calls `conceptIdsInScope` for write / create; its read keeps its own query (read mode would
+  narrow to the brand picked at the top). Tests: `tests/conceptAccessOneRule.test.ts`.
 - **Item groups under a category (owner, 2026-11-07: "In PO, make item categories like Sea food … Meat …"; answer:
   groups UNDER the existing category, the PO maker can add groups).** `IngredientGroup` (`ingredient_groups`, servd-wide
   like the master — no tenantId, deliberately; unique by normalised name; under ONE `INVENTORY_CATEGORIES` category;

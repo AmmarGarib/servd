@@ -7,17 +7,16 @@ import { requireAuth, ALL_STAFF, CASHIERS, MANAGERS } from '../auth/middleware.j
 import { requireManagerApproval } from '../pos/service.js'
 import { TICKET_CANCEL_APPROVERS } from '../../lib/roles.js'
 import { listOrders, getOrder, updateOrderStatus, updateItemStatus, cancelOrder, completionDoor, fireCourse, bumpPaidTillSale } from './service.js'
-import { assertConceptAccess, filterConceptIdsForStaff } from '../../lib/conceptAccess.js'
-import { conceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+import { assertConceptOwnedAsMember, conceptWhere, memberConceptWhere, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { audit } from '../../lib/audit.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { redactDeliveryOtp } from '../../lib/deliveryOtp.js'
 
 // Orders are brand-anchored (Order.conceptId) and a brand belongs to one
 // company, so "is this order mine?" is always answered through the concept.
-// `assertConceptAccess` is a per-user brand whitelist that NO-OPs for every
-// management role — it is not a company check. Every handler below scopes
-// the lookup itself, before touching a client-supplied id.
+// Every handler below scopes the lookup itself (lib/tenantScope.ts), before
+// touching a client-supplied id. Reads stay with member companies (no
+// head-office reach — `memberConceptWhere` / `assertConceptOwnedAsMember`).
 //
 // There is no POST /orders. Every channel creates orders through ingestOrder
 // (the till via /pos/orders, the storefront, group orders, WhatsApp); a staff
@@ -111,19 +110,11 @@ export async function orderRoutes(fastify: FastifyInstance) {
     // answered 500. Validate it here — one status or a comma list — and
     // answer 400 naming the allowed values.
     const statuses = parseStatusFilter(status)
-    // Company scope first: a client conceptId must be a brand the operator
-    // can see (404 otherwise — never confirm a foreign brand exists); absent
-    // → every brand in view (portfolio-aware).
-    const owned = await conceptWhere(req, conceptId, 'read')
-    const tenantConceptIds = typeof owned.conceptId === 'string' ? [owned.conceptId] : owned.conceptId.in
-    // Then the per-user brand whitelist (no-op for management roles).
-    const scopedConceptIds = await filterConceptIdsForStaff(
-      req.staffUser!,
-      conceptId ? [conceptId] : null,
-    )
-    const finalConceptIds = scopedConceptIds
-      ? scopedConceptIds.filter((id) => tenantConceptIds.includes(id))
-      : tenantConceptIds
+    // Company scope: a client conceptId must be a brand the operator can see
+    // in a member company (404 otherwise — never confirm a foreign brand
+    // exists); absent → every such brand in view (portfolio-aware).
+    const owned = await memberConceptWhere(req, conceptId)
+    const finalConceptIds = typeof owned.conceptId === 'string' ? [owned.conceptId] : owned.conceptId.in
     // Empty scope → empty page. listOrders also refuses to run unscoped, but
     // there's no reason to hit the DB for it.
     if (finalConceptIds.length === 0) return { data: [], cursor: null, hasMore: false }
@@ -145,7 +136,7 @@ export async function orderRoutes(fastify: FastifyInstance) {
       // Company-scoped at the lookup itself — a foreign id 404s without the
       // row ever being fetched.
       const order = await getOrder(req.params.id, await orderInCompany(req, 'read'))
-      await assertConceptAccess(req.staffUser!, order.conceptId)
+      await assertConceptOwnedAsMember(req, order.conceptId)
       return redactDeliveryOtp(order, req.staffUser!.role)
     },
   )
@@ -159,8 +150,8 @@ export async function orderRoutes(fastify: FastifyInstance) {
       const { conceptId } = req.query
       // Company scope through the brand: a client conceptId must be ours
       // (404 otherwise); absent → every brand in view.
-      const brand = await conceptWhere(req, conceptId, 'read')
-      if (conceptId) await assertConceptAccess(req.staffUser!, conceptId)
+      // (Members only when a brand is named — as before; absent keeps the view.)
+      const brand = conceptId ? await memberConceptWhere(req, conceptId) : await conceptWhere(req, undefined, 'read')
 
       const orders = await prisma.order.findMany({
         where: {
@@ -201,16 +192,13 @@ export async function orderRoutes(fastify: FastifyInstance) {
     '/:id/curbside/running-out',
     { preHandler: requireAuth(...ALL_STAFF) },
     async (req) => {
-      // Lookup is scoped by company — assertConceptAccess alone bypasses the
-      // concept ACL for management-tier roles, which would otherwise let a
-      // manager in company A mutate orders in company B.
+      // Lookup is scoped by company (write mode: every member company).
       const order = await prisma.order.findFirst({
         where: { id: req.params.id, ...(await orderInCompany(req, 'write')) },
         select: { id: true, conceptId: true, curbsideVehicle: true },
       })
       if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
       if (!order.curbsideVehicle) throw new AppError('NOT_CURBSIDE', 'Order is not a curbside order', 422)
-      await assertConceptAccess(req.staffUser!, order.conceptId)
 
       return prisma.order.update({
         where: { id: order.id },
@@ -232,7 +220,6 @@ export async function orderRoutes(fastify: FastifyInstance) {
         select: { id: true, conceptId: true, status: true, source: true, fulfilmentType: true, rawPayload: true },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-      await assertConceptAccess(req.staffUser!, order.conceptId)
       // A till sale paid before the kitchen finished is already 'completed'
       // (decision 8) and sits on expo by its lines (UI-05). Its status can't
       // go back to 'ready': the kitchen's progress is its items — bump them
@@ -298,7 +285,6 @@ export async function orderRoutes(fastify: FastifyInstance) {
         select: { id: true, conceptId: true, concept: { select: { tenantId: true } } },
       })
       if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
-      await assertConceptAccess(req.staffUser!, order.conceptId)
       const { approverId, viaPin } = await requireManagerApproval({
         actorId: req.staffUser!.id,
         actorRole: req.staffUser!.role,
@@ -332,7 +318,6 @@ export async function orderRoutes(fastify: FastifyInstance) {
         select: { id: true, conceptId: true },
       })
       if (!order) throw new AppError('NOT_FOUND', 'Order not found in your active company', 404)
-      await assertConceptAccess(req.staffUser!, order.conceptId)
       return prisma.order.update({ where: { id: req.params.id }, data: { deliveryNotes: notes }, select: { id: true, deliveryNotes: true } })
     },
   )
@@ -372,7 +357,6 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
         select: { order: { select: { conceptId: true } } },
       })
       if (!item) throw new NotFoundError('OrderItem', req.params.id)
-      await assertConceptAccess(req.staffUser!, item.order.conceptId)
       return updateItemStatus(req.params.id, status, req.staffUser?.id)
     },
   )
@@ -390,7 +374,6 @@ export async function orderItemRoutes(fastify: FastifyInstance) {
         select: { order: { select: { conceptId: true } } },
       })
       if (!item) throw new NotFoundError('OrderItem', req.params.id)
-      await assertConceptAccess(req.staffUser!, item.order.conceptId)
       await prisma.orderItem.update({
         where: { id: req.params.id },
         data: { bumpPhotoUrl: url },
@@ -435,7 +418,6 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
         select: { id: true, conceptId: true, concept: { select: { tenantId: true } } },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-      await assertConceptAccess(req.staffUser!, order.conceptId)
       if (fireAll && !FIRE_ALL_ROLES.includes(req.staffUser!.role)) {
         throw new AppError('FIRE_ALL_NOT_ALLOWED', 'Only a manager or the expediter can fire paced dishes early.', 403)
       }
@@ -484,7 +466,7 @@ export async function orderCourseRoutes(fastify: FastifyInstance) {
         select: { id: true, conceptId: true },
       })
       if (!order) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Order not found in your active company' } })
-      await assertConceptAccess(req.staffUser!, order.conceptId)
+      await assertConceptOwnedAsMember(req, order.conceptId)
       const items = await prisma.orderItem.findMany({
         where: { orderId: req.params.id },
         // scheduledFireAt: a PACED line's fire time, so the Courses page still

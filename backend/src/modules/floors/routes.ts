@@ -11,17 +11,16 @@
 // ownership is resolved through the brand: floor → concept → tenant. Every
 // handler that takes an id from the client goes through `scopeTenantWhere`
 // (reads are view-aware, edits span every company the operator belongs to,
-// creates bind to the active company only). `assertConceptAccess` is the
-// per-user brand whitelist and is a no-op for managers — it is NOT a company
-// check, which is why each handler carries both.
+// creates bind to the active company only). The reads that take a brand use
+// `assertConceptOwnedAsMember` (read mode, member companies only — a company
+// reached through a head office never sees the floor plan; see tenantScope).
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, MANAGERS, ALL_STAFF } from '../auth/middleware.js'
-import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { assertConceptOwned, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
+import { assertConceptOwned, assertConceptOwnedAsMember, scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 
@@ -65,8 +64,7 @@ const bulkLayoutSchema = z.object({
 
 /**
  * Resolve a floor the operator may act on in `mode`, or 404. Ownership is
- * through the brand (floor.concept.tenantId); the per-user brand whitelist
- * is checked afterwards so a foreign id never confirms the floor exists.
+ * through the brand (floor.concept.tenantId).
  */
 async function findOwnedFloor(req: FastifyRequest, id: string, mode: ScopeMode) {
   const floor = await prisma.floor.findFirst({
@@ -77,7 +75,6 @@ async function findOwnedFloor(req: FastifyRequest, id: string, mode: ScopeMode) 
     },
   })
   if (!floor) throw new NotFoundError('Floor', id)
-  await assertConceptAccess(req.staffUser!, floor.conceptId)
   return floor
 }
 
@@ -89,10 +86,8 @@ export async function floorRoutes(fastify: FastifyInstance) {
     async (req) => {
       const { conceptId } = req.query
       if (conceptId) {
-        // Company check first (404 for a foreign brand), then the per-user
-        // brand whitelist (403).
-        await assertConceptOwned(req, conceptId, 'read')
-        await assertConceptAccess(req.staffUser!, conceptId)
+        // 404 for a brand outside the view or outside the member companies.
+        await assertConceptOwnedAsMember(req, conceptId)
       }
       return prisma.floor.findMany({
         where: {
@@ -120,7 +115,6 @@ export async function floorRoutes(fastify: FastifyInstance) {
     // 'create' mode: the active company only — never let a new floor land
     // under a brand of another company the operator happens to belong to.
     await assertConceptOwned(req, body.conceptId, 'create')
-    await assertConceptAccess(req.staffUser!, body.conceptId)
     const floor = await prisma.floor.create({ data: body })
     return reply.status(201).send(floor)
   })
@@ -171,7 +165,6 @@ export async function floorRoutes(fastify: FastifyInstance) {
         },
       })
       if (!existing) throw new NotFoundError('Table', req.params.id)
-      await assertConceptAccess(req.staffUser!, existing.conceptId)
       // A table may only sit on a floor of its own brand — otherwise a
       // guessed floorId would drop it onto another company's floor plan.
       if (body.floorId) {
@@ -289,8 +282,7 @@ export async function floorRoutes(fastify: FastifyInstance) {
   // brand 404s.
   fastify.get('/board', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const q = z.object({ conceptId: z.string().uuid(), floorId: z.string().uuid().optional() }).parse(req.query ?? {})
-    await assertConceptOwned(req, q.conceptId, 'read')
-    await assertConceptAccess(req.staffUser!, q.conceptId)
+    await assertConceptOwnedAsMember(req, q.conceptId)
     const [floors, tables] = await Promise.all([
       prisma.floor.findMany({
         where: { conceptId: q.conceptId, deletedAt: null, isActive: true },
@@ -360,10 +352,8 @@ export async function floorRoutes(fastify: FastifyInstance) {
         conceptId: z.string().min(1),
         floorId:   z.string().optional(),
       }).parse(req.query)
-      // Company check first (404 for a foreign brand — assertConceptAccess is
-      // a no-op for managers and never was a company check).
-      await assertConceptOwned(req, conceptId, 'read')
-      await assertConceptAccess(req.staffUser!, conceptId)
+      // Company check first (404 for a foreign brand).
+      await assertConceptOwnedAsMember(req, conceptId)
 
       const tables = await prisma.table.findMany({
         where: {

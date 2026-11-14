@@ -10,7 +10,6 @@ import { prisma } from '../../lib/prisma.js'
 import { requireAuth, CASHIERS } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertConceptOwned, assertShiftOf, scopeTenantWhere, shiftWhere } from '../../lib/tenantScope.js'
-import { assertConceptAccess } from '../../lib/conceptAccess.js'
 import { audit } from '../../lib/audit.js'
 import { isLoyaltyPaused } from '../../lib/loyaltyPause.js'
 import { assertDrawerOperator, lockOrderTx, getZReport } from './service.js'
@@ -25,7 +24,6 @@ const conceptQuery = z.object({ conceptId: z.string().uuid() })
 /** The brand of a till lookup → its company (404 for a brand outside the caller's companies). */
 async function brandCompany(req: FastifyRequest, conceptId: string): Promise<string> {
   const c = await assertConceptOwned(req, conceptId, 'write')
-  await assertConceptAccess(req.staffUser!, conceptId)
   if (!c.tenantId) throw new AppError('NO_COMPANY', 'This brand is not bound to a company', 422)
   return c.tenantId
 }

@@ -202,6 +202,58 @@ export async function conceptWhere(
   return { conceptId: { in: await conceptIdsInScope(req, mode) } }
 }
 
+// ─── Members-only reads (no head-office reach) ───────────────────────────────
+//
+// The till, floor plan, order and reservation READS never admitted a company
+// reached only through a head office: they used to run a second check
+// (lib/conceptAccess.ts, folded in here and removed 2026-11-14) that wanted
+// the brand's company among the caller's MEMBER companies. These two keep
+// exactly that: read mode first (view-aware, foreign → 404), then — for
+// everyone but the CEO, who owns the portfolio and kept every brand in view —
+// only brands of a member company. An empty scope denies. Writes on those
+// screens need nothing extra: 'write' / 'create' never include reach.
+
+/** Member companies to narrow a read to; null = no narrowing (the CEO). */
+function memberNarrowing(req: FastifyRequest): string[] | null {
+  const su = req.staffUser
+  if (!su) return []
+  if (su.role === 'admin') return null
+  return su.memberTenantIds ?? []
+}
+
+/** `assertConceptOwned(req, id, 'read')`, then members only (see above). 404 otherwise. */
+export async function assertConceptOwnedAsMember(
+  req: FastifyRequest,
+  conceptId: string,
+): Promise<{ id: string; tenantId: string | null }> {
+  const concept = await assertConceptOwned(req, conceptId, 'read')
+  const members = memberNarrowing(req)
+  if (members && !(concept.tenantId && members.includes(concept.tenantId))) {
+    throw new NotFoundError('Concept', conceptId)
+  }
+  return concept
+}
+
+/** `conceptWhere(req, conceptId, 'read')`, narrowed to member companies (see above). */
+export async function memberConceptWhere(
+  req: FastifyRequest,
+  conceptId: string | undefined | null,
+): Promise<{ conceptId: string } | { conceptId: { in: string[] } }> {
+  if (conceptId) {
+    await assertConceptOwnedAsMember(req, conceptId)
+    return { conceptId }
+  }
+  const ids = await conceptIdsInScope(req, 'read')
+  const members = memberNarrowing(req)
+  if (!members) return { conceptId: { in: ids } }
+  if (ids.length === 0 || members.length === 0) return { conceptId: { in: [] } }
+  const rows = await prisma.concept.findMany({
+    where: { id: { in: ids }, tenantId: { in: members } },
+    select: { id: true },
+  })
+  return { conceptId: { in: rows.map((r) => r.id) } }
+}
+
 // ─── Shifts (drawers) ────────────────────────────────────────────────────────
 //
 // Which company a shift belongs to is answered ONE way, here. Shift.tenantId
