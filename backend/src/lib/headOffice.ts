@@ -76,17 +76,6 @@ export async function liveLink(hoId: string, companyId: string, db: Db = service
   })
 }
 
-/** Ids of the live head offices that serve a company through a live link. */
-export async function liveHeadOfficesOf(companyId: string, db: Db = serviceClient): Promise<string[]> {
-  if (!companyId) return []
-  const links = await db.headOfficeLink.findMany({
-    where: liveLinkWhere({ companyTenantId: companyId }),
-    select: { tenantId: true },
-    orderBy: { tenantId: 'asc' },
-  })
-  return [...new Set(links.map((l) => l.tenantId))]
-}
-
 /** True when the tenant is a head office (whatever its active state). */
 export async function isHeadOfficeTenant(id: string | null | undefined, db: Db = serviceClient): Promise<boolean> {
   if (!id) return false

@@ -120,15 +120,6 @@ export async function cashVarianceLimitCents(tenantId: string | null): Promise<n
   return cfg?.cashVarianceLimitCents ?? DEFAULT_CASH_VARIANCE_LIMIT_CENTS
 }
 
-/** The tolerance for a shift's own company (Shift.tenantId, then the legacy fallbacks). */
-export async function shiftVarianceLimitCents(shiftId: string): Promise<number> {
-  const shift = await prisma.shift.findUnique({
-    where: { id: shiftId },
-    select: { tenantId: true, locationId: true, ...SHIFT_COMPANY_INCLUDE },
-  })
-  return cashVarianceLimitCents(shift ? shiftTenantId(shift) : null)
-}
-
 /** Counted − expected, or null while the drawer has not been counted. */
 export function drawerVariance(countedCents: number | null, expected: DrawerExpectation): number | null {
   return countedCents === null ? null : countedCents - expected.expectedCents

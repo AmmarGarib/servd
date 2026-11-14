@@ -45,6 +45,7 @@ import { ensureFifoReady } from '../../lib/stockLedger.js'
 import { assertPayableBill, billDueCents, creditNoteAvailableCents, lockBills, settledStatus } from './service.js'
 import { moveToTrash } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
+import { fmtPkrCents } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient
 type Db = Tx | typeof prisma
@@ -65,7 +66,6 @@ const QUANTITY_REASONS = new Set<CreditNoteReason>(['return', 'short', 'damaged'
 const STOCK_BACK_REASONS = new Set<CreditNoteReason>(['return', 'damaged'])
 
 const EPS = 1e-9
-const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 
 function lineKey(stockItemId: string | null, description: string): string {
   return `${stockItemId ?? ''}|${description}`
@@ -265,7 +265,7 @@ export async function createCreditNote(input: CreateCreditNoteInput) {
         }
         if (!Number.isInteger(unit) || unit <= 0) throw new AppError('INVALID_AMOUNT', `${orig.description}: the credit per unit must be more than zero`, 400)
         if (unit > orig.unitCostCents) {
-          throw new AppError('OVER_CREDIT', `${orig.description}: the credit per unit is more than the bill charged (${pkr(orig.unitCostCents)})`, 422)
+          throw new AppError('OVER_CREDIT', `${orig.description}: the credit per unit is more than the bill charged (${fmtPkrCents(orig.unitCostCents)})`, 422)
         }
         const total = Math.round(qty * unit)
         if (total <= 0) throw new AppError('INVALID_AMOUNT', `${orig.description}: the credit comes to nothing`, 400)
@@ -301,15 +301,15 @@ export async function createCreditNote(input: CreateCreditNoteInput) {
           throw new AppError('OVER_RETURN', `${g.description}: only ${Math.max(0, g.returnable)} is left to send back`, 422)
         }
         if (g.cents > g.left) {
-          throw new AppError('OVER_CREDIT', `${g.description}: only ${pkr(Math.max(0, g.left))} of it is left to credit`, 422)
+          throw new AppError('OVER_CREDIT', `${g.description}: only ${fmtPkrCents(Math.max(0, g.left))} of it is left to credit`, 422)
         }
       }
       const subtotalCents = built.reduce((s, b) => s + b.total, 0)
       if (subtotalCents > view.subtotalLeftCents) {
-        throw new AppError('CREDIT_EXCEEDS_BILL', `Only ${pkr(view.subtotalLeftCents)} of bill ${bill.billNumber} is left to credit`, 422)
+        throw new AppError('CREDIT_EXCEEDS_BILL', `Only ${fmtPkrCents(view.subtotalLeftCents)} of bill ${bill.billNumber} is left to credit`, 422)
       }
       if (taxCents > view.taxLeftCents) {
-        throw new AppError('CREDIT_TAX_EXCEEDS_BILL', `Only ${pkr(view.taxLeftCents)} of the bill's tax is left to credit`, 422)
+        throw new AppError('CREDIT_TAX_EXCEEDS_BILL', `Only ${fmtPkrCents(view.taxLeftCents)} of the bill's tax is left to credit`, 422)
       }
       const totalCents = subtotalCents + taxCents
       assertMoneyFits(totalCents, 'This credit note\'s total')
@@ -400,7 +400,7 @@ async function applyCreditTx(
   const adding = applications.reduce((s, a) => s + a.amountCents, 0)
   const available = creditNoteAvailableCents(cn)
   if (adding > available) {
-    throw new AppError('OVER_ALLOCATED', `Only ${pkr(available)} of credit note ${cn.billNumber} is left to apply`, 422)
+    throw new AppError('OVER_ALLOCATED', `Only ${fmtPkrCents(available)} of credit note ${cn.billNumber} is left to apply`, 422)
   }
 
   const bills = await lockBills(tx, applications.map((a) => a.billId))
@@ -410,7 +410,7 @@ async function applyCreditTx(
     assertPayableBill(bill, cn.supplierId)
     const owed = billDueCents(bill)
     if (a.amountCents > owed) {
-      throw new AppError('OVER_APPLIED', `Bill ${bill.billNumber} only has ${pkr(Math.max(0, owed))} due`, 422)
+      throw new AppError('OVER_APPLIED', `Bill ${bill.billNumber} only has ${fmtPkrCents(Math.max(0, owed))} due`, 422)
     }
     const prior = cn.creditsGiven.find((x) => x.billId === a.billId)
     if (prior) {
@@ -461,7 +461,7 @@ export async function unapplyCreditNote(creditNoteId: string, billId: string, ac
     await moveToTrash(tx, actor, {
       type: 'payment_application', entityId: application.id, tenantId: application.tenantId,
       title: `Credit note ${appCn.billNumber ?? creditNoteId.slice(-8).toUpperCase()} taken off bill ${appBill.billNumber ?? billId.slice(-8).toUpperCase()}`,
-      subtitle: `${appCn.supplier.name} · PKR ${(amount / 100).toLocaleString('en-PK')}`,
+      subtitle: `${appCn.supplier.name} · ${fmtPkrCents(amount)}`,
       reason: actor.reason ?? null,
       meta: { kind: 'credit_note', creditNoteId, billId },
       snapshot: takeSnapshot('SupplierCreditApplication', appRow),

@@ -32,7 +32,7 @@ import { postedOpeningBalances } from './openingBalance.js'
 import { assertItemsOfCompany } from './scope.js'
 import { CASH_PURCHASE_SUPPLIER_KIND, ensureCashPurchaseSupplier } from './receiving.js'
 import type { Prisma } from '@prisma/client'
-import { type DbMoney, assertInt4Fits, assertMoneyFits, toCents } from '../../lib/money.js'
+import { type DbMoney, assertInt4Fits, assertMoneyFits, toCents, fmtPkrCents } from '../../lib/money.js'
 import { assertBrandOfCompany, ensureFifoReady } from '../../lib/stockLedger.js'
 import { flagException } from '../../lib/exceptions.js'
 import { audit } from '../../lib/audit.js'
@@ -1377,7 +1377,7 @@ export async function unapplyPayment(paymentId: string, billId: string, actor: {
     await moveToTrash(tx, actor, {
       type: 'payment_application', entityId: application.id, tenantId: appPayment.supplier.tenantId,
       title: `Payment taken off bill ${appBill.billNumber ?? billId.slice(-8).toUpperCase()}`,
-      subtitle: `${appPayment.supplier.name} · PKR ${(amount / 100).toLocaleString('en-PK')}`,
+      subtitle: `${appPayment.supplier.name} · ${fmtPkrCents(amount)}`,
       reason: actor.reason ?? null,
       meta: { kind: 'supplier_payment', paymentId, billId },
       snapshot: takeSnapshot('SupplierPaymentApplication', appRow),

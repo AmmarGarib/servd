@@ -14,6 +14,7 @@ import { todayPktIso } from '../../../lib/money'
 import { Select } from '@/components/ui/Select'
 import { usePermissions } from '../../../hooks/useCan'
 import { GuestListExport } from '../../../components/crm/GuestListExport'
+import { ExportMenu } from '../../../components/ui/ExportMenu'
 
 // The public link people are sent to. Production storefront on purpose: this
 // is what gets shared, so a dev STOREFRONT_URL (localhost) must never leak in.
@@ -263,7 +264,6 @@ function SignupsTable({ sources }: { sources: string[] }) {
   const [to, setTo] = useState('')
   const [page, setPage] = useState(1)
   const [exportError, setExportError] = useState<string | null>(null)
-  const [exporting, setExporting] = useState(false)
   const { data: me } = usePermissions()
   const isCeo = me?.role === 'admin'
 
@@ -287,18 +287,6 @@ function SignupsTable({ sources }: { sources: string[] }) {
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1
   const resetPage = <T,>(fn: (v: T) => void) => (v: T) => { fn(v); setPage(1) }
 
-  const exportCsv = async () => {
-    setExportError(null); setExporting(true)
-    try {
-      const qs = filterQs.toString()
-      await api.download(`/waitlist/signups.csv${qs ? `?${qs}` : ''}`, `waitlist-${todayPktIso()}.csv`)
-    } catch (e) {
-      setExportError((e as Error).message)
-    } finally {
-      setExporting(false)
-    }
-  }
-
   return (
     <div className="s-card overflow-hidden">
       <div className="p-4 flex items-end gap-3 flex-wrap border-b border-s-border">
@@ -319,9 +307,8 @@ function SignupsTable({ sources }: { sources: string[] }) {
         </label>
         {/* Phones and emails: the CEO downloads at once, anyone else asks the CEO (owner, 2026-10-27). */}
         {isCeo ? (
-          <button type="button" onClick={() => void exportCsv()} disabled={exporting} className="s-btn-secondary">
-            {exporting ? 'Exporting…' : 'Export CSV'}
-          </button>
+          <ExportMenu path={`/waitlist/signups.csv${filterQs.toString() ? `?${filterQs.toString()}` : ''}`}
+            filename={`waitlist-${todayPktIso()}`} className="s-btn-secondary" onError={setExportError} />
         ) : (
           <GuestListExport kind="waitlist" ceoExport={null}
             filters={Object.fromEntries([...filterQs.entries()])} />

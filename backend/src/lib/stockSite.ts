@@ -109,12 +109,6 @@ export async function stockHomeOf(db: Db, tenantId: string): Promise<string | nu
   return stored?.value ?? picked
 }
 
-/** 422 LOCATION_NOT_IN_COMPANY unless `locationId` is a location of `tenantId` (a deleted one counts — its lots are history). */
-export async function assertSiteOfCompany(db: Db, tenantId: string, locationId: string): Promise<void> {
-  const ok = await db.location.findFirst({ where: { id: locationId, tenantId }, select: { id: true } })
-  if (!ok) throw new AppError('LOCATION_NOT_IN_COMPANY', 'That location does not belong to this item\'s company — stock never moves across companies', 422)
-}
-
 /** The site that cooks an order (see the header). Null only when the company has no location. */
 export async function stockSiteOf(db: Db, a: { orderLocationId: string | null | undefined; conceptId: string | null | undefined; tenantId: string }): Promise<string | null> {
   if (a.orderLocationId) {

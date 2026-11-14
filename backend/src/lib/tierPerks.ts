@@ -92,12 +92,3 @@ export async function getCustomerPerks(customerId: string | null, tenantId?: str
   return getTierPerks(tier, tenantId)
 }
 
-// True if this customer's tier AT `tenantId` qualifies them for free delivery
-// on an order of `subtotalCents`. Used by the order checkout flow to set
-// deliveryFee=0.
-export async function qualifiesForFreeDelivery(customerId: string | null, tenantId: string | null, subtotalCents: number): Promise<boolean> {
-  const perks = await getCustomerPerks(customerId, tenantId)
-  if (perks.alwaysFreeDelivery) return true
-  if (perks.freeDeliveryAboveCents != null && subtotalCents >= perks.freeDeliveryAboveCents) return true
-  return false
-}

@@ -19,6 +19,7 @@ import { buildFoodCostEmail } from '../modules/reports/foodCost.js'
 import { getMenuEngineering } from '../modules/reports/menu-engineering.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
 import { SCHEDULED_REPORT_MODULES, mayScheduleReport } from '../lib/moduleAccess.js'
+import { fmtPkrCents } from '../lib/money.js'
 
 type ReportType = 'sales_daily' | 'shift_summary' | 'low_stock' | 'food_cost' | 'ap_aging' | 'menu_engineering'
 
@@ -320,7 +321,7 @@ export async function buildApAgingReport(tenantId: string): Promise<{ subject: s
     `<tr><td>${name}</td><td>${fmt(r.current)}</td><td>${fmt(r['1_30'])}</td><td>${fmt(r['31_60'])}</td><td>${fmt(r['61_90'])}</td><td>${fmt(r['90_plus'])}</td><td>${fmt(-r.creditsCents)}</td><td><strong>${fmt(r.total) || 'PKR 0'}</strong></td><td>${fmt(r.openingCents)}</td></tr>`
 
   return {
-    subject: `[servd] AP aging — ${aging.total.bills} open bill(s), PKR ${(aging.total.total / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })} owed`,
+    subject: `[servd] AP aging — ${aging.total.bills} open bill(s), ${fmtPkrCents(aging.total.total)} owed`,
     html: `
       <h2>AP aging</h2>
       <p>Days past due date. Amounts are net of withholding tax, as in the ledger (AP 2010).</p>

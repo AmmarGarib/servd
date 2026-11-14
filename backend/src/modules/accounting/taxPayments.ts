@@ -65,7 +65,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { moneyCodesOfCompany } from '../../lib/moneyAccounts.js'
 import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
-import { assertMoneyFits, sumCents, toCents } from '../../lib/money.js'
+import { assertMoneyFits, sumCents, toCents, fmtPkrCents } from '../../lib/money.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay, pktToday } from './dates.js'
 import { AUTHORITIES, isAuthorityKey, outputTaxCodeFor, type AuthorityKey } from './taxAuthorities.js'
@@ -640,7 +640,7 @@ export async function voidTaxPayment(input: { scope: Prisma.SalesTaxPaymentWhere
     await moveToTrash(tx, { userId: input.userId }, {
       type: 'sales_tax_payment', entityId: row.id, tenantId: row.tenantId,
       title: `${authority} sales tax payment — ${fmtPktDate(row.periodFrom).slice(0, 7)}`,
-      subtitle: `PKR ${(toCents(row.paidCents) / 100).toLocaleString('en-PK')}${row.cprNumber ? ` · CPR ${row.cprNumber}` : ''}`,
+      subtitle: `${fmtPkrCents(toCents(row.paidCents))}${row.cprNumber ? ` · CPR ${row.cprNumber}` : ''}`,
       reason: input.reason,
       meta: { linked: row.linked, journalEntryId: row.journalEntryId },
       snapshot: takeSnapshot('SalesTaxPayment', row),

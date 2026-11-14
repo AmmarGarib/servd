@@ -27,7 +27,7 @@ import { audit } from '../../lib/audit.js'
 import { moveToTrash } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
 import { ACCOUNTING_AUDIT_ROLES } from '../../lib/moduleAccess.js'
-import { toCents, zMoneyCents } from '../../lib/money.js'
+import { toCents, zMoneyCents, fmtPkrCents } from '../../lib/money.js'
 import {
   MANUAL_PREFIX, MANUAL_REVERSAL_PREFIX, journalEntrySchema, reverseSchema,
   assertBalanced, postManualJournal, reverseManualJournal, amendManualJournal, textEditManualJournal, textEditSchema, textOnlyMapping, amountsUnchanged, assertNoControlledLines, MANUAL_JOURNAL_POSTERS, splitDescription, manualVoucherKindOf,
@@ -1361,7 +1361,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
           const r = blocks[0]!
           throw new AppError(
             'RAAST_UNMATCHED',
-            `${r.count} Raast payment(s), PKR ${((r.cents ?? 0) / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}, up to ${fmtPktDate(newLock)} are not matched to a bank statement yet. Match them on Finance → Reconciliation → Raast (or mark them not received), or close anyway.`,
+            `${r.count} Raast payment(s), ${fmtPkrCents(r.cents ?? 0)}, up to ${fmtPktDate(newLock)} are not matched to a bank statement yet. Match them on Finance → Reconciliation → Raast (or mark them not received), or close anyway.`,
             409,
             { count: r.count, cents: r.cents ?? 0, problems: list.problems },
           )

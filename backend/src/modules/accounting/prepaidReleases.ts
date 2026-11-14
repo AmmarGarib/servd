@@ -33,7 +33,7 @@
 import type { Prisma } from '@prisma/client'
 import { serviceClient } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
-import { toCents } from '../../lib/money.js'
+import { toCents, fmtPkrCents } from '../../lib/money.js'
 import { ACCT, flagPostingFailed, lateDatingFor, withLateNote } from './journal.js'
 import { syncSourcePosting, liveRevision } from './sourcePosting.js'
 import { expenseCodeForCategoryName } from './expenseCategories.js'
@@ -305,7 +305,7 @@ export const prepaidCloseChecks: CloseCheck[] = [
         key: 'prepaid_release',
         severity: 'block',
         title: 'Prepaid rent not released',
-        detail: `${rows.length} prepayment${rows.length === 1 ? '' : 's'} still hold${rows.length === 1 ? 's' : ''} PKR ${(cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })} `
+        detail: `${rows.length} prepayment${rows.length === 1 ? '' : 's'} still hold${rows.length === 1 ? 's' : ''} ${fmtPkrCents(cents)} `
           + `for months up to ${through} (${months.join(', ')}). Release them so each month carries its own rent.`,
         count: rows.length,
         cents,

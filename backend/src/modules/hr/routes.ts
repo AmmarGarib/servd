@@ -3537,24 +3537,21 @@ export async function hrRoutes(fastify: FastifyInstance) {
   const sendReport = async (req: FastifyRequest, reply: FastifyReply, key: string, q: ReportQuery, as: 'csv' | 'xlsx' | 'pdf' = 'csv') => {
     const t = await buildReport(key, readTenants(req), activeTenant(req), q)
     const name = `hr-${key.replace(/_/g, '-')}${t.month ? `-${t.month}` : ''}`
-    // PDF through lib/reportExport.ts; the .xlsx stays laid out as Danish's workbook.
-    if (as === 'pdf') {
-      const kindType: Record<string, ReportColumnType> = { money: 'pkr', number: 'number', text: 'text', date: 'text', percent: 'text' }
-      const m = fromMatrix(t.header, t.rows, t.kinds.map((k) => kindType[k] ?? 'text'))
-      const last = m.rows[m.rows.length - 1]
-      return sendReportFor(req, reply, 'pdf', name, {
-        title: t.title, ...(t.month ? { period: t.month } : {}), ...m,
-        isTotal: (r) => Boolean(t.totalsRow && r === last), ...(t.note ? { notes: [t.note] } : {}),
-      })
-    }
+    // CSV and PDF through the standard exporter (lib/reportExport.ts; CSV byte-identical to what this route
+    // always wrote); the .xlsx stays laid out as Danish's workbook (owner, 2026-10-15).
     if (as === 'xlsx') {
       return reply.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         .header('Content-Disposition', `attachment; filename="${name}.xlsx"`)
         .send(reportXlsx(t))
     }
-    return reply.header('Content-Type', 'text/csv; charset=utf-8')
-      .header('Content-Disposition', `attachment; filename="${name}.csv"`)
-      .send(csv([t.header, ...t.rows]))
+    const kindType: Record<string, ReportColumnType> = { money: 'pkr', number: 'number', text: 'text', date: 'text', percent: 'text' }
+    const m = fromMatrix(t.header, t.rows, t.kinds.map((k) => kindType[k] ?? 'text'))
+    const last = m.rows[m.rows.length - 1]
+    return sendReportFor(req, reply, as, name, {
+      title: t.title, ...(t.month ? { period: t.month } : {}), ...m,
+      isTotal: (r) => Boolean(t.totalsRow && r === last), ...(t.note ? { notes: [t.note] } : {}),
+      ...(as === 'csv' ? { csv: csv([t.header, ...t.rows]) } : {}),
+    })
   }
   fastify.get('/reports/employees.csv', { preHandler: requireAuth(...HR_ADMIN) }, async (req, reply) =>
     sendReport(req, reply, 'employee_master', {}, exportFormatOf((req.query as { format?: string } | undefined)?.format, 'csv')!))

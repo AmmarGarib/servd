@@ -330,12 +330,6 @@ export function explodeForPrepBatch(graph: RecipeGraph, recipeId: string, batche
   return out
 }
 
-/** Add `b` into `a` (per-item quantities). */
-export function mergeQuantities(a: Map<string, number>, b: Map<string, number>): Map<string, number> {
-  for (const [k, v] of b) a.set(k, (a.get(k) ?? 0) + v)
-  return a
-}
-
 // ─── Costing: what a recipe costs ────────────────────────────────────────────
 
 export interface RecipeLineCost {

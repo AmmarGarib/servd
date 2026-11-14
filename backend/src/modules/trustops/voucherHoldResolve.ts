@@ -47,6 +47,7 @@ import { ACCT } from '../accounting/journal.js'
 import { MANUAL_PREFIX, MANUAL_REVERSAL_PREFIX } from '../accounting/manualJournal.js'
 import { fmtPktDate } from '../accounting/dates.js'
 import { liveHoldOf, resolveUnconvertedFlags } from './voucherHoldConversion.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 type Db = Prisma.TransactionClient | typeof prisma
 
@@ -54,7 +55,6 @@ const PKT_OFFSET_MS = 5 * 3600_000
 const DAY_MS = 86_400_000
 /** The start (UTC instant) of the Karachi day `d` falls in. */
 const pktDayStart = (d: Date) => new Date(Math.floor((d.getTime() + PKT_OFFSET_MS) / DAY_MS) * DAY_MS - PKT_OFFSET_MS)
-const pkr = (c: number) => `PKR ${(c / 100).toFixed(2)}`
 
 const VOUCHER_SELECT = {
   id: true, tenantId: true, number: true, status: true, expenseOnVerify: true, bookedAtPay: true, postedAt: true,

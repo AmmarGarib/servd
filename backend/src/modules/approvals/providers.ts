@@ -33,13 +33,10 @@ import { internEnrollments, internPayrollFinanceReviews, internPayrollRuns } fro
 import { reservationOverbooks } from '../reservations/overbookProvider.js'
 import { marketingTasks } from '../marketingBoard/approvalProvider.js'
 import { karachiDay } from '../../connectors/util.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-export function pkr(cents: number | null | undefined): string {
-  const n = Math.round((cents ?? 0) / 100)
-  return `PKR ${n.toLocaleString('en-PK')}`
-}
 const iso = (d: unknown): string | null => {
   if (!d) return null
   const t = new Date(d as string)

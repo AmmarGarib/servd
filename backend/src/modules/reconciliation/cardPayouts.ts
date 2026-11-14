@@ -50,7 +50,7 @@ import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { prisma as defaultPrisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { assertMoneyFits, toCents } from '../../lib/money.js'
+import { assertMoneyFits, toCents, fmtPkrCents } from '../../lib/money.js'
 import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { flagException } from '../../lib/exceptions.js'
 import { invalidateSetupCache, getOperationsConfig } from '../../lib/setup-config.js'
@@ -785,7 +785,7 @@ export async function undoCardSettlement(input: { settlementId: string; tenantId
     await moveToTrash(tx, { userId: input.actorId }, {
       type: 'card_settlement', entityId: st.id, tenantId: st.tenantId,
       title: `Card payout ${st.dayFrom === st.dayTo ? st.dayFrom : `${st.dayFrom} – ${st.dayTo}`}`,
-      subtitle: `Net PKR ${(toCents(st.netCents) / 100).toLocaleString('en-PK')} · ${st.unit}`,
+      subtitle: `Net ${fmtPkrCents(toCents(st.netCents))} · ${st.unit}`,
       reason: input.reason,
       meta: { statementLineId: st.statementLineId, reversalEntryId, status: st.status },
       snapshot: takeSnapshot('CardSettlement', settlement, { CardSettlementDay: days }),
@@ -887,7 +887,7 @@ const cardUnsettledCheck: CloseCheck = {
       key: 'card_unsettled',
       severity: 'block',
       title: 'Card sales with no bank payout',
-      detail: `${r.count} day${r.count === 1 ? '' : 's'} of card sales (PKR ${(r.cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}, ${rangeOf(first, last)}) `
+      detail: `${r.count} day${r.count === 1 ? '' : 's'} of card sales (${fmtPkrCents(r.cents)}, ${rangeOf(first, last)}) `
         + 'still sit in 1030 with no Keenu payout matched. Import the payout bank\'s statement and confirm the payouts on Reconciliation → Card payouts.',
       count: r.count,
       cents: r.cents,

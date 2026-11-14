@@ -7,7 +7,6 @@ Source files for `frontend/admin/src/components/ui`.
 - `ActivityFeed.tsx` — React component
 - `AppShell.tsx` — React component
 - `AuthGuard.tsx` — React component
-- `EmptyStateGuide.tsx` — React component
 - `Providers.tsx` — React component
 
 ## Shared primitives (UX audit, 2026-10-15)

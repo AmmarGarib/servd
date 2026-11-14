@@ -60,6 +60,7 @@ import {
   bookRemakeWaste, ensureOrderDepleted, flagOrderStockFailure, orderCogsFixDoc, restoreInventoryForOrder,
   type OrderCogsFixSource,
 } from '../orders/stock.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 /** Step 4's kinds: the flag's metadata.sourceType, which is also the entry's key prefix. */
 export type RefusedPostingKind = 'deposit.drop' | 'inventory.waste' | 'inventory.count' | 'pos.void_waste' | 'order.cancel_unwind' | 'pos.card_failed' | 'reservation.deposit_capture'
@@ -427,7 +428,6 @@ export interface Reposter {
 const acceptsEntity = (r: Reposter, entityType: string | null): boolean =>
   !!entityType && (entityType === r.entityType || (r.entityTypes ?? []).includes(entityType))
 
-const pkr = (cents: number | null | undefined) => `PKR ${((cents ?? 0) / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 function metaOf(v: Prisma.JsonValue): Record<string, unknown> {
   return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {}

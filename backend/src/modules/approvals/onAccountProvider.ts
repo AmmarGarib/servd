@@ -19,14 +19,12 @@ import { APPROVAL_RIGHTS } from '../../lib/approvalRights.js'
 import { serviceClient } from '../../lib/prisma.js'
 import { tillClearingCodeTx } from '../accounting/tillClearingCode.js'
 import type { ApprovalItem, ApprovalProvider } from './types.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 const RIGHTS = APPROVAL_RIGHTS.on_account_client
 const BASE = '/accounting/customer-accounts'
 const LINK = '/accounting/receivables/clients'
 
-function pkr(cents: number | null | undefined): string {
-  return `PKR ${Math.round((cents ?? 0) / 100).toLocaleString('en-PK')}`
-}
 const iso = (d: unknown): string | null => {
   if (!d) return null
   const t = new Date(d as string)

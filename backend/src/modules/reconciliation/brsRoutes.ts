@@ -15,7 +15,7 @@ import { requireModule } from '../notifications/requireModule.js'
 import { scopeTenantWhere } from '../../lib/tenantScope.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
-import { toCents, zMoneyCents } from '../../lib/money.js'
+import { toCents, zMoneyCents, fmtPkrCents } from '../../lib/money.js'
 import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval } from '../../lib/approvalRights.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { notifyStaffMany, queueStaffNotify } from '../../lib/staffNotify.js'
@@ -507,7 +507,7 @@ export async function brsRoutes(fastify: FastifyInstance) {
       await lockBank(tx, r.bankAccountId)
       const s = await liveStatement(tx, r)
       if (s.totals.differenceCents !== 0) {
-        throw new AppError('UNRECONCILED_DIFFERENCE', `The statement does not reconcile: a difference of PKR ${((s.totals.differenceCents ?? 0) / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} remains. Match, classify or explain every item (no balancing figure) before submitting.`, 422, { differenceCents: s.totals.differenceCents })
+        throw new AppError('UNRECONCILED_DIFFERENCE', `The statement does not reconcile: a difference of ${fmtPkrCents((s.totals.differenceCents ?? 0))} remains. Match, classify or explain every item (no balancing figure) before submitting.`, 422, { differenceCents: s.totals.differenceCents })
       }
       const n = await tx.bankReconciliation.updateMany({ where: { id: r.id, status: 'draft' }, data: { status: 'submitted', submittedById: req.staffUser!.id, submittedAt: at, snapshot: s as never, returnNote: null } })
       if (n.count === 0) throw new AppError('RECONCILIATION_NOT_DRAFT', 'This reconciliation is no longer a draft — reload it', 409)

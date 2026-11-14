@@ -17,6 +17,7 @@ import cron from 'node-cron'
 import { serviceClient as prisma } from '../lib/prisma.js'
 import { flagException } from '../lib/exceptions.js'
 import { runFleetChargesOnce } from '../modules/intercompany/fleet.js'
+import { fmtPkrCents } from '../lib/money.js'
 import { IC_CONTROLLED_BY, pairBalances, pairKey } from '../modules/intercompany/accounts.js'
 
 export { runFleetChargesOnce }
@@ -47,7 +48,7 @@ export async function flagPairMismatches(): Promise<number> {
         kind: 'intercompany_mismatch',
         severity: 'high',
         title: `Inter-company balance with ${nameOf(other)} does not agree`,
-        description: `${nameOf(a)} and ${nameOf(b)} disagree on what they owe each other by ${(bal.mismatchCents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2 })} PKR. `
+        description: `${nameOf(a)} and ${nameOf(b)} disagree on what they owe each other by ${fmtPkrCents(bal.mismatchCents)}. `
           + 'Every inter-company posting moves both books, so one book holds an entry the other does not — look for a hand entry or a one-sided reversal (Accounting → Inter-company → Balances).',
         entityType: 'CompanyPair',
         entityId: key,

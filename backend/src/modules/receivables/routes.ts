@@ -84,7 +84,7 @@ import { audit } from '../../lib/audit.js'
 import { ACCT, postJournalEntry, reverseJournalEntry } from '../accounting/journal.js'
 import { outputTaxCodeFor, OUTPUT_TAX_ACCOUNTS, refundTaxAccountFor } from '../accounting/orderPosting.js'
 import { authorityOfOutputCode, AUTHORITIES, type AuthorityKey } from '../accounting/taxAuthorities.js'
-import { assertMoneyFits, sumCents, toCents, zMoneyCents, type DbMoney } from '../../lib/money.js'
+import { assertMoneyFits, sumCents, toCents, zMoneyCents, type DbMoney, fmtPkrCents } from '../../lib/money.js'
 import { moneyAccountCode, zReceiptMethod, zPaymentRef, assertPaymentReference, receiptText } from '../../lib/bankAccounts.js'
 import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
 import { fmtPktDate } from '../accounting/dates.js'
@@ -604,7 +604,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
         if (body.amountCents > leftCents) {
           throw new AppError(
             'OVER_SALES_TAX_WITHHOLDING',
-            `That is more than the sales tax left on ${inv.number} (PKR ${(Math.max(0, leftCents) / 100).toLocaleString('en-PK')})`,
+            `That is more than the sales tax left on ${inv.number} (${fmtPkrCents(Math.max(0, leftCents))})`,
             409,
             { leftCents: Math.max(0, leftCents) },
           )
@@ -697,7 +697,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       if (writtenOff > 0 && toCents(inv.creditedCents) + credit > creditable) {
         throw new AppError(
           'WRITTEN_OFF_FIRST',
-          `Part of ${inv.number} was written off as a bad debt — a credit note can only credit what was not written off (PKR ${(Math.max(0, creditable - toCents(inv.creditedCents)) / 100).toLocaleString('en-PK')} left). Recover or reverse the write-off first.`,
+          `Part of ${inv.number} was written off as a bad debt — a credit note can only credit what was not written off (${fmtPkrCents(Math.max(0, creditable - toCents(inv.creditedCents)))} left). Recover or reverse the write-off first.`,
           409,
           { leftCents: Math.max(0, creditable - toCents(inv.creditedCents)), writtenOffCents: writtenOff },
         )
@@ -705,7 +705,7 @@ export async function receivableRoutes(fastify: FastifyInstance) {
       if (body.amountCents > leftAmount || body.taxCents > leftTax || toCents(inv.creditedCents) + credit > creditable) {
         throw new AppError(
           'OVER_CREDIT',
-          `That is more than is left to credit on ${inv.number} (PKR ${(leftAmount / 100).toLocaleString('en-PK')} before tax, PKR ${(leftTax / 100).toLocaleString('en-PK')} tax)`,
+          `That is more than is left to credit on ${inv.number} (${fmtPkrCents(leftAmount)} before tax, ${fmtPkrCents(leftTax)} tax)`,
           409,
           { leftAmountCents: leftAmount, leftTaxCents: leftTax },
         )

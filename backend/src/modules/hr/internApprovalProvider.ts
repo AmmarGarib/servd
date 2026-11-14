@@ -8,8 +8,8 @@
 import type { UserRole } from '@prisma/client'
 import { APPROVAL_RIGHTS } from '../../lib/approvalRights.js'
 import type { ApprovalItem, ApprovalProvider } from '../approvals/types.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
-const pkr = (cents: number | null | undefined) => `PKR ${Math.round((cents ?? 0) / 100).toLocaleString('en-PK')}`
 
 interface InternRow {
   id: string; tenantId: string; internCode: string; fullName: string; department: string | null; designation: string | null

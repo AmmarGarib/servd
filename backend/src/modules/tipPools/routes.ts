@@ -70,6 +70,7 @@ import { requireModule } from '../notifications/requireModule.js'
 import { serviceClient } from '../../lib/prisma.js'
 import { queueStaffNotify, notifyStaffMany } from '../../lib/staffNotify.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
+import { fmtPkrCents } from '../../lib/money.js'
 
 // The rules are the company's, set in /configuration/operations
 // (OperationsConfig): whether pooling is on, how it is split, and the weight
@@ -1189,7 +1190,7 @@ export async function tipPoolRoutes(fastify: FastifyInstance) {
           return notifyStaffMany(ids.map((userId) => ({
             userId, tenantId: poolTenantId, actorId, kind: 'task.next' as const,
             title: `Tip pool ready to pay: ${pool.name}`,
-            body: `The CEO approved PKR ${(pool.totalTipsCents / 100).toLocaleString('en-PK')} of tips. Pay it on Tip pools.`,
+            body: `The CEO approved ${fmtPkrCents(pool.totalTipsCents)} of tips. Pay it on Tip pools.`,
             link: '/tip-pools', entityType: 'TipPool', entityId: pool.id,
             dedupeKey: `task.next:tip_pool:${pool.id}:pay`,
           })))

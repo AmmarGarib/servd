@@ -1,4 +1,4 @@
-// ─── Pages and gap notes, per module id ──────────────────────────────────────
+// ─── Pages, per module id ────────────────────────────────────────────────────
 //
 // servd is organised by OWNER into six workspaces — CEO, Operations, Finance,
 // Marketing, HR, Dev (owner decision 47; the CEO section is decision D2,
@@ -11,10 +11,7 @@
 //   • MODULE_PAGES — the admin pages behind each module id (label, href, an
 //     optional hint). The sidebar, the workspace homes (/w/[id]) and the
 //     Modules page all render a section as "the pages of its modules".
-//   • MODULE_GAPS — a short, CURRENT note of what is missing or unreliable.
-//     Keep them factual and short, and re-verify rather than assume: a stale
-//     gap register sends people chasing things that were fixed months ago. If
-//     unsure, say less.
+//     (The per-module "known gaps" notes were removed, owner 2026-11-14: stale.)
 //
 // The 18-module catalogue that used to live here (ordered by cost of defect)
 // is replaced by the workspaces; its still-true notes were carried over.
@@ -348,42 +345,6 @@ export const PERSONAL_PAGES: ModulePage[] = [
 ]
 
 /**
- * What is missing or unreliable, per module — current as of 2026-10-04; the
- * stock, food-cost and finance notes as of 2026-10-13 (wave B).
- * Short and factual; omit a module rather than guess.
- */
-export const MODULE_GAPS: Partial<Record<ModuleId, string>> = {
-  pos: 'One refund engine, one comp engine and one settle path, all on the open drawer; GST is cash 15% / card 8% from one pricing function. Offline: a new order is kept on the till (lib/offline-queue.ts) and re-sent with the cashier\'s session and the same idempotency key; a refused order stays on the till with the server\'s reason until a manager resends or discards it. Payments, Keenu, No Charge and adding items need the internet. No Charge comps an open order; Split is on the Order Summary.',
-  orders: 'Every order is created by ingestOrder and completed by one completeOrder, which issues the invoice; tax filing goes only through the POS connector. Voids are per line on the order page.',
-  refunds: 'The one refund engine: caps, manager PIN, cash from the open drawer, its own journal entry; a full refund restores loyalty, wallet and gift-card value.',
-  reservations: 'A table is occupied by the reservation flow, or by an open till bill on it (released when the bill is completed or cancelled). Guest tags have endpoints but no admin screen.',
-  dashboard: 'The four workspace dashboards (Operations, Finance, Marketing, HR) are blank until the owner picks their numbers.',
-  ops: 'The prep list forecasts for the first brand only; it has no brand picker.',
-  inventory: 'Stock is held as FIFO lots, costed at the price paid: lib/stockLedger.ts is the only writer and every change leaves a stock movement. Sales deplete through the one recipe explosion; unfired voids and cancels go back to their lots, fired ones are booked as waste. Counts and prep batches are company-scoped. One stock pool per company: lots carry their outlet, but per-outlet pools are the next build, so a transfer moves no quantity (a short receipt is booked as transit loss). Lots have no expiry dates.',
-  par_sheet: 'The par board counts preps in PORTIONS (portions per recipe on each sub-recipe): the daily par per outlet and weekday, on hand at the outlet, made today. A different "par" from InventoryItem.parLevel (the low-stock alert for bought stock).',
-  recipes: 'One plate cost (lib/recipeCost.ts) behind recipes, pricing, food cost, COGS and stock depletion, at the FIFO price of the lots being cooked; modifiers carry their own recipes; till sales book COGS per brand at shift close. Every dish has a Packaging section: it counts on takeaway and delivery, on every order of a brand whose service vessel is packaging (Stackd), and on a dine-in line only when staff tap "Box given". The Q factor is the only plate allowance — menu pricing, never booked. One price per item across channels; no combos.',
-  procurement: 'One PO system and one receiving path: each receipt line opens a FIFO lot, held on 2015 until its bill clears it ("Received, not billed" lists what is open; a write-off needs the CEO). A bill\'s stock lines link to their receipt; equipment goes through CapEx, never a bill. One AP aging tied to ledger AP. No requisition step, payment run or WHT certificate.',
-  food_safety: 'Temperature limits with corrective actions and cleaning tasks, per company, with overdue bell reminders and a PDF printout for inspectors. Not yet per outlet in the UI.',
-  reconciliation: 'One expected-cash formula and one shift close; every closed shift posts to the ledger. A Raast QR receipt stays provisional until a bank-statement line matches it. Rider COD not handed in sits on 1351 and blocks the month close until the CEO approves; writing off a rider debt is not built.',
-  accounting: 'One ledger feed and one period-close checklist (only the CEO may close over an overridable block, with a reason; reopen: CEO only, audited, raised as an exception). The ledger splits by brand, never by outlet; no transfer pricing or multi-currency. Bad debts are written off directly, each approved by the CEO; there is no doubtful-debt provision. On-account clients pay by QR card at the cash tax class and get monthly statements (not tax invoices). Head-office costs not recharged show as "Company overhead (unallocated)".',
-  finance_pl: 'From the ledger. Shared cost reaches a brand only through allocation runs; the rest is one head-office line (decision 22).',
-  capital: 'A CapEx line names its supplier; a paid instalment is an advance on 1340, with income tax withheld at the rate for the supplier\'s filer status (non-filer until confirmed) and input tax by authority. Capitalising a delivered item onto the fixed-asset register needs the CEO\'s approval; Quick buy (bank only) buys, pays and asks for capitalisation in one step. Old capital-ledger rows are read-only history.',
-  reports: 'Food cost variance is its own module (food_cost), linked from Reports. The demand forecast predicts items, not covers, so it cannot drive a rota.',
-  food_cost: 'Actual vs recipe at the FIFO price of the lots cooked, split food / drinks / packaging, with material cost by order type and brand. Per-outlet actual waits for per-outlet stock (the next build); periods before the FIFO cut-over have no lot data.',
-  dispatch: 'A delivery is completed with the customer\'s code; the staff "Delivered" override is managers-only and only while the company\'s code-only switch is off.',
-  riders: 'Riders belong to one company and carry another\'s orders only under a fleet agreement. No earnings or payouts yet; the app polls for offers.',
-  crm: 'Segments, loyalty settings and tiers are per company, computed nightly. Customer strikes and bans are servd-wide (owner, 2026-10-15); a banned customer may appeal when appeals are switched on.',
-  campaigns: 'Email and WhatsApp only. No scheduled sends — a campaign is a draft until sent — and opens and clicks are not linked to orders.',
-  storefront: 'Nothing publishes without the CEO (decision 41).',
-  staff_hr: 'HR is the person master; each company can replace its forms in /hr/formats. Leave counts calendar days (weekly offs and holidays are not skipped); file fields take a link, not an upload.',
-  staff_directory: 'A login is access only; one login can be linked to an employee in each company. Team leads add logins for their own roles from My team, and the CEO approves each one. HR adds and offboards logins from the employee record: floor staff are active at once, manager and office logins wait for the CEO.',
-  scheduling: 'Generated from the HR roster and approved swaps; managers store only one-off changes. Costed from HR salaries.',
-  api_pos: 'Vendors not chosen yet: until the CEO goes live with a fiscal POS driver, every sale is held (visible, never sent). No nightly card-settlement match yet. Raast QR bank-SMS matching is off per company until the CEO switches it on; servd never logs in to internet banking.',
-  integrations: 'No data export screen (database backups: CEO → Backups). Webhooks: one API, but only order events fire. Supplier chat still sends mail through its own env-only SMTP transport.',
-  audit_log: 'Sign-ins (success, failure, OTP, 2FA, sign-out) are audited alongside account, access and on-shift actions, per company.',
-}
-
-/**
  * Module ids PARKED by the owner (2026-10-13, .handoff/parked/2026-10-14/):
  * the ids stay (Module Access, workspaces) but they have no page, so the
  * workspace homes and /modules hide a section made only of them instead of
@@ -408,13 +369,6 @@ export function pagesForModules(modules: readonly string[]): ModulePage[] {
     }
   }
   return out
-}
-
-/** The current gap notes of a section's modules. */
-export function gapsForModules(modules: readonly string[]): Array<{ module: string; note: string }> {
-  return modules
-    .map((m) => ({ module: m, note: MODULE_GAPS[m as ModuleId] }))
-    .filter((x): x is { module: string; note: string } => !!x.note)
 }
 
 /**
@@ -501,20 +455,4 @@ export function canOpenPath(pathname: string, role: string | undefined, modules:
   const need = modulesForPath(pathname)
   if (need.length === 0) return true
   return need.some((m) => modules.includes(m))
-}
-
-/** Which module owns a path (longest matching page href). */
-export function moduleForPath(pathname: string): ModuleId | undefined {
-  let best: ModuleId | undefined
-  let bestLen = -1
-  for (const [mod, pages] of Object.entries(MODULE_PAGES) as Array<[ModuleId, ModulePage[]]>) {
-    for (const p of pages) {
-      const href = p.href.split('?')[0]!
-      if ((pathname === href || pathname.startsWith(href + '/')) && href.length > bestLen) {
-        best = mod
-        bestLen = href.length
-      }
-    }
-  }
-  return best
 }

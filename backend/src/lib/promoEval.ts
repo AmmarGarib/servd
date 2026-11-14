@@ -28,6 +28,9 @@
 
 import type { PromoCode } from '@prisma/client'
 import { prisma } from './prisma.js'
+import { fmtPkrCents } from './money.js'
+
+export { fmtPkrCents }
 
 export interface PromoEvalInput {
   code: string
@@ -63,12 +66,6 @@ export function promoDiscountCents(
     discount = Math.round(promo.discountValue)
   }
   return Math.max(0, Math.min(discount, base))
-}
-
-/** "PKR 150" for 15000 paisa; "PKR 150.50" only when there are paisa to show. */
-export function fmtPkrCents(cents: number): string {
-  const rupees = Math.round(cents) / 100
-  return `PKR ${Number.isInteger(rupees) ? rupees.toLocaleString('en-PK') : rupees.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 /** The customer-facing line for a promo with no description of its own. */

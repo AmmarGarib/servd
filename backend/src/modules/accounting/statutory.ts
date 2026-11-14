@@ -46,6 +46,7 @@ import { STATUTORY, STATUTORY_KEYS, monthPeriod, type StatutoryKey } from './tax
 import { TAX_PAYMENT_SOURCE } from './salesTaxReturn.js'
 import { settlementParts } from '../hr/logic.js'
 import type { CloseCheck, CloseCheckContext, CloseProblem } from './closeCheckTypes.js'
+import { fmtPkrCents as fmtRs } from '../../lib/money.js'
 
 /** Any client: `prisma`, `serviceClient`, a transaction, a close check's db. */
 type Db = Prisma.TransactionClient
@@ -580,7 +581,6 @@ export async function postReclass(tenantId: string, amounts: ReclassAmounts, use
 
 // ─── Period close (both warnings, never a block) ────────────────────────────
 
-const fmtRs = (c: number) => `PKR ${(c / 100).toFixed(2)}`
 
 export const statutoryCloseChecks: CloseCheck[] = [
   {

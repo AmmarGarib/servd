@@ -4,7 +4,7 @@
 //
 //   • What is gated: every download that carries a customer's phone or email — the CRM guest list
 //     (GET /crm/customers/export, built here) and the new-brand waitlist (GET /waitlist/signups.csv, built in
-//     waitlist/routes.ts waitlistSignupsCsv). Screens, masked lists and aggregate reports are not affected.
+//     waitlist/routes.ts waitlistSignupsTable). Screens, masked lists and aggregate reports are not affected.
 //   • The CEO (role admin) downloads at once: GET /crm/customers/export?format=csv|xlsx|pdf&search=&conceptId=
 //     (the companies in view), GET /waitlist/signups.csv. Anyone else gets 403 EXPORT_NEEDS_CEO there and
 //     asks instead: POST /crm/exports {kind: customers | waitlist, filters, reason ≥10} → 202
@@ -21,7 +21,7 @@
 //     the filters the CEO approved, in the request's company. Audited customer_export.download (row count,
 //     never the rows).
 //   • /crm is module-gated ('crm'), so every route here needs the CRM module too.
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ADMIN_ONLY, MARKETING_TEAM } from '../auth/middleware.js'
@@ -33,7 +33,7 @@ import { audit } from '../../lib/audit.js'
 import { exportFormatOf, sendReport, companyNamesOf, type ReportTable } from '../../lib/reportExport.js'
 import { companyCustomerStats } from './routes.js'
 import { tenantIdsOf } from './customerScope.js'
-import { waitlistListQuery, waitlistSignupsCsv } from '../waitlist/routes.js'
+import { waitlistListQuery, waitlistSignupsTable, waitlistFileName } from '../waitlist/routes.js'
 
 /** How long an approved download stays open. */
 export const EXPORT_TTL_MS = 24 * 60 * 60 * 1000
@@ -111,13 +111,6 @@ async function auditDownload(req: FastifyRequest, tenantId: string | null, e: { 
     userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId,
     metadata: { kind: e.kind, rowCount: e.rows, filters: e.filters, viaRequest: !!e.requestId, actorRole: req.staffUser!.role },
   })
-}
-
-function sendWaitlistCsv(reply: FastifyReply, text: string) {
-  return reply
-    .header('content-type', 'text/csv; charset=utf-8')
-    .header('content-disposition', `attachment; filename="servd-waitlist-${new Date().toISOString().slice(0, 10)}.csv"`)
-    .send(text)
 }
 
 export async function customerExportRoutes(fastify: FastifyInstance) {
@@ -252,23 +245,23 @@ export async function customerExportRoutes(fastify: FastifyInstance) {
     if (r.downloadedAt) throw new AppError('EXPORT_ALREADY_DOWNLOADED', 'This list was already downloaded — ask the CEO again for another copy', 409)
     if (r.expiresAt.getTime() <= Date.now()) throw new AppError('EXPORT_EXPIRED', 'The 24 hours to download this list have passed — ask the CEO again', 410)
     // Built first, claimed second: a failure while building never uses up the one download.
-    let file: { kind: 'table'; t: ReportTable } | { kind: 'csv'; text: string; rows: number }
+    let file: { t: ReportTable; rows: number; name: Parameters<typeof sendReport>[2] }
     if (r.kind === 'waitlist') {
       const q = waitlistListQuery.parse(r.filters ?? {})
-      const c = await waitlistSignupsCsv(q, true)
-      file = { kind: 'csv', ...c }
+      const c = await waitlistSignupsTable(q, true)
+      file = { t: c.table, rows: c.rows, name: waitlistFileName() }
     } else {
-      file = { kind: 'table', t: await customerExportTable([r.tenantId], customerFilters.parse(r.filters ?? {})) }
+      const t = await customerExportTable([r.tenantId], customerFilters.parse(r.filters ?? {}))
+      file = { t, rows: t.rows.length, name: 'guest-list' }
     }
-    const rows = file.kind === 'csv' ? file.rows : file.t.rows.length
+    const rows = file.rows
     const claimed = await prisma.customerExportRequest.updateMany({
       where: { id: r.id, status: 'approved', downloadedAt: null, expiresAt: { gt: new Date() } },
       data: { downloadedAt: new Date(), rowCount: rows },
     })
     if (claimed.count === 0) throw new AppError('EXPORT_ALREADY_DOWNLOADED', 'This list was already downloaded or the 24 hours have passed — ask the CEO again', 409)
     await auditDownload(req, r.tenantId, { kind: r.kind, rows, requestId: r.id, filters: r.filters })
-    if (file.kind === 'csv') return sendWaitlistCsv(reply, file.text)
-    return sendReport(reply, exportFormatOf(req.query.format, 'csv')!, 'guest-list', file.t)
+    return sendReport(reply, exportFormatOf(req.query.format, 'csv')!, file.name, file.t)
   })
 }
 

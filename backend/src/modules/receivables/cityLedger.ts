@@ -49,7 +49,7 @@
 import type { CityLedgerAllocation, CityLedgerSettlement, CustomerAccount, CustomerAccountCharge, Prisma } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { assertInt4Fits, toCents } from '../../lib/money.js'
+import { assertInt4Fits, toCents, fmtPkrCents } from '../../lib/money.js'
 import { RECEIPT_METHODS, assertPaymentReference, moneyAccountCode, receiptText } from '../../lib/bankAccounts.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { karachiDay } from '../../connectors/util.js'
@@ -212,11 +212,11 @@ export async function settleBills(input: SettleInput): Promise<SettleResult> {
         const owed = chargeOwedCents(c)
         if (out) {
           if (owed >= 0) throw refuse('NOTHING_OWED_BACK', `Bill #${orderRefOf(c.orderId)} owes nothing back`, 409, { chargeId: c.id })
-          if (a.amountCents > -owed) throw refuse('OVER_ALLOCATED', `That is more than bill #${orderRefOf(c.orderId)} is owed back (PKR ${(-owed / 100).toLocaleString('en-PK')})`, 409, { chargeId: c.id, owedBackCents: -owed })
+          if (a.amountCents > -owed) throw refuse('OVER_ALLOCATED', `That is more than bill #${orderRefOf(c.orderId)} is owed back (${fmtPkrCents(-owed)})`, 409, { chargeId: c.id, owedBackCents: -owed })
         } else {
           if (owed <= 0) throw refuse('BILL_ALREADY_SETTLED', `Bill #${orderRefOf(c.orderId)} is already settled`, 409, { chargeId: c.id })
           if (a.amountCents > owed) {
-            throw refuse('OVER_ALLOCATED', `That is more than bill #${orderRefOf(c.orderId)} still owes (PKR ${(owed / 100).toLocaleString('en-PK')})`, 409, { chargeId: c.id, owedCents: owed })
+            throw refuse('OVER_ALLOCATED', `That is more than bill #${orderRefOf(c.orderId)} still owes (${fmtPkrCents(owed)})`, 409, { chargeId: c.id, owedCents: owed })
           }
         }
         // Never dated before the bill itself.

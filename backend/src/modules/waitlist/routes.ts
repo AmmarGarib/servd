@@ -16,6 +16,7 @@ import { refuseCodeRequestInPractice } from '../../lib/sandbox.js'
 import { requireAuth } from '../auth/middleware.js'
 import { requestOtp, verifyOtp, normalisePhone, normaliseEmail } from '../auth/otp.js'
 import { maskPhone } from '../auth/twoFactor.js'
+import { exportFormatOf, sendReport, type ReportFileName, type ReportTable } from '../../lib/reportExport.js'
 import { check as checkRateLimit, recordFailure } from '../../lib/loginRateLimit.js'
 import {
   WAITLIST_LIST, WAITLIST_CONSENT_TEXT, sanitiseSource, deviceFromUserAgent,
@@ -372,34 +373,50 @@ export async function waitlistRoutes(fastify: FastifyInstance) {
     return { rows: rows.map((r) => shapeRow(r, fullPhone)), total, page, pageSize: PAGE_SIZE }
   })
 
-  // GET /waitlist/signups.csv — same filters. Phones and emails: the CEO downloads at once; anyone else asks
+  // GET /waitlist/signups.csv?format=csv|xlsx|pdf — same filters, through the standard exporter
+  // (lib/reportExport.ts; CSV unchanged). Phones and emails: the CEO downloads at once; anyone else asks
   // the CEO first (owner, 2026-10-27) through POST /crm/exports {kind: 'waitlist'} — modules/crm/customerExports.ts.
-  fastify.get('/signups.csv', STAFF, async (req, reply) => {
+  fastify.get<{ Querystring: { format?: string } }>('/signups.csv', STAFF, async (req, reply) => {
     if (req.staffUser!.role !== 'admin') {
       throw new AppError('EXPORT_NEEDS_CEO', 'Downloading the list with phones and emails needs the CEO — ask the CEO to export.', 403)
     }
     const q = waitlistListQuery.parse(req.query)
     const fullPhone = (await staffModules(req)).has('crm')
-    const csv = await waitlistSignupsCsv(q, fullPhone)
-    return reply
-      .header('content-type', 'text/csv; charset=utf-8')
-      .header('content-disposition', `attachment; filename="servd-waitlist-${new Date().toISOString().slice(0, 10)}.csv"`)
-      .send(csv.text)
+    const { table } = await waitlistSignupsTable(q, fullPhone)
+    return sendReport(reply, exportFormatOf(req.query.format, 'csv')!, waitlistFileName(), table)
   })
 }
 
-/** The sign-up list as CSV (the one builder: the CEO's direct download and an approved guest-list download). */
-export async function waitlistSignupsCsv(q: z.infer<typeof waitlistListQuery>, fullPhone: boolean): Promise<{ text: string; rows: number }> {
-  const rows = await prisma.waitlistSignup.findMany({
+/** servd-waitlist-<day>: the download's name (the waitlist belongs to servd, so no company is added). */
+export function waitlistFileName(): ReportFileName {
+  return { base: 'servd-waitlist', suffix: new Date().toISOString().slice(0, 10) }
+}
+
+/**
+ * The sign-up list as a report table (the one builder: the CEO's direct download and an approved guest-list
+ * download). `table.csv` is the exact CSV this route always sent (phones unguarded, free text formula-guarded).
+ */
+export async function waitlistSignupsTable(q: z.infer<typeof waitlistListQuery>, fullPhone: boolean): Promise<{ table: ReportTable; rows: number }> {
+  const found = await prisma.waitlistSignup.findMany({
     where: signupWhere(q), select: signupSelect, orderBy: { createdAt: 'desc' }, take: CSV_MAX_ROWS,
   })
   const header = ['name', 'phone', 'email', 'area', 'interest', 'source', 'joined_at', 'unsubscribed_at', 'customer_id']
-  const lines = rows.map((r) => {
-    const s = shapeRow(r, fullPhone)
-    return [
-      csvCell(s.name), csvCell(s.phone, false), csvCell(s.email), csvCell(s.area), csvCell(s.interest),
-      csvCell(s.source), csvCell(s.createdAt), csvCell(s.unsubscribedAt), csvCell(s.customerId),
-    ].join(',')
-  })
-  return { text: [header.join(','), ...lines].join('\n') + '\n', rows: rows.length }
+  const shaped = found.map((r) => shapeRow(r, fullPhone))
+  const lines = shaped.map((s) => [
+    csvCell(s.name), csvCell(s.phone, false), csvCell(s.email), csvCell(s.area), csvCell(s.interest),
+    csvCell(s.source), csvCell(s.createdAt), csvCell(s.unsubscribedAt), csvCell(s.customerId),
+  ].join(','))
+  const iso = (d: Date | null | undefined) => (d ? d.toISOString() : '')
+  const table: ReportTable = {
+    title: 'servd waitlist sign-ups',
+    companies: [],
+    columns: header.map((key) => ({ key, type: 'text' as const })),
+    hide: ['customer_id'],
+    rows: shaped.map((s) => ({
+      name: s.name, phone: s.phone, email: s.email, area: s.area, interest: s.interest, source: s.source,
+      joined_at: iso(s.createdAt), unsubscribed_at: iso(s.unsubscribedAt), customer_id: s.customerId,
+    })),
+    csv: [header.join(','), ...lines].join('\n') + '\n',
+  }
+  return { table, rows: found.length }
 }

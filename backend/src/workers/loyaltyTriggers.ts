@@ -10,6 +10,7 @@ import { formatBrandName } from '../lib/brandName.js'
 import { sandboxBlocks } from '../lib/sandbox.js'
 import { activeBanAtCompany } from '../lib/strikes.js'
 import { realCompanyOrderWhere } from '../lib/testCompany.js'
+import { fmtPkrCents } from '../lib/money.js'
 
 // Automated customer messages and point bonuses.
 //
@@ -32,7 +33,7 @@ import { realCompanyOrderWhere } from '../lib/testCompany.js'
 /** PKR text for what `points` are worth at `tenantId`. */
 async function pointsWorth(points: number, tenantId: string): Promise<string> {
   const cents = await calculatePointsValue(points, tenantId)
-  return `PKR ${(cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`
+  return fmtPkrCents(cents)
 }
 
 /** reachableAtCompany, cached per company for one run. */
@@ -168,7 +169,7 @@ export async function runBirthdayTriggers(today = new Date()) {
       if (bonus <= 0) continue
       await creditPoints({ customerId: customer.id, tenantId, points: bonus, description })
       const company = tenantNames.get(tenantId) ?? 'servd'
-      const worth = `PKR ${((bonus * program.pointValueCents) / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`
+      const worth = fmtPkrCents(bonus * program.pointValueCents)
       const msg = `Happy birthday, ${customer.name ?? 'there'}! ${company} has added ${bonus} loyalty points to your account — ${worth} off your next order with us.`
       await reach(customer, `Happy birthday from ${company}`, `<p>${msg}</p>`, msg, tenantId).catch(() => {})
       await prisma.triggerLog.create({ data: { customerId: customer.id, triggerType } })

@@ -12,8 +12,3 @@ export function portionSizeOf(r: PortionRecipe): number | null {
   return r.yieldGrams / r.portionsPerBatch
 }
 
-/** A quantity in the yield unit as portions (null without a portion size). */
-export function toPortions(qty: number, r: PortionRecipe): number | null {
-  const size = portionSizeOf(r)
-  return size ? qty / size : null
-}

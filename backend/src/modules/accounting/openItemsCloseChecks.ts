@@ -14,8 +14,8 @@
 
 import type { CloseCheck } from './closeCheckTypes.js'
 import { fmtPktDate } from './dates.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
-const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 const listed = (xs: string[], total: number) => xs.join(', ') + (total > xs.length ? ` and ${total - xs.length} more` : '')
 

@@ -35,7 +35,7 @@ import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from '../accounting/journal.js'
 import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
-import { toCents } from '../../lib/money.js'
+import { toCents, fmtPkrCents } from '../../lib/money.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
 import { loansFor, ALL_RUN_STATUSES } from './service.js'
 import { allocateLoanCents, settlementParts, settlementNet, pktToday } from './logic.js'
@@ -590,10 +590,10 @@ export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy
   const p = settlementParts(rec.data)
   const net = settlementNet(p)
   if (rec.amountCents != null && rec.amountCents !== net) {
-    throw new AppError('FNF_UNBALANCED', `The settlement's figures come to Rs ${(net / 100).toFixed(2)}, not the Rs ${(rec.amountCents / 100).toFixed(2)} saved as its net — recalculate it`, 409)
+    throw new AppError('FNF_UNBALANCED', `The settlement's figures come to ${fmtPkrCents(net)}, not the ${fmtPkrCents(rec.amountCents)} saved as its net — recalculate it`, 409)
   }
   if (net < 0) {
-    throw new AppError('FNF_NEGATIVE', `${emp.fullName} would owe Rs ${(-net / 100).toFixed(2)} — lower the loan recovery (what is not recovered stays on Staff loans) or the deductions`, 422)
+    throw new AppError('FNF_NEGATIVE', `${emp.fullName} would owe ${fmtPkrCents(-net)} — lower the loan recovery (what is not recovered stays on Staff loans) or the deductions`, 422)
   }
   const negative = (['salaryPayable', 'otPayable', 'leaveEncashment', 'gratuity', 'deductions', 'loanRecovery', 'incomeTax', 'eobiEmployee', 'eobiEmployer', 'sessiEmployer'] as const).filter((k) => p[k] < 0)
   if (negative.length) throw new AppError('NEGATIVE_AMOUNT', `${negative.join(', ')} cannot be negative`, 422)
@@ -607,7 +607,7 @@ export async function postFinalSettlementAccrual(tx: Tx, rec: HrRecord, postedBy
     if (!split) {
       const owed = open.reduce((a, l) => a + l.outstandingCents, 0)
       throw new AppError('LOAN_OVER_OUTSTANDING', owed > 0
-        ? `The loan recovery is more than the Rs ${(owed / 100).toFixed(2)} ${emp.fullName} still owes`
+        ? `The loan recovery is more than the ${fmtPkrCents(owed)} ${emp.fullName} still owes`
         : `${emp.fullName} has no loan outstanding to recover`, 422)
     }
     loans = split

@@ -22,11 +22,11 @@ import { tillClearingCutoverAt } from './tillClearingCode.js'
 import { tieOutOf } from './tillClearing.js'
 import { isChargeBookedTx } from '../receivables/onAccount.js'
 import { chargeOwedCents } from '../receivables/cityLedger.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 const DAY = 86_400_000
 /** Booked charges unbilled longer than this many days are warned about. */
 export const UNBILLED_WARN_DAYS = 35
-const pkr = (cents: number) => `PKR ${(cents / 100).toLocaleString('en-PK')}`
 
 export const onAccountTieoutCheck: CloseCheck = {
   key: 'on_account_tieout',

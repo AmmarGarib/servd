@@ -54,8 +54,18 @@ export function sumCents(v: DbMoney | null | undefined): number {
   return v == null ? 0 : toCents(v)
 }
 
-const pkr = (c: number) =>
-  `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+/**
+ * THE way an amount is written in MESSAGES AND NOTICES (bell, WhatsApp / email text, exception
+ * flags, close-check and error messages; finance decision 2026-11-14): "PKR 1,234", and paisa only
+ * when there are some — "PKR 1,234.50". Receipts, tax invoices, PDFs, exports and report tables
+ * keep their own fixed layouts (`fmtPkr` in modules/accounting/csv.ts). Null / NaN read as 0.
+ */
+export function fmtPkrCents(cents: DbMoney | null | undefined): string {
+  const n = Math.round(Number(cents ?? 0))
+  const rupees = (Number.isFinite(n) ? n : 0) / 100
+  return `PKR ${Number.isInteger(rupees) ? rupees.toLocaleString('en-PK') : rupees.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+const pkr = fmtPkrCents
 
 /** 422 AMOUNT_TOO_LARGE: "<what> comes to PKR X, which is more than the PKR <max> one amount can be — check the figure". */
 export function amountTooLarge(what: string, cents?: number, max: number = MAX_MONEY_CENTS): AppError {

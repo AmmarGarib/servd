@@ -58,6 +58,7 @@ import { commonOpenPlacement, latestLock, postSystemTransferTx, reverseSystemTra
 import { chargesAccountCodeFor } from './accounts.js'
 import { computePool, type PoolBasisLine, type PoolResult } from './pool.js'
 import { FULL_BPS, splitByBps, splitFor, type SplitLineInput } from './splits.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 export type Tx = Prisma.TransactionClient
 export type Db = Tx | PrismaClient
@@ -83,7 +84,6 @@ const actorIdOf = (a: Preparer): string => (a === SYSTEM ? SYSTEM : a.id)
 const personOf = (a: Preparer): string | null => (a === SYSTEM ? null : a.id)
 
 const pct = (bps: number) => `${(bps / 100).toFixed(2)}%`
-const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 // ─── Months and locks ────────────────────────────────────────────────────────
 

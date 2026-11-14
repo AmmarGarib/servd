@@ -37,6 +37,7 @@ import {
   type ApprovalSubject, type ApprovalType,
 } from '../../lib/approvalRights.js'
 import { orderRefOf } from '../../lib/orderRef.js'
+import { fmtPkrCents } from '../../lib/money.js'
 
 /** What a notice says about one item (read on serviceClient when the job runs). */
 export interface ApprovalFacts {
@@ -83,9 +84,7 @@ export interface ApprovalDecidedEvent {
 
 export function formatPkr(cents: number | null | undefined): string | null {
   if (cents == null || !Number.isFinite(Number(cents))) return null
-  const rupees = Number(cents) / 100
-  const whole = Number.isInteger(rupees)
-  return `PKR ${rupees.toLocaleString('en-US', { minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: whole ? 0 : 2 })}`
+  return fmtPkrCents(Number(cents))
 }
 
 const human = (s: string | null | undefined) => (s ?? '').replace(/_/g, ' ').trim()

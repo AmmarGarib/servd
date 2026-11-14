@@ -526,18 +526,6 @@ export async function deleteWithUndo(path: string, opts: DeleteWithUndoOptions):
   })
 }
 
-// ─── Auth ──────────────────────────────────────────────────────────────────────
-
-export const authApi = {
-  login: (email: string, password: string) =>
-    api.post<{ accessToken: string; refreshToken: string; user: { id: string; name: string; role: string } }>(
-      '/auth/login',
-      { email, password },
-    ),
-  refresh: (refreshToken: string) =>
-    api.post<{ accessToken: string }>('/auth/refresh', { refreshToken }),
-}
-
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 export const ordersApi = {

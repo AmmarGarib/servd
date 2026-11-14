@@ -1,15 +1,14 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import bcrypt from 'bcryptjs'                  // password checks on the self-service routes
 import { z } from 'zod'
-import { staffLogin, refreshStaffToken, customerRegister, customerLogin, hashPassword, issueShiftSession, findOtpLoginStaff } from './service.js'
-import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, requestSharedCode, verifySharedCode, issueStaffCodeInPerson } from './otp.js'
+import { staffLogin, refreshStaffToken, customerRegister, customerLogin, hashPassword, issueShiftSession } from './service.js'
+import { requestOtp, verifyOtp, normalisePhone, requestEmailOtp, verifyEmailOtp, requestSharedCode, verifySharedCode } from './otp.js'
 import { preparePin, setManagerPin, PIN_FORMAT, isWeakPin, MIN_NEW_PIN_LENGTH, SHORT_PIN_GRACE_HOURS } from './managerPin.js'
 import { accountStateOf, whereAccountState, suspendData, reactivateData, approveData, softDeleteData } from './accountStatus.js'
 import {
   normaliseStaffPhone, normaliseStaffPhoneLenient, assertPhoneForRole, assertPhoneFree, withStaffPhoneLock, findManagedStaff,
   assertCompaniesInScope, staffInCompaniesWhere, auditCompanyOf, loginDecisionRight, practiceStaffEmail,
 } from './staffAccounts.js'
-import { maskPhoneForLog } from '../../lib/notify.js'
 import { PRACTICE_NOTE, practiceCodeField, sandboxBlocks, refuseCodeRequestInPractice, isSandbox } from '../../lib/sandbox.js'
 import { ASSIGNABLE_ROLES_WITH_ADMIN, isGeofenceExempt, isOverrideApprover, canHoldOverridePin, isDirectorRole } from '../../lib/roles.js'
 import { validateDirectorBrands } from '../director/access.js'
@@ -49,7 +48,6 @@ import {
   CUSTOMER_PASSWORD_LIMIT,
   PASSWORD_RESET_LIMIT,
   PASSWORD_RESET_USE_LIMIT,
-  STAFF_OTP_PHONE_LIMIT
 } from '../../lib/loginRateLimit.js'
 
 const staffLoginSchema = z.object({
@@ -66,9 +64,6 @@ const refreshSchema = z.object({
 
 // Rate-limit buckets this module owns (same shape as lib/loginRateLimit.ts).
 //
-// Manager-issued sign-in codes, per manager per hour. A shift start is a
-// handful; this stops a session being used to mint codes in bulk.
-const STAFF_CODE_ISSUER_LIMIT = { scope: 'staff-code-issuer', max: 30, lockoutSec: 60 * 60 }
 // Wrong current PIN / password on the signed-in PIN setter, per account. The
 // session is already authenticated; this stops a borrowed session grinding the
 // 10^4 PIN space or the password.
@@ -2405,89 +2400,15 @@ export async function authRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /auth/staff/:id/sign-in-code — a manager hands a floor-staff member a
-  // one-time sign-in code in person (FOH-19).
-  //
-  // Floor staff have no password: a code to WhatsApp or email is their only way
-  // in. When neither can be delivered (gateway down, SMTP down, phone dead), the
-  // till used to say "ask a manager to sign you in" — and no manager could.
-  // This is that path, kept as narrow as the rest of code sign-in:
-  //   • who: a signed-in manager whose role may manage the target's role
-  //     (lib/workspaces.ts childRoles — foh_management for cashiers and
-  //     servers, boh_management for the kitchen, management / F&B / CEO for
-  //     all floor roles). Owners get none, as everywhere in staff admin.
-  //   • whom: an active floor-role login in the manager's own companies
-  //     (write scope; another company's login is 404) with a phone on file
-  //     that no other login shares.
-  //   • what: the SAME staff_login code row the WhatsApp path writes — 5-minute
-  //     life, single use, the per-number lock, cooldown and daily cap — shown
-  //     on the manager's screen instead of sent. The staff member redeems it at
-  //     the normal POST /auth/staff/otp/verify, with its attempt limit and
-  //     per-phone rate limit.
-  //   • rate-limited per manager, and audited (actor + target, in the
-  //     target's company). The code itself is never logged or stored anywhere
-  //     but the code row.
+  // POST /auth/staff/:id/sign-in-code — RETIRED (owner, 2026-10-28): no staff role signs in with a
+  // code any more (middleware.ts OTP_LOGIN_ROLES is empty). The target is still looked up first,
+  // so another company's login stays 404 and a shared login 403, then the answer is 410.
   fastify.post<{ Params: { id: string } }>(
     '/staff/:id/sign-in-code',
     { preHandler: requireAuth(...MANAGERS) },
-    async (req, reply) => {
-      const actor = req.staffUser!
-      const target = await findManagedStaff(req, req.params.id, {
-        id: true, name: true, email: true, phone: true, role: true, accountStatus: true, isActive: true,
-      })
-      if (!usesOtpLogin(target.role)) {
-        throw new AppError('STAFF_CODE_LOGIN_RETIRED', 'Sign-in codes are switched off: everyone signs in with their @gsfoods.pk email and password. Use "New password" or "Send password reset link" instead.', 410)
-      }
-      if (!childRolesFor(actor.role).includes(target.role)) {
-        throw new AppError('ROLE_NOT_ALLOWED', 'Your role cannot sign this person in. Ask their own manager.', 403)
-      }
-      if (accountStateOf(target) !== 'active') {
-        throw new AppError('ACCOUNT_NOT_ACTIVE', 'This login is not active, so it cannot sign in.', 409)
-      }
-      const phone = normaliseStaffPhoneLenient(target.phone)
-      if (!phone) {
-        throw new AppError('PHONE_REQUIRED', 'Add their mobile number on Workforce first — they type it with the code to sign in.', 400)
-      }
-      // The code is redeemed by number. If the number resolves to anyone else
-      // (or to nobody, because two logins share it), the code would not sign
-      // THIS person in — refuse rather than hand over a dead code.
-      const resolved = await findOtpLoginStaff(phone)
-      if (resolved?.id !== target.id) {
-        throw new AppError('PHONE_IN_USE', 'Another login has the same mobile number, so a code cannot tell them apart. Fix the duplicate on Workforce first.', 409)
-      }
-
-      await claimRateLimit(STAFF_CODE_ISSUER_LIMIT, `user:${actor.id}`)
-      const { code, expiresAt } = await issueStaffCodeInPerson(phone)
-      // The usual reason a manager is here is that the cashier has already
-      // tapped "Send code" until the per-phone bucket locked (every send counts
-      // toward it). Left alone, that lock (15 min) outlives this code (5 min),
-      // so the code would be refused at verify with 429 and die unused (AUTH-R2).
-      // A manager has vouched for the person in front of them, so the bucket
-      // starts fresh. Guessing stays bounded: the code row's own attempt limit
-      // (5) and the per-IP bucket still apply at verify.
-      await clearFailures(STAFF_OTP_PHONE_LIMIT, `phone:${phone}`)
-
-      await audit({
-        category: 'identity',
-        action: 'user.signin_code_issue',
-        entity: 'User',
-        entityId: target.id,
-        userId: actor.id,
-        userEmail: actor.email,
-        tenantId: auditCompanyOf(target),
-        after: { targetEmail: target.email, targetRole: target.role, expiresAt },
-        metadata: { actorTenantId: actor.tenantId ?? null, ip: req.ip ?? null },
-      })
-      req.log.warn({ actor: actor.id, target: target.id, phone: maskPhoneForLog(phone) }, 'sign-in code issued in person')
-
-      return reply.status(201).send({
-        code,
-        expiresAt,
-        name: target.name,
-        // What the staff member types with the code — their own number, masked
-        // here because the manager does not need to read it back.
-        phoneHint: maskPhoneForLog(phone),
-      })
+    async (req) => {
+      await findManagedStaff(req, req.params.id, { id: true })
+      throw new AppError('STAFF_CODE_LOGIN_RETIRED', 'Sign-in codes are switched off: everyone signs in with their @gsfoods.pk email and password. Use "New password" or "Send password reset link" instead.', 410)
     },
   )
 

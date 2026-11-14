@@ -38,6 +38,7 @@ import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from '../accounting/
 import type { RefusedDoc, RepostResult } from '../reconciliation/backfillOrders.js'
 import { lockPair, type Db } from './accounts.js'
 import { commonOpenPlacement, postSystemTransferTx, type TransferActor } from './service.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 /** posting_failed metadata.sourceType of a refused fleet charge (and w4's RefusedPostingKind). */
 export const FLEET_CHARGE_KIND = 'ic.fleet_charge'
@@ -103,7 +104,6 @@ export function isMonthEnded(month: string, now: Date = new Date()): boolean {
   return monthBounds(month).to.getTime() < now.getTime()
 }
 
-const pkr = (c: number) => `Rs ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`
 
 // ─── Rates ───────────────────────────────────────────────────────────────────
 

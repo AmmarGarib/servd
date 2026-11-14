@@ -107,10 +107,6 @@ export function isGeofenceExempt(role: string | null | undefined): boolean {
   return !!role && (GEOFENCE_EXEMPT as readonly string[]).includes(role)
 }
 
-export function isKnownRole(role: string): role is UserRole {
-  return (ALL_ROLES as readonly string[]).includes(role)
-}
-
 /**
  * Every management tier, including legacy 'manager' until the data migration
  * has moved those accounts to foh_management. The same set as the auth

@@ -398,7 +398,7 @@ describe('(2) a PKR 25m manual journal entry', () => {
     const tooBig = await call('ceoA', 'POST', '/accounting/journal', { description: 'typo', lines: await lines(MAX_MONEY_CENTS + 1) })
     expect(tooBig.statusCode).toBe(422)
     expect(tooBig.json().error.code).toBe('AMOUNT_TOO_LARGE')
-    expect(tooBig.json().error.message).toMatch(/PKR 900,000,000,000\.00/)
+    expect(tooBig.json().error.message).toMatch(/PKR 900,000,000,000/)
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantA } })).toBe(before)
     const atCap = await call('ceoA', 'POST', '/accounting/journal', { description: 'at the cap', lines: await lines(MAX_MONEY_CENTS) })
     expect(atCap.statusCode, atCap.body).toBe(201)

@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto'
 import type { Prisma, PrismaClient, HrEmployee, HrRecord } from '@prisma/client'
 import { serviceClient as prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
+import { fmtPkrCents } from '../../lib/money.js'
 import { accountStateOf } from '../auth/accountStatus.js'
 import {
   HR_SECTIONS, sectionByKey, EMPLOYEE_MASTER_FIELDS, withSystemFields, transferTargetsOutsideCompany,
@@ -1097,7 +1098,7 @@ async function withRecoveries(tenantId: string, employeeId: string, runId: strin
   return allocateRecoveries(open.map((l) => ({ loanId: l.id, outstandingCents: l.outstandingCents, type: l.type })), installments, items)
 }
 const recoveryWarning = (name: string, d: DeductionItem) =>
-  `${name}: the ${d.label} deduction of Rs ${(d.amountCents / 100).toFixed(2)} is more than the loans / advances still owed — lower it or take it off`
+  `${name}: the ${d.label} deduction of ${fmtPkrCents(d.amountCents)} is more than the loans / advances still owed — lower it or take it off`
 
 export async function calculateRun(tenantId: string, runId: string, actorId?: string) {
   const run = await prisma.hrPayrollRun.findUniqueOrThrow({ where: { id: runId } })
@@ -1235,7 +1236,7 @@ export async function recalcPayslip(payslipId: string, overrides: Partial<Payrol
     if (!split) {
       const owed = loans.reduce((a, l) => a + l.outstandingCents, 0)
       throw new AppError('LOAN_OVER_OUTSTANDING', owed > 0
-        ? `The loan deduction is more than the Rs ${(owed / 100).toFixed(2)} this employee still owes`
+        ? `The loan deduction is more than the ${fmtPkrCents(owed)} this employee still owes`
         : 'This employee has no loan outstanding to deduct', 400)
     }
     inputs.loans = split

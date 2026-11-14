@@ -24,7 +24,7 @@
 import type { Prisma } from '@prisma/client'
 import { serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { toCents } from '../../lib/money.js'
+import { toCents, fmtPkrCents } from '../../lib/money.js'
 import { notifyStaffMany, type NotifyInput } from '../../lib/staffNotify.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 
@@ -123,7 +123,7 @@ export async function raiseMirrorDrafts(entryId: string, actorId?: string | null
     await tell(target, 'finance_and_ceo', {
       kind: 'journal.intercompany', severity: 'info',
       title: `${from} booked ${e.voucherNo ?? 'a journal'} with you — book your ${kind}`.slice(0, 140),
-      body: `${e.description} · PKR ${(amount / 100).toLocaleString('en-PK')}. A pre-filled ${kind} is waiting in Journals → From other companies: check it, edit if needed, and post it.`.slice(0, 500),
+      body: `${e.description} · ${fmtPkrCents(amount)}. A pre-filled ${kind} is waiting in Journals → From other companies: check it, edit if needed, and post it.`.slice(0, 500),
       link: '/accounting/journal?tab=entry', entityType: 'IntercompanyJournalDraft', entityId: e.id, actorId: actorId ?? null,
       dedupeKey: `journal.intercompany:${e.id}:${target}`,
     }, actorId)

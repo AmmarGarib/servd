@@ -58,13 +58,13 @@ import { codCloseCheck } from '../reconciliation/codCloseCheck.js'
 import { onAccountCloseChecks } from './onAccountCloseChecks.js'
 import { nightAuditCloseCheck } from '../nightAudit/closeCheck.js'
 import { servdFilingsCloseCheck } from './servdFilings.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 /** A close never looks further back than this many months (the oldest are dropped). */
 export const MAX_CLOSE_MONTHS = 24
 
 const PKT_OFFSET_MS = 5 * 3600_000
 
-const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 function pktYearMonth(at: Date): { y: number; m: number } {

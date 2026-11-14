@@ -36,7 +36,7 @@ import {
   requireActiveCompany, assertConceptAttachable, assertLocationOfCompany, assertConceptOfCompany,
   assertMemberOfCompany, assertSupplierOfCompany, assertBankAccountOfCompany,
 } from './companyRefs.js'
-import { type DbMoney, assertMoneyFits, toCents, zMoneyCents } from '../../lib/money.js'
+import { type DbMoney, assertMoneyFits, toCents, zMoneyCents, fmtPkrCents } from '../../lib/money.js'
 import { moneyAccountCode, zReceiptMethod, zPaymentRef, assertPaymentReference } from '../../lib/bankAccounts.js'
 import { equipmentLocationsOf } from '../../lib/generalLocation.js'
 import { findPaymentReferenceUses } from '../../lib/paymentRefs.js'
@@ -235,7 +235,7 @@ async function maybeFireOverBudgetFlag(projectId: string, lineId: string): Promi
     conceptId: project.conceptId,
     severity: overBy > envelope * 0.1 ? 'high' : 'medium',
     title: `CapEx project over budget: ${project.name}`,
-    description: `Committed PKR ${(committed / 100).toLocaleString()} on a PKR ${(envelope / 100).toLocaleString()} envelope. Over by PKR ${(overBy / 100).toLocaleString()}.`,
+    description: `Committed ${fmtPkrCents(committed)} on a ${fmtPkrCents(envelope)} envelope. Over by ${fmtPkrCents(overBy)}.`,
     entityType: 'CapexProject',
     entityId: projectId,
     amountCents: overBy,
@@ -876,7 +876,7 @@ export async function financePlanningRoutes(fastify: FastifyInstance) {
         // never erased) — in the reversal's transaction, before the row goes.
         await moveToTrash(tx, req, {
           type: 'capex_payment', entityId: p.id, tenantId, conceptId: line.project.conceptId,
-          title: `${p.label} instalment — PKR ${(toCents(p.amountCents) / 100).toLocaleString('en-PK')}`, subtitle: line.item,
+          title: `${p.label} instalment — ${fmtPkrCents(toCents(p.amountCents))}`, subtitle: line.item,
           parent: { type: 'capex_line', id: p.lineId }, reason,
           snapshot: takeSnapshot('CapexPayment', payment),
         })

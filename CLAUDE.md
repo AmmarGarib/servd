@@ -2506,6 +2506,14 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   4-card board (`/expo/station/:id/board`, Start, timers, no sound) — needs a tablet app build to reach devices.
   Left: recipes' private `scopedConceptIdSet` (does not agree with `conceptIdsInScope`). Tests:
   `tests/recipeOneOwnerOneBrand.test.ts`, `tests/moneyAccountsOne.test.ts`, `tests/brandProvinceRegistered.test.ts`.
+- **Clean-up step 3 (2026-11-14).** Amounts in MESSAGES AND NOTICES (bell, WhatsApp, email, flags, error text) are
+  written by ONE helper, `lib/money.ts fmtPkrCents` — "PKR 1,234", paisa only when there are some ("PKR 1,234.50");
+  never a local `pkr` / `Rs` helper in a module. Documents (receipts, pre-bills, tax invoices, payslips, letters,
+  statements, PO emails), report tables / exports and ledger descriptions keep their own formats. The waitlist
+  download and the HR reports go through `lib/reportExport.ts` (`?format=csv|xlsx|pdf`; CSV byte-identical; HR's Excel
+  keeps its own workbook layout, `hr/reports.ts reportXlsx`). The Modules page has no "known gaps" notes. Dead code
+  removed: the retired 2FA / staff-code bodies (routes still answer 410), five unused admin components, unused lib
+  exports. The tables nothing uses keep their data and their company-merge repoint lines.
 - **Item groups under a category (owner, 2026-11-07: "In PO, make item categories like Sea food … Meat …"; answer:
   groups UNDER the existing category, the PO maker can add groups).** `IngredientGroup` (`ingredient_groups`, servd-wide
   like the master — no tenantId, deliberately; unique by normalised name; under ONE `INVENTORY_CATEGORIES` category;

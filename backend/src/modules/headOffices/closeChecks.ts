@@ -32,9 +32,9 @@ import type { CloseCheck, CloseCheckContext, CloseCheckDb, CloseProblem } from '
 import { isMonthEnded, monthLabel } from '../intercompany/fleet.js'
 import { monthReadiness, READINESS_TEXT, type MonthReadiness } from './runs.js'
 import { splitForOrNull } from './splits.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 const LINK = '/accounting/intercompany?tab=recharges'
-const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 export interface RechargeProblem {
   headOfficeId: string

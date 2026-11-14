@@ -85,7 +85,6 @@ function officeMagicMatches(mime: OfficeMime, buf: Buffer): boolean {
   const head = text.replace(/^\uFEFF/, '').trimStart().slice(0, 64).toLowerCase()
   return !/^<(!doctype|html|svg|script|\?xml|body|head|iframe)/.test(head)
 }
-export const isImageMime = (m: string): m is ImageMime => isEvidenceMime(m) && m !== 'application/pdf'
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 

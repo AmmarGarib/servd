@@ -78,6 +78,7 @@ import { statementRoutes } from './statements.js'
 import { cityLedgerBackOfficeRoutes } from './cityLedgerRoutes.js'
 import { chargeOwedCents } from './cityLedger.js'
 import { ACCOUNT_TYPES, ACCOUNT_TYPE_LABEL, type AccountType } from './cityLedger.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -85,7 +86,6 @@ export const CLIENT_STATUSES = ['pending', 'active', 'suspended', 'closed'] as c
 export type ClientStatus = (typeof CLIENT_STATUSES)[number]
 
 const isAdmin = (req: FastifyRequest) => req.staffUser?.role === 'admin'
-const pkr = (cents: number) => `PKR ${(cents / 100).toLocaleString('en-PK')}`
 const actorOf = (req: FastifyRequest) => ({ userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null })
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
 

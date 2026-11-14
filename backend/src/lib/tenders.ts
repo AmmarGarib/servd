@@ -57,10 +57,6 @@ export function isTillTender(m: unknown): m is TillTender {
   return typeof m === 'string' && (TILL_TENDERS as readonly string[]).includes(m)
 }
 
-export function isRefundTender(m: unknown): m is RefundTender {
-  return typeof m === 'string' && (REFUND_TENDERS as readonly string[]).includes(m)
-}
-
 /**
  * Ring-up and quotes accept 'keenu_qr' only as a legacy alias of the digital
  * rate, so an offline-queued pre-deploy ring-up never 400s: it is priced and

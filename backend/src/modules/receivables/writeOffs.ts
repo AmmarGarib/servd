@@ -73,6 +73,7 @@ import { findInScope, lockInvoice, restatus, assertLiveInvoice, balanceOf, total
 import { STATEMENT } from './ledger.js'
 import { lockAccountTx } from './onAccount.js'
 import { chargeOwedCents } from './cityLedger.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient
 
@@ -89,7 +90,6 @@ const PKT_OFFSET_MS = 5 * 3_600_000
 
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}/)
 const isRequesterRole = (role: string) => (WRITE_OFF_REQUESTERS as readonly string[]).includes(role)
-const pkr = (cents: number) => `PKR ${(cents / 100).toLocaleString('en-PK')}`
 const pktDay = (d: Date) => new Date(d.getTime() + PKT_OFFSET_MS).toISOString().slice(0, 10)
 const staffOf = (req: FastifyRequest) => ({ userId: req.staffUser!.id, userEmail: req.staffUser!.email })
 

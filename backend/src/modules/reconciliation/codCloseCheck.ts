@@ -25,6 +25,7 @@ import { fmtPktDate } from '../accounting/dates.js'
 import { codDueWhere, codStatusOf, type CodStatus } from '../../lib/cod.js'
 import { toCents } from '../../lib/money.js'
 import { codeOnlyDelivery } from '../../lib/deliveryRules.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 /** accounting/codPosting.ts's keys (COD_DEBT_SOURCE / COD_TRANSFER_SOURCE_REF) — kept literal here so this check never imports the posting module (pos/service). */
 const COD_DEBT_REF = (paymentId: string) => `cod.rider_debt:${paymentId}`
@@ -79,7 +80,6 @@ export async function codBookedDebtIds(
   return booked
 }
 
-const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 const STATUS_WORDS: Record<CodStatus, string> = {

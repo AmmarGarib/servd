@@ -9,8 +9,6 @@
 //   liabilities  below 2200 → current; 2200+ (e.g. 2210 Due to Garibsons) → non-current
 
 export type AccountTerm = 'current' | 'non_current'
-export const ACCOUNT_TERMS: readonly AccountTerm[] = ['current', 'non_current']
-export const TERM_LABEL: Record<AccountTerm, string> = { current: 'Current', non_current: 'Non-current' }
 
 const lead = (code: string): number | null => {
   const m = /^\s*(\d{4})(?!\d)/.exec(code)

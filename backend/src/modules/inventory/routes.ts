@@ -8,7 +8,7 @@ import { assertConceptOwned, resolveTenantScope } from '../../lib/tenantScope.js
 import { belowParWhere, isBelowPar } from '../../lib/recipeCost.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { INVENTORY_CATEGORIES, costClassOf, isNonFoodCategory, COST_CLASSES } from '../../lib/inventoryClass.js'
-import { assertInt4Fits, sumCents, zInt4Cents } from '../../lib/money.js'
+import { assertInt4Fits, sumCents, zInt4Cents, fmtPkrCents } from '../../lib/money.js'
 import { stockSiteForDocument } from '../../lib/stockSite.js'
 import { consumeFifoTx, ensureFifoReady, latestCostsMany, lockItemsTx, reclassItemLotsTx, STOCK_SOURCE, type LatestCost } from '../../lib/stockLedger.js'
 import { postInventoryDocInSavepoint, postItemReclassTx, WASTE_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
@@ -992,8 +992,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
             hide
               // A line cook is not told what the item costs — only that a photo is needed.
               ? `Waste of ${body.quantity} ${item.unit} of ${item.name} needs a photo. Snap the wasted product before logging.`
-              : `Waste of ${body.quantity} ${item.unit} of ${item.name} is worth PKR ${Math.round(cost / 100).toLocaleString('en-PK')}. `
-                + `Waste above PKR ${(threshold / 100).toFixed(0)} requires a photo. Snap the wasted product before logging.`,
+              : `Waste of ${body.quantity} ${item.unit} of ${item.name} is worth ${fmtPkrCents(cost)}. `
+                + `Waste above ${fmtPkrCents(threshold)} requires a photo. Snap the wasted product before logging.`,
             400,
           )
         }

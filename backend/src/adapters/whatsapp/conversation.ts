@@ -51,12 +51,12 @@ import { findCustomerByPhone } from '../../lib/customer-channels.js'
 import { assertNotBannedAtCompany, activeBanAtCompany } from '../../lib/strikes.js'
 import { banAppealsEnabled, createBanAppeal } from '../../modules/complaints/appeals.js'
 import { AppError } from '../../lib/errors.js'
-import { fmtPkr as fmtPkrShared } from '../../modules/accounting/csv.js'
+import { fmtPkrCents } from '../../lib/money.js'
 import { formatBrandName } from '../../lib/brandName.js'
 import { publicBrandWhere, listedBrandWhere } from '../../lib/publicBrands.js'
 
-// The one PKR formatter (modules/accounting/csv.ts), in the bot's "PKR 1234" form.
-const fmtPkr = (cents: number) => fmtPkrShared(cents, { symbol: true, decimals: 0, group: false })
+// The one message formatter (lib/money.ts): "PKR 1,234", paisa only when there are some.
+const fmtPkr = fmtPkrCents
 
 // ─── Brands that take orders ─────────────────────────────────────────────────
 

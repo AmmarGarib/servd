@@ -117,7 +117,7 @@ describe('(1) procurement money: BIGINT amounts fit up to PKR 900bn, per-unit st
   const tooBig = (res: { statusCode: number; body: string; json: () => { error: { code: string; message: string } } }) => {
     expect(res.statusCode, res.body).toBe(422)
     expect(res.json().error.code).toBe('AMOUNT_TOO_LARGE')
-    expect(res.json().error.message).toMatch(/PKR 900,000,000,000\.00/)
+    expect(res.json().error.message).toMatch(/PKR 900,000,000,000/)
   }
 
   it('one BIGINT ceiling and one INT4 ceiling; the till keeps the INT4 one', () => {

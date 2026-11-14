@@ -69,6 +69,7 @@ import {
   RAAST_TOLERANCE_CENTS, OPEN_ALERT_STATUSES,
 } from '../../connectors/raast/match.js'
 import { notifyConnectorPeople } from '../../connectors/alerts.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 type Tx = Prisma.TransactionClient
 type Db = Tx | typeof defaultPrisma
@@ -119,7 +120,6 @@ export const earliestLineDay = (r: Pick<RaastReceipt, 'createdAt'>, matchWindowM
 export const lineDayFits = (r: Pick<RaastReceipt, 'createdAt' | 'confirmedAt'>, day: number, n: number, matchWindowMin: number): boolean =>
   day >= earliestLineDay(r, matchWindowMin) && day - pktDay(receiptAt(r)) <= n
 
-const pkr = (cents: number) => `PKR ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 
 /** The statement-matching settings of a company's raast connector (defaults when none). */
 export async function raastFinanceSettings(db: Db, tenantId: string): Promise<{ statementMatchDays: number; matchWindowMin: number; provisionalFlagDays: number; refMin: number; refMax: number; smsOn: boolean }> {

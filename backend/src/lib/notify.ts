@@ -2,6 +2,7 @@ import { AppError } from './errors.js'
 import { sendEmail as sendMail, emailConfigured } from './mailer.js'
 import { formatBrandName } from './brandName.js'
 import { orderRefOf } from './orderRef.js'
+import { fmtPkrCents } from './money.js'
 import { testCompanyBlocks, type SendScope } from './outboundScope.js'
 
 const isProd = process.env['NODE_ENV'] === 'production'
@@ -252,7 +253,7 @@ export async function sendOrderReceipt(opts: {
   const scope: SendScope = { tenantId: opts.tenantId ?? null, audience: 'customer' }
   const baseUrl = process.env['STOREFRONT_URL'] ?? 'http://localhost:3002'
   const trackUrl = `${baseUrl}/orders/${opts.orderId}`
-  const fmt = (cents: number) => `Rs. ${(cents / 100).toLocaleString()}`
+  const fmt = fmtPkrCents
 
   const itemRows = opts.items
     .map(i => `<tr><td>${i.quantity}× ${i.name}</td><td align="right">${fmt(i.unitPriceCents * i.quantity)}</td></tr>`)

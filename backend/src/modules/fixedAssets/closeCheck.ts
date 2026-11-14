@@ -16,8 +16,8 @@ import type { CloseCheck, CloseProblem } from '../accounting/closeCheckTypes.js'
 import { toCents } from '../../lib/money.js'
 import { lastCompletedPeriodPkt, lastPeriodEndingBy, periodIndex } from './schedule.js'
 import { chargeThrough, unchargedThrough } from './service.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
-const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 
 /** The last month a lock through `lockedThrough` covers that has also ended (never the running month). */
 function closeThroughPeriod(lockedThrough: Date): string {

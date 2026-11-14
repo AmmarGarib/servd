@@ -44,6 +44,7 @@ import { MANUAL_FILABLE, recordManualFiling, SERVD_CHANNEL } from '../../connect
 import { DIRECT_FISCAL_DRIVERS } from '../../connectors/registry.js'
 import { fmtPktDate, parsePktEndOfDay, parsePktStartOfDay } from './dates.js'
 import type { CloseCheck } from './closeCheckTypes.js'
+import { fmtPkrCents } from '../../lib/money.js'
 
 /** Who records a portal filing: the CEO and finance (the /accounting module gate holds finance to 'accounting'). */
 export const SERVD_FILERS = ['admin', 'finance'] as UserRole[]
@@ -210,7 +211,7 @@ export const servdFilingsCloseCheck: CloseCheck = {
       key: 'servd_sales_unfiled',
       severity: 'block',
       title: 'Sales closed in servd not filed on the portal',
-      detail: `${count} fiscal document${count === 1 ? '' : 's'} (PKR ${(cents / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}) of bills closed in servd on or before ${fmtPktDate(ctx.newLock)} ${count === 1 ? 'has' : 'have'} not been recorded as filed on the SRB / FBR portal. `
+      detail: `${count} fiscal document${count === 1 ? '' : 's'} (${fmtPkrCents(cents)}) of bills closed in servd on or before ${fmtPktDate(ctx.newLock)} ${count === 1 ? 'has' : 'have'} not been recorded as filed on the SRB / FBR portal. `
         + 'File them on the portal, then record the filing on Finance → Servd sales to file — or close anyway (CEO, with a reason).',
       count,
       cents,

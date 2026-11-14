@@ -39,7 +39,7 @@ import { enqueueFiscalRefundTx, kickFiscal } from '../../connectors/fiscal/outbo
 import { fiscalViewForOrder, legacySrbAlias, type FiscalView } from '../../connectors/fiscal/view.js'
 import { orderRefOf } from '../../lib/orderRef.js'
 import { withSavepoint } from '../../lib/savepoint.js'
-import { INT4_MAX_CENTS, sumCents, toCents } from '../../lib/money.js'
+import { INT4_MAX_CENTS, sumCents, toCents, fmtPkrCents } from '../../lib/money.js'
 // Raast QR (2026-10-12): the till's ONE tender set, the per-company Raast lock
 // (taken FIRST, before the order lock — M2/M3) and the receipt side of a
 // Raast tender.
@@ -747,7 +747,7 @@ export const MAX_AMOUNT_CENTS = INT4_MAX_CENTS
 export function assertAmountsFit(...amounts: Array<number | null | undefined>): void {
   for (const a of amounts) {
     if (a != null && Number.isFinite(a) && Math.abs(a) > MAX_AMOUNT_CENTS) {
-      throw new AppError('AMOUNT_TOO_LARGE', `That amount (PKR ${(a / 100).toLocaleString('en-PK', { maximumFractionDigits: 0 })}) is too large — check the figure you typed`, 422)
+      throw new AppError('AMOUNT_TOO_LARGE', `That amount (${fmtPkrCents(a)}) is too large — check the figure you typed`, 422)
     }
   }
 }

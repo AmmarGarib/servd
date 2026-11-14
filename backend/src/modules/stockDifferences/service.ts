@@ -44,6 +44,7 @@ import { flagException, type ExceptionKind } from '../../lib/exceptions.js'
 import { ACCT, postJournalEntry, type JournalLineInput } from '../accounting/journal.js'
 import { fmtPktDate } from '../accounting/dates.js'
 import type { CloseCheck } from '../accounting/closeCheckTypes.js'
+import { fmtPkrCents as pkr } from '../../lib/money.js'
 
 type Db = Prisma.TransactionClient | PrismaClient
 
@@ -82,7 +83,6 @@ export const STOCK_DIFFERENCE_QUERIED_KIND: ExceptionKind = 'stock_difference_qu
 export const STOCK_DIFFERENCE_APPROVERS = ['admin'] as const
 
 const PKT_MS = 5 * 3600_000
-const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 /** 'YYYY-MM' of an instant, Pakistan time. */
 const pktMonth = (d: Date) => fmtPktDate(d).slice(0, 7)
