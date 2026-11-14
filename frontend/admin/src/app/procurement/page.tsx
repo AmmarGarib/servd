@@ -873,12 +873,27 @@ const noSupplier = (po: { supplier?: { systemKind?: string | null } | null }) =>
 const poSupplierName = (po: { supplier?: { name: string; systemKind?: string | null } | null }) =>
   noSupplier(po) ? 'Not chosen yet' : po.supplier?.name ?? '—'
 
-/** Choose the supplier of a PO raised without one (PUT /purchase-orders/:id/supplier) — suppliers of the PO's company. */
+// Suppliers are servd's (owner, 2026-11-14): ONE list for every company. A pick is the company's own account with the
+// supplier when it has one (its id), else the servd supplier ("master:<id>") — the server opens the account.
+interface SupplierMasterRow { id: string; name: string; companySupplierId: string | null }
+function useServdSuppliers() {
+  return useQuery({ queryKey: ['procurement', 'supplier-masters'], queryFn: () => api.get<SupplierMasterRow[]>('/procurement/supplier-masters') })
+}
+const servdPickValue = (m: SupplierMasterRow) => m.companySupplierId ?? `master:${m.id}`
+const supplierPickBody = (v: string): { supplierId?: string; masterSupplierId?: string } =>
+  v.startsWith('master:') ? { masterSupplierId: v.slice(7) } : v ? { supplierId: v } : {}
+
+/** Choose the supplier of a PO raised without one (PUT /purchase-orders/:id/supplier) — any servd supplier. */
 function ChooseSupplier({ po, qc }: { po: PurchaseOrder; qc: ReturnType<typeof useQueryClient> }) {
   const { data: suppliers = [] } = useQuery({ queryKey: ['procurement', 'suppliers'], queryFn: () => api.get<Supplier[]>('/procurement/suppliers') })
-  const mine = suppliers.filter((s) => !po.supplier?.tenantId || s.tenantId === po.supplier.tenantId)
+  const { data: servd = [] } = useServdSuppliers()
+  // The PO's own company's accounts by id; every other servd supplier by its servd id (the server opens the account).
+  const own = suppliers.filter((s) => !po.supplier?.tenantId || s.tenantId === po.supplier.tenantId)
+  const ownNames = new Set(own.map((s) => s.name.trim().toLowerCase()))
+  const mine = [...own.map((s) => ({ id: s.id, name: s.name })), ...servd.filter((m) => !ownNames.has(m.name.trim().toLowerCase())).map((m) => ({ id: `master:${m.id}`, name: m.name }))]
+    .sort((a, b) => a.name.localeCompare(b.name))
   const set = useMutation({
-    mutationFn: (supplierId: string) => api.put(`/procurement/purchase-orders/${po.id}/supplier`, { supplierId }),
+    mutationFn: (pick: string) => api.put(`/procurement/purchase-orders/${po.id}/supplier`, supplierPickBody(pick)),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
       void qc.invalidateQueries({ queryKey: ['procurement', 'po', po.id] })
@@ -908,6 +923,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
     queryFn: () => api.get<InventoryItem[]>('/inventory'),
   })
 
+  const { data: servd = [] } = useServdSuppliers()
   // Finance raises POs but never edits the supplier master (owner, 2026-11-10): no "+ New supplier" for it.
   const isFinance = useAuthStore((st) => st.user?.role) === 'finance'
   // A draft from the Reorder tab arrives pre-filled; the buyer can still change anything.
@@ -937,6 +953,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
     onSuccess: (sup) => {
       qc.setQueryData<Supplier[]>(['procurement', 'suppliers'], (prev = []) => [...prev.filter((x) => x.id !== sup.id), sup])
       void qc.invalidateQueries({ queryKey: ['procurement', 'suppliers'] })
+      void qc.invalidateQueries({ queryKey: ['procurement', 'supplier-masters'] })
       setSupplierId(sup.id); setNewSupplier(null)
     },
   })
@@ -944,7 +961,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   // Editing a draft PATCHes it (its brand is kept); otherwise a new draft is created.
   const mut = useMutation({
     mutationFn: () => (editId ? (body: unknown) => api.patch(`/procurement/purchase-orders/${editId}`, body) : (body: unknown) => api.post('/procurement/purchase-orders', body))({
-      supplierId: supplierId || null, expectedDate: expectedDate || null,
+      ...(supplierId ? supplierPickBody(supplierId) : { supplierId: null }), expectedDate: expectedDate || null,
       notes: notes || null,
       buyerUserId: buyerUserId && buyerChoices.some((b) => b.userId === buyerUserId) ? buyerUserId : null,
       ...(editId ? { conceptId: initial?.conceptId ?? null } : {}),
@@ -1016,7 +1033,9 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
             setNewSupplier(null); setSupplierId(e.target.value)
           }} className={fi}>
             <option value="">No supplier yet (choose later)</option>
-            {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {/* servd's one supplier list; a supplier already picked that is not on it (an older draft) stays listed. */}
+            {servd.map((m) => <option key={m.id} value={servdPickValue(m)}>{m.name}</option>)}
+            {suppliers.filter((s) => s.id === supplierId && !servd.some((m) => m.companySupplierId === s.id)).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             {!isFinance && <option value="__new">+ New supplier…</option>}
           </Select>
         </Field>
@@ -2747,6 +2766,7 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         <LinkButton tone="muted" type="button" onClick={onClose} aria-label="Close"><FIcon name="x" size={14} /></LinkButton>
       </div>
       <DraftNotice draft={draft} />
+      <p className="text-xs text-s-muted">Name, phone, email, address, NTN and filer status are shared across servd — one supplier for every company. Balances, bills, payments and terms stay with each company.</p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Field label="Name" required error={err === 'Supplier name is required.' ? err : null}>
           <Input required enterKeyHint="next" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fi} autoFocus />

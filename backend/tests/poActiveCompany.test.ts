@@ -1,5 +1,5 @@
 // A new PO binds to the ACTIVE company (owner, 2026-11-14: POs raised with Flipd picked landed in GS Foods because the
-// supplier was GS Foods'). Another of the caller's own companies' supplier is refused, never silently filed there.
+// supplier was GS Foods'). Suppliers are servd's: the pick resolves to the active company's own account with them.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { ZodError } from 'zod'
@@ -41,12 +41,23 @@ const post = (payload: unknown, activeTenant?: string) => app.inject({
 })
 
 describe('a new PO lands in the company picked', () => {
-  it("company B picked + company A's supplier → 422, nothing created", async () => {
-    const before = await prisma.purchaseOrder.count()
-    const r = await post({ supplierId: supA, lines: [{ inventoryItemId: itemA, quantityOrdered: 2, unitCostCents: 1000 }] }, B.tenantId)
-    expect(r.statusCode, r.body).toBe(422)
-    expect(r.json().error.code).toBe('SUPPLIER_NOT_IN_ACTIVE_COMPANY')
-    expect(await prisma.purchaseOrder.count()).toBe(before)
+  it("company B picked + company A's supplier → the PO is company B's, on B's own account with that supplier", async () => {
+    // Suppliers are servd's (owner, 2026-11-14): A's account is linked to its servd supplier first.
+    const patched = await app.inject({ method: 'PATCH', url: `/procurement/suppliers/${supA}`, payload: { notes: 'link' }, headers: { authorization: `Bearer ${buyer.token}` } })
+    expect(patched.statusCode, patched.body).toBe(200)
+    const r = await post({ supplierId: supA, lines: [{ inventoryItemId: itemB, quantityOrdered: 2, unitCostCents: 1000 }] }, B.tenantId)
+    expect(r.statusCode, r.body).toBe(201)
+    const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: r.json().id }, include: { supplier: true } })
+    expect(po.supplier.tenantId).toBe(B.tenantId)
+    expect(po.supplier.name).toBe('POAC Pack It Up')
+    expect(po.supplierId).not.toBe(supA)
+    const a = await prisma.supplier.findUniqueOrThrow({ where: { id: supA } })
+    expect(po.supplier.masterSupplierId).toBe(a.masterSupplierId)
+    // A second PO reuses B's account — never a second one.
+    const again = await post({ supplierId: supA, lines: [{ inventoryItemId: itemB, quantityOrdered: 1, unitCostCents: 1000 }] }, B.tenantId)
+    expect(again.statusCode, again.body).toBe(201)
+    expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: again.json().id } })).supplierId).toBe(po.supplierId)
+    expect(await prisma.supplier.count({ where: { tenantId: B.tenantId, masterSupplierId: a.masterSupplierId, deletedAt: null } })).toBe(1)
   })
 
   it('company B picked + no supplier → the PO is company B\'s', async () => {

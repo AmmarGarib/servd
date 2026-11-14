@@ -191,6 +191,9 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Kitchen flow (2026-10-26): the servd-wide ingredient master's live-name and one-item-per-company keys + CHECKs.
   for (const statement of migrationSection('20261026120000_ingredient_master',
     '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
+  // servd supplier list (2026-11-14): one live account per servd supplier per company.
+  for (const statement of migrationSection('20261114120000_supplier_master',
+    '-- ─── SQL-only objects')) await applyIdempotent(prisma, statement)
   // Kitchen flow (2026-10-26): par targets and the recipe portion CHECKs (RLS out).
   for (const statement of migrationSection('20261026120200_par_targets',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)

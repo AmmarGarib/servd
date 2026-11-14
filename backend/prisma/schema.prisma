@@ -3040,6 +3040,11 @@ model Supplier {
   // System supplier rows (never offered in pickers, never billed): 'cash_purchases' = the supplier of every
   // receipt settled by a petty-cash spend / cash request (wave B decision P6). One per company (unique below).
   systemKind          String?
+  // The servd supplier this row is ONE company's account with (owner, 2026-11-14: "we need to make suppliers belong to
+  // servd. just like the ingredient master list"). Null = a system supplier or a legacy company-less row. One LIVE
+  // account per master per company (SQL partial unique suppliers_tenant_master_live_key).
+  masterSupplierId    String?
+  masterSupplier      SupplierMaster?        @relation(fields: [masterSupplierId], references: [id], onDelete: SetNull)
 
   assignedStaff  User?                  @relation("SupplierAssignee", fields: [assignedStaffId], references: [id], onDelete: SetNull)
   tenant         Tenant?                @relation("TenantSuppliers", fields: [tenantId], references: [id], onDelete: SetNull)
@@ -3058,7 +3063,37 @@ model Supplier {
   @@index([tenantId])
   @@index([whatsappPhone])
   @@index([email])
+  @@index([masterSupplierId])
   @@map("suppliers")
+}
+
+// The servd supplier list (owner, 2026-11-14) — platform data, deliberately NO tenantId, like IngredientMaster. It is
+// WHO the supplier is (lib/supplierMaster.ts MASTER_FIELDS); each company's `Supplier` row (masterSupplierId) is that
+// company's ACCOUNT with them: its bills, payments, opening balance, terms, buyer. Money never lives here.
+model SupplierMaster {
+  id                  String    @id @default(uuid())
+  name                String
+  normalizedName      String
+  category            String?
+  phone               String?
+  email               String?
+  whatsappPhone       String?
+  address             String?
+  taxId               String?
+  filerStatus         String    @default("unknown")
+  whtExemptCertNo     String?
+  whtExemptUntil      DateTime?
+  defaultTaxAuthority String?
+  defaultWhtSection   String?
+  mergedIntoId        String?
+  createdByUserId     String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  suppliers Supplier[]
+
+  @@index([normalizedName])
+  @@map("supplier_masters")
 }
 
 // ─── Recipe costing ───────────────────────────────────────────────────────────

@@ -2451,6 +2451,23 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   `costsHiddenFor` login; audit `ingredient_master.price`), stored in `IngredientMasterPrice` (platform table, no
   tenantId, one row per edit, never edited): a typed price is the LATEST until a newer delivery comes in (source
   `sheet`, in the history). Tests: `tests/ingredientMaster.test.ts`, `tests/recipeCompanyShare.test.ts`.
+- **Suppliers belong to servd (owner, 2026-11-14: "we need to make suppliers belong to servd. just like the ingredient
+  master list").** `SupplierMaster` (`supplier_masters`, deliberately NO `tenantId`): the DEFINITION — name, category,
+  phone, email, WhatsApp, address, NTN, filer status, WHT exemption, default tax authority / WHT section. Each company's
+  `Supplier` row (`masterSupplierId`) is its ACCOUNT: balance, opening balance, terms, bills, payments, POs, assigned
+  staff — money never crosses companies. ONE live account per master per company (SQL-only partial unique
+  `suppliers_tenant_master_live_key`). `lib/supplierMaster.ts` is the one helper (`findOrCreateMasterTx`,
+  `ensureCompanySupplierForMasterTx` — THE way a company's account for a servd supplier is found or made,
+  `supplierForCompanyTx`, `syncAccountsFromMasterTx`). A PO (create, edit, `PUT …/supplier`) takes `supplierId` or
+  `masterSupplierId` and always lands on the account of the PO's OWN company (made on first use) — never another
+  company's row. `POST /procurement/suppliers` joins the servd list (409 `SUPPLIER_ALREADY_IN_COMPANY`); `PATCH` writes
+  definition fields to the master and every company's account follows (rename = CEO / fnb_manager, 409
+  `SUPPLIER_NAME_TAKEN`). `GET /procurement/supplier-masters?q=`, `POST /procurement/suppliers/from-master`, `POST
+  /procurement/supplier-masters/:id/merge {intoId}` (re-points links, posts nothing; a company holding both 409
+  `MERGE_NEEDS_ACCOUNT_MERGE`). System suppliers and company-less rows stay unlinked. Migration
+  `20261114120000_supplier_master` (same name in two companies = one master; a second live one in the same company
+  "<name> (duplicate n)"). Not switched yet: the supplier pickers on cash vouchers, CapEx, OpEx, bills and payments
+  still list the company's own accounts. Tests: `tests/supplierMaster.test.ts`, `tests/poActiveCompany.test.ts`.
 - **Item groups under a category (owner, 2026-11-07: "In PO, make item categories like Sea food … Meat …"; answer:
   groups UNDER the existing category, the PO maker can add groups).** `IngredientGroup` (`ingredient_groups`, servd-wide
   like the master — no tenantId, deliberately; unique by normalised name; under ONE `INVENTORY_CATEGORIES` category;

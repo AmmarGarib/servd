@@ -4,7 +4,11 @@ import { trashReasonOf } from '../../lib/trash.js'
 import { classificationOf, classificationsOfReferences } from '../accounting/paymentsRegister.js'
 import type { Prisma } from '@prisma/client'
 import { z } from 'zod'
-import { prisma } from '../../lib/prisma.js'
+import { prisma, serviceClient } from '../../lib/prisma.js'
+import {
+  SUPPLIER_MASTER_FIELDS, accountFieldsFromMaster, cleanSupplierName, ensureCompanySupplierForMasterTx, findOrCreateMasterTx,
+  normalizeSupplierName, supplierForCompanyTx, syncAccountsFromMasterTx,
+} from '../../lib/supplierMaster.js'
 import { requireAuth, MANAGERS, ADMIN_ONLY, ALL_STAFF, FINANCE_TEAM, PROCUREMENT_TEAM } from '../auth/middleware.js'
 import { resolveTenantScope, scopeTenantWhere } from '../../lib/tenantScope.js'
 import { NotFoundError, AppError, ForbiddenError } from '../../lib/errors.js'
@@ -189,6 +193,8 @@ const poCreateSchema = z.object({
   // Optional (owner, 2026-11-03: "POs should be able to go thru without supplier attached"): none = the company's
   // "no supplier yet" placeholder (service.ts noSupplierFor); chosen later with PUT /purchase-orders/:id/supplier.
   supplierId:   z.string().uuid().optional().nullable(),
+  // A servd supplier (lib/supplierMaster.ts): the PO's company's account with them is found or opened.
+  masterSupplierId: z.string().uuid().optional().nullable(),
   expectedDate: z.string().optional().nullable(),
   reference:    z.string().optional().nullable(),
   notes:        z.string().optional().nullable(),
@@ -292,6 +298,17 @@ const creditApplicationSchema = z.object({
   billId:      z.string().uuid(),
   amountCents: zMoneyCents('An amount applied to a bill', { sign: 'positive' }),
 })
+
+// Suppliers are servd's (owner, 2026-11-14; lib/supplierMaster.ts): whichever supplier is picked — a servd supplier, or
+// any company's account with one — the document lands on `tenantId`'s OWN account with that supplier (opened when the
+// company has never used them). The caller's right to write in `tenantId` is checked by the route.
+async function supplierIdInCompany(pick: { supplierId?: string | null; masterSupplierId?: string | null }, tenantId: string): Promise<string | null> {
+  if (pick.masterSupplierId) return (await serviceClient.$transaction((tx) => ensureCompanySupplierForMasterTx(tx, pick.masterSupplierId!, tenantId))).id
+  if (pick.supplierId) return (await serviceClient.$transaction((tx) => supplierForCompanyTx(tx, pick.supplierId!, tenantId))).id
+  return null
+}
+/** Renames and merges of a servd supplier: the CEO and the F&B manager (who owns buying). */
+const SUPPLIER_MASTER_REVIEWERS = ['admin', 'fnb_manager'] as UserRole[]
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
@@ -409,13 +426,34 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     // Strip body.tenantId before spreading — Prisma needs the resolved value,
     // not the body field which may be undefined.
     const { tenantId: _bodyTenantId, whtExemptUntil, openingBalanceDate, ...rest } = body
-    const supplier = await prisma.supplier.create({
-      data: {
-        ...rest,
+    // Suppliers are servd's (lib/supplierMaster.ts): the name finds the servd supplier (made when servd has none) and
+    // this row is the company's ACCOUNT with it. A supplier servd already knows keeps its servd details (name, phone,
+    // NTN, filer status…); what was typed here fills only the company's own fields. One live account per company.
+    const created = await serviceClient.$transaction(async (tx) => {
+      const master = await findOrCreateMasterTx(tx, {
+        name: rest.name, phone: rest.phone, whatsappPhone: rest.whatsappPhone, email: rest.email, address: rest.address, taxId: rest.taxId,
+        ...(rest.filerStatus !== undefined ? { filerStatus: rest.filerStatus } : {}),
+        ...(rest.whtExemptCertNo !== undefined ? { whtExemptCertNo: rest.whtExemptCertNo } : {}),
         ...(whtExemptUntil !== undefined ? { whtExemptUntil: exemptUntilOf(whtExemptUntil) } : {}),
-        ...(openingBalanceDate !== undefined ? { openingBalanceDate: openingDateOf(openingBalanceDate) } : {}),
-        tenantId,
-      },
+        ...(rest.defaultTaxAuthority !== undefined ? { defaultTaxAuthority: rest.defaultTaxAuthority } : {}),
+        ...(rest.defaultWhtSection !== undefined ? { defaultWhtSection: rest.defaultWhtSection } : {}),
+        createdByUserId: req.staffUser!.id,
+      })
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'supplier.account:' + tenantId + ':' + master.id}))`
+      const has = await tx.supplier.findFirst({ where: { tenantId, masterSupplierId: master.id, deletedAt: null }, select: { id: true } })
+      if (has) throw new AppError('SUPPLIER_ALREADY_IN_COMPANY', `${master.name} is already one of this company's suppliers`, 409, { supplierId: has.id })
+      return tx.supplier.create({
+        data: {
+          notes: rest.notes, paymentTermsDays: rest.paymentTermsDays, leadTimeDays: rest.leadTimeDays, openingBalanceCents: rest.openingBalanceCents,
+          ...accountFieldsFromMaster(master),
+          ...(openingBalanceDate !== undefined ? { openingBalanceDate: openingDateOf(openingBalanceDate) } : {}),
+          tenantId, masterSupplierId: master.id,
+        },
+        select: { id: true },
+      })
+    })
+    const supplier = await prisma.supplier.findUniqueOrThrow({
+      where: { id: created.id },
       include: {
         assignedStaff: { select: { id: true, name: true } },
         tenant:        { select: { id: true, name: true, slug: true } },
@@ -494,11 +532,60 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         if (!staff) throw new AppError('STAFF_NOT_IN_COMPANY', 'That staff member does not work for this supplier\'s company', 422)
       }
       const { whtExemptUntil, openingBalanceDate, ...fields } = body
+      // servd suppliers (lib/supplierMaster.ts): WHO the supplier is (name, phone, NTN, filer status…) is ONE servd
+      // record — a change here changes it for every company's account. A rename is the CEO's and the F&B manager's.
+      const defChange: Record<string, unknown> = {}
+      for (const k of SUPPLIER_MASTER_FIELDS) {
+        const v = k === 'whtExemptUntil' ? (whtExemptUntil !== undefined ? exemptUntilOf(whtExemptUntil) : undefined) : (fields as Record<string, unknown>)[k]
+        if (v === undefined) continue
+        const cur = (existing as unknown as Record<string, unknown>)[k]
+        const same = cur instanceof Date || v instanceof Date ? (cur as Date | null)?.valueOf() === (v as Date | null)?.valueOf() : (cur ?? null) === (v ?? null)
+        if (!same) defChange[k] = k === 'name' ? cleanSupplierName(v as string) : v
+      }
+      if (typeof defChange.name === 'string' && defChange.name === existing.name) delete defChange.name
+      if (defChange.name !== undefined && existing.masterSupplierId && !(SUPPLIER_MASTER_REVIEWERS as string[]).includes(req.staffUser!.role)) {
+        throw new ForbiddenError('Only the CEO or the F&B manager renames a servd supplier — it is renamed for every company')
+      }
+      const targetCo = body.tenantId ?? existing.tenantId
+      const linkedMasterId = await serviceClient.$transaction(async (tx) => {
+        let masterId = existing.masterSupplierId
+        if (!masterId && targetCo) {
+          // A row with no servd supplier (legacy, or unlinked by a company merge) joins the list once it has a company
+          // — unless that company already has an account with the same supplier: then it stays its own row.
+          const merged = { ...(existing as unknown as Record<string, unknown>), ...defChange }
+          const master = await findOrCreateMasterTx(tx, {
+            ...Object.fromEntries(SUPPLIER_MASTER_FIELDS.filter((k) => k !== 'name').map((k) => [k, merged[k] ?? null])),
+            name: String(merged.name), createdByUserId: req.staffUser!.id,
+          })
+          const twin = existing.deletedAt ? null : await tx.supplier.findFirst({ where: { tenantId: targetCo, masterSupplierId: master.id, deletedAt: null, id: { not: existing.id } }, select: { id: true } })
+          if (twin) return null
+          masterId = master.id
+          delete defChange.name
+        } else if (masterId && targetCo && !existing.deletedAt && targetCo !== existing.tenantId) {
+          // The account moves company: one live account per servd supplier per company.
+          const twin = await tx.supplier.findFirst({ where: { tenantId: targetCo, masterSupplierId: masterId, deletedAt: null, id: { not: existing.id } }, select: { id: true } })
+          if (twin) throw new AppError('SUPPLIER_ALREADY_IN_COMPANY', `That company already has an account with ${existing.name}`, 409, { supplierId: twin.id })
+        }
+        if (!masterId) return null
+        if (Object.keys(defChange).length > 0) {
+          if (typeof defChange.name === 'string') {
+            const normalizedName = normalizeSupplierName(defChange.name)
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'supplier.master:' + normalizedName}))`
+            const clash = await tx.supplierMaster.findFirst({ where: { normalizedName, mergedIntoId: null, id: { not: masterId } }, select: { id: true } })
+            if (clash) throw new AppError('SUPPLIER_NAME_TAKEN', `servd already has a supplier called ${defChange.name} — merge the two instead of renaming`, 409, { masterSupplierId: clash.id })
+            defChange.normalizedName = normalizedName
+          }
+          await tx.supplierMaster.update({ where: { id: masterId }, data: defChange })
+        }
+        if (masterId !== existing.masterSupplierId) await tx.supplier.update({ where: { id: existing.id }, data: { masterSupplierId: masterId } })
+        await syncAccountsFromMasterTx(tx, masterId)
+        return masterId
+      })
+      const ownFields = Object.fromEntries(Object.entries(fields).filter(([k]) => !(SUPPLIER_MASTER_FIELDS as readonly string[]).includes(k)))
       const updated = await prisma.supplier.update({
         where: { id: req.params.id },
         data:  {
-          ...fields,
-          ...(whtExemptUntil !== undefined ? { whtExemptUntil: exemptUntilOf(whtExemptUntil) } : {}),
+          ...(linkedMasterId ? ownFields : { ...fields, ...(whtExemptUntil !== undefined ? { whtExemptUntil: exemptUntilOf(whtExemptUntil) } : {}) }),
           ...(openingBalanceDate !== undefined ? { openingBalanceDate: openingDateOf(openingBalanceDate) } : {}),
         },
         include: {
@@ -506,6 +593,15 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           tenant:        { select: { id: true, name: true, slug: true } },
         },
       })
+      if (Object.keys(defChange).length > 0 && existing.masterSupplierId) {
+        await audit({
+          category: 'accounting', action: 'supplier_master.update', entity: 'SupplierMaster', entityId: existing.masterSupplierId,
+          userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: existing.tenantId,
+          before: Object.fromEntries(Object.keys(defChange).filter((k) => k !== 'normalizedName').map((k) => [k, (existing as unknown as Record<string, unknown>)[k] ?? null])) as never,
+          after: Object.fromEntries(Object.entries(defChange).filter(([k]) => k !== 'normalizedName')) as never,
+          metadata: { actorRole: req.staffUser!.role },
+        })
+      }
       // A new opening balance, or a move to another company, re-posts it.
       // (A new opening DATE is refused above once anything is posted.)
       if (body.openingBalanceCents !== undefined || body.openingBalanceDate !== undefined || body.tenantId !== undefined) {
@@ -522,6 +618,71 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       return updated
     },
   )
+
+  // ── The servd supplier list (owner, 2026-11-14; lib/supplierMaster.ts) ──────
+  // GET  /procurement/supplier-masters?q=      every servd supplier (name, phone, NTN, filer status) with the ACTIVE
+  //                                            company's account id when it has one. No balances — money is per company.
+  // POST /procurement/suppliers/from-master    the active company's account with a servd supplier (found or opened).
+  // POST /procurement/supplier-masters/:id/merge {intoId}  two entries for one supplier → one (CEO / F&B manager).
+  fastify.get('/supplier-masters', { preHandler: requireAuth(...PROCUREMENT_TEAM, 'finance') }, async (req) => {
+    const q = z.object({ q: z.string().trim().max(100).optional() }).parse(req.query ?? {})
+    const su = req.staffUser!
+    const active = su.tenantId && su.memberTenantIds.includes(su.tenantId) ? su.tenantId : null
+    const masters = await serviceClient.supplierMaster.findMany({
+      where: { mergedIntoId: null, ...(q.q ? { normalizedName: { contains: normalizeSupplierName(q.q) } } : {}) },
+      select: { id: true, name: true, category: true, phone: true, taxId: true, filerStatus: true },
+      orderBy: { name: 'asc' }, take: 1000,
+    })
+    const mine = active ? await prisma.supplier.findMany({
+      where: { tenantId: active, deletedAt: null, masterSupplierId: { in: masters.map((m) => m.id) } },
+      select: { id: true, masterSupplierId: true },
+    }) : []
+    const accountOf = new Map(mine.map((s) => [s.masterSupplierId!, s.id]))
+    return masters.map((m) => ({ ...m, companySupplierId: accountOf.get(m.id) ?? null }))
+  })
+
+  fastify.post('/suppliers/from-master', { preHandler: requireAuth(...PROCUREMENT_TEAM, 'finance') }, async (req, reply) => {
+    const body = z.object({ masterSupplierId: z.string().uuid() }).parse(req.body ?? {})
+    const tenantId = activeTenantOr422(req, null)
+    const r = await serviceClient.$transaction((tx) => ensureCompanySupplierForMasterTx(tx, body.masterSupplierId, tenantId))
+    if (r.created) {
+      await audit({
+        category: 'accounting', action: 'supplier.opened_from_master', entity: 'Supplier', entityId: r.id,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId, metadata: { masterSupplierId: body.masterSupplierId },
+      })
+    }
+    return reply.status(r.created ? 201 : 200).send(await prisma.supplier.findUniqueOrThrow({ where: { id: r.id } }))
+  })
+
+  fastify.post<{ Params: { id: string } }>('/supplier-masters/:id/merge', { preHandler: requireAuth(...SUPPLIER_MASTER_REVIEWERS) }, async (req) => {
+    const { intoId } = z.object({ intoId: z.string().uuid() }).parse(req.body ?? {})
+    if (intoId === req.params.id) throw new AppError('MERGE_SAME', 'Pick a different supplier to merge into', 422)
+    const result = await serviceClient.$transaction(async (tx) => {
+      const [src, dst] = await Promise.all([
+        tx.supplierMaster.findUnique({ where: { id: req.params.id } }), tx.supplierMaster.findUnique({ where: { id: intoId } }),
+      ])
+      if (!src || src.mergedIntoId) throw new NotFoundError('Supplier', req.params.id)
+      if (!dst || dst.mergedIntoId) throw new NotFoundError('Supplier', intoId)
+      // A company with a live account on BOTH keeps two balances — they cannot be folded together here.
+      const both = await tx.$queryRaw<Array<{ tenantId: string }>>`
+        SELECT a."tenantId" FROM suppliers a JOIN suppliers b ON b."tenantId" = a."tenantId"
+         WHERE a."masterSupplierId" = ${src.id} AND b."masterSupplierId" = ${dst.id} AND a."deletedAt" IS NULL AND b."deletedAt" IS NULL`
+      if (both.length > 0) {
+        const names = await tx.tenant.findMany({ where: { id: { in: both.map((b) => b.tenantId) } }, select: { name: true } })
+        throw new AppError('MERGE_NEEDS_ACCOUNT_MERGE', `${names.map((n) => n.name).join(', ')} has an account with both — delete the one it does not use first`, 409)
+      }
+      const moved = await tx.supplier.updateMany({ where: { masterSupplierId: src.id }, data: { masterSupplierId: dst.id } })
+      await tx.supplierMaster.update({ where: { id: src.id }, data: { mergedIntoId: dst.id } })
+      await syncAccountsFromMasterTx(tx, dst.id)
+      return { from: src.name, into: dst.name, accountsMoved: moved.count }
+    })
+    await audit({
+      category: 'accounting', action: 'supplier_master.merge', entity: 'SupplierMaster', entityId: intoId,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: req.staffUser!.tenantId ?? null,
+      metadata: { mergedId: req.params.id, ...result, actorRole: req.staffUser!.role },
+    })
+    return { ok: true, ...result }
+  })
 
   // ?format=csv|xlsx|pdf: the supplier's account statement (lib/reportExport.ts)
   // — opening balance, every live bill (net of withholding), credit note and
@@ -675,21 +836,16 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     // Through a head-office lens ('write' = members ∪ the lens company) a new
     // DRAFT is a proposal (spec §6.4) — allowed; it goes nowhere until submitted.
     // No supplier: the PO is the ACTIVE company's (422 when no single company is active).
-    const supplierId = body.supplierId ?? await noSupplierFor(activeTenantOr422(req, null))
+    // A new PO lands in the ACTIVE company (owner, 2026-11-14: POs raised with Flipd picked landed in GS Foods because
+    // the supplier picked was GS Foods' account). Suppliers are servd's: the pick resolves to the active company's own
+    // account with that supplier, opened when it has never used them. No supplier = its "no supplier yet" placeholder.
+    const activeCo = req.staffUser!.tenantId && req.staffUser!.memberTenantIds.includes(req.staffUser!.tenantId) ? req.staffUser!.tenantId : null
+    const supplierId = (activeCo ? await supplierIdInCompany(body, activeCo) : body.supplierId) ?? await noSupplierFor(activeTenantOr422(req, null))
     const supplier = await findSupplierInScope(req, supplierId, 'write', { live: true })
-    // A PO is its SUPPLIER's company's. A new PO binds to the ACTIVE company (owner, 2026-11-14: POs raised with Flipd
-    // picked landed in GS Foods because the supplier was GS Foods'): another of the caller's own companies' supplier
-    // is refused — never silently filed there. (A head-office lens company is not a member company: unchanged.)
-    const active = req.staffUser!.tenantId
-    if (supplier.tenantId && active && supplier.tenantId !== active
-      && req.staffUser!.memberTenantIds.includes(active) && req.staffUser!.memberTenantIds.includes(supplier.tenantId)) {
-      const names = new Map((await prisma.tenant.findMany({ where: { id: { in: [active, supplier.tenantId] } }, select: { id: true, name: true } })).map((t) => [t.id, t.name]))
-      throw new AppError('SUPPLIER_NOT_IN_ACTIVE_COMPANY',
-        `${supplier.name} is a ${names.get(supplier.tenantId) ?? 'another company'} supplier, and this PO is being raised in ${names.get(active) ?? 'the company picked at the top'}. Pick a ${names.get(active) ?? ''} supplier, add this supplier to ${names.get(active) ?? 'it'} under Suppliers, or leave the supplier empty.`, 422)
-    }
     if (supplier.tenantId) await assertHoMayPropose(req, supplier.tenantId, true, 'a purchase order')
     if (body.buyerUserId && supplier.tenantId) await assertListedBuyer(prisma, supplier.tenantId, body.buyerUserId)
-    const po = await createPo({ ...body, supplierId, createdBy: req.staffUser!.id })
+    const { masterSupplierId: _m, ...poBody } = body
+    const po = await createPo({ ...poBody, supplierId, createdBy: req.staffUser!.id })
     return reply.status(201).send(po)
   })
 
@@ -717,12 +873,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     if (po.supplier.tenantId) await assertHoMayPropose(req, po.supplier.tenantId, po.createdBy === su.id, 'editing this purchase order')
     // The new supplier must be one the caller may see (another company's is 404, as on create); none = this PO's
     // company's "no supplier yet" placeholder.
-    const supplierId = body.supplierId ?? (po.supplier.tenantId ? await noSupplierFor(po.supplier.tenantId) : null)
+    const supplierId = (po.supplier.tenantId ? await supplierIdInCompany(body, po.supplier.tenantId) : body.supplierId)
+      ?? (po.supplier.tenantId ? await noSupplierFor(po.supplier.tenantId) : null)
     if (!supplierId) throw new AppError('SUPPLIER_REQUIRED', 'Pick a supplier for this PO', 422)
     await findSupplierInScope(req, supplierId, 'write', { live: true })
     if (body.buyerUserId && po.supplier.tenantId) await assertListedBuyer(prisma, po.supplier.tenantId, body.buyerUserId)
     const before = await prisma.purchaseOrder.findUnique({ where: { id: po.id }, select: { supplierId: true, totalCents: true, notes: true, expectedDate: true, conceptId: true, buyerUserId: true } })
-    const updated = await updatePoDraft(po.id, su.id, { ...body, supplierId })
+    const { masterSupplierId: _m, ...poBody } = body
+    const updated = await updatePoDraft(po.id, su.id, { ...poBody, supplierId })
     await audit({
       category: 'accounting', action: 'po.edit', entity: 'PurchaseOrder', entityId: po.id,
       userId: su.id, userEmail: su.email ?? null, tenantId: po.supplier.tenantId,
@@ -878,8 +1036,13 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     '/purchase-orders/:id/supplier',
     { preHandler: requireAuth(...PROCUREMENT_TEAM) },
     async (req) => {
-      await guardPo(req, req.params.id)
-      const body = z.object({ supplierId: z.string().uuid() }).parse(req.body ?? {})
+      const guarded = await guardPo(req, req.params.id)
+      const raw = z.object({ supplierId: z.string().uuid().optional(), masterSupplierId: z.string().uuid().optional() })
+        .refine((v) => !!v.supplierId || !!v.masterSupplierId, 'Pick a supplier').parse(req.body ?? {})
+      // The PO's own company's account with the supplier picked (servd suppliers — lib/supplierMaster.ts).
+      const picked = guarded.supplier.tenantId ? await supplierIdInCompany(raw, guarded.supplier.tenantId) : raw.supplierId ?? null
+      if (!picked) throw new AppError('SUPPLIER_REQUIRED', 'Pick a supplier for this PO', 422)
+      const body = { supplierId: picked }
       await findSupplierInScope(req, body.supplierId, 'write', { live: true })
       const r = await setPoSupplier(req.params.id, body.supplierId, req.staffUser!.id)
       const su = req.staffUser!

@@ -584,6 +584,13 @@ async function mergeRequestTables(tx: MergeTx, src: string, dst: string, account
  * @@unique([tenantId, systemKind]) and roll the whole merge back.
  */
 async function mergeSystemSuppliers(tx: MergeTx, src: string, dst: string, srcSlug: string): Promise<number> {
+  // servd suppliers (lib/supplierMaster.ts): one LIVE account per servd supplier per company. Where both companies
+  // have an account with the same supplier, the source's account comes over UNLINKED (both balances stay, each on its
+  // own row) — the CEO deletes the unused one or re-links it from the supplier editor.
+  await tx.$executeRaw`
+    UPDATE suppliers s SET "masterSupplierId" = NULL
+     WHERE s."tenantId" = ${src} AND s."deletedAt" IS NULL AND s."masterSupplierId" IS NOT NULL
+       AND EXISTS (SELECT 1 FROM suppliers d WHERE d."tenantId" = ${dst} AND d."deletedAt" IS NULL AND d."masterSupplierId" = s."masterSupplierId")`
   const srcSys = await tx.supplier.findMany({ where: { tenantId: src, systemKind: { not: null } }, select: { id: true, systemKind: true } })
   let absorbed = 0
   for (const s of srcSys) {
