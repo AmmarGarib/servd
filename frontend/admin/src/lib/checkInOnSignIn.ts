@@ -14,13 +14,20 @@ const SKIP_ROLES = ['admin', 'director']
 const OFF_NETWORK = 'off-network'
 let inFlight: Promise<string | null> | null = null
 
+/** The longest sign-in ever waits for the check-in (owner, 2026-11-14: sign-in hung on "Signing in…"). */
+const SIGN_IN_WAIT_MS = 4000
+/** The longest the check-in waits for a location. The browser's own `timeout` only starts once the person answers
+ *  the "Allow location?" prompt — an unanswered prompt would wait for ever — so this timer is our own. */
+const PLACE_WAIT_MS = 8000
+
 function findPlace(): Promise<{ lat: number; lng: number; accuracyM?: number } | null> {
   return new Promise((resolve) => {
     if (typeof navigator === 'undefined' || !('geolocation' in navigator)) return resolve(null)
+    const timer = setTimeout(() => resolve(null), PLACE_WAIT_MS) // unanswered prompt: check in without a location
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, ...(Number.isFinite(pos.coords.accuracy) && { accuracyM: Math.round(pos.coords.accuracy) }) }),
-      () => resolve(null), // refused or slow: check in without a location
-      { enableHighAccuracy: true, timeout: 8000 },
+      (pos) => { clearTimeout(timer); resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, ...(Number.isFinite(pos.coords.accuracy) && { accuracyM: Math.round(pos.coords.accuracy) }) }) },
+      () => { clearTimeout(timer); resolve(null) }, // refused or slow: check in without a location
+      { enableHighAccuracy: true, timeout: PLACE_WAIT_MS },
     )
   })
 }
@@ -44,7 +51,12 @@ export async function checkInOncePerDay(userId: string | undefined, role: string
 
 /** Returns a page to send the person to ('/time-clock' when a selfie is needed), else null. */
 export async function checkInOnSignIn(role: string | undefined): Promise<string | null> {
-  const r = await tryCheckIn(role, false)
+  // Never hold the sign-in: after SIGN_IN_WAIT_MS the person lands as usual and the check-in carries on behind
+  // (its toast still shows; the shell's once-a-day check covers a check-in that never finished).
+  const r = await Promise.race([
+    tryCheckIn(role, false),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), SIGN_IN_WAIT_MS)),
+  ])
   return r === OFF_NETWORK ? null : r
 }
 
