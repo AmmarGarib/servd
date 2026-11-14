@@ -3,6 +3,7 @@
 // on an account linked to one of mine — its side waits here, pre-filled. "Open" loads it into New entry (editable)
 // and Post books it; "Dismiss" needs a reason. No CEO approval — the CEO is told.
 import { useState } from 'react'
+import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
 import { fmtPkr } from '../../../lib/money'
@@ -16,13 +17,26 @@ export interface MirrorDraft {
 }
 
 export function MirrorDrafts({ onOpen, openId }: { onOpen: (d: MirrorDraft) => void; openId: string | null }) {
-  const { data = [] } = useQuery<MirrorDraft[]>({
+  const { data = [], isLoading, error } = useQuery<MirrorDraft[]>({
     queryKey: ['journal-drafts', 'pending'],
     queryFn: () => api.get<MirrorDraft[]>('/accounting/journal-drafts?status=pending'),
     staleTime: 30_000,
   })
   const mine = data.filter((d) => d.mine)
-  if (mine.length === 0) return null
+  if (isLoading) return null
+  // Always shown (owner, 2026-11-14: "No box") so an empty list explains itself instead of vanishing.
+  if (mine.length === 0) {
+    return (
+      <section className="s-card px-4 py-3" aria-label="From other companies">
+        <p className="text-xs text-s-muted">
+          <span className="font-bold text-s-text">From other companies:</span>{' '}
+          {error
+            ? `could not load (${(error as Error).message}).`
+            : <>nothing waiting. An entry appears here when another company posts a journal on an account linked to one of yours — set the link on <Link href="/configuration/chart-of-accounts" className="underline">Chart of accounts</Link> → the account → &quot;Linked to company&quot;, in both companies.</>}
+        </p>
+      </section>
+    )
+  }
   return (
     <section className="s-card p-4 space-y-2" aria-label="From other companies">
       <h2 className="text-sm font-bold text-s-text">From other companies ({mine.length})</h2>
