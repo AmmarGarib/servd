@@ -1,4 +1,5 @@
 'use client'
+import { useServdSupplierPick } from '@/components/procurement/useServdSupplierPick'
 import { CompanyTicks } from '../../components/ui/TenantPicker'
 import { MasterIngredientPicker, type MasterPrice } from '../../components/kitchen/MasterIngredientPicker'
 import { fmtUnitCost, priceSourceLabel } from '../../lib/unitCost'
@@ -1778,6 +1779,7 @@ const blankExpenseLine = (): BillLine => ({
 function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; prefill?: Prefill | null }) {
   const { data: me } = usePermissions()
   const { data: suppliers = [] } = useQuery({ queryKey: ['procurement', 'suppliers'], queryFn: () => api.get<Supplier[]>('/procurement/suppliers') })
+  const servdPick = useServdSupplierPick({ ownIds: suppliers.map((x) => x.id), onOpened: (sp) => changeSupplier(sp.id) })
   const { data: pos = [] } = useQuery({ queryKey: ['procurement', 'pos', ''], queryFn: () => api.get<PurchaseOrder[]>('/procurement/purchase-orders') })
 
   // Recovered bill: supplier, reference, dates, notes and the EXPENSE lines come
@@ -1954,12 +1956,16 @@ function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQue
         </p>
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div>
         <Field label="Supplier" required error={tried && !form.supplierId ? 'Choose the supplier.' : null}>
-          <Select value={form.supplierId} onChange={(e) => changeSupplier(e.target.value)} className={fi}>
+          <Select value={form.supplierId} onChange={(e) => { if (!servdPick.pick(e.target.value)) changeSupplier(e.target.value) }} className={fi}>
             <option value="">Select</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {servdPick.options}
           </Select>
         </Field>
+        {servdPick.note}
+        </div>
         <Field label="Link to PO">
           <Select value={form.poId} onChange={(e) => setForm({ ...form, poId: e.target.value })} className={fi}>
             <option value="">None</option>
@@ -2319,6 +2325,7 @@ function PaymentsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; p
 
 function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; prefill?: Prefill | null }) {
   const { data: suppliers = [] } = useQuery({ queryKey: ['procurement', 'suppliers'], queryFn: () => api.get<Supplier[]>('/procurement/suppliers') })
+  const servdPick = useServdSupplierPick({ ownIds: suppliers.map((x) => x.id), onOpened: (sp) => setForm((f) => ({ ...f, supplierId: sp.id, bankAccountId: '' })) })
 
   // Recovered payment: supplier, amount, method, bank account and memo. The
   // reference # is typed again and the allocations are made afresh.
@@ -2378,12 +2385,16 @@ function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof use
       </div>
       <DraftNotice draft={draft} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div>
         <Field label="Supplier" required error={tried && !form.supplierId ? 'Choose the supplier.' : null}>
-          <Select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value, bankAccountId: '' })} className={fi}>
+          <Select value={form.supplierId} onChange={(e) => { if (!servdPick.pick(e.target.value)) setForm({ ...form, supplierId: e.target.value, bankAccountId: '' }) }} className={fi}>
             <option value="">Select</option>
             {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {servdPick.options}
           </Select>
         </Field>
+        {servdPick.note}
+        </div>
         <Field label="Date" required error={tried && !form.paymentDate ? 'Pick the payment date.' : null}>
           <Input type="date" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} className={fi} />
         </Field>

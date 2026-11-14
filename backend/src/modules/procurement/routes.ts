@@ -626,9 +626,12 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   // POST /procurement/suppliers/from-master    the active company's account with a servd supplier (found or opened).
   // POST /procurement/supplier-masters/:id/merge {intoId}  two entries for one supplier → one (CEO / F&B manager).
   fastify.get('/supplier-masters', { preHandler: requireAuth(...PROCUREMENT_TEAM, 'finance') }, async (req) => {
-    const q = z.object({ q: z.string().trim().max(100).optional() }).parse(req.query ?? {})
+    const q = z.object({ q: z.string().trim().max(100).optional(), tenantId: z.string().min(1).max(64).optional() }).parse(req.query ?? {})
     const su = req.staffUser!
-    const active = su.tenantId && su.memberTenantIds.includes(su.tenantId) ? su.tenantId : null
+    // `tenantId` = the company the picker is for (an OpEx category's, a CapEx project's): one the caller belongs to,
+    // else 404. None = the active company.
+    if (q.tenantId && !su.memberTenantIds.includes(q.tenantId)) throw new NotFoundError('Company', q.tenantId)
+    const active = q.tenantId ?? (su.tenantId && su.memberTenantIds.includes(su.tenantId) ? su.tenantId : null)
     const masters = await serviceClient.supplierMaster.findMany({
       where: { mergedIntoId: null, ...(q.q ? { normalizedName: { contains: normalizeSupplierName(q.q) } } : {}) },
       select: { id: true, name: true, category: true, phone: true, taxId: true, filerStatus: true },
@@ -643,8 +646,10 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   })
 
   fastify.post('/suppliers/from-master', { preHandler: requireAuth(...PROCUREMENT_TEAM, 'finance') }, async (req, reply) => {
-    const body = z.object({ masterSupplierId: z.string().uuid() }).parse(req.body ?? {})
-    const tenantId = activeTenantOr422(req, null)
+    const body = z.object({ masterSupplierId: z.string().uuid(), tenantId: z.string().min(1).max(64).optional() }).parse(req.body ?? {})
+    // The company named (the document's own — one the caller belongs to, else 404), else the active one.
+    if (body.tenantId && !req.staffUser!.memberTenantIds.includes(body.tenantId)) throw new NotFoundError('Company', body.tenantId)
+    const tenantId = body.tenantId ?? activeTenantOr422(req, null)
     const r = await serviceClient.$transaction((tx) => ensureCompanySupplierForMasterTx(tx, body.masterSupplierId, tenantId))
     if (r.created) {
       await audit({

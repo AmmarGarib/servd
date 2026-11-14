@@ -17,6 +17,7 @@
 // 1310); refundable deposits are CapEx. Equipment is refused (422 USE_CAPEX):
 // it goes through CapEx. Budgets compare the EXPENSE (invoice − input tax).
 
+import { useServdSupplierPick } from '@/components/procurement/useServdSupplierPick'
 import { useEffect, useState } from 'react'
 import { PaymentClassificationFields, ClassificationChip, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue, type PaymentClassification } from '@/components/finance/PaymentClassificationFields'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -882,6 +883,10 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
   // The vendor master is Procurement's suppliers of the category's company.
   const vendors = useVendorPicker(category.id)
   const picked = (vendors.data ?? []).find((v) => v.id === supplierId) ?? null
+  const servdPick = useServdSupplierPick({
+    tenantId: category.tenantId, ownIds: (vendors.data ?? []).map((v) => v.id),
+    onOpened: (sp) => { setSupplierId(sp.id); void vendors.refetch() },
+  })
   const { data: me } = usePermissions()
   const canAddSupplier = !!me && canOpenPath('/procurement', me.role, me.modules ?? [])
 
@@ -957,10 +962,12 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
         <div>
           <FieldLabel htmlFor={`opex-vendor-${line?.id ?? 'new'}`}>Vendor (supplier)</FieldLabel>
           <div className="mt-1">
-            <Select id={`opex-vendor-${line?.id ?? 'new'}`} aria-invalid={shown('opex-line-supplier') ? true : undefined} value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls} disabled={vendors.isLoading}>
+            <Select id={`opex-vendor-${line?.id ?? 'new'}`} aria-invalid={shown('opex-line-supplier') ? true : undefined} value={supplierId} onChange={(e) => { if (!servdPick.pick(e.target.value)) setSupplierId(e.target.value) }} className={fieldCls} disabled={vendors.isLoading}>
               <option value="">{vendors.isError ? 'Suppliers unavailable' : '— no supplier picked —'}</option>
               {(vendors.data ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+              {servdPick.options}
             </Select>
+            {servdPick.note}
           </div>
           {picked && (
             <Hint>

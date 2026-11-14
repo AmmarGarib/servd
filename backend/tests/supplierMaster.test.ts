@@ -104,6 +104,24 @@ describe('one servd supplier, one account per company', () => {
   })
 })
 
+describe('a picker for another company (OpEx category, CapEx project)', () => {
+  it('opens the account in the company NAMED when the caller belongs to it; a company they are not in is 404', async () => {
+    const m = await prisma.supplierMaster.create({ data: { name: `Named Co ${stamp}`, normalizedName: `named co ${stamp}` } })
+    // The CEO has A picked but the document is B's.
+    const r = await call(ceo, 'POST', '/procurement/suppliers/from-master', { masterSupplierId: m.id, tenantId: B.tenantId }, A.tenantId)
+    expect([200, 201], r.body).toContain(r.statusCode)
+    expect(r.json().tenantId).toBe(B.tenantId)
+    expect(await prisma.supplier.count({ where: { masterSupplierId: m.id, tenantId: A.tenantId } })).toBe(0)
+    const list = await call(ceo, 'GET', `/procurement/supplier-masters?tenantId=${B.tenantId}`, undefined, A.tenantId)
+    expect(list.json().find((x: { id: string }) => x.id === m.id).companySupplierId).toBe(r.json().id)
+    // A-only buyer naming B: refused, nothing opened.
+    const no = await call(buyerA, 'POST', '/procurement/suppliers/from-master', { masterSupplierId: m.id, tenantId: B.tenantId })
+    expect(no.statusCode).toBe(404)
+    expect((await call(buyerA, 'GET', `/procurement/supplier-masters?tenantId=${B.tenantId}`)).statusCode).toBe(404)
+    expect(await prisma.supplier.count({ where: { masterSupplierId: m.id } })).toBe(1)
+  })
+})
+
 describe('the backfill migration', () => {
   it('links same-name suppliers of two companies to ONE servd supplier; a second same-name account in one company gets its own', async () => {
     const mk = (tenantId: string, name: string) => prisma.supplier.create({ data: { tenantId, name } })

@@ -10,6 +10,7 @@
 // the caller may press comes from the API's capability flags. The server
 // decides whether a capitalisation waits for the CEO (202) or posts (201).
 
+import { useServdSupplierPick } from '@/components/procurement/useServdSupplierPick'
 import { useEffect, useMemo, useState } from 'react'
 import { useFormDraft } from '../../lib/formDraft'
 import { DraftNotice } from '@/components/ui/DraftNotice'
@@ -486,6 +487,10 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
 
   const cls = L0?.assetClasses.find((c) => c.key === classKey)
   const supplier = L0?.lookups.suppliers.find((s) => s.id === supplierId)
+  const servdPick = useServdSupplierPick({
+    tenantId: L0?.tenantId ?? null, ownIds: (L0?.lookups.suppliers ?? []).map((x) => x.id), enabled: !!L0,
+    onOpened: (sp) => { setSupplierId(sp.id); void lookups.refetch() },
+  })
   const qty = Math.max(0, Math.floor(Number(quantity) || 0))
   const total = unitCost * qty
   const wht = preview({ grossCents: total, inputTaxCents: tax, section: section || undefined, supplier, paidOn: paidAt, treatment: 'capital' })
@@ -603,10 +608,12 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
             <L t="Quantity"><NumberField id="qb-qty" min={1} max={100000} className={inp} value={asNum(quantity)} onValueChange={(n) => setQuantity(fromNum(n))} /></L>
             <L t="Unit cost, sales tax included (PKR)"><MoneyInput id="qb-cost" value={unitCost} onChange={setUnitCost} className={inp} /></L>
             <L t={payFrom === 'credit' ? 'Supplier (required on credit)' : 'Supplier'}>
-              <Select id="qb-supplier" className={inp} value={supplierId} onChange={(e) => { setSupplierId(e.target.value); const s = L0.lookups.suppliers.find((x) => x.id === e.target.value); if (s?.defaultTaxAuthority && !authority) setAuthority(s.defaultTaxAuthority) }}>
+              <Select id="qb-supplier" className={inp} value={supplierId} onChange={(e) => { if (servdPick.pick(e.target.value)) return; setSupplierId(e.target.value); const s = L0.lookups.suppliers.find((x) => x.id === e.target.value); if (s?.defaultTaxAuthority && !authority) setAuthority(s.defaultTaxAuthority) }}>
                 <option value="">{payFrom === 'credit' ? 'Pick the supplier' : 'No supplier on file'}</option>
                 {L0.lookups.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {servdPick.options}
               </Select>
+              {servdPick.note}
             </L>
             <L t={payFrom === 'credit' ? 'Bought on' : 'Paid on'}><input id="qb-paid" type="date" min={bounds.min} className={inp} value={paidAt} max={todayIso()} onChange={(e) => setPaidAt(e.target.value)} /></L>
             <L t="Paid from">

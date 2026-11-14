@@ -5,6 +5,7 @@
 // the same project, giving full TCO. Schema: CapexProject is the parent;
 // CapexLine for one-off items, OpexLine.projectId for recurring items.
 
+import { useServdSupplierPick } from '@/components/procurement/useServdSupplierPick'
 import { Suspense, useState, useEffect } from 'react'
 import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -1258,6 +1259,10 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
 
   const suppliers = project.lookups.suppliers
   const supplier = suppliers.find((x) => x.id === supplierId)
+  const servdPick = useServdSupplierPick({
+    tenantId, ownIds: suppliers.map((x) => x.id),
+    onOpened: (sp) => { setSupplierId(sp.id); if (!vendor) setVendor(sp.name); void qc.invalidateQueries({ queryKey: ['capex-projects'] }) },
+  })
   const authorities = lookups.data?.taxAuthorities ?? Object.keys(AUTHORITY_LABEL)
   const whtSections = lookups.data?.whtSections ?? Object.keys(WHT_SECTION_LABEL)
 
@@ -1371,6 +1376,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
         <Field label="Supplier on file">
           <Select value={supplierId} onChange={(e) => {
             const id = e.target.value
+            if (servdPick.pick(id)) return
             setSupplierId(id)
             const picked = suppliers.find((x) => x.id === id)
             if (picked && !vendor) setVendor(picked.name)
@@ -1378,7 +1384,9 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
           }} className={fieldCls}>
             <option value="">Not on file</option>
             {suppliers.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            {servdPick.options}
           </Select>
+          {servdPick.note}
           <Hint>Pick a supplier so income tax can be withheld at the rate for their filer status (the non-filer rate until it is confirmed).</Hint>
         </Field>
         <Field label="Vendor name"><Input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Sialkot Steel Works" className={fieldCls} /></Field>

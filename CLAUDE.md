@@ -2466,8 +2466,11 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   /procurement/supplier-masters/:id/merge {intoId}` (re-points links, posts nothing; a company holding both 409
   `MERGE_NEEDS_ACCOUNT_MERGE`). System suppliers and company-less rows stay unlinked. Migration
   `20261114120000_supplier_master` (same name in two companies = one master; a second live one in the same company
-  "<name> (duplicate n)"). Not switched yet: the supplier pickers on cash vouchers, CapEx, OpEx, bills and payments
-  still list the company's own accounts. Tests: `tests/supplierMaster.test.ts`, `tests/poActiveCompany.test.ts`.
+  "<name> (duplicate n)"). Every supplier picker (PO, bills, payments, cash voucher on credit, CapEx
+  line + Quick buy, OpEx line) lists the company's accounts then "Other servd suppliers"
+  (`components/procurement/useServdSupplierPick.tsx`): picking one opens that company's account (`from-master
+  {masterSupplierId, tenantId?}` — the document's company, one the caller belongs to, else 404) and the form carries
+  on with a normal supplier id. A new supplier picker uses that hook. Tests: `tests/supplierMaster.test.ts`, `tests/poActiveCompany.test.ts`.
 - **Move a PO to another company (owner, 2026-11-14: "Give button to transfer to other company, she will do it
   manually").** `POST /procurement/purchase-orders/:id/move-company {tenantId}` (`procurement/poMove.ts`; PO_RAISERS,
   finance its own only, a member of BOTH companies — 403 `NOT_IN_BOTH_COMPANIES`; another company's PO 404). Only a

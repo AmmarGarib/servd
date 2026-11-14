@@ -21,6 +21,7 @@
 //   • Edit — the same fields on an existing voucher (after it is returned, or
 //     while it still waits for finance); the detail page then resubmits.
 
+import { useServdSupplierPick } from '@/components/procurement/useServdSupplierPick'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
@@ -109,6 +110,10 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
   )
 
   const tenantId = voucher?.tenantId ?? null
+  const servdPick = useServdSupplierPick({
+    tenantId: tenantId ?? opts?.tenantId ?? null, ownIds: (opts?.suppliers ?? []).map((x) => x.id), enabled: payFrom === 'credit',
+    onOpened: (sp) => { setSupplierId(sp.id); void qc.invalidateQueries({ queryKey: [CV_ROOT, 'raise-options'] }) },
+  })
   const expenseAccounts = chart.filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!tenantId || a.tenantId === tenantId))
   const isCode = /^\d{4}$/.test(category)
   const assetClassId = category.startsWith('asset:') ? category.slice(6) : ''
@@ -283,13 +288,15 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
       )}
       {expense && payFrom === 'credit' && (
         <Field label="Supplier *" error={shown('cv-supplier')}>
-          <Select id="cv-supplier" value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={fieldCls}>
+          <Select id="cv-supplier" value={supplierId} onChange={(e) => { if (!servdPick.pick(e.target.value)) setSupplierId(e.target.value) }} className={fieldCls}>
             <option value="">— pick the supplier —</option>
             {voucher?.supplierId && !opts?.suppliers.some((x) => x.id === voucher.supplierId) && (
               <option value={voucher.supplierId}>{voucher.supplierName ?? 'Current supplier'}</option>
             )}
             {(opts?.suppliers ?? []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            {servdPick.options}
           </Select>
+          {servdPick.note}
           <div className="mt-2 flex gap-2">
             <Input value={newSupplier} onChange={(e) => setNewSupplier(e.target.value)} maxLength={120} placeholder="New supplier name"
               aria-label="New supplier name" className={fieldCls} />
