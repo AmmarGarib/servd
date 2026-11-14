@@ -665,12 +665,13 @@ const PRICE_TIERS: { value: 'budget' | 'mid' | 'premium' | 'luxury'; label: stri
 // longer written. Rates stay editable per brand in Brands → Tax registration.
 // Punjab, KP and Balochistan are not offered: the company is registered only
 // with FBR and SRB (owner, 2026-10-15).
-type ProvinceCode = 'SD' | 'ICT' | 'GB' | 'AJK'
+// Gilgit-Baltistan and AJK are not offered either (finance, 2026-11-14): the
+// books know only FBR and SRB (backend accounting/taxAuthorities.ts
+// BRAND_PROVINCES is the one list), so such a kitchen is FBR — pick ICT.
+type ProvinceCode = 'SD' | 'ICT'
 const PROVINCES: { value: ProvinceCode; name: string; authority: string; rate: number; cardRate?: number; note?: string }[] = [
   { value: 'SD',  name: 'Sindh',                  authority: 'SRB',  rate: 15, cardRate: 8, note: 'Karachi, Hyderabad. Card / digital payments at 8%.' },
   { value: 'ICT', name: 'Islamabad Capital',      authority: 'FBR',  rate: 16, note: 'Federal jurisdiction' },
-  { value: 'GB',  name: 'Gilgit-Baltistan',       authority: 'GBRA', rate: 15 },
-  { value: 'AJK', name: 'Azad Jammu & Kashmir',   authority: 'AJK',  rate: 15 },
 ]
 /** Default tender split for a new brand in this province: cash / card GST %. */
 function provinceTenderRates(p: ProvinceCode | null | undefined): { taxRateCash: number; taxRateCard: number } {

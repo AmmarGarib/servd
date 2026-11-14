@@ -63,6 +63,7 @@ import { classifyPaymentTx, type ClassificationInput } from './paymentsRegister.
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { moneyAccountCode } from '../../lib/bankAccounts.js'
+import { moneyCodesOfCompany } from '../../lib/moneyAccounts.js'
 import { assertTemplateAccounts } from '../../lib/chartOfAccounts.js'
 import { assertMoneyFits, sumCents, toCents } from '../../lib/money.js'
 import { ACCT, postJournalEntry, reverseJournalEntry, type JournalLineInput } from './journal.js'
@@ -476,15 +477,14 @@ async function settlementOf(tenantId: string, entryId: string, authority: TaxPay
   // A Cr 1320 against a PROVINCIAL authority's output is the federal input
   // cross set-off (H8) — never money paid. (FBR's own 1320 is acc.input.)
   const crossSetOffCents = crossSetOffAllowed(authority) ? Math.max(0, net(ACCT.GST_INPUT, 'credit')) : 0
-  // Cash and bank: cash on hand, petty cash, the drawer, the 102x bank codes
-  // and any code a bank account of the company is linked to.
+  // Money paid out: THE money accounts (lib/moneyAccounts.ts — 1010, 1011, 1020 and the company's linked banks;
+  // the payments register's rule). Never the drawer 1015 or a 102x code no bank of the company is linked to.
+  const money = await moneyCodesOfCompany(prisma, tenantId)
+  const isMoney = (code: string) => money.has(code)
   const banks = await prisma.bankAccount.findMany({
     where: { tenantId, deletedAt: null, accountCode: { not: null } },
     select: { id: true, accountCode: true },
   })
-  const bankCodes = new Set(banks.map((b) => b.accountCode!))
-  const isMoney = (code: string) =>
-    code === ACCT.CASH_ON_HAND || code === ACCT.PETTY_CASH || code === ACCT.CASH_DRAWER || /^102\d$/.test(code) || bankCodes.has(code)
   const moneyCodes = [...new Set(entry.lines.filter((l) => l.type === 'credit' && isMoney(l.account.code)).map((l) => l.account.code))]
   const moneyOutCents = moneyCodes.reduce((t, c) => t + net(c, 'credit'), 0)
   const matching = banks.filter((b) => moneyCodes.includes(b.accountCode!))

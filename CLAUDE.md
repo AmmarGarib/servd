@@ -2493,6 +2493,19 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
 - **The CEO's inbox and bell are ONE rule (step 1).** `approvalRights.ts ceoMustSee` reads the approve route's own
   subject and `approverIdsFor` calls it; `/hr/approvals` lists a non-CEO step for the CEO exactly when
   `hrStepApprovers` names the CEO. Tests: `tests/approvalsCeoOneRule.test.ts`.
+- **Clean-up step 2 (owner + finance answers, 2026-11-14).** ONE recipe-company rule: `lib/recipeCompany.ts`
+  (`recipeCompaniesOf`, `loadRecipeCompanyIndex`) — recipes routes, `approvalRights.ts` and the approvals provider all
+  read it (a recipe with `tenantId` is that company's; an old sub-recipe = the companies of what uses it, any depth).
+  ONE recipe-brand rule: `GET /recipes?conceptId=` = the brand's dishes + add-ons + every sub-recipe they use; rows
+  carry `brandIds`, and the Recipes page filters on it. ONE money-account rule: `lib/moneyAccounts.ts` (1010, 1011,
+  1020 + the company's linked bank codes) — the payments register, the PV / RV stamp and the tax-payment link (a
+  payment from 1015 or an unlinked 102x is no longer linkable: 422 `NOT_A_TAX_PAYMENT`). Brand provinces:
+  `taxAuthorities.ts BRAND_PROVINCES` (Sindh → SRB, ICT → FBR) is the form's list; GB / AJK are gone from the forms
+  (POST 422 `PROVINCE_NOT_AVAILABLE`; a stored one still saves unchanged and books to FBR). The unused 17% helper
+  `accounting/taxRate.ts` is deleted. The tablet station screen (`tablet/app/(staff)/kds/[stationId].tsx`) is on the
+  4-card board (`/expo/station/:id/board`, Start, timers, no sound) — needs a tablet app build to reach devices.
+  Left: recipes' private `scopedConceptIdSet` (does not agree with `conceptIdsInScope`). Tests:
+  `tests/recipeOneOwnerOneBrand.test.ts`, `tests/moneyAccountsOne.test.ts`, `tests/brandProvinceRegistered.test.ts`.
 - **Item groups under a category (owner, 2026-11-07: "In PO, make item categories like Sea food … Meat …"; answer:
   groups UNDER the existing category, the PO maker can add groups).** `IngredientGroup` (`ingredient_groups`, servd-wide
   like the master — no tenantId, deliberately; unique by normalised name; under ONE `INVENTORY_CATEGORIES` category;

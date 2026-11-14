@@ -27,7 +27,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 
 type Db = Prisma.TransactionClient | PrismaClient
-import { NOT_BANK_CODES } from '../../lib/bankAccounts.js'
+import { moneyCodesOfCompany } from '../../lib/moneyAccounts.js'
 import { AppError } from '../../lib/errors.js'
 
 export type VoucherKind = 'JV' | 'PV' | 'RV' | 'AV'
@@ -35,9 +35,6 @@ export type VoucherKind = 'JV' | 'PV' | 'RV' | 'AV'
 export const MANUAL_VOUCHER_KINDS = ['PV', 'JV', 'RV', 'AV'] as const
 export type ManualVoucherKind = (typeof MANUAL_VOUCHER_KINDS)[number]
 
-/** Cash on hand, petty cash, the default bank — the same fixed set as paymentsRegister.ts FIXED_MONEY_CODES. */
-const FIXED_MONEY_CODES = ['1010', '1011', '1020']
-const BANK_CODE_EXCLUDED = NOT_BANK_CODES.filter((c) => !FIXED_MONEY_CODES.includes(c))
 const SALES_PREFIXES = ['order', 'pos.', 'shift.close']
 
 export function voucherNoOf(kind: VoucherKind, seq: number): string {
@@ -60,18 +57,14 @@ export async function voucherKindOf(
   return net > 0 ? 'PV' : net < 0 ? 'RV' : null
 }
 
-/** Money net OUT of the company's cash on hand, petty cash and banks (> 0 pays out, < 0 brings in, 0 neither). */
+/** Money net OUT of the company's money accounts (lib/moneyAccounts.ts; > 0 pays out, < 0 brings in, 0 neither). */
 export async function moneyNetOutCents(
   tx: Db,
   tenantId: string,
   lines: Array<{ accountCode: string; type: 'debit' | 'credit'; amountCents: number }>,
 ): Promise<number> {
-  const codes = [...new Set(lines.map((l) => l.accountCode))]
-  const banks = await tx.bankAccount.findMany({
-    where: { tenantId, accountCode: { in: codes.filter((c) => !BANK_CODE_EXCLUDED.includes(c)) } },
-    select: { accountCode: true },
-  })
-  const money = new Set([...FIXED_MONEY_CODES, ...banks.map((b) => b.accountCode!).filter(Boolean)])
+  // THE money accounts (lib/moneyAccounts.ts — the payments register's rule).
+  const money = await moneyCodesOfCompany(tx, tenantId)
   let net = 0
   for (const l of lines) if (money.has(l.accountCode)) net += l.type === 'credit' ? l.amountCents : -l.amountCents
   return net

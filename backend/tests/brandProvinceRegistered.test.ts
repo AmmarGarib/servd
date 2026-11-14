@@ -15,10 +15,13 @@ import { prisma, mkCompany, mkUser, type Company, type Who } from './connectorsF
 import { AppError, errorResponse } from '../src/lib/errors.js'
 import { ensureChartOfAccounts } from '../src/lib/chartOfAccounts.js'
 import { conceptRoutes } from '../src/modules/concepts/routes.js'
+import { AUTHORITY_BY_PROVINCE, BRAND_PROVINCES, outputTaxCodeFor } from '../src/modules/accounting/taxAuthorities.js'
 
 let app: FastifyInstance
 let A: Company
 let ceoA: Who
+let B: Company
+let ceoB: Who
 const stamp = Date.now()
 
 const call = (who: Who, method: 'POST' | 'PATCH', url: string, payload: Record<string, unknown>) =>
@@ -27,6 +30,8 @@ const call = (who: Who, method: 'POST' | 'PATCH', url: string, payload: Record<s
 beforeAll(async () => {
   A = await mkCompany(`bpr-a-${stamp}`)
   ceoA = await mkUser('bpr-ceo-a', 'admin', A.tenantId)
+  B = await mkCompany(`bpr-b-${stamp}`)
+  ceoB = await mkUser('bpr-ceo-b', 'admin', B.tenantId)
   app = Fastify()
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof AppError) return reply.status(err.statusCode).send(errorResponse(err))
@@ -63,6 +68,41 @@ describe('a brand can only be in an FBR or SRB province', () => {
     const ok = await call(ceoA, 'PATCH', `/concepts/${A.conceptId}`, { province: 'ICT' })
     expect(ok.statusCode, ok.body).toBe(200)
     expect((await prisma.concept.findUniqueOrThrow({ where: { id: A.conceptId } })).province).toBe('ICT')
+  })
+})
+
+// Clean-up A7 (finance, 2026-11-14): the forms offer only what the books know (FBR, SRB). Gilgit-Baltistan and AJK
+// are not offered; a brand already saved with one still loads and saves unchanged (taxed by FBR).
+describe('Gilgit-Baltistan and AJK are not offered; an old value is kept', () => {
+  it('the one list: Sindh → SRB, ICT → FBR, agreeing with the authority table', () => {
+    expect(BRAND_PROVINCES.map((p) => p.code)).toEqual(['SD', 'ICT'])
+    for (const p of BRAND_PROVINCES) expect(AUTHORITY_BY_PROVINCE[p.code] ?? 'fbr').toBe(p.authority)
+  })
+
+  it('POST with GB / AJK → 422 PROVINCE_NOT_AVAILABLE, nothing created', async () => {
+    for (const province of ['GB', 'AJK']) {
+      const slug = `bpr-new-${province.toLowerCase()}-${stamp}`
+      const r = await call(ceoA, 'POST', '/concepts', { name: `Brand ${province}`, slug, type: 'restaurant', serviceVessel: 'plate', province })
+      expect(r.statusCode, r.body).toBe(422)
+      expect(r.json().error.code).toBe('PROVINCE_NOT_AVAILABLE')
+      expect(await prisma.concept.count({ where: { slug } })).toBe(0)
+    }
+  })
+
+  it('a brand saved with GB: a full save sending GB unchanged passes; switching to AJK is 422; to ICT is 200; it books to FBR', async () => {
+    await prisma.concept.update({ where: { id: B.conceptId }, data: { province: 'GB', srbPosId: null } })
+    expect(outputTaxCodeFor({ province: 'GB', srbPosId: null })).toBe('2030')
+    const keep = await call(ceoB, 'PATCH', `/concepts/${B.conceptId}`, { province: 'GB', description: 'Northern kitchen' })
+    expect(keep.statusCode, keep.body).toBe(200)
+    expect(await prisma.concept.findUniqueOrThrow({ where: { id: B.conceptId } })).toMatchObject({ province: 'GB', description: 'Northern kitchen' })
+    const ajk = await call(ceoB, 'PATCH', `/concepts/${B.conceptId}`, { province: 'AJK' })
+    expect(ajk.statusCode, ajk.body).toBe(422)
+    expect(ajk.json().error.code).toBe('PROVINCE_NOT_AVAILABLE')
+    // Another company's CEO never reaches it.
+    expect((await call(ceoA, 'PATCH', `/concepts/${B.conceptId}`, { province: 'ICT' })).statusCode).toBe(404)
+    const ict = await call(ceoB, 'PATCH', `/concepts/${B.conceptId}`, { province: 'ICT' })
+    expect(ict.statusCode, ict.body).toBe(200)
+    expect((await prisma.concept.findUniqueOrThrow({ where: { id: B.conceptId } })).province).toBe('ICT')
   })
 })
 

@@ -66,6 +66,19 @@ export const AUTHORITY_BY_PROVINCE: Readonly<Record<string, AuthorityKey>> = {
   SD: 'srb',   // Sindh Revenue Board
 }
 
+/**
+ * The provinces a brand may be set to — THE list the brand forms offer (finance decision, clean-up A7, 2026-11-14):
+ * Sindh (SRB) and Islamabad Capital Territory (FBR). Gilgit-Baltistan and AJK are no longer offered: the books know
+ * only FBR and SRB, so such a kitchen is FBR (set ICT, or leave the province empty).
+ */
+export const BRAND_PROVINCES: ReadonlyArray<{ code: string; label: string; authority: AuthorityKey }> = [
+  { code: 'SD',  label: 'Sindh',                       authority: 'srb' },
+  { code: 'ICT', label: 'Islamabad Capital Territory', authority: 'fbr' },
+]
+/** Old values a brand may still carry (Gilgit-Baltistan, AJK): read and kept as they are (taxed by FBR — they are not
+ *  in AUTHORITY_BY_PROVINCE), never newly chosen. */
+export const LEGACY_FBR_PROVINCES: ReadonlySet<string> = new Set(['GB', 'AJK'])
+
 /** Provinces with their own authority that GS Foods is NOT registered with (Punjab, KP, Balochistan). */
 export const UNREGISTERED_PROVINCES: ReadonlySet<string> = new Set(['PB', 'KP', 'BL'])
 

@@ -327,42 +327,23 @@ const recipes: ApprovalProvider = {
     if (all === null) return null
     const rows = all.filter((r) => isSelfApprovalExempt(ctx.user) || !r.submittedById || r.submittedById !== ctx.user.id)
     if (rows.length === 0) return []
-    const [found, names] = await Promise.all([
-      prisma.recipe.findMany({
-        where: { id: { in: rows.map((r) => r.id) } },
-        select: {
-          id: true, pendingMenuItem: true, menuItem: { select: { conceptId: true } },
-          // An add-on's recipe (kind 'modifier'): modifier → group → dish → brand.
-          modifier: { select: { group: { select: { menuItem: { select: { conceptId: true } } } } } },
-        },
-      }),
+    // THE company of each recipe (lib/recipeCompany.ts, the same reading approvalSubject and the recipes page use):
+    // an owned recipe → its owner (Flipd's dishes owned by GS Foods → GS Foods); else a dish / add-on → its brand's
+    // company; a sub-recipe → the companies of the dishes / add-ons that use it and of its own stock.
+    const [derived, names] = await Promise.all([
+      recipeCompaniesBatch(rows.map((r) => r.id)),
       userNames(rows.map((r) => r.submittedById)),
     ])
-    const conceptOf = new Map(found.map((r) => [
-      r.id,
-      r.menuItem?.conceptId
-        ?? r.modifier?.group.menuItem.conceptId
-        ?? (r.pendingMenuItem as { conceptId?: string } | null)?.conceptId
-        ?? null,
-    ]))
-    const concepts = await conceptInfo([...conceptOf.values()])
-    // A component (no brand of its own): the A21 company set the approve route
-    // derives (lib/approvalRights.ts approvalSubject) — the dishes / add-ons
-    // that use it and its own stock — so its section and hand-over match.
-    const componentIds = rows.filter((r) => !conceptOf.get(r.id)).map((r) => r.id)
-    const derived = componentIds.length ? await recipeCompaniesBatch(componentIds) : new Map<string, string[]>()
     return rows.map((r): ApprovalItem => {
-      const cid = conceptOf.get(r.id)
-      const set = cid ? null : (derived.get(r.id) ?? [])
+      const set = derived.get(r.id) ?? []
+      const component = r.kind === 'component'
       return {
         type: 'recipe',
         id: r.id,
-        // A plate's company is its dish's brand's; an add-on's, its dish's (via
-        // the modifier group). A component recipe keeps tenantId null (listed
-        // on the role path as before) and carries its derived companies: 'ceo'
-        // only when that set is empty.
-        tenantId: cid ? (concepts.get(cid)?.tenantId ?? null) : null,
-        ...(set && {
+        // A dish / add-on: its one company. A component recipe keeps tenantId null (listed on the role path as
+        // before) and carries its companies: 'ceo' only when that set is empty.
+        tenantId: component ? null : (recipeOwnerOf(set) ?? null),
+        ...(component && {
           touchesTenantIds: set,
           ownerTenantId: recipeOwnerOf(set),
           section: sectionOf('recipe', { tenantId: set.length ? set[0]! : null }),

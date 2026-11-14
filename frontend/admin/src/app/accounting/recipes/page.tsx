@@ -93,6 +93,8 @@ interface Recipe {
   menuItem: { id: string; name: string; priceCents: number; conceptId: string; concept: ConceptWithTenant } | null
   // Testing plates haven't opened their menu item yet — brand lives here.
   pendingMenuItem: { conceptId: string; name: string } | null
+  /** The brands this recipe belongs to — a sub-recipe: every brand whose dishes / add-ons use it (server rule). */
+  brandIds?: string[]
   ingredients: RecipeIngredient[]
   ingredientCostCents: number
   qFactorCents: number
@@ -197,7 +199,7 @@ export default function RecipesPage() {
   })()
 
   const { data: recipes, isLoading } = useQuery({
-    queryKey: ['recipes', seasonFilter, searchQ, activeOnly],
+    queryKey: ['recipes', seasonFilter, searchQ, activeOnly, conceptFilter],
     queryFn:  () => api.get<Recipe[]>(`/recipes${queryString}`),
   })
   // The line cook's view (wave 3, UI-10): the recipe book read-only — no
@@ -364,19 +366,9 @@ export default function RecipesPage() {
   const filtered = (recipes ?? []).filter((r) => {
     if (kindFilter && r.kind !== kindFilter) return false
     if (noPackagingOnly && !r.warnings?.noPackaging) return false
-    if (conceptFilter) {
-      // Components are cross-concept by design (one caramel serves every
-      // brand) — keep them visible under a brand filter rather than blanking
-      // the list. Plates match on their brand: a live plate carries it on the
-      // menu item; a TESTING plate hasn't opened its item yet, so its brand
-      // lives in pendingMenuItem.
-      if (r.kind === 'plate') {
-        const brandId = r.menuItem?.conceptId ?? r.pendingMenuItem?.conceptId ?? null
-        if (brandId !== conceptFilter) return false
-      }
-      // An add-on belongs to its dish's brand.
-      if (r.kind === 'modifier' && r.modifier?.group.menuItem.conceptId !== conceptFilter) return false
-    }
+    // A brand shows its dishes and add-ons PLUS the sub-recipes they use (owner, 2026-11-14) — the server's one
+    // rule (brandIds, lib/recipeCompany.ts), the same the Add-ons page gets from /recipes?conceptId.
+    if (conceptFilter && !(r.brandIds ?? []).includes(conceptFilter)) return false
     if (search) {
       // Search across menuItem name (plate) AND recipe name (component) so the
       // operator can find either kind from one box.

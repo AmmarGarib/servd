@@ -1,4 +1,4 @@
-import { UNREGISTERED_PROVINCES } from '../accounting/taxAuthorities.js'
+import { BRAND_PROVINCES, LEGACY_FBR_PROVINCES, UNREGISTERED_PROVINCES } from '../accounting/taxAuthorities.js'
 import { ensureBrandRevenueAccount } from '../accounting/brandRevenueAccount.js'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { Prisma } from '@prisma/client'
@@ -20,6 +20,17 @@ import { assertTradingCompany } from '../../lib/headOffice.js'
 // accounting/taxAuthorities.ts UNREGISTERED_PROVINCES.
 const zProvince = z.enum(['PB', 'SD', 'KP', 'BL', 'ICT', 'GB', 'AJK']).nullable().optional()
   .refine((v) => !v || !UNREGISTERED_PROVINCES.has(v), { message: 'The company is registered only with FBR and SRB — Punjab, KP and Balochistan are not available' })
+
+/**
+ * A province a brand may be SET to: one of accounting/taxAuthorities.ts BRAND_PROVINCES (Sindh, ICT). An old
+ * Gilgit-Baltistan / AJK value (LEGACY_FBR_PROVINCES, taxed by FBR) still loads and is kept when the form sends it
+ * back unchanged; choosing one anew is 422 PROVINCE_NOT_AVAILABLE (finance, 2026-11-14: such brands are FBR).
+ */
+function assertBrandProvince(next: string | null | undefined, current: string | null = null): void {
+  if (!next || BRAND_PROVINCES.some((p) => p.code === next)) return
+  if (LEGACY_FBR_PROVINCES.has(next) && next === current) return
+  throw new AppError('PROVINCE_NOT_AVAILABLE', 'Pick Sindh (SRB) or Islamabad Capital Territory (FBR) — the books know only FBR and SRB. A Gilgit-Baltistan or AJK kitchen is FBR: pick Islamabad Capital Territory.', 422)
+}
 
 // What a till role (cashier, foh/waiter) may read about a brand: enough to
 // pick it at the till and see its tender GST split, nothing else. The brand
@@ -521,6 +532,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     assertNoMovedFields(req.body)
     assertProfileLinks(req.body)
     const body = createConceptSchema.parse(req.body)
+    assertBrandProvince(body.province)
     // A head office never has brands (D1 §6.7): 422 HEAD_OFFICE_HAS_NO_BRANDS.
     await assertTradingCompany(req.staffUser!.tenantId)
     // A slug held by a brand in the Trash → 409 IN_TRASH (restore it instead).
@@ -576,6 +588,7 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     })
     if (!owned) return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Concept not found in your companies' } })
     assertNoCeoFieldChange(req, body as Record<string, unknown>, owned as unknown as Record<string, unknown>)
+    assertBrandProvince(body.province, owned.province)
     // K4: a recipe owner is one of the CEO's live trading companies; the brand's own company means "none".
     if (body.recipeOwnerTenantId !== undefined) {
       if (body.recipeOwnerTenantId === owned.tenantId) body.recipeOwnerTenantId = null

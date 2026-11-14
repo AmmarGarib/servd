@@ -33,7 +33,7 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
-import { NOT_BANK_CODES } from '../../lib/bankAccounts.js'
+import { FIXED_MONEY_CODES, BANK_CODE_EXCLUDED, moneyCodesOf } from '../../lib/moneyAccounts.js'
 import { toCents } from '../../lib/money.js'
 import { particularsOf } from './particulars.js'
 
@@ -91,13 +91,13 @@ export function assertTaxStatusFields(c: ClassificationInput): void {
 // ─── What a payment is ───────────────────────────────────────────────────────
 
 /** Fixed money accounts in every company's chart; a company's banks add their own codes. */
-export const FIXED_MONEY_CODES = ['1010', '1011', '1020'] as const
+// The money accounts are THE rule in lib/moneyAccounts.ts (re-exported here for this module's readers).
+export { FIXED_MONEY_CODES, moneyCodesOf }
 /** Withholding payable accounts — supplier WHT 2040, sales-tax WHT 2041, salary tax 2042. */
 export const WHT_PAYABLE_CODES = ['2040', '2041', '2042'] as const
 /** Sales and till sources are out of scope (customer refunds at the till are not payments here). */
 const SALES_PREFIX_SQL = ['order%', 'pos.%', 'shift.close%']
 
-const BANK_CODE_EXCLUDED = NOT_BANK_CODES.filter((c) => !FIXED_MONEY_CODES.includes(c as never))
 
 /**
  * The ONE SQL of "money moved by an entry": per entry of the companies, the
@@ -133,22 +133,10 @@ export function moneyAggregatesSql(tenantIds: string[], window: { from: Date; to
        ${window && !entryId ? Prisma.sql`AND e."entryDate" >= ${window.from} AND e."entryDate" <= ${window.to}` : Prisma.empty}
        AND (
              a.code = ANY(${[...FIXED_MONEY_CODES]}::text[])
-          OR (NOT (a.code = ANY(${BANK_CODE_EXCLUDED}::text[]))
+          OR (NOT (a.code = ANY(${[...BANK_CODE_EXCLUDED]}::text[]))
               AND EXISTS (SELECT 1 FROM bank_accounts b WHERE b."tenantId" = e."tenantId" AND b."accountCode" = a.code))
        )
      GROUP BY e.id`
-}
-
-/** The money accounts of each company: 1010, 1011, 1020 + its bank accounts' codes (the same rule as the SQL above). */
-export async function moneyCodesOf(db: Db, tenantIds: string[]): Promise<Map<string, Set<string>>> {
-  const out = new Map<string, Set<string>>(tenantIds.map((t) => [t, new Set<string>(FIXED_MONEY_CODES)]))
-  if (tenantIds.length === 0) return out
-  const banks = await db.bankAccount.findMany({ where: { tenantId: { in: tenantIds }, accountCode: { not: null } }, select: { tenantId: true, accountCode: true } })
-  for (const b of banks) {
-    if (!b.tenantId || !b.accountCode || BANK_CODE_EXCLUDED.includes(b.accountCode)) continue
-    out.get(b.tenantId)?.add(b.accountCode)
-  }
-  return out
 }
 
 /**

@@ -22,6 +22,7 @@ import {
   delegatedTenantsByType, throughHeadOfficeBatch, type ApprovalGrant, type ApprovalSubject, type ApprovalType,
 } from '../../lib/approvalRights.js'
 import { toCents } from '../../lib/money.js'
+import { loadRecipeCompanyIndex, NO_COMPANY, type RecipeCompanyIndex } from '../../lib/recipeCompany.js'
 import { audit } from '../../lib/audit.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
 import { takeSnapshot } from '../trash/snapshot.js'
@@ -333,21 +334,8 @@ async function scopedConceptIdSet(req: FastifyRequest, mode: ScopeMode = 'read')
   return new Set(concepts.map((c) => c.id))
 }
 
-/**
- * Companies (tenant ids) of each component recipe: the companies of the dishes
- * and add-ons that use it (walking up nested sub-recipes) plus the companies
- * of its own stock lines. `.users(id)` is only the first part — the companies
- * whose sales consume it, NO_COMPANY left out — which is what its stock lines
- * and stations must belong to. `.drawsOn(id)` is the companies of the stock it
- * and every sub-recipe under it use.
- */
-type ComponentCompanies = ((recipeId: string) => Set<string>) & {
-  users: (recipeId: string) => Set<string>
-  drawsOn: (recipeId: string) => Set<string>
-}
-
-// A plate whose brand has no company belongs to nobody — never in any scope.
-const NO_COMPANY = '\u0000none'
+/** A sub-recipe's companies (users ∪ stock, `.users`, `.drawsOn`): THE index, lib/recipeCompany.ts. */
+type ComponentCompanies = RecipeCompanyIndex
 
 /** The brand of a modifier recipe: modifier → group → menu item → brand. */
 const MODIFIER_BRAND = {
@@ -356,99 +344,8 @@ const MODIFIER_BRAND = {
   },
 } satisfies Prisma.ModifierDefaultArgs
 
-async function loadComponentCompanies(): Promise<ComponentCompanies> {
-  const [recipes, links] = await Promise.all([
-    prisma.recipe.findMany({
-      select: {
-        id: true, kind: true, pendingMenuItem: true,
-        menuItem: { select: { concept: { select: { tenantId: true } } } },
-        modifier: MODIFIER_BRAND,
-      },
-    }),
-    prisma.recipeIngredient.findMany({
-      select: { recipeId: true, prepRecipeId: true, inventoryItem: { select: { tenantId: true } } },
-    }),
-  ])
-  const pendingConceptIds = new Set<string>()
-  for (const r of recipes) {
-    const cid = (r.pendingMenuItem as { conceptId?: string } | null)?.conceptId
-    if (!r.menuItem && cid) pendingConceptIds.add(cid)
-  }
-  const pendingTenant = new Map(
-    (await prisma.concept.findMany({ where: { id: { in: [...pendingConceptIds] } }, select: { id: true, tenantId: true } }))
-      .map((c) => [c.id, c.tenantId]),
-  )
-  const byId = new Map(recipes.map((r) => [r.id, r]))
-  const plateCompany = (r: (typeof recipes)[number]): string => {
-    if (r.menuItem) return r.menuItem.concept.tenantId ?? NO_COMPANY
-    const cid = (r.pendingMenuItem as { conceptId?: string } | null)?.conceptId
-    return (cid && pendingTenant.get(cid)) || NO_COMPANY
-  }
-  const parents = new Map<string, string[]>()
-  const children = new Map<string, string[]>()
-  const rawTenants = new Map<string, Set<string>>()
-  for (const l of links) {
-    if (l.prepRecipeId) {
-      const list = parents.get(l.prepRecipeId) ?? []
-      list.push(l.recipeId)
-      parents.set(l.prepRecipeId, list)
-      const kids = children.get(l.recipeId) ?? []
-      kids.push(l.prepRecipeId)
-      children.set(l.recipeId, kids)
-    }
-    const t = l.inventoryItem?.tenantId
-    if (t) {
-      const set = rawTenants.get(l.recipeId) ?? new Set<string>()
-      set.add(t)
-      rawTenants.set(l.recipeId, set)
-    }
-  }
-  // The companies of the dishes and add-ons above a recipe (cycle-safe walk up).
-  const userMemo = new Map<string, Set<string>>()
-  const usersOf = (recipeId: string): Set<string> => {
-    const hit = userMemo.get(recipeId)
-    if (hit) return hit
-    const out = new Set<string>()
-    const seen = new Set<string>([recipeId])
-    const stack = [...(parents.get(recipeId) ?? [])]
-    while (stack.length) {
-      const pid = stack.pop()!
-      if (seen.has(pid)) continue
-      seen.add(pid)
-      const parent = byId.get(pid)
-      if (!parent) continue
-      if (parent.kind === 'plate') out.add(plateCompany(parent))
-      else if (parent.kind === 'modifier') out.add(parent.modifier?.group.menuItem.concept.tenantId ?? NO_COMPANY)
-      else stack.push(...(parents.get(pid) ?? []))
-    }
-    userMemo.set(recipeId, out)
-    return out
-  }
-  const memo = new Map<string, Set<string>>()
-  const all = ((recipeId: string) => {
-    const hit = memo.get(recipeId)
-    if (hit) return hit
-    const out = new Set<string>([...(rawTenants.get(recipeId) ?? []), ...usersOf(recipeId)])
-    memo.set(recipeId, out)
-    return out
-  }) as ComponentCompanies
-  all.users = (recipeId) => new Set([...usersOf(recipeId)].filter((t) => t !== NO_COMPANY))
-  // The stock companies of a recipe and every sub-recipe under it (cycle-safe walk down).
-  all.drawsOn = (recipeId) => {
-    const out = new Set<string>()
-    const seen = new Set<string>()
-    const stack = [recipeId]
-    while (stack.length) {
-      const id = stack.pop()!
-      if (seen.has(id)) continue
-      seen.add(id)
-      for (const t of rawTenants.get(id) ?? []) out.add(t)
-      stack.push(...(children.get(id) ?? []))
-    }
-    return out
-  }
-  return all
-}
+/** THE recipe company / brand index (lib/recipeCompany.ts), read through the request's client. */
+const loadComponentCompanies = (): Promise<ComponentCompanies> => loadRecipeCompanyIndex(prisma)
 
 interface RecipeScope {
   mode:       ScopeMode
@@ -652,7 +549,7 @@ const RECIPE_TYPE: ApprovalType = 'recipe'
 async function recipeTenantSet(owned: Pick<OwnedRecipe, 'id' | 'kind' | 'ownerTenantId'>): Promise<string[]> {
   if (owned.ownerTenantId) return [owned.ownerTenantId]
   if (owned.kind !== 'component') return []
-  return [...(await loadComponentCompanies())(owned.id)].filter((t) => t !== NO_COMPANY)
+  return (await loadComponentCompanies()).companiesOf(owned.id)
 }
 
 /** The first of the recipe's companies the caller sees only through a head office, or null. */
@@ -1263,14 +1160,11 @@ export async function recipeRoutes(fastify: FastifyInstance) {
       // Each filter is its own AND term (two ORs spread into one object
       // used to overwrite each other: ?season&q dropped the season filter).
       const and: Prisma.RecipeWhereInput[] = []
-      // A brand's recipes: its dishes and its add-ons (modifier recipes).
-      // A new dish not on the menu yet (opens at approval) carries its brand in pendingMenuItem (owner, 2026-11-12: a
-      // submitted Flipd mousse did not show under Flipd).
-      if (conceptId) and.push({ OR: [
-        { menuItem: { conceptId } },
-        { menuItemId: null, pendingMenuItem: { path: ['conceptId'], equals: conceptId } },
-        { modifier: { group: { menuItem: { conceptId } } } },
-      ] })
+      // A brand's recipes (owner, 2026-11-14 — the Recipes page and the Add-ons page alike): its dishes (a new dish
+      // not on the menu yet carries its brand in pendingMenuItem), its add-ons, PLUS the sub-recipes those dishes and
+      // add-ons use, at any depth. THE rule: lib/recipeCompany.ts brandsOf (each row also carries `brandIds`).
+      const index = await scope.components()
+      if (conceptId) and.push({ id: { in: [...index.recipeIdsOfBrand(conceptId)] } })
       if (activeOnly === 'true') and.push({ isActive: true })
       // Season filter: include the requested season OR explicit "year-round" OR
       // empty seasons array (which we treat as year-round).
@@ -1428,6 +1322,9 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           ...r,
           ingredients: ingDetails,
           serviceVessel: ctx.serviceVessel,
+          // The brands this recipe belongs to (a sub-recipe: every brand whose dishes / add-ons use it) — the page's
+          // brand filter reads this, never its own rule (lib/recipeCompany.ts brandsOf).
+          brandIds: [...index.brandsOf(r.id)],
           // Material cost per portion (food / drinks / packaging, target MC per order type, Q apart).
           mc: mcReadout(cost),
           warnings: costWarnings(graph, r.id, { owners: ctx.owners, kind: r.kind, status: r.status, live: ctx.live, serviceVessel: ctx.serviceVessel }, names),

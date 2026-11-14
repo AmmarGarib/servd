@@ -146,12 +146,19 @@ const PRICE_TIERS = [
 
 const DAYPARTS = ['breakfast', 'lunch', 'afternoon', 'dinner', 'late_night']
 
+// The provinces a brand may be set to — the same list as the books' one table
+// (backend accounting/taxAuthorities.ts BRAND_PROVINCES): Sindh (SRB) and ICT
+// (FBR). Gilgit-Baltistan / AJK are no longer offered (finance, 2026-11-14:
+// such a kitchen is FBR); a brand still saved with one shows it as an old value
+// and keeps it until the CEO picks another.
 const PROVINCES = [
-  { code: 'SD',  label: 'Sindh' },
-  { code: 'ICT', label: 'Islamabad Capital Territory' },
-  { code: 'GB',  label: 'Gilgit-Baltistan' },
-  { code: 'AJK', label: 'Azad Jammu & Kashmir' },
+  { code: 'SD',  label: 'Sindh (SRB)' },
+  { code: 'ICT', label: 'Islamabad Capital Territory (FBR)' },
 ]
+const LEGACY_PROVINCE_LABELS: Record<string, string> = {
+  GB:  'Gilgit-Baltistan (old value — taxed by FBR)',
+  AJK: 'Azad Jammu & Kashmir (old value — taxed by FBR)',
+}
 
 export default function BrandEditorPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -696,6 +703,7 @@ function BrandForm({ concept, onDeleted }: { concept: Concept; onDeleted: () => 
               className="s-input w-full max-w-md">
               <option value="">Select province…</option>
               {PROVINCES.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
+              {LEGACY_PROVINCE_LABELS[province] && <option value={province}>{LEGACY_PROVINCE_LABELS[province]}</option>}
             </Select>
           </Field>
           <Field label="Invoice legal name" hint="Registered entity name printed on tax invoices.">

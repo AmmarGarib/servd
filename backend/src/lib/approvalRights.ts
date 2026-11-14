@@ -28,6 +28,7 @@
 import type { FastifyRequest } from 'fastify'
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { serviceClient } from './prisma.js'
+import { recipeCompaniesOf } from './recipeCompany.js'
 import { AppError } from './errors.js'
 import { audit } from './audit.js'
 import { WORKSPACES } from './workspaces.js'
@@ -1005,61 +1006,9 @@ export async function auditApproval(
 
 // ─── A5: an item's facts, on serviceClient, BEFORE assertCanApprove ─────────
 
-/** Recipe companies (A21): a plate's / add-on's brand company; a component's users (walking up) and stock. */
+/** Recipe companies (A21) — THE rule, lib/recipeCompany.ts recipeCompaniesOf (the recipes routes read the same). */
 async function recipeCompanies(id: string, db: Db): Promise<string[] | null> {
-  const r = await db.recipe.findUnique({
-    where: { id },
-    select: {
-      id: true, kind: true, pendingMenuItem: true, tenantId: true,
-      menuItem: { select: { concept: { select: { tenantId: true } } } },
-      modifier: { select: { group: { select: { menuItem: { select: { concept: { select: { tenantId: true } } } } } } } },
-    },
-  })
-  if (!r) return null
-  // Kitchen flow (K4): a recipe with an OWNER company is that company's to approve (Flipd's dishes → GS Foods).
-  if (r.tenantId) return [r.tenantId]
-  const out = new Set<string>()
-  const pendingTenant = async (p: unknown) => {
-    const cid = (p as { conceptId?: string } | null)?.conceptId
-    if (!cid) return null
-    return (await db.concept.findUnique({ where: { id: cid }, select: { tenantId: true } }))?.tenantId ?? null
-  }
-  if (r.kind === 'plate') {
-    const t = r.menuItem?.concept.tenantId ?? (await pendingTenant(r.pendingMenuItem))
-    if (t) out.add(t)
-    return [...out]
-  }
-  if (r.kind === 'modifier') {
-    const t = r.modifier?.group.menuItem.concept.tenantId
-    if (t) out.add(t)
-    return [...out]
-  }
-  // Component: the companies of the dishes / add-ons above it (cycle-safe) + its own stock.
-  const stock = await db.recipeIngredient.findMany({ where: { recipeId: id }, select: { inventoryItem: { select: { tenantId: true } } } })
-  for (const s of stock) if (s.inventoryItem?.tenantId) out.add(s.inventoryItem.tenantId)
-  const seen = new Set<string>([id])
-  let frontier = [id]
-  for (let depth = 0; frontier.length && depth < 20; depth++) {
-    const ups = await db.recipeIngredient.findMany({ where: { prepRecipeId: { in: frontier } }, select: { recipeId: true } })
-    const next = uniq(ups.map((u) => u.recipeId)).filter((x) => !seen.has(x))
-    next.forEach((x) => seen.add(x))
-    if (next.length === 0) break
-    const parents = await db.recipe.findMany({
-      where: { id: { in: next } },
-      select: {
-        id: true, kind: true, pendingMenuItem: true,
-        menuItem: { select: { concept: { select: { tenantId: true } } } },
-        modifier: { select: { group: { select: { menuItem: { select: { concept: { select: { tenantId: true } } } } } } } },
-      },
-    })
-    frontier = []
-    for (const p of parents) {
-      if (p.kind === 'plate') { const t = p.menuItem?.concept.tenantId ?? (await pendingTenant(p.pendingMenuItem)); if (t) out.add(t) }
-      else if (p.kind === 'modifier') { const t = p.modifier?.group.menuItem.concept.tenantId; if (t) out.add(t) }
-      else frontier.push(p.id)
-    }
-  }
-  return [...out]
+  return (await recipeCompaniesOf([id], db)).get(id) ?? null
 }
 
 /**
@@ -1068,9 +1017,8 @@ async function recipeCompanies(id: string, db: Db): Promise<string[] | null> {
  * section and hand-over checks match the approve route. Missing ids → [].
  */
 export async function recipeCompaniesBatch(ids: readonly string[], db: Db = serviceClient): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>()
-  await Promise.all(uniq([...ids]).map(async (id) => { out.set(id, (await recipeCompanies(id, db)) ?? []) }))
-  return out
+  const found = await recipeCompaniesOf(ids, db)
+  return new Map(uniq([...ids]).map((id) => [id, found.get(id) ?? []]))
 }
 
 /** The owner company approvalSubject('recipe') picks from an A21 set (null = CEO only). */
