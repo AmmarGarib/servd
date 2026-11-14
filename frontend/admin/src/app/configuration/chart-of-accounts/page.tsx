@@ -132,6 +132,14 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
   const others = companies.filter((c) => c.id !== account?.tenantId)
   const [relatedTenantId, setRelatedTenantId] = useState(account?.relatedTenantId ?? '')
   const [relatedAccountCode, setRelatedAccountCode] = useState(account?.relatedAccountCode ?? '')
+  // The other company's accounts to pick from (owner, 2026-11-14: a typed code was missed — "??").
+  const { data: theirAccounts = [] } = useQuery<Account[]>({
+    queryKey: ['chart-of-accounts', 'linked', relatedTenantId],
+    queryFn: () => api.get<Account[]>('/setup/chart-of-accounts', { headers: { 'x-servd-portfolio': '1' } }),
+    enabled: !!relatedTenantId,
+    select: (rows) => rows.filter((a) => a.tenantId === relatedTenantId && a.isActive).sort((a, b) => a.code.localeCompare(b.code)),
+    staleTime: 60_000,
+  })
   const linkChanged = (relatedTenantId || null) !== (account?.relatedTenantId ?? null) || (relatedAccountCode.trim() || null) !== (account?.relatedAccountCode ?? null)
 
   const save = useMutation({
@@ -180,15 +188,22 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
           <Field label="Name *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Marketing software" className={fieldCls} /></Field>
           <Field label="Description"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className={fieldCls} placeholder="What goes here vs other accounts" /></Field>
           {account && others.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Linked to company (optional)">
                 <Select value={relatedTenantId} onChange={(e) => setRelatedTenantId(e.target.value)} className={fieldCls}>
                   <option value="">— Not linked —</option>
                   {others.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </Select>
               </Field>
-              <Field label="Their account code">
-                <input value={relatedAccountCode} onChange={(e) => setRelatedAccountCode(e.target.value)} disabled={!relatedTenantId} placeholder="2290" className={fieldCls + ' font-mono'} />
+              <Field label="Their account *">
+                {relatedTenantId && theirAccounts.length > 0 ? (
+                  <Select value={relatedAccountCode} onChange={(e) => setRelatedAccountCode(e.target.value)} className={fieldCls}>
+                    <option value="">— pick their account —</option>
+                    {theirAccounts.map((a) => <option key={a.id} value={a.code}>{a.code} · {a.name}</option>)}
+                  </Select>
+                ) : (
+                  <input value={relatedAccountCode} onChange={(e) => setRelatedAccountCode(e.target.value)} disabled={!relatedTenantId} placeholder="their account code" className={fieldCls + ' font-mono'} />
+                )}
               </Field>
               {relatedTenantId && (
                 <p className="sm:col-span-2 text-[11px] text-white/55">A journal on this account puts a ready-made voucher in that company&apos;s Journals (its side, on their account), for its finance to check and post. The CEO is told.</p>
