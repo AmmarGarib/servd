@@ -5,6 +5,8 @@
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { SalaryBreakupView, PayslipParticularsView, PayslipPdfButtons, type SalaryBreakup, type PayslipParticulars } from '../../../components/hr/SalaryBreakup'
 import { card, btn, btnGhost, rs, day, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord } from '../../../lib/hr'
 import { HrShell, Modal, Stat, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
@@ -161,9 +163,11 @@ function RequestForm({ section, tenantId, department, onClose }: { section: stri
   const [err, setErr] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const formRef = useRef<HTMLFormElement>(null)
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts); the key turns on once the format has loaded.
+  const draft = useFormDraft<Record<string, unknown>>(fmt ? `hr:me:request:${section}` : null, value, (d) => setValue(d && typeof d === 'object' ? d : {}), { isEmpty: (d) => !d || Object.keys(d).length === 0 })
   const save = useMutation({
     mutationFn: () => api.post(`/hr/me/records/${section}`, { data: value }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['hr-me'] }); onClose() },
+    onSuccess: () => { draft.clear(); void qc.invalidateQueries({ queryKey: ['hr-me'] }); onClose() },
     onError: (e: Error) => setErr(e.message),
   })
   const fields = fmt ? leaveFields(section, fmt.fields, value) : []
@@ -182,6 +186,7 @@ function RequestForm({ section, tenantId, department, onClose }: { section: stri
   }
   return (
     <Modal title={section === 'requisition' && department ? `Manpower requisition — ${department}` : REQUEST_LABEL[section] ?? human(section)} wide onClose={onClose} dirty={Object.keys(value).length > 0}>
+      <DraftNotice draft={draft} className="mb-3" />
       <form ref={formRef} onSubmit={(ev) => void submit(ev)} noValidate>
         {section === 'requisition' && department && (
           <p className="text-xs text-white/55 mb-3">For your department, {department}. It goes to HR, then management.</p>

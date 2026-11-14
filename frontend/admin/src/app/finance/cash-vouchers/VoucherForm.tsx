@@ -25,6 +25,8 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
 import { api } from '../../../lib/api'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { pStr, pNum, type Prefill } from '../../../lib/trashPrefill'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { amountInWords, formatPkr } from './amountInWords'
@@ -84,6 +86,28 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
     ? { classification: voucher.classification, taxStatus: voucher.taxStatus ?? '', nonDeductionReason: voucher.nonDeductionReason ?? '' }
     : EMPTY_PAYMENT_CLASSIFICATION)
 
+  // Unsaved typing survives a refresh / Back (attachments are not part of this form).
+  const draft = useFormDraft(
+    // A Trash "Recover as copy" opens pre-filled — never mixed with a kept draft.
+    prefill ? null : editing ? `cash-voucher:${voucher!.id}` : expense ? 'cash-voucher:new-expense' : 'cash-voucher:new-request',
+    { grossCents, discountCents, purpose, category, assetLocationId, payFrom, payFromBankAccountId, supplierId, voucherDate, payeeName, sendTo, cls },
+    (d) => {
+      setGrossCents(typeof d.grossCents === 'number' ? d.grossCents : 0)
+      setDiscountCents(typeof d.discountCents === 'number' ? d.discountCents : 0)
+      setPurpose(d.purpose ?? '')
+      setCategory(d.category ?? '')
+      setAssetLocationId(d.assetLocationId ?? '')
+      setPayFrom(d.payFrom === 'bank' || d.payFrom === 'credit' ? d.payFrom : 'cash')
+      setPayFromBankAccountId(d.payFromBankAccountId ?? '')
+      setSupplierId(d.supplierId ?? '')
+      if (d.voucherDate) setVoucherDate(d.voucherDate)
+      setPayeeName(d.payeeName ?? '')
+      setSendTo(d.sendTo === 'finance' ? 'finance' : 'ceo')
+      setCls(d.cls ?? EMPTY_PAYMENT_CLASSIFICATION)
+    },
+    { isEmpty: (d) => !d.purpose?.trim() && !d.grossCents && !d.payeeName?.trim() && !d.category },
+  )
+
   const tenantId = voucher?.tenantId ?? null
   const expenseAccounts = chart.filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!tenantId || a.tenantId === tenantId))
   const isCode = /^\d{4}$/.test(category)
@@ -137,7 +161,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
         : api.post<CashVoucher>(CV_BASE, body)
     },
     meta: { inlineErrors: true },
-    onSuccess: (v) => onSaved(v),
+    onSuccess: (v) => { draft.clear(); onSaved(v) },
   })
 
   const submit = useSubmitOnce(save.isPending)(() => {
@@ -161,6 +185,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
   return (
     <Modal title={title} onClose={onClose} wide dirty={!save.isPending && (purpose !== (voucher?.purpose ?? '') || grossCents !== startGross || (expense && payeeName !== (voucher?.payeeName ?? '')))}>
       <form onSubmit={submit} className="space-y-3" noValidate>
+      <DraftNotice draft={draft} />
       <p className="text-xs text-s-muted">
         {expense
           ? (sendTo === 'ceo' || editing

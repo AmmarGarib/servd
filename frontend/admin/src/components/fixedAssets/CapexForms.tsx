@@ -11,6 +11,8 @@
 // decides whether a capitalisation waits for the CEO (202) or posts (201).
 
 import { useEffect, useMemo, useState } from 'react'
+import { useFormDraft } from '../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -226,7 +228,8 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
   const [name, setName] = useState(line.item)
   const [life, setLife] = useState('')
   const [salvage, setSalvage] = useState(0)
-  const [inService, setInService] = useState((line.installedDate ?? line.actualDeliveryDate ?? '').slice(0, 10) || todayIso())
+  const defInService = (line.installedDate ?? line.actualDeliveryDate ?? '').slice(0, 10) || todayIso()
+  const [inService, setInService] = useState(defInService)
   const [locationId, setLocationId] = useState(project.locationId ?? '')
   // An individual asset's brand: the project's by default; '' = shared across brands.
   const [brandId, setBrandId] = useState(project.conceptId ?? '')
@@ -239,6 +242,19 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
 
   useEffect(() => { if (!classKey && classes[0]) setClassKey(classes[0].key) }, [classes, classKey])
   const cls = classes.find((c) => c.key === classKey)
+
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft(
+    assets.length > 0 || pendingId ? null : `capex-capitalise:${line.id}`,
+    { classKey, name, life, salvage, inService, locationId, brandId, typeKey, poolConcept, inputTax, leaseEnds, note },
+    (d) => {
+      setClassKey(d.classKey ?? ''); setName(d.name || line.item); setLife(d.life ?? ''); setSalvage(d.salvage ?? 0)
+      setInService(d.inService || defInService); setLocationId(d.locationId ?? ''); setBrandId(d.brandId ?? '')
+      setTypeKey(d.typeKey ?? ''); setPoolConcept(d.poolConcept ?? ''); setInputTax(d.inputTax ?? line.inputTaxCents)
+      setLeaseEnds(d.leaseEnds ?? ''); setNote(d.note ?? '')
+    },
+    { isEmpty: (d) => !d.life && !d.note.trim() && !d.leaseEnds && !d.salvage && d.name === line.item && d.inputTax === line.inputTaxCents && d.inService === defInService && !d.typeKey },
+  )
 
   const outlets = (caps.lookups?.locations ?? []).filter((l) => l.tenantId === project.tenantId)
   const brands = (caps.lookups?.brands ?? []).filter((b) => b.tenantId === project.tenantId)
@@ -258,6 +274,7 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
       ...(note.trim() ? { reason: note.trim() } : {}),
     }, project.tenantId ? { tenantId: project.tenantId } : undefined),
     onSuccess: (r) => {
+      draft.clear()
       setResult(r)
       void qc.invalidateQueries({ queryKey: ['fa-register'] })
       void qc.invalidateQueries({ queryKey: ['fa-pending-count'] })
@@ -334,6 +351,7 @@ export function CapitalisePanel({ project, line, onChange }: { project: Project;
 
   return (
     <form onSubmit={submitCap} noValidate className="rounded-xl p-3 mt-2" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.05)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.2)' }}>
+      <DraftNotice draft={draft} className="mb-2" />
       <p className="text-sm font-black text-white/85">Prepare for the register</p>
       <p className="text-xs text-white/60 mt-0.5">
         Delivered. Cost {money(total)}, {money(advanced)} advanced so far{total > advanced ? `, ${money(total - advanced)} still owed to the supplier` : ''}.{' '}
@@ -475,6 +493,21 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
   // Garibsons / credit move none of the company's money: no withholding here, no payment classification.
   const viaLiability = payFrom === 'garibsons' || payFrom === 'credit'
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts). Placed here so the first-class /
+  // single-outlet auto-fill above never counts as typing (isEmpty).
+  const draft = useFormDraft(
+    'capex:quick-buy',
+    { locationId, conceptId, item, classKey, typeKey, quantity, unitCost, supplierId, paidAt, bankId, payFrom, ref, tax, authority, section, override, overrideCents, overrideReason, life, salvage, warranty, notes, payCls },
+    (d) => {
+      setLocationId(d.locationId ?? ''); setConceptId(d.conceptId ?? ''); setItem(d.item ?? ''); setClassKey(d.classKey ?? ''); setTypeKey(d.typeKey ?? '')
+      setQuantity(d.quantity || '1'); setUnitCost(d.unitCost ?? 0); setSupplierId(d.supplierId ?? ''); setPaidAt(d.paidAt || todayIso()); setBankId(d.bankId ?? '')
+      setPayFrom(d.payFrom || 'bank'); setRef(d.ref ?? ''); setTax(d.tax ?? 0); setAuthority(d.authority ?? ''); setSection(d.section ?? '')
+      setOverride(!!d.override); setOverrideCents(d.overrideCents ?? 0); setOverrideReason(d.overrideReason ?? ''); setLife(d.life ?? ''); setSalvage(d.salvage ?? 0)
+      setWarranty(d.warranty ?? ''); setNotes(d.notes ?? ''); setPayCls(d.payCls ?? EMPTY_PAYMENT_CLASSIFICATION)
+    },
+    { isEmpty: (d) => !d.item.trim() && !(d.unitCost > 0) && !d.ref.trim() && !d.notes.trim() && !d.supplierId && !(d.tax > 0) },
+  )
+
   const send = useMutation({
     mutationFn: () => api.post<QuickBuyResponse>('/finance/capex/quick-buy', {
       locationId,
@@ -499,7 +532,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
       ...(notes.trim() ? { notes: notes.trim() } : {}),
       ...(viaLiability ? {} : paymentClassificationBody(payCls)),
     }),
-    onSuccess: onDone,
+    onSuccess: (r) => { draft.clear(); onDone(r) },
   })
 
   const bounds = dateBounds()
@@ -533,6 +566,7 @@ export function QuickBuyModal({ onClose, onDone }: { onClose: () => void; onDone
       {lookups.error && <Notice tone="bad">{errorWords(lookups.error)}</Notice>}
       {L0 && (
         <form onSubmit={submitBuy} noValidate className="space-y-3">
+          <DraftNotice draft={draft} />
           <p className="text-xs text-white/55">
             Records a purchase made today: paid from a bank account or the cash on hand, paid by Garibsons, or owed to the supplier. The equipment is prepared for the fixed-asset register in the same step.
           </p>
@@ -696,6 +730,13 @@ export function DepositReturnModal({ payment, line, project, onClose, onDone }: 
   // Saved with a reference used before: say so before closing.
   const [reused, setReused] = useState<PaymentRefUse[] | null>(null)
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft(`capex-deposit-return:${payment.id}`, { returned, kept, reason, receivedAt, method, reference, bankId },
+    (d) => {
+      setReturned(d.returned ?? 0); setKept(d.kept ?? 0); setReason(d.reason ?? ''); setReceivedAt(d.receivedAt || todayIso())
+      setMethod(d.method || 'bank_transfer'); setReference(d.reference ?? ''); setBankId(d.bankId ?? '')
+    })
+
   const send = useMutation({
     mutationFn: () => api.post<{ referenceUsedBefore?: PaymentRefUse[] }>(`/finance/capex/payments/${payment.id}/deposit-return`, {
       returnedCents: returned, forfeitedCents: kept,
@@ -703,7 +744,7 @@ export function DepositReturnModal({ payment, line, project, onClose, onDone }: 
       receivedAt,
       ...(returned > 0 ? { method, reference: reference.trim(), ...(isBankMethod(method) && bankId ? { bankAccountId: bankId } : {}) } : {}),
     }, project.tenantId ? { tenantId: project.tenantId } : undefined),
-    onSuccess: (r) => { if (r?.referenceUsedBefore?.length) setReused(r.referenceUsedBefore); else onDone() },
+    onSuccess: (r) => { draft.clear(); if (r?.referenceUsedBefore?.length) setReused(r.referenceUsedBefore); else onDone() },
   })
   const total = returned + kept
   const bounds = dateBounds()
@@ -727,6 +768,7 @@ export function DepositReturnModal({ payment, line, project, onClose, onDone }: 
     <Modal title={`Deposit back: ${line.item}`} onClose={reused ? onDone : onClose}
       dirty={!reused && !send.isPending && (returned !== payment.depositReturnedCents || kept !== payment.depositForfeitedCents || !!reason.trim() || !!reference.trim())}>
       <form onSubmit={submitReturn} noValidate className="space-y-3">
+        <DraftNotice draft={draft} />
         <p className="text-sm text-white/65">The deposit held is <strong className="text-white/90">{money(held)}</strong>. Enter the totals; saving again corrects them.</p>
         <div className="grid grid-cols-2 gap-3">
           <L t="Returned to us (PKR)"><MoneyInput id="dr-returned" value={returned} onChange={setReturned} className={inp} /></L>

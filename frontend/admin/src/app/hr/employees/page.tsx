@@ -6,6 +6,8 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import { api } from '../../../lib/api'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { card, btn, btnGhost, rs, day, human, STATUS_BADGE, type HrField } from '../../../lib/hr'
 import { HrShell, Modal, useHrForm, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../components/hr/FormRenderer'
@@ -157,6 +159,8 @@ function AddEmployee({ onClose }: { onClose: () => void }) {
   // the column they fill, not by key.
   const [value, setValue] = useState<Record<string, unknown> | null>(null)
   const v = value ?? masterDefaults(fields)
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts). Only what is typed / picked; file fields are not kept.
+  const draft = useFormDraft<Record<string, unknown> | null>(form ? 'hr:employee:new' : null, value, (d) => setValue(d && typeof d === 'object' ? d : null), { isEmpty: (d) => !d || Object.keys(d).length === 0 })
   const nameKey = fields.find((f) => f.bind === 'employee.fullName')?.key
   const named = !!nameKey && typeof v[nameKey] === 'string' && !!(v[nameKey] as string).trim()
   const [err, setErr] = useState('')
@@ -164,7 +168,7 @@ function AddEmployee({ onClose }: { onClose: () => void }) {
   const formRef = useRef<HTMLFormElement>(null)
   const save = useMutation({
     mutationFn: () => api.post<{ id: string }>('/hr/employees', { data: v }),
-    onSuccess: (e) => { void qc.invalidateQueries(); router.push(`/hr/employees/${e.id}`) },
+    onSuccess: (e) => { draft.clear(); void qc.invalidateQueries(); router.push(`/hr/employees/${e.id}`) },
     onError: (e: Error) => setErr(e.message),
   })
   const submit = (ev: React.FormEvent) => {
@@ -180,6 +184,7 @@ function AddEmployee({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="Add employee" wide onClose={onClose} dirty={value !== null}>
       <p className="text-xs text-white/60 mb-3">Interns are not employees — they are enrolled in <Link href="/hr/interns" className="font-bold text-primary-ink underline">HR → Interns</Link>.</p>
+      <DraftNotice draft={draft} className="mb-3" />
       <form ref={formRef} onSubmit={submit} noValidate>
         {form ? <FormRenderer fields={fields} value={v} errors={errors}
           onChange={(nv) => { setValue(nv); if (Object.keys(errors).length) setErrors(validate(fields, nv)) }} ctx={{ lookups, org }} />

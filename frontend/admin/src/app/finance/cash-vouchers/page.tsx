@@ -21,6 +21,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { formatPkr } from './amountInWords'
 import { CV_ROOT, errorWords, fmtDate, stageOf, useDashboard, useVouchers, type Dashboard, type ListView } from './data'
 import { VoucherForm } from './VoucherForm'
+import { hasFormDraft } from '../../../lib/formDraft'
 import { useTrashPrefill } from '../../../lib/trash'
 import { unwrapPrefill, pStr } from '../../../lib/trashPrefill'
 import { Button, ErrorBanner, StatusBadge } from './ui'
@@ -72,6 +73,11 @@ function CashVouchers() {
   useEffect(() => {
     if (trashPrefill) setMode(pStr(trashPrefill, 'kind') === 'expense' ? 'expense' : 'request')
   }, [trashPrefill])
+  // An unsaved voucher kept in this browser (lib/formDraft.ts) reopens its form after a refresh / Back.
+  useEffect(() => {
+    if (hasFormDraft('cash-voucher:new-request')) setMode((m) => m ?? 'request')
+    else if (hasFormDraft('cash-voucher:new-expense')) setMode((m) => m ?? 'expense')
+  }, [])
   const { data, isLoading, error } = useVouchers(view)
   const dash = useDashboard()
   const keeper = !!data?.keeper

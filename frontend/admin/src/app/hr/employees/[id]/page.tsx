@@ -7,6 +7,8 @@ import Link from 'next/link'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, deleteWithUndo } from '../../../../lib/api'
+import { useFormDraft } from '../../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { card, btn, btnGhost, inp, rs, day, human, STATUS_COLOR, STATUS_BADGE, isReportingLineField, REPORTS_TO_CEO, type HrRecord, type HrLogin, recordStatusText, isManualEntry, btnDanger } from '../../../../lib/hr'
 import { HrShell, Stat, useHrForm, useHrLookups, useHrOrg } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
@@ -161,10 +163,13 @@ function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void 
   const [errors, setErrors] = useState<Record<string, string>>({})
   const formRef = useRef<HTMLFormElement>(null)
   const [sentForApproval, setSentForApproval] = useState<false | 'own' | 'pay'>(false)
+  // Unsaved edits survive Back / refresh (lib/formDraft.ts). value is null until the person edits, so an untouched
+  // form never leaves a draft; the key turns on once the format (and so the loaded values) is there.
+  const draft = useFormDraft<Record<string, unknown> | null>(form ? `hr:employee:${p.employee.id}` : null, value, (d) => setValue(d && typeof d === 'object' ? d : null), { isEmpty: (d) => !d || Object.keys(d).length === 0 })
   const save = useMutation({
     // A pay change by anyone but the CEO comes back 202 { pendingApproval } — the rest of the save applied.
     mutationFn: () => api.patch<{ pendingApproval?: boolean; request?: { section?: string } }>(`/hr/employees/${p.employee.id}`, { data: value }),
-    onSuccess: (r) => { setOk(true); setSentForApproval(r?.pendingApproval ? (r.request?.section === 'profile_update' ? 'own' : 'pay') : false); setErr(''); setValue(null); void qc.invalidateQueries() },
+    onSuccess: (r) => { draft.clear(); setOk(true); setSentForApproval(r?.pendingApproval ? (r.request?.section === 'profile_update' ? 'own' : 'pay') : false); setErr(''); setValue(null); void qc.invalidateQueries() },
     onError: (e: Error) => { setErr(e.message); setOk(false) },
   })
   const withdraw = useMutation({
@@ -187,6 +192,7 @@ function ProfileTab({ p, onDirty }: { p: Profile; onDirty: (d: boolean) => void 
   }
   return (
     <form ref={formRef} onSubmit={submit} noValidate className="rounded-2xl p-5" style={card}>
+      <DraftNotice draft={draft} className="mb-4" />
       {pw && (
         <div role="status" className="mb-4 rounded-xl border border-s-amber/40 bg-s-amber/10 px-4 py-3 text-sm">
           <p className="font-bold text-white/85">{pw.atCeoStep ? 'Waiting for the CEO' : `Pay change waiting for ${pw.waitingFor ?? 'approval'}`}</p>

@@ -24,6 +24,8 @@ import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
 import { ReferenceUsedBeforeNotice, type PaymentRefUse } from '../../../components/finance/PaymentReceivedFields'
@@ -192,6 +194,23 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
   // Saved with a slip # used before in this company: a warning, shown before closing.
   const [reused, setReused] = useState<PaymentRefUse[] | null>(null)
 
+  // Unsaved typing survives a refresh / Back (slip files are not kept).
+  const draft = useFormDraft(
+    'deposit-drop:new',
+    { shiftId, amountCents, splitMode, shares, bankAccountId, bagSerial, slipNumber, notes },
+    (d) => {
+      setShiftId(d.shiftId ?? '')
+      setAmountCents(typeof d.amountCents === 'number' ? d.amountCents : 0)
+      setSplitMode(!!d.splitMode)
+      if (Array.isArray(d.shares) && d.shares.length > 0) setShares(d.shares)
+      setBankAccountId(d.bankAccountId ?? '')
+      setBagSerial(d.bagSerial ?? '')
+      setSlipNumber(d.slipNumber ?? '')
+      setNotes(d.notes ?? '')
+    },
+    { isEmpty: (d) => !d.amountCents && !d.shares?.some((x) => x.amountCents > 0) && !d.slipNumber?.trim() && !d.bagSerial?.trim() && !d.notes?.trim() },
+  )
+
   const save = useMutation({
     mutationFn: () => api.post<{ posted?: boolean; postingError?: string | null; referenceUsedBefore?: PaymentRefUse[] }>('/trustops/deposit-drops', {
       ...(splitMode ? { shifts: shares } : { shiftId: shiftId || null }),
@@ -204,6 +223,7 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
     }),
     onSuccess: (r) => {
       const uses = r?.referenceUsedBefore?.length ? r.referenceUsedBefore : null
+      draft.clear()
       if (r?.postingError || uses) { setNotBooked(r?.postingError ?? null); setReused(uses) }
       else onSaved()
     },
@@ -234,6 +254,7 @@ function DropModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
       </div>
     }>
     <form id="dd-form" onSubmit={submit} className="space-y-3" noValidate>
+      <DraftNotice draft={draft} />
       <CheckLabel className="flex items-center gap-2 text-sm text-white/70">
         <input type="checkbox" checked={splitMode} onChange={(e) => setSplitMode(e.target.checked)} style={{ accentColor: 'var(--erp-accent)' }} />
         One bag for several tills — split it across them

@@ -22,6 +22,8 @@ import { PaymentClassificationFields, ClassificationChip, EMPTY_PAYMENT_CLASSIFI
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError, deleteWithUndo } from '../../../lib/api'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { BankAccountSelect, useBankAccounts } from '../../../components/finance/BankAccountSelect'
 import { useAuthStore } from '../../../store/auth'
@@ -752,6 +754,19 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
   const accountLabel = useAccountLabel(tenantId)
   const suggested = category?.suggestedExpenseAccountCode ?? null
 
+  // Unsaved typing survives a refresh / Back.
+  const draft = useFormDraft(
+    category ? `opex-category:${category.id}` : 'opex-category:new',
+    { name, budgetMonthlyCents, notes, expenseAccountCode },
+    (d) => {
+      setName(d.name ?? '')
+      setBudget(typeof d.budgetMonthlyCents === 'number' ? d.budgetMonthlyCents : 0)
+      setNotes(d.notes ?? '')
+      setExpenseAccountCode(d.expenseAccountCode ?? '')
+    },
+    { isEmpty: (d) => !d.name?.trim() && !d.budgetMonthlyCents && !d.notes?.trim() },
+  )
+
   const save = useMutation({
     mutationFn: () => {
       const payload: Record<string, unknown> = { name, emoji: category?.emoji ?? null, budgetMonthlyCents, notes: notes || null }
@@ -764,7 +779,7 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
       if (expenseAccountCode) payload.expenseAccountCode = expenseAccountCode
       return api.post('/opex/categories', payload)
     },
-    onSuccess: () => onSaved(),
+    onSuccess: () => { draft.clear(); onSaved() },
   })
   const del = useMutation({
     mutationFn: () => deleteWithUndo(`/opex/categories/${category!.id}`, { trashType: 'opex_category', id: category!.id, onRestored: () => onSaved() }),
@@ -784,6 +799,7 @@ function CategoryModal({ category, activeTenantId, onClose, onSaved }: { categor
 
   return <ModalShell title={category ? 'Edit category' : 'New OpEx category'} onClose={onClose} dirty={dirty}>
     <form id="opex-cat-form" onSubmit={submit} className="space-y-4" noValidate>
+    <DraftNotice draft={draft} />
     <div className="grid grid-cols-1 gap-3">
       <Field label="Name *" error={nameErr}><Input id="opex-cat-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Rent / lease" className={fieldCls} autoFocus /></Field>
     </div>
@@ -842,6 +858,27 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
   const paidInCash = paymentMethod === 'cash'
   const payroll = category.isPayroll || line?.source === 'payroll'
 
+  // Unsaved typing survives a refresh / Back.
+  const draft = useFormDraft(
+    line ? `opex-line:${line.id}` : `opex-line:new:${category.id}`,
+    { name, vendor, supplierId, vendorContact, amountCents, cadence, nextDueDate, paymentMethod, bankAccountId, whtSection, inputTaxAuthority, notes },
+    (d) => {
+      setName(d.name ?? '')
+      setVendor(d.vendor ?? '')
+      setSupplierId(d.supplierId ?? '')
+      setVendorContact(d.vendorContact ?? '')
+      setAmount(typeof d.amountCents === 'number' ? d.amountCents : 0)
+      setCadence(d.cadence ?? 'monthly')
+      setNextDueDate(d.nextDueDate ?? '')
+      setPaymentMethod(d.paymentMethod ?? '')
+      setBankAccountId(d.bankAccountId ?? '')
+      setWhtSection(d.whtSection ?? '')
+      setInputTaxAuthority(d.inputTaxAuthority ?? '')
+      setNotes(d.notes ?? '')
+    },
+    { isEmpty: (d) => !d.name?.trim() && !d.amountCents && !d.vendor?.trim() && !d.notes?.trim() },
+  )
+
   // The vendor master is Procurement's suppliers of the category's company.
   const vendors = useVendorPicker(category.id)
   const picked = (vendors.data ?? []).find((v) => v.id === supplierId) ?? null
@@ -872,7 +909,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
       }
       return line ? api.patch(`/opex/lines/${line.id}`, payload) : api.post('/opex/lines', payload)
     },
-    onSuccess: () => onSaved(),
+    onSuccess: () => { draft.clear(); onSaved() },
   })
   const del = useMutation({
     mutationFn: () => deleteWithUndo(`/opex/lines/${line!.id}`, { trashType: 'opex_line', id: line!.id, onRestored: () => onSaved() }),
@@ -905,6 +942,7 @@ function LineModal({ category, line, onClose, onSaved }: { category: Category; l
       { label: 'Withholding', value: payroll ? 'n/a' : whtSection ? WHT_SECTION_LABEL[whtSection] : 'None' },
     ]} />
     <form id="opex-line-form" onSubmit={submit} className="space-y-4" noValidate>
+    <DraftNotice draft={draft} />
     <Section heading="What it is">
     <Field label="Name *" error={shown('opex-line-name')}>
       <Input id="opex-line-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Office rent — DHA Phase 5" className={fieldCls} autoFocus />
@@ -1209,6 +1247,40 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
   const [overrideAccount, setOverrideAccount] = useState(false)
   const accountLabel = useAccountLabel(category.tenantId)
 
+  // Unsaved typing survives a refresh / Back (receipt files are not kept).
+  const draft = useFormDraft(
+    payment ? `opex-payment:${payment.id}` : `opex-payment:new:${line.id}`,
+    {
+      periodStart, periodEnd, invoiceCents, inputTaxCents, authority, section, overrideOn, overrideCents, overrideReason,
+      treatment, coversFrom, coversMonths, notEquipment, notEquipmentReason, paidOn, paymentRef, cls, cash, bankAccountId,
+      expenseAccountCode,
+    },
+    (d) => {
+      setPeriodStart(d.periodStart ?? initial.periodStart)
+      setPeriodEnd(d.periodEnd ?? initial.periodEnd)
+      setInvoice(typeof d.invoiceCents === 'number' ? d.invoiceCents : initial.invoiceCents)
+      setInputTax(typeof d.inputTaxCents === 'number' ? d.inputTaxCents : 0)
+      setAuthority(d.authority ?? '')
+      setSection(d.section ?? initial.section)
+      setOverrideOn(!!d.overrideOn)
+      setOverrideCents(typeof d.overrideCents === 'number' ? d.overrideCents : 0)
+      setOverrideReason(d.overrideReason ?? '')
+      setTreatment(d.treatment === 'prepaid' ? 'prepaid' : 'expense')
+      setCoversFrom(d.coversFrom ?? initial.coversFrom)
+      setCoversMonths(d.coversMonths ?? '12')
+      setNotEquipment(!!d.notEquipment)
+      setNotEquipmentReason(d.notEquipmentReason ?? '')
+      setPaidOn(d.paidOn ?? initial.paidOn)
+      setPaymentRef(d.paymentRef ?? '')
+      setCls(d.cls ?? EMPTY_PAYMENT_CLASSIFICATION)
+      setCash(!!d.cash)
+      setBankAccountId(d.bankAccountId ?? '')
+      setExpenseAccountCode(d.expenseAccountCode ?? '')
+      // A correction sends cash / bank only when deliberately changed: a restored choice counts as one.
+      if (payment) setMoneyTouched(true)
+    },
+  )
+
   // What changed in the money (a paid payment's split is restated only then).
   const invoiceChanged = invoiceCents !== initial.invoiceCents
   const taxChanged = inputTaxCents !== initial.inputTaxCents
@@ -1291,7 +1363,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
       if (!payroll && !payment.paidAt) Object.assign(body, paymentClassificationBody(cls))
       return api.patch(`/opex/payments/${payment.id}`, body)
     },
-    onSuccess: (r) => { if (!(r as { uploadFailed?: boolean } | null)?.uploadFailed) onDone() },
+    onSuccess: (r) => { draft.clear(); if (!(r as { uploadFailed?: boolean } | null)?.uploadFailed) onDone() },
     meta: { inlineErrors: true },
   })
   const unpay = useMutation({
@@ -1340,6 +1412,7 @@ function PaymentForm({ line, category, payment, onCancel, onDone }: {
 
   return (
     <form onSubmit={submit} noValidate className="rounded-xl p-3 mt-2 space-y-2" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+      <DraftNotice draft={draft} />
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <div>
           <FieldLabel htmlFor={`ps-${idp}`}>Period from</FieldLabel>

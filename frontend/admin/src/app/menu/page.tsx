@@ -4,6 +4,8 @@ import { useId, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { menuApi, api, deleteWithUndo, type Category, type MenuItem } from '../../lib/api'
 import { useAuthStore } from '../../store/auth'
+import { useFormDraft } from '../../lib/formDraft'
+import { DraftNotice } from '../../components/ui/DraftNotice'
 import Link from 'next/link'
 import { CompactEmptyState } from '../../components/ui/CompactEmptyState'
 import { useActiveBrandId } from '../../components/ui/BrandPicker'
@@ -566,6 +568,10 @@ function AddItemForm({ conceptId, categoryId, displayOrder, onSaved, onCancel }:
   const [priceCents, setPriceCents] = useState(0)
   const [touched, setTouched] = useState(false)
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft(`menu-item:new:${categoryId}`, { name, description, priceCents },
+    (d) => { setName(d.name ?? ''); setDescription(d.description ?? ''); setPriceCents(d.priceCents ?? 0) })
+
   const mutation = useMutation({
     mutationFn: () => menuApi.createItem({
       conceptId,
@@ -576,7 +582,7 @@ function AddItemForm({ conceptId, categoryId, displayOrder, onSaved, onCancel }:
       isAvailable: true,
       displayOrder,
     }),
-    onSuccess: onSaved,
+    onSuccess: () => { draft.clear(); onSaved() },
   })
   const nameErr = touched && !name.trim() ? 'Enter the item name.' : undefined
   const priceErr = touched && priceCents <= 0 ? 'Enter a price above zero.' : undefined
@@ -589,6 +595,7 @@ function AddItemForm({ conceptId, categoryId, displayOrder, onSaved, onCancel }:
         setTouched(true)
         if (name.trim() && priceCents > 0 && !mutation.isPending) mutation.mutate()
       }}>
+      <DraftNotice draft={draft} />
       <h3 className="font-bold text-s-text">New Menu Item</h3>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <FormField className="sm:col-span-2" label="Item name" required error={nameErr}>
@@ -634,6 +641,13 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
   const [uploadError, setUploadError] = useState('')
   const [videoUploading, setVideoUploading] = useState(false)
   const [videoUploadError, setVideoUploadError] = useState('')
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts). Uploaded image / video URLs are kept;
+  // a file still uploading is not.
+  const draft = useFormDraft(`menu-item:${item.id}`, { name, nameUrdu, description, priceCents, imageUrl, videoUrl, instructions, instructionsUrdu },
+    (d) => {
+      setName(d.name ?? item.name); setNameUrdu(d.nameUrdu ?? ''); setDescription(d.description ?? ''); setPriceCents(d.priceCents ?? item.priceCents)
+      setImageUrl(d.imageUrl ?? ''); setVideoUrl(d.videoUrl ?? ''); setInstructions(d.instructions ?? ''); setInstructionsUrdu(d.instructionsUrdu ?? '')
+    })
   const dirty = name !== item.name || nameUrdu !== (item.nameUrdu ?? '') || description !== (item.description ?? '') ||
     priceCents !== item.priceCents || imageUrl !== (item.imageUrl ?? '') || videoUrl !== (item.videoUrl ?? '') ||
     instructions !== (item.instructions ?? '') || instructionsUrdu !== (item.instructionsUrdu ?? '')
@@ -700,7 +714,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
       instructions: instructions.trim() || undefined,
       instructionsUrdu: instructionsUrdu.trim() || undefined,
     }),
-    onSuccess: onSaved,
+    onSuccess: () => { draft.clear(); onSaved() },
   })
 
   return (
@@ -721,6 +735,7 @@ function EditItemDrawer({ item, onClose, onSaved }: { item: MenuItem; onClose: (
           if (!name.trim() || priceCents <= 0 || save.isPending) return
           save.mutate()
         }}>
+        <DraftNotice draft={draft} />
         <div className="space-y-3">
           {/* Image */}
           <div>

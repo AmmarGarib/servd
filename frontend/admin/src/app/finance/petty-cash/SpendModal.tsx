@@ -10,6 +10,8 @@ import { useState } from 'react'
 import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../../lib/api'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { SpendLinesEditor, emptyLine, lineBody, linesReady, type SpendLine } from '../../../components/finance/SpendLinesEditor'
 import { ReceiptUploader, type UploadedReceipt } from '../../../components/finance/ReceiptUploader'
@@ -28,6 +30,21 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
   const [supplierBillId, setSupplierBillId] = useState('')
   // Internal payment classification (2026-10-20): required, a reporting label only.
   const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
+  // Unsaved typing survives a refresh / Back (receipt photos are not kept).
+  const draft = useFormDraft(
+    `petty-cash-spend:${box.id}`,
+    { mode, amountCents, reason, vendorName, lines, supplierBillId, cls },
+    (d) => {
+      setMode(d.mode === 'bill' ? 'bill' : 'expense')
+      setAmountCents(typeof d.amountCents === 'number' ? d.amountCents : 0)
+      setReason(d.reason ?? '')
+      setVendorName(d.vendorName ?? '')
+      setLines(Array.isArray(d.lines) && d.lines.length > 0 ? d.lines : [emptyLine()])
+      setSupplierBillId(d.supplierBillId ?? '')
+      setCls(d.cls ?? EMPTY_PAYMENT_CLASSIFICATION)
+    },
+    { isEmpty: (d) => !d.amountCents && !d.reason?.trim() && !d.vendorName?.trim() && !d.supplierBillId },
+  )
   const { data: bills = [] } = useQuery<OpenBill[]>({
     queryKey: ['procurement-bills-open'],
     queryFn: () => api.get('/procurement/bills'),
@@ -55,7 +72,7 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
       ...(receipts.length > 0 && { receiptIds: receipts.map((r) => r.id) }),
       ...paymentClassificationBody(cls),
     }),
-    onSuccess: () => onSaved(),
+    onSuccess: () => { draft.clear(); onSaved() },
     onError: (e) => {
       // Equipment: a keeper may say a line is not equipment, with a reason
       // (the server allows finance and the CEO only, and says so otherwise).
@@ -85,6 +102,7 @@ export function SpendModal({ box, isKeeper, onClose, onSaved }: { box: Box; isKe
 
   return <Modal title={`Spend from ${box.name}`} onClose={onClose} dirty={!save.isPending && (amountCents > 0 || !!reason.trim() || receipts.length > 0)}>
     <form onSubmit={submit} className="space-y-3" noValidate>
+    <DraftNotice draft={draft} />
     {openBills.length > 0 && (
       <Choice<'expense' | 'bill'> value={mode} onChange={setMode} options={[
         { value: 'expense', label: 'Expense' },

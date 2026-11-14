@@ -18,6 +18,8 @@
 
 import { Button, Field, FieldLabel, Input, LinkButton, Textarea } from '@/components/finance/ui'
 import { useEffect, useMemo, useState } from 'react'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -308,6 +310,23 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
   // right after the create POST returns an id.
   const [draftAttempts, setDraftAttempts] = useState<DraftAttempt[]>([])
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts). Kept per recipe (or per new-recipe
+  // start point) in this browser; cleared once saved.
+  const draft = useFormDraft(
+    isEdit ? `recipe:${initial!.id}` : `recipe:new:${prefillBrandId ?? ''}:${prefillCategoryId ?? ''}:${prefillModifier?.modifierId ?? ''}`,
+    { kind, modMenuItemId, modGroupId, modifierId, name, brandId, menuItemId, newItemName, newItemDescription,
+      newItemCategoryId, portions, yieldGrams, yieldUnit, portionsPerBatch, portionLabel, method, methodSteps, qFactor,
+      ings, draftAttempts },
+    (d) => {
+      setKind(d.kind); setModMenuItemId(d.modMenuItemId); setModGroupId(d.modGroupId); setModifierId(d.modifierId)
+      setName(d.name); setBrandId(d.brandId); setMenuItemId(d.menuItemId); setNewItemName(d.newItemName)
+      setNewItemDescription(d.newItemDescription); setNewItemCategoryId(d.newItemCategoryId); setPortions(d.portions)
+      setYieldGrams(d.yieldGrams); setYieldUnit(d.yieldUnit); setPortionsPerBatch(d.portionsPerBatch)
+      setPortionLabel(d.portionLabel); setMethod(d.method); setMethodSteps(d.methodSteps ?? []); setQFactor(d.qFactor)
+      setIngs(d.ings?.length ? d.ings : [blankRow()]); setDraftAttempts(d.draftAttempts ?? [])
+    },
+  )
+
   // If creating + menu item is picked, infer the brand from it
   useEffect(() => {
     if (!isEdit && kind === 'plate' && menuItemId && !brandId) {
@@ -549,6 +568,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
       })
     },
     onSuccess: () => {
+      draft.clear()
       void qc.invalidateQueries({ queryKey: ['recipes'] })
       router.push('/accounting/recipes')
     },
@@ -559,6 +579,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
   const submitForProd = useMutation({
     mutationFn: () => api.post(`/recipes/${initial!.id}/submit`, {}),
     onSuccess: () => {
+      draft.clear()
       void qc.invalidateQueries({ queryKey: ['recipes'] })
       router.push('/accounting/recipes')
     },
@@ -758,6 +779,7 @@ function RecipeFormBody({ initial, prefillBrandId, prefillCategoryId, prefillMod
           </p>
         </div>
       </header>
+      {draft.restoredAt && <div className="max-w-6xl mx-auto px-6 pt-4"><DraftNotice draft={draft} /></div>}
 
       <main className="max-w-6xl mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
 

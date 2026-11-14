@@ -25,6 +25,8 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../../lib/api'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { stockErrorText, errorCode } from '../../../lib/stockUi'
 import { Select } from '@/components/ui/Select'
 import { NumberField } from '../../../components/ui/NumberField'
@@ -122,12 +124,15 @@ export default function StockTransfersPage() {
     void qc.invalidateQueries({ queryKey: ['inventory'] })
   }
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft('stock-transfer:new', { fromId, toId, itemId, qty, reason },
+    (d) => { setFromId(d.fromId ?? ''); setToId(d.toId ?? ''); setItemId(d.itemId ?? ''); setQty(d.qty ?? null); setReason(d.reason ?? '') })
   const create = useMutation({
     mutationFn: () => api.post('/stock-transfers', {
       inventoryItemId: itemId, fromLocationId: fromId, toLocationId: toId,
       quantity: qty, unit: item?.unit ?? '', reason: reason.trim() || undefined,
     }),
-    onSuccess: () => { setQty(null); setReason(''); setTried(false); refresh() },
+    onSuccess: () => { draft.clear(); setQty(null); setReason(''); setTried(false); refresh() },
   })
   const act = useMutation({
     mutationFn: (a: { id: string; verb: 'approve' | 'ship' | 'cancel' }) => api.patch(`/stock-transfers/${a.id}/${a.verb}`, {}),
@@ -158,6 +163,7 @@ export default function StockTransfersPage() {
       <div className="px-7 py-6 max-w-4xl mx-auto space-y-5">
         <SectionCard heading="Request a transfer">
           <form noValidate className="space-y-3" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!problem && !create.isPending) create.mutate() }}>
+            <DraftNotice draft={draft} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="From outlet" error={tried && !fromId ? 'Pick the outlet the stock leaves.' : null}>
                 <Select value={fromId} onChange={(e) => { setFromId(e.target.value); setToId(''); setItemId('') }}>
@@ -302,6 +308,9 @@ function BrandMoveCard({ sites, items, byBrand, isCeo, onDone }: { sites: Site[]
     : fromB === toB ? 'Pick two different brands.'
     : !(qty && qty > 0) ? 'Enter how much to move.'
     : null
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft('stock-brand-move:new', { siteId, itemId, fromB, toB, qty, reason },
+    (d) => { setSiteId(d.siteId ?? ''); setItemId(d.itemId ?? ''); setFromB(d.fromB ?? ''); setToB(d.toB ?? ''); setQty(d.qty ?? null); setReason(d.reason ?? '') })
   const move = useMutation({
     mutationFn: () => api.post('/stock-transfers/brand-move', {
       inventoryItemId: itemId, locationId: siteId, fromConceptId: fromB === SHARED ? null : fromB, toConceptId: toB === SHARED ? null : toB,
@@ -309,6 +318,7 @@ function BrandMoveCard({ sites, items, byBrand, isCeo, onDone }: { sites: Site[]
     }),
     onMutate: () => setSent(null),
     onSuccess: (res: unknown) => {
+      draft.clear()
       setQty(null); setReason(''); setTried(false)
       setSent((res as { pendingApproval?: boolean } | null)?.pendingApproval ? 'Sent to the CEO for approval — nothing moves until the CEO approves.' : 'Moved.')
       onDone()
@@ -327,6 +337,7 @@ function BrandMoveCard({ sites, items, byBrand, isCeo, onDone }: { sites: Site[]
         the brand that sells it carries the cost. It moves at one outlet{isCeo ? ', at once.' : ' once the CEO approves it.'}
       </p>
       <form noValidate className="space-y-3" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!problem && !move.isPending) move.mutate() }}>
+        <DraftNotice draft={draft} />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Outlet" error={tried && !siteId ? 'Pick the outlet.' : null}>
             <Select value={siteId} onChange={(e) => { setSiteId(e.target.value); setItemId(''); setFromB(''); setToB('') }}>

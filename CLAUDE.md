@@ -2881,6 +2881,21 @@ only the types its modules + roles allow.
 - Promo codes and allocation rules are soft-deleted (partial unique over live
   rows); every promo redemption read filters `deletedAt: null`.
 
+### Unsaved drafts on manual-entry forms (owner, 2026-11-14)
+
+"If someone goes back or refreshes the page, it should not lose incomplete data." ONE helper:
+`frontend/admin/src/lib/formDraft.ts` — `useFormDraft(key, value, apply, { isEmpty })` keeps a form's typed values in
+the browser's localStorage (keyed per login + company in view + the form's key; ~0.4 s after each change and when the
+page is hidden; dropped after 7 days; never sent to the server) and puts them back on the next open;
+`draft.clear()` in the save's success handler; `<DraftNotice draft />` (`components/ui/DraftNotice.tsx`) shows "put
+back" + Discard. An untouched form leaves no draft. Attachments are never kept (files can't be stored). A pop-up form
+reopens after a refresh only where its page asks `hasFormDraft(key)` (cash vouchers, new PO); the others restore when
+reopened. In: recipes, journals, cash vouchers, petty-cash spend, OpEx, deposit drops, POs / bills / supplier
+payments / credit notes / suppliers / buyer complete / confirm receipt / GRN fix + return, HR employee new + edit, My HR
+requests, HR new records, bulk attendance, receivables (invoice, receipt, credit note), CapEx (Quick buy, capitalise,
+deposit return, projects, lines, mark paid), stock transfers / brand moves, menu items. A new manual-entry form uses
+this hook — never its own storage (the stock count page keeps its older inline draft).
+
 ### Record files (owner, 2026-10-16)
 
 "It should ask for attachment instead of URL for supporting docs" — and, for

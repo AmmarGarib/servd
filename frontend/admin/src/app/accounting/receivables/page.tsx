@@ -46,6 +46,8 @@
 // money OUT and keeps its own methods.
 
 import { Button, Field, Input, LinkButton } from '@/components/finance/ui'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { PaymentClassificationFields, EMPTY_PAYMENT_CLASSIFICATION, paymentClassificationBody, paymentClassificationError, type PaymentClassificationValue } from '@/components/finance/PaymentClassificationFields'
 import { toast } from 'sonner'
@@ -563,6 +565,9 @@ function Raise({ concepts, onClose, prefill }: { concepts: Concept[]; onClose: (
     tax: pNum(prefill ?? null, 'taxCents') != null ? rupees(pNum(prefill ?? null, 'taxCents') ?? 0) : '0',
   }))
   const [err, setErr] = useState('')
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14). Not for a recovered (Trash) invoice, which opens pre-filled.
+  const draft = useFormDraft(prefill ? null : 'receivable-invoice:new', f, (d) => setF({ ...d }),
+    { isEmpty: (d) => !d.customerName.trim() && !d.customerEmail.trim() && !d.customerPhone.trim() && !d.customerNtn.trim() && !d.description.trim() && !d.amount })
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF((p) => ({ ...p, [k]: e.target.value }))
   // The brand's own rates (cash / card) and where its tax is booked — never
   // a rate assumed here.
@@ -595,7 +600,7 @@ function Raise({ concepts, onClose, prefill }: { concepts: Concept[]; onClose: (
       issueDate: f.issueDate, dueDate: f.dueDate, description: f.description,
       amountCents: toPaisa(f.amount), taxCents: toPaisa(f.tax),
     }),
-    onSuccess: done,
+    onSuccess: () => { draft.clear(); done() },
     onError: (e: Error) => setErr(receivablesErrorMessage(e)),
   })
   const applyRate = (pct: number) => setF((p) => ({ ...p, tax: String(Math.round((Number(p.amount) || 0) * pct) / 100) }))
@@ -604,6 +609,7 @@ function Raise({ concepts, onClose, prefill }: { concepts: Concept[]; onClose: (
     <Modal title="New invoice" onClose={onClose} dirty={!save.isPending && (!!f.customerName.trim() || !!f.amount || !!f.description)}>
       <Form busy={save.isPending} onSubmit={() => save.mutate()}
         missing={!(f.customerName.trim() || f.customerAccountId) ? 'Enter the customer, or pick an on-account client.' : !f.amount ? 'Enter the amount before tax.' : !f.description.trim() ? 'Say what the invoice is for.' : null}>
+      <DraftNotice draft={draft} className="mb-3" />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="sm:col-span-2"><L t="Customer"><Input className={inp} value={f.customerName} onChange={set('customerName')} placeholder="Company or person" /></L></div>
         <L t="Email"><Input className={inp} value={f.customerEmail} onChange={set('customerEmail')} /></L>
@@ -654,12 +660,16 @@ function Pay({ inv, onClose, prefill }: { inv: Invoice; onClose: () => void; pre
   const [err, setErr] = useState('')
   // Saved, but the reference was used before: say so before closing.
   const [usedBefore, setUsedBefore] = useState<PaymentRefUse[] | null>(null)
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14). Not for a recovered (Trash) payment.
+  const draft = useFormDraft(prefill ? null : `receivable-receipt:${inv.id}`, { amount, date, method, bankAccountId, reference },
+    (d) => { setAmount(d.amount ?? ''); setDate(d.date || today()); setMethod(d.method || 'bank_transfer'); setBankAccountId(d.bankAccountId ?? ''); setReference(d.reference ?? '') })
   const go = useMutation({
     mutationFn: () => api.post<{ referenceUsedBefore?: PaymentRefUse[] }>(`/accounting/receivables/${inv.id}/payments`, {
       amountCents: toPaisa(amount), receivedAt: date, method, reference: reference.trim(),
       bankAccountId: isBankMethod(method) && bankAccountId ? bankAccountId : undefined,
     }),
     onSuccess: (r) => {
+      draft.clear()
       if (r.referenceUsedBefore?.length) setUsedBefore(r.referenceUsedBefore)
       else done()
     },
@@ -678,6 +688,7 @@ function Pay({ inv, onClose, prefill }: { inv: Invoice; onClose: () => void; pre
     <Modal title={`Payment on ${inv.number}`} onClose={onClose} dirty={!go.isPending && (amount !== rupees(inv.balanceCents) || !!reference.trim())}>
       <Form busy={go.isPending} onSubmit={() => { setErr(''); go.mutate() }}
         missing={!Number(amount) ? 'Enter the amount received.' : !receiptFieldsValid({ method, reference }) ? 'Enter the payment reference # — the receipt, slip, transfer or cheque number.' : null}>
+      <DraftNotice draft={draft} className="mb-3" />
       <p className="text-sm text-white/60">Balance owed: <strong className="text-white/90">{fmtPkrWhole(inv.balanceCents)}</strong></p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <L t="Amount received (PKR)"><RupeeField label="Amount received (PKR)" value={amount} onChange={setAmount} invalid={!Number(amount)} /></L>
@@ -792,11 +803,16 @@ function CreditNote({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
   const [date, setDate] = useState(today())
   const [err, setErr] = useState('')
   const [warning, setWarning] = useState<string | null>(null)
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14).
+  const draft = useFormDraft(`receivable-credit-note:${inv.id}`, { amount, tax, reason, date },
+    (d) => { setAmount(d.amount ?? ''); setTax(d.tax ?? '0'); setReason(d.reason ?? ''); setDate(d.date || today()) },
+    { isEmpty: (d) => !d.amount && !d.reason.trim() })
   const go = useMutation({
     mutationFn: () => api.post<{ number: string; warning: string | null }>(`/accounting/receivables/${inv.id}/credit-notes`, {
       amountCents: toPaisa(amount), taxCents: toPaisa(tax), reason, date,
     }),
     onSuccess: (r) => {
+      draft.clear()
       void qc.invalidateQueries({ queryKey: ['receivables'] })
       if (r.warning) setWarning(`${r.number} issued. ${r.warning}`)
       else onClose()
@@ -817,6 +833,7 @@ function CreditNote({ inv, onClose }: { inv: Invoice; onClose: () => void }) {
     <Modal title={`Credit note on ${inv.number}`} onClose={onClose} dirty={!go.isPending && (!!amount || !!reason.trim())}>
       <Form busy={go.isPending} onSubmit={() => go.mutate()}
         missing={toPaisa(amount) + toPaisa(tax) <= 0 ? 'Enter the amount to credit.' : reason.trim().length < 3 ? 'Give a reason (3 characters or more).' : null}>
+      <DraftNotice draft={draft} className="mb-3" />
       <p className="text-sm text-white/60">
         Reverses revenue and the sales tax this invoice charged. Left to credit: <strong className="text-white/90">{fmtPkrWhole(left.amount)}</strong> before tax,{' '}
         <strong className="text-white/90">{fmtPkrWhole(left.tax)}</strong> tax.

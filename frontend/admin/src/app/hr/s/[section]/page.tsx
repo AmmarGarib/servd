@@ -8,6 +8,8 @@ import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../../lib/api'
+import { useFormDraft } from '../../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { card, btn, btnGhost, displayValue, human, withLeaveDays, leaveFields, STATUS_COLOR, type HrFormat, type HrRecord, recordStatusText, isManualEntry } from '../../../../lib/hr'
 import { HrShell, Modal, useHrAccess, useHrLookups, useHrOrg, useHrSections } from '../../../../components/hr/HrShell'
 import { FormRenderer, validate, focusFirstInvalid } from '../../../../components/hr/FormRenderer'
@@ -180,6 +182,9 @@ function NewRecord({ section, format, tenantId, onClose, onSaved }: { section: s
   const [err, setErr] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const formRef = useRef<HTMLFormElement>(null)
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts). Typed / picked values only (no files; the F&F
+  // calculation stamp is not kept — press Calculate again).
+  const draft = useFormDraft<Record<string, unknown>>(`hr:record:new:${section}`, value, (d) => setValue(d && typeof d === 'object' ? d : {}), { isEmpty: (d) => !d || Object.keys(d).length === 0 })
   // A full & final can be calculated before it is saved (owner, 2026-10-21:
   // the form shows the days paid); saving then stamps the calculation, with
   // the overtime HR added, on the new record.
@@ -214,7 +219,7 @@ function NewRecord({ section, format, tenantId, onClose, onSaved }: { section: s
       }
       return created
     },
-    onSuccess: onSaved,
+    onSuccess: () => { draft.clear(); onSaved() },
     onError: (e: Error) => setErr(e.message),
   })
   const hasWorkflow = format.workflow.length > 0
@@ -232,6 +237,7 @@ function NewRecord({ section, format, tenantId, onClose, onSaved }: { section: s
   }
   return (
     <Modal title={`New — ${format.title}`} wide onClose={onClose} dirty={Object.keys(value).length > 0}>
+      <DraftNotice draft={draft} className="mb-3" />
       <form ref={formRef} noValidate onSubmit={(ev) => { ev.preventDefault(); run(true) }}>
         <FormRenderer fields={fields} value={value} errors={errors}
           onChange={(x) => { const nv = withLeaveDays(section, format.fields, value, x); setValue(nv); if (Object.keys(errors).length) setErrors(validate(leaveFields(section, format.fields, nv), nv)) }} ctx={{ lookups, org, tenantId }} />

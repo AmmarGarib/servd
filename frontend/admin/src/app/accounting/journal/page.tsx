@@ -21,6 +21,8 @@
 //     deleted. Each manual entry can be reversed once.
 import { Button, Field, Input, LinkButton } from '@/components/finance/ui'
 import { Suspense, useMemo, useState } from 'react'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -162,6 +164,25 @@ function JournalsPage() {
   const [lines, setLines] = useState<DraftLine[]>(() => [blankLine(), blankLine()])
   const [result, setResult] = useState<{ ok: boolean; msg: string; entryId?: string } | null>(null)
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts): the whole form, including an entry
+  // being corrected, a request being edited or another company's draft being booked. Cleared once posted / saved.
+  const draft = useFormDraft(
+    canPrepare ? 'journal:entry' : null,
+    { pickedCompany, date, description, reference, voucherPick, lines, amendReason, amending, editing, mirror },
+    (d) => {
+      setPickedCompany(d.pickedCompany ?? ''); setDate(d.date || todayPktIso()); setDescription(d.description ?? '')
+      setReference(d.reference ?? ''); setVoucherPick(d.voucherPick ?? ''); setAmendReason(d.amendReason ?? '')
+      setAmending(d.amending ?? null); setEditing(d.editing ?? null); setMirror(d.mirror ?? null)
+      const ls = Array.isArray(d.lines) && d.lines.length ? d.lines : [blankLine(), blankLine()]
+      // Fresh row keys so new rows never clash with restored ones.
+      setLines(ls.map((l) => ({ ...l, key: ++lineSeq })))
+    },
+    {
+      isEmpty: (d) => !d.amending && !d.editing && !d.mirror && !d.description.trim() && !d.reference.trim() && !d.amendReason.trim()
+        && d.lines.every((l) => !l.accountId && !l.debit && !l.credit && !l.memo.trim() && !l.conceptId && !l.subAccountId),
+    },
+  )
+
   function patchLine(key: number, patch: Partial<DraftLine>) {
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
   }
@@ -284,6 +305,7 @@ function JournalsPage() {
         ? `Corrected — the old entry is reversed and the corrected one is posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} (${fmtPkr(debitTotal)} on ${date}).`
         : `Posted${entry.voucherNo ? ` as ${entry.voucherNo}` : ''} — ${fmtPkr(debitTotal)} on ${date}. It is in the Exceptions inbox for review.`
       setResult({ ok: !fileError, msg: fileError ? `${done} The documents did not upload (${fileError}) — attach them from the entry's panel on the Journals tab.` : done, entryId: isPending(entry) ? undefined : entry.id })
+      draft.clear()
       setDescription(''); setReference(''); setLines([blankLine(), blankLine()]); setAmending(null); setAmendReason(''); setFiles([]); setCls(EMPTY_PAYMENT_CLASSIFICATION); setVoucherPick(''); setMirror(null)
       void qc.invalidateQueries({ queryKey: ['journal-drafts'] })
       void qc.invalidateQueries({ queryKey: ['record-files'] })
@@ -346,6 +368,7 @@ function JournalsPage() {
     },
     onSuccess: (send) => {
       setResult({ ok: true, msg: send ? 'Sent for approval — the CEO will see it in the approvals inbox. Nothing is posted yet.' : 'Saved as a draft. Send it when it is ready.' })
+      draft.clear()
       resetForm()
       setReqRefresh((n) => n + 1)
       void qc.invalidateQueries({ queryKey: ['journal-requests'] })
@@ -459,6 +482,7 @@ function JournalsPage() {
 
         {canPrepare && tab === 'entry' && (
           <section className="s-card p-4 space-y-4 min-w-0" aria-label="New journal entry">
+            <DraftNotice draft={draft} />
             {mirror && (
               <p className="text-xs text-s-muted">
                 Booking your side of {mirror.sourceCompanyName ?? 'another company'}&apos;s {mirror.sourceVoucherNo ?? 'entry'} — posting it marks that draft as booked and tells the CEO.

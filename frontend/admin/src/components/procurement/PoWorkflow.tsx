@@ -6,12 +6,14 @@
 //   GrnsTab — every GRN of the companies in view, with its PO lines ordered vs received vs invoiced, the invoice files
 //     and the bill. Finance verifies and the CEO approves from the approvals inbox (or here, when it is theirs).
 // ERP tokens only; dropdowns are the shared Select; every action calls the module's own route.
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api } from '../../lib/api'
 import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
+import { useFormDraft } from '../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { Button, Field, Input, LinkButton } from '@/components/finance/ui'
 import { Select } from '@/components/ui/Select'
 import { Modal } from '../ui/Modal'
@@ -257,9 +259,20 @@ function BuyCard({ po }: { po: WfPo }) {
   const [taxCents, setTaxCents] = useState(0)
   const [taxBy, setTaxBy] = useState('')
   const [tried, setTried] = useState(false)
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts); the form reopens with it. Cleared once completed.
+  const draft = useFormDraft(
+    `po-complete:${po.id}`,
+    { invoiceNumber, invoiceDate, rates, qtys, amounts, taxCents, taxBy },
+    (d) => {
+      setInvoiceNumber(d.invoiceNumber ?? ''); setInvoiceDate(d.invoiceDate || todayPktIso())
+      setRates(d.rates ?? {}); setQtys(d.qtys ?? {}); setAmounts(d.amounts ?? {}); setTaxCents(d.taxCents ?? 0); setTaxBy(d.taxBy ?? '')
+    },
+    { isEmpty: (d) => !d.invoiceNumber.trim() && !Object.keys(d.rates ?? {}).length && !Object.keys(d.qtys ?? {}).length && !Object.keys(d.amounts ?? {}).length && !d.taxCents && !d.taxBy },
+  )
+  useEffect(() => { if (draft.restoredAt) setOpen(true) }, [draft.restoredAt])
   const done = useMutation({
     mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedLines(po.lines, qtys, amounts) }),
-    onSuccess: () => { setOpen(false); invalidateAll(qc, po.id) },
+    onSuccess: () => { draft.clear(); setOpen(false); invalidateAll(qc, po.id) },
   })
   const noSupplier = !!po.supplier?.systemKind
   return (
@@ -276,6 +289,7 @@ function BuyCard({ po }: { po: WfPo }) {
       {open && (
         <Modal extraWide title={`Mark ${ref(po)} completed`} onClose={() => setOpen(false)} dirty={invoiceNumber !== ''}>
           <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!invoiceNumber.trim() || !invoiceDate || badQty(qtys) || done.isPending) return; done.mutate() }}>
+            <DraftNotice draft={draft} />
             <p className="text-xs text-s-muted">It goes to whoever raised it to confirm what arrived. The invoice must be attached first.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Invoice / bill number" required error={tried && !invoiceNumber.trim() ? "Enter the supplier's invoice number." : null}>
@@ -308,20 +322,28 @@ function ConfirmCard({ po }: { po: WfPo }) {
   const [sendBack, setSendBack] = useState(false)
   const [note, setNote] = useState('')
   const [tried, setTried] = useState(false)
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts). Cleared once confirmed or sent back.
+  const draft = useFormDraft(
+    `po-confirm:${po.id}`,
+    { qty, note },
+    (d) => { if (d.qty) setQty((q) => ({ ...q, ...d.qty })); setNote(d.note ?? '') },
+  )
+  useEffect(() => { if (draft.restoredAt && note.trim()) setSendBack(true) }, [draft.restoredAt]) // eslint-disable-line react-hooks/exhaustive-deps
   const confirm = useMutation({
     mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/confirm-receipt`, {
       lines: po.lines.map((l) => ({ poLineId: l.id, quantityReceived: round6((Number(qty[l.id]) || 0) * shown(l).factor) })),
     }),
-    onSuccess: () => invalidateAll(qc, po.id),
+    onSuccess: () => { draft.clear(); invalidateAll(qc, po.id) },
   })
   const reject = useMutation({
     mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/reject-receipt`, { note: note.trim() }),
-    onSuccess: () => { setSendBack(false); invalidateAll(qc, po.id) },
+    onSuccess: () => { draft.clear(); setSendBack(false); invalidateAll(qc, po.id) },
   })
   const bad = po.lines.some((l) => !(Number(qty[l.id]) >= 0) || qty[l.id] === '')
   return (
     <Card title={`${ref(po)} — ${po.supplier?.name ?? ''}`}
       sub={<>Bought on invoice {po.invoiceNumber ?? '—'} ({day(po.invoiceDate)}) · {fmtPkrWhole(po.totalCents)}</>}>
+      <DraftNotice draft={draft} />
       <RecordFiles ownerType="purchase_order" ownerId={po.id} canUpload={false} title="Supplier's invoice / bill" tenantId={po.supplier?.tenantId ?? undefined} lazy />
       <div className="space-y-2">
         {po.lines.map((l) => {
@@ -375,12 +397,22 @@ function FixCard({ g }: { g: WfFix }) {
   const [taxBy, setTaxBy] = useState(g.invoiceTaxAuthority ?? '')
   const onGrn = new Set(g.lines.map((l) => l.poLineId))
   const lines = g.po.lines.filter((l) => onGrn.has(l.id))
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts). Cleared once resubmitted.
+  const draft = useFormDraft(
+    `grn-fix:${g.id}`,
+    { invoiceNumber, invoiceDate, rates, taxCents, taxBy },
+    (d) => {
+      setInvoiceNumber(d.invoiceNumber ?? ''); setInvoiceDate(d.invoiceDate || todayPktIso())
+      setRates(d.rates ?? {}); setTaxCents(d.taxCents ?? 0); setTaxBy(d.taxBy ?? '')
+    },
+  )
   const re = useMutation({
     mutationFn: () => api.post(`/procurement/grns/${g.id}/resubmit`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedRates(lines, rates) }),
-    onSuccess: () => invalidateAll(qc, g.po.id),
+    onSuccess: () => { draft.clear(); invalidateAll(qc, g.po.id) },
   })
   return (
     <Card title={`${g.grnNumber} — ${ref(g.po)} — ${g.po.supplier?.name ?? ''}`} sub={`Invoice ${g.invoiceNumber ?? '—'}`}>
+      <DraftNotice draft={draft} />
       {g.returnNote && <p className="text-xs text-s-red">Returned: {g.returnNote}</p>}
       <RecordFiles ownerType="purchase_order" ownerId={g.po.id} canUpload title="Supplier's invoice / bill" tenantId={g.po.supplier?.tenantId ?? undefined} />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -472,9 +504,12 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const { data: g, isError, error } = useQuery({ queryKey: ['procurement', 'grns', 'one', id], queryFn: () => api.get<GrnDetailRow>(`/procurement/grns/${id}`) })
   const [returning, setReturning] = useState(false)
   const [note, setNote] = useState('')
+  // The return note survives Back / refresh (lib/formDraft.ts); the dialog reopens with it. Cleared once returned.
+  const draft = useFormDraft(`grn-return:${id}`, { note }, (d) => setNote(d.note ?? ''), { isEmpty: (d) => !d.note.trim() })
+  useEffect(() => { if (draft.restoredAt) setReturning(true) }, [draft.restoredAt])
   const act = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) => api.post(`/procurement/grns/${id}/${path}`, body ?? {}),
-    onSuccess: () => { setReturning(false); setNote(''); invalidateAll(qc, g?.po?.id); void qc.invalidateQueries({ queryKey: ['procurement', 'grns', 'one', id] }) },
+    onSuccess: (_r, vars) => { if (vars.path === 'return') draft.clear(); setReturning(false); setNote(''); invalidateAll(qc, g?.po?.id); void qc.invalidateQueries({ queryKey: ['procurement', 'grns', 'one', id] }) },
   })
   if (isError) return <p role="alert" className="text-sm text-s-red">{errOf(error)}</p>
   if (!g) return <p className="text-s-muted text-sm">Loading…</p>
@@ -566,6 +601,7 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
       {returning && (
         <Modal title={`Return ${g.grnNumber} to the buyer`} onClose={() => setReturning(false)} dirty={note !== ''}>
           <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (note.trim().length < 10 || act.isPending) return; act.mutate({ path: 'return', body: { note: note.trim() } }) }}>
+            <DraftNotice draft={draft} />
             <Field label="What the buyer must correct" required error={note && note.trim().length < 10 ? 'At least 10 characters.' : null}>
               <Input value={note} onChange={(e) => setNote(e.target.value)} className="w-full" autoFocus />
             </Field>

@@ -11,6 +11,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { api, deleteWithUndo } from '../../../lib/api'
+import { useFormDraft } from '../../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { MoneyInput } from '../../../components/ui/MoneyInput'
 import { PositionsView } from '../../workforce/positions/view'
 import { BankAccountSelect, useBankAccounts } from '../../../components/finance/BankAccountSelect'
@@ -619,6 +621,14 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
   const [creatingCategory, setCreatingCategory] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft(isEdit ? `opex-project-line:${line!.id}` : `opex-project-line:new:${projectId}`, { categoryId, name, vendor, amountCents, cadence, nextDueDate },
+    (d) => {
+      setCategoryId(d.categoryId ?? ''); setName(d.name ?? ''); setVendor(d.vendor ?? ''); setAmount(d.amountCents ?? 0)
+      setCadence(d.cadence || 'monthly'); setNextDueDate(d.nextDueDate ?? '')
+    },
+    { isEmpty: (d) => !d.name.trim() && !d.vendor.trim() && !(d.amountCents > 0) && !d.nextDueDate })
+
   const createCat = useMutation({
     mutationFn: () => api.post<{ id: string }>('/opex/categories', { name: newCategoryName.trim(), emoji: null }),
     onSuccess: async (created) => {
@@ -638,7 +648,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
       }
       return isEdit ? api.patch(`/opex/lines/${line!.id}`, payload) : api.post('/opex/lines', payload)
     },
-    onSuccess: () => onSaved(),
+    onSuccess: () => { draft.clear(); onSaved() },
   })
 
   const del = useMutation({
@@ -667,6 +677,7 @@ function ProjectOpexLineModal({ projectId, categories, qc, line, onClose, onSave
   return (
     <ModalShell title={isEdit ? 'Edit OpEx line' : 'Add OpEx line'} onClose={onClose} dirty={dirty}>
       <form id="ol-form" onSubmit={submit} className="space-y-3" noValidate>
+          <DraftNotice draft={draft} />
           <div>
           <FieldLabel htmlFor="ol-category">Category *</FieldLabel>
           <div className="flex gap-2 mt-1">
@@ -953,6 +964,15 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
   const splitSum = jvPartners.reduce((s, p) => s + (p.pct || 0), 0)
   const splitOff = isJointVenture && Math.abs(splitSum - 100) > 0.01
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft('capex-project:new', { name, projectType, address, floorAreaSqft, targetOpeningDate, budgetEnvelopeCents, isJointVenture, jvPartners },
+    (d) => {
+      setName(d.name ?? ''); setProjectType(d.projectType || 'kitchen_buildout'); setAddress(d.address ?? ''); setFloorAreaSqft(d.floorAreaSqft ?? '')
+      setTargetOpeningDate(d.targetOpeningDate ?? ''); setBudgetEnvelopeCents(d.budgetEnvelopeCents ?? 0); setIsJointVenture(!!d.isJointVenture)
+      setJvPartners(Array.isArray(d.jvPartners) && d.jvPartners.length ? d.jvPartners : [{ label: '', pct: 50 }, { label: '', pct: 50 }])
+    },
+    { isEmpty: (d) => !d.name.trim() && !d.address.trim() && !d.floorAreaSqft && !d.targetOpeningDate && !(d.budgetEnvelopeCents > 0) && !d.isJointVenture })
+
   const save = useMutation({
     mutationFn: () => api.post<{ id: string }>('/finance/capex', {
       name, projectType, budgetEnvelopeCents,
@@ -964,7 +984,7 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
         jvPartners: jvPartners.filter((p) => p.label.trim()),
       }),
     }),
-    onSuccess: (created) => onSaved(created.id),
+    onSuccess: (created) => { draft.clear(); onSaved(created.id) },
   })
 
   const bounds = dateBounds()
@@ -983,6 +1003,7 @@ function CreateProjectModal({ onClose, onSaved }: { onClose: () => void; onSaved
   const shown = (k: string) => (tried ? errs[k] : '')
   return <ModalShell title="New CapEx project" onClose={onClose} dirty={!save.isPending && (!!name.trim() || !!address.trim() || budgetEnvelopeCents > 0)}>
     <form id="np-form" onSubmit={submit} className="space-y-4" noValidate>
+    <DraftNotice draft={draft} />
     <Field label="Project name *" error={shown('np-name')}>
       <Input id="np-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="42C Kitchen — Phase 1 build" className={fieldCls} autoFocus />
     </Field>
@@ -1089,6 +1110,14 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   const [floorAreaSqft, setFloorAreaSqft] = useState<number | ''>(project.floorAreaSqft ?? '')
   const [notes, setNotes] = useState(project.notes ?? '')
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft(`capex-project:${project.id}`, { name, phase, budgetEnvelopeCents, contingencyPct, consultantFeesCents, taxCents, targetOpeningDate, address, floorAreaSqft, notes },
+    (d) => {
+      setName(d.name ?? project.name); setPhase(d.phase ?? project.phase); setBudgetEnvelopeCents(d.budgetEnvelopeCents ?? 0); setContingencyPct(d.contingencyPct ?? 0)
+      setConsultantFeesCents(d.consultantFeesCents ?? 0); setTaxCents(d.taxCents ?? 0); setTargetOpeningDate(d.targetOpeningDate ?? ''); setAddress(d.address ?? '')
+      setFloorAreaSqft(d.floorAreaSqft ?? ''); setNotes(d.notes ?? '')
+    })
+
   const save = useMutation({
     mutationFn: () => api.patch(`/finance/capex/${project.id}`, {
       name, phase, budgetEnvelopeCents, contingencyPct, consultantFeesCents, taxCents,
@@ -1097,7 +1126,7 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
       floorAreaSqft: floorAreaSqft === '' ? null : +floorAreaSqft,
       notes: notes || null,
     }),
-    onSuccess: () => onSaved(),
+    onSuccess: () => { draft.clear(); onSaved() },
   })
   const del = useMutation({
     mutationFn: () => deleteWithUndo(`/finance/capex/${project.id}`, { trashType: 'capex_project', id: project.id, onRestored: () => onSaved() }),
@@ -1123,6 +1152,7 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
     || contingencyPct !== project.contingencyPct || notes !== (project.notes ?? '') || address !== (project.address ?? ''))
   return <ModalShell title="Edit project" onClose={onClose} wide dirty={dirty}>
     <form id="ep-form" onSubmit={submit} className="space-y-4" noValidate>
+    <DraftNotice draft={draft} />
     <div className="grid grid-cols-2 gap-3">
       <Field label="Name *" error={shown('ep-name')}><Input id="ep-name" value={name} onChange={(e) => setName(e.target.value)} className={fieldCls} /></Field>
       <Field label="Phase">
@@ -1215,6 +1245,17 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
   // Once an instalment is on the books the treatment can no longer change (409 TREATMENT_LOCKED).
   const treatmentLocked = !!line && Object.values(line.ledger?.payments ?? {}).some((p) => p.status === 'posted')
 
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft(onRegister ? null : line ? `capex-line:${line.id}` : `capex-line:new:${projectId}:${scope}`,
+    { item, category, quantity, unitCostCents, vendor, vendorContact, supplierId, treatment, inputTaxCents, inputTaxAuthority, whtSection, quotedCents, negotiatedCents, status, priority, leadTimeDays, expectedDeliveryDate, actualDeliveryDate, installedDate, notes },
+    (d) => {
+      setItem(d.item ?? ''); setCategory(d.category ?? ''); setQuantity(d.quantity ?? 1); setUnitCostCents(d.unitCostCents ?? 0); setVendor(d.vendor ?? '')
+      setVendorContact(d.vendorContact ?? ''); setSupplierId(d.supplierId ?? ''); setTreatment(d.treatment ?? ''); setInputTaxCents(d.inputTaxCents ?? 0)
+      setInputTaxAuthority(d.inputTaxAuthority ?? ''); setWhtSection(d.whtSection ?? ''); setQuotedCents(d.quotedCents ?? ''); setNegotiatedCents(d.negotiatedCents ?? '')
+      setStatus(d.status ?? 'not_quoted'); setPriority(d.priority ?? 'must_have'); setLeadTimeDays(d.leadTimeDays ?? ''); setExpectedDeliveryDate(d.expectedDeliveryDate ?? '')
+      setActualDeliveryDate(d.actualDeliveryDate ?? ''); setInstalledDate(d.installedDate ?? ''); setNotes(d.notes ?? '')
+    })
+
   const suppliers = project.lookups.suppliers
   const supplier = suppliers.find((x) => x.id === supplierId)
   const authorities = lookups.data?.taxAuthorities ?? Object.keys(AUTHORITY_LABEL)
@@ -1245,7 +1286,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
       if (line) return api.patch(`/finance/capex/lines/${line.id}`, payload)
       return api.post(`/finance/capex/${projectId}/lines`, payload)
     },
-    onSuccess: () => onSaved(),
+    onSuccess: () => { draft.clear(); onSaved() },
   })
 
   const del = useMutation({
@@ -1282,6 +1323,7 @@ function LineModal({ project, projectId, tenantId, scope, line, onClose, onSaved
       { label: 'Sales tax in price', value: inputTaxCents > 0 ? PKR(inputTaxCents) : '—' },
     ]} />
     <form id="cl-form" onSubmit={submit} className="space-y-4" noValidate>
+    <DraftNotice draft={draft} />
     {onRegister && (
       <div className="rounded-xl px-4 py-3 text-xs text-white/70" style={{ background: 'rgb(var(--erp-accent-rgb) / 0.08)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.25)' }}>
         This item is on the fixed-asset register (or sent for approval), so its name, cost, quantity, tax and dates are fixed.
@@ -1694,6 +1736,13 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
 
   // Internal payment classification (2026-10-20): required, a reporting label only.
   const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts).
+  const draft = useFormDraft(`capex-mark-paid:${payment.id}`, { bankId, paidOn, amount, coversFrom, coversMonths, needsTerm, override, overrideCents, overrideReason, cls },
+    (d) => {
+      setBankId(d.bankId ?? ''); setPaidOn(d.paidOn || new Date(Date.now() + 5 * 3_600_000).toISOString().slice(0, 10)); setAmount(d.amount ?? payment.amountCents)
+      setCoversFrom(d.coversFrom ?? ''); setCoversMonths(d.coversMonths ?? ''); setNeedsTerm(!!d.needsTerm); setOverride(!!d.override)
+      setOverrideCents(d.overrideCents ?? 0); setOverrideReason(d.overrideReason ?? ''); setCls(d.cls ?? EMPTY_PAYMENT_CLASSIFICATION)
+    })
   const pay = useMutation({
     mutationFn: () => api.patch(`/finance/capex/payments/${payment.id}`, {
       ...paymentClassificationBody(cls),
@@ -1703,7 +1752,7 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
       ...((termExpected || needsTerm) && coversFrom && coversMonths ? { coversFrom, coversMonths: Number(coversMonths) } : {}),
       ...(override ? { whtOverrideCents: overrideCents, whtOverrideReason: overrideReason.trim() } : {}),
     }),
-    onSuccess: onDone,
+    onSuccess: () => { draft.clear(); onDone() },
     onError: (e) => { if ((e as { code?: string }).code === 'PREPAID_TERM_REQUIRED') setNeedsTerm(true) },
   })
 
@@ -1726,6 +1775,7 @@ function MarkPaidForm({ project, line, payment, tenantId, onClose, onDone }: {
   })
   return (
     <form onSubmit={submitPaid} noValidate className="mt-3 space-y-3 rounded-lg p-3" style={{ background: 'rgb(var(--fg-rgb) / 0.02)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+      <DraftNotice draft={draft} />
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="sm:col-span-1">
           <BankAccountSelect tenantId={tenantId} value={bankId} onChange={setBankId} id={`capex-pay-bank-${payment.id}`} label="Paid from" className={fieldCls} />

@@ -13,6 +13,8 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { useFormDraft } from '../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { card, inp, btn, btnGhost, human } from '../../lib/hr'
 import { Modal, useHrLookups, useHrForm } from './HrShell'
 import { Select } from '@/components/ui/Select'
@@ -79,6 +81,10 @@ function BulkDaysModal({ onClose }: { onClose: () => void }) {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const employees = (lookups?.employees ?? []).filter((e) => e.status === 'active' || e.status === 'on_leave')
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts): the person, dates, remarks and the day grid.
+  const draft = useFormDraft('hr:attendance:bulk-days', { employeeId, from, to, remarks, rows },
+    (d) => { setEmployeeId(d.employeeId ?? ''); setFrom(d.from || monthStart()); setTo(d.to || karachiToday()); setRemarks(d.remarks ?? ''); setRows(Array.isArray(d.rows) ? d.rows : null) },
+    { isEmpty: (d) => !d.employeeId && !d.remarks && !d.rows })
 
   const load = useMutation({
     mutationFn: () => api.get<{ days: PreviewDay[] }>(`/hr/attendance/bulk-days/preview?employeeId=${encodeURIComponent(employeeId)}&from=${from}&to=${to}`),
@@ -104,7 +110,7 @@ function BulkDaysModal({ onClose }: { onClose: () => void }) {
       employeeId, remarks,
       days: chosen.map((r) => ({ date: r.date, status: r.status, checkIn: r.checkIn || null, checkOut: r.checkOut || null, shiftId: r.shiftId })),
     }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['time-clock-logs'] }) },
+    onSuccess: () => { draft.clear(); void qc.invalidateQueries({ queryKey: ['time-clock-logs'] }) },
     onError: (e: Error) => setErr(e.message),
   })
   const set = (i: number, patch: Partial<Row>) => setRows((rs) => rs && rs.map((r, j) => (j === i ? { ...r, ...patch } : r)))
@@ -112,6 +118,7 @@ function BulkDaysModal({ onClose }: { onClose: () => void }) {
   if (save.data) return <Modal title="Enter days in bulk" wide onClose={onClose}><Done created={save.data.created} failed={save.data.failed} onClose={onClose} /></Modal>
   return (
     <Modal title="Enter days in bulk" wide onClose={onClose} dirty={!!rows}>
+      <DraftNotice draft={draft} className="mb-3" />
       <p className="text-xs text-white/55 mb-3">One person, many days. Each day is prefilled from their rota; change the status or times, untick what to leave out, and send them all to the CEO in one go.</p>
       <div className="grid gap-3 grid-cols-2 sm:grid-cols-[1fr_1fr_auto] items-end">
         <label className="block col-span-2 sm:col-span-3"><span className="block text-[11px] font-bold text-white/55 mb-1">Employee</span>
@@ -179,6 +186,10 @@ function MarkPresentModal({ onClose }: { onClose: () => void }) {
   const [err, setErr] = useState<string | null>(null)
   const employees = useMemo(() => (lookups?.employees ?? []).filter((e) => e.status === 'active' || e.status === 'on_leave'), [lookups])
   const shown = employees.filter((e) => !q || `${e.fullName} ${e.employeeCode}`.toLowerCase().includes(q.toLowerCase()))
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts): who is picked, the dates and the remarks.
+  const draft = useFormDraft('hr:attendance:mark-present', { picked: [...picked].sort(), q, from, to, remarks },
+    (d) => { setPicked(new Set(Array.isArray(d.picked) ? d.picked : [])); setQ(d.q ?? ''); setFrom(d.from || monthStart()); setTo(d.to || karachiToday()); setRemarks(d.remarks ?? '') },
+    { isEmpty: (d) => d.picked.length === 0 && !d.remarks })
   const body = () => ({ employeeIds: [...picked], from, to, remarks })
 
   const preview = useQuery({
@@ -188,7 +199,7 @@ function MarkPresentModal({ onClose }: { onClose: () => void }) {
   })
   const run = useMutation({
     mutationFn: () => api.post<{ created: number; failed: Array<{ employeeId: string; date: string; message: string }>; people: PlanPerson[] }>('/hr/attendance/mark-present', body()),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['time-clock-logs'] }) },
+    onSuccess: () => { draft.clear(); void qc.invalidateQueries({ queryKey: ['time-clock-logs'] }) },
     onError: (e: Error) => setErr(e.message),
   })
   const toggle = (id: string, on: boolean) => setPicked((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n })
@@ -200,6 +211,7 @@ function MarkPresentModal({ onClose }: { onClose: () => void }) {
   const stale = preview.data && preview.dataUpdatedAt > 0
   return (
     <Modal title="Mark present for dates" wide onClose={onClose} dirty={picked.size > 0}>
+      <DraftNotice draft={draft} className="mb-3" />
       <p className="text-xs text-white/55 mb-3">Every working day on each person&apos;s rota in these dates that has no attendance yet is marked present at the rota&apos;s hours. Weekly offs, holidays, leave and days already recorded are left alone. To set a different status for some days, use Enter days in bulk.</p>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block"><span className="block text-[11px] font-bold text-white/55 mb-1">From</span>

@@ -33,6 +33,8 @@ import { unwrapPrefill, pStr, pNum, pArr, type Prefill } from '../../lib/trashPr
 import { ExportMenu } from '@/components/ui/ExportMenu'
 import { FIcon } from '../../components/finance/ui/icons'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
+import { useFormDraft, hasFormDraft } from '../../lib/formDraft'
+import { DraftNotice } from '@/components/ui/DraftNotice'
 import { MyTasksTab, GrnsTab, BuyerPicker, useMyPoTasks, taskCount } from '@/components/procurement/PoWorkflow'
 
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
@@ -399,6 +401,8 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
   const router = useRouter()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
+  // An unsaved new PO kept in this browser (lib/formDraft.ts) reopens its form after a refresh / Back.
+  useEffect(() => { if (hasFormDraft('po:new')) setShowCreate(true) }, [])
   // The deep link from Inventory opens the form once (and pre-fills one item line).
   const { data: stockItems, isError: stockItemsFailed } = useQuery({
     queryKey: ['inventory'],
@@ -918,6 +922,16 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   const [lines, setLines] = useState(initial?.lines.length ? initial.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
   // "+ New supplier…" right in the PO (owner, 2026-11-03: create the supplier from here, not another tab).
   const [newSupplier, setNewSupplier] = useState<{ name: string; phone: string } | null>(null)
+  // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts). Cleared once the PO is saved.
+  const draft = useFormDraft(
+    editId ? `po:${editId}` : initial ? 'po:reorder' : 'po:new',
+    { supplierId, expectedDate, notes, buyerUserId, lines },
+    (d) => {
+      setSupplierId(d.supplierId ?? ''); setExpectedDate(d.expectedDate ?? ''); setNotes(d.notes ?? ''); setBuyerUserId(d.buyerUserId ?? '')
+      setLines(Array.isArray(d.lines) && d.lines.length ? d.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
+    },
+    { isEmpty: (d) => !d.supplierId && !d.expectedDate && !d.notes.trim() && !d.buyerUserId && !d.lines.some((l) => l.inventoryItemId || l.quantityOrdered || l.unitCostCents || (l.notes ?? '').trim()) },
+  )
   const addSupplier = useMutation({
     mutationFn: () => api.post<Supplier>('/procurement/suppliers', { name: newSupplier!.name.trim(), phone: newSupplier!.phone.trim() || undefined }),
     onSuccess: (sup) => {
@@ -948,6 +962,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
       // What is on order changes what the reorder list suggests.
       void qc.invalidateQueries({ queryKey: ['procurement', 'reorder'] })
       if (editId) void qc.invalidateQueries({ queryKey: ['procurement', 'po', editId] })
+      draft.clear()
       onClose()
     },
   })
@@ -989,6 +1004,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
         <p className="font-bold text-s-text">{title ?? (initial ? 'Draft purchase order from reorder suggestions' : 'New Purchase Order')}</p>
         <LinkButton tone="muted" type="button" onClick={onClose} aria-label="Close"><FIcon name="x" size={14} /></LinkButton>
       </div>
+      <DraftNotice draft={draft} />
       {initial && !title && (
         <p className="text-xs text-s-muted">Quantities bring each item back to its par level, after what is already on order. Check them and the prices, then create the PO — it is a draft until you submit it.</p>
       )}
@@ -1437,6 +1453,16 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
   const [picked, setPicked] = useState<Record<string, { on: boolean; qty: string; price: string }>>({})
   const [tried, setTried] = useState(false)
   const dirty = !!number.trim() || !!tax || !!notes.trim() || Object.values(picked).some((r) => r.on)
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts); kept once the bill has loaded. Cleared on save.
+  const draft = useFormDraft(
+    bill ? `credit-note:${billId}` : null,
+    { number, date, reason, tax, notes, returnStock, applyToBill, picked },
+    (d) => {
+      setNumber(d.number ?? ''); setDate(d.date || todayPktIso()); setReason(d.reason ?? 'return'); setTax(d.tax ?? ''); setNotes(d.notes ?? '')
+      setReturnStock(d.returnStock ?? true); setApplyToBill(d.applyToBill ?? true); setPicked(d.picked && typeof d.picked === 'object' ? d.picked : {})
+    },
+    { isEmpty: (d) => !d.number.trim() && !d.tax && !d.notes.trim() && !Object.values(d.picked ?? {}).some((r) => r.on) },
+  )
 
   const byQuantity = reason === 'return' || reason === 'short' || reason === 'damaged'
   const lines = bill?.creditable?.lines ?? []
@@ -1461,7 +1487,7 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
       lines: chosen.map((l) => ({ billLineId: l.billLineId, qty: Number(row(l).qty), unitCostCents: rupeesToPaisa(row(l).price) })),
       taxCents, returnStock: canSendBack && returnStock, applyToBill, notes: notes.trim() || null,
     }),
-    onSuccess: () => { onDone(); onClose() },
+    onSuccess: () => { draft.clear(); onDone(); onClose() },
   })
 
   return (
@@ -1471,6 +1497,7 @@ function CreditNoteForm({ billId, onDone, onClose }: { billId: string; onDone: (
         setTried(true)
         if (valid && !mut.isPending) mut.mutate()
       }}>
+        <DraftNotice draft={draft} />
         {isLoading && <p className="text-sm text-s-muted">Loading…</p>}
         {error && <p className="text-sm text-s-red">{errText(error)}</p>}
         {bill && (
@@ -1754,6 +1781,17 @@ function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQue
   const [picker, setPicker] = useState<'receipt' | 'po' | null>(null)
   const [chosen, setChosen] = useState<Record<string, boolean>>({})
   const [tried, setTried] = useState(false)
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts). Attachments cannot be kept. Off for a Trash recovery.
+  const draft = useFormDraft(
+    prefill ? null : 'bill:new',
+    { form, lines },
+    (d) => {
+      if (d.form) setForm({ ...d.form })
+      setLines(Array.isArray(d.lines) ? d.lines.map((l) => ({ ...l, key: `bl${++billLineSeq}` })) : [])
+    },
+    { isEmpty: (d) => !d.form.supplierId && !d.form.billNumber.trim() && !d.form.billDate && !d.form.dueDate && !d.form.taxPkr && !d.form.notes.trim()
+      && !d.lines.some((l) => l.kind === 'stock' || l.description.trim() || l.unitCostPkr || l.expenseAccountCode.trim()) },
+  )
 
   const supplier = suppliers.find((s) => s.id === form.supplierId) ?? null
 
@@ -1846,6 +1884,7 @@ function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQue
       void qc.invalidateQueries({ queryKey: ['procurement'] })
       void qc.invalidateQueries({ queryKey: ['ap-aging'] })
       void qc.invalidateQueries({ queryKey: ['inventory'] })
+      draft.clear()
       onClose()
     },
   })
@@ -1884,6 +1923,7 @@ function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQue
         <p className="font-bold text-s-text">New Supplier Bill</p>
         <LinkButton tone="muted" type="button" onClick={onClose}  aria-label="Close"><FIcon name="x" size={14} /></LinkButton>
       </div>
+      <DraftNotice draft={draft} />
       {prefill && (
         <p className="rounded-lg bg-s-elevated px-3 py-2 text-xs text-s-muted">
           Recovered from Trash: check every figure, then save. Pick the bill date again.
@@ -2273,6 +2313,13 @@ function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof use
   const usesBank = form.method !== 'cash'
   // Internal payment classification (2026-10-20): required, a reporting label only.
   const [cls, setCls] = useState<PaymentClassificationValue>(EMPTY_PAYMENT_CLASSIFICATION)
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts). Cleared on save. Off for a Trash recovery.
+  const draft = useFormDraft(
+    prefill ? null : 'supplier-payment:new',
+    { form, cls },
+    (d) => { if (d.form) setForm({ ...d.form }); setCls(d.cls ? { ...EMPTY_PAYMENT_CLASSIFICATION, ...d.cls } : EMPTY_PAYMENT_CLASSIFICATION) },
+    { isEmpty: (d) => !d.form.supplierId && !d.form.paymentDate && !d.form.reference.trim() && !d.form.amountCents && !d.form.notes.trim() },
+  )
 
   const mut = useMutation({
     mutationFn: () => api.post('/procurement/payments', {
@@ -2286,6 +2333,7 @@ function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof use
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['procurement'] })
       void qc.invalidateQueries({ queryKey: ['ap-aging'] })
+      draft.clear()
       onClose()
     },
   })
@@ -2305,6 +2353,7 @@ function CreatePaymentForm({ qc, onClose, prefill }: { qc: ReturnType<typeof use
         <p className="font-bold text-s-text">Record Payment</p>
         <LinkButton tone="muted" type="button" onClick={onClose} aria-label="Close"><FIcon name="x" size={14} /></LinkButton>
       </div>
+      <DraftNotice draft={draft} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Field label="Supplier" required error={tried && !form.supplierId ? 'Choose the supplier.' : null}>
           <Select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value, bankAccountId: '' })} className={fi}>
@@ -2613,6 +2662,18 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
 
   const [err, setErr] = useState<string | null>(null)
 
+  // Unsaved typing survives Back / refresh (lib/formDraft.ts). Cleared on save.
+  const draft = useFormDraft(
+    supplier ? `supplier:${supplier.id}` : 'supplier:new',
+    { form, tenantIds },
+    (d) => {
+      if (d.form) setForm((f) => ({ ...f, ...d.form }))
+      if (Array.isArray(d.tenantIds)) setTenantIds(d.tenantIds)
+    },
+    { isEmpty: (d) => !supplier && !d.form.name.trim() && !d.form.phone.trim() && !d.form.email.trim() && !d.form.address.trim()
+      && !d.form.taxId.trim() && !d.form.notes.trim() && !d.form.leadTimeDays && !d.form.openingBalanceCents && !d.form.openingBalanceDate },
+  )
+
   const mut = useMutation({
     mutationFn: () => {
       const data = {
@@ -2662,7 +2723,7 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         }
       })()
     },
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['procurement', 'suppliers'] }); onClose() },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['procurement', 'suppliers'] }); draft.clear(); onClose() },
     onError:   (e: unknown) => setErr(stockErrorText(e, 'Failed to save supplier')),
   })
 
@@ -2685,6 +2746,7 @@ function SupplierForm({ qc, supplier, onClose }: { qc: ReturnType<typeof useQuer
         <p className="font-bold text-s-text">{supplier ? 'Edit Supplier' : 'New Supplier'}</p>
         <LinkButton tone="muted" type="button" onClick={onClose} aria-label="Close"><FIcon name="x" size={14} /></LinkButton>
       </div>
+      <DraftNotice draft={draft} />
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Field label="Name" required error={err === 'Supplier name is required.' ? err : null}>
           <Input required enterKeyHint="next" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fi} autoFocus />
