@@ -500,10 +500,12 @@ describe('review fixes', () => {
     expect(team.statusCode).toBe(200)
     expect((team.json() as { pendingApprovals: number }).pendingApprovals).toBe(2)
 
-    // Company A active (not "All companies"): both steps still listed.
+    // Company A active: its own step listed, the other company's counted as waiting elsewhere (owner, 2026-11-14:
+    // "i see anushas leave application in g's kitchen approvals"); "All companies" lists both.
     const c = (await counts('hodBoth')).json() as Inbox
-    expect(countOf(c, 'hr_request')).toBe(2)
-    const body = (await inbox('hodBoth')).json() as Inbox
+    expect(countOf(c, 'hr_request')).toBe(1)
+    expect(c.elsewhere).toBeGreaterThanOrEqual(1)
+    const body = (await inbox('hodBoth', { 'x-servd-portfolio': '1' })).json() as Inbox
     const hr = body.items.filter((i) => i.type === 'hr_request')
     expect(hr.map((i) => i.id).sort()).toEqual([...recIds].sort())
     expect(new Set(hr.map((i) => i.companyName))).toEqual(new Set(['Approvals Co A', 'Approvals Co B']))
@@ -521,9 +523,9 @@ describe('review fixes', () => {
     expect(viewScoped.elsewhere).toBe(1)
 
     const spanning = await collectApprovals(ctx, { providers: [{ ...base, spansMemberCompanies: true, load: async () => rows.map((r) => ({ ...r })) }] })
-    expect(spanning.items.map((i) => i.id).sort()).toEqual(['a', 'b'])
-    expect(spanning.types[0]!.elsewhere).toBeUndefined()
-    expect(spanning.elsewhere).toBe(0)
+    // A spanning type follows the view for the caller's OWN companies too (owner, 2026-11-14).
+    expect(spanning.items.map((i) => i.id)).toEqual(['a'])
+    expect(spanning.elsewhere).toBe(1)
   })
 
   it('§7.6: a type spanning member companies (HR) also keeps the companies the user reaches through a head office', async () => {

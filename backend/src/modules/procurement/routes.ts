@@ -677,6 +677,16 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     // No supplier: the PO is the ACTIVE company's (422 when no single company is active).
     const supplierId = body.supplierId ?? await noSupplierFor(activeTenantOr422(req, null))
     const supplier = await findSupplierInScope(req, supplierId, 'write', { live: true })
+    // A PO is its SUPPLIER's company's. A new PO binds to the ACTIVE company (owner, 2026-11-14: POs raised with Flipd
+    // picked landed in GS Foods because the supplier was GS Foods'): another of the caller's own companies' supplier
+    // is refused — never silently filed there. (A head-office lens company is not a member company: unchanged.)
+    const active = req.staffUser!.tenantId
+    if (supplier.tenantId && active && supplier.tenantId !== active
+      && req.staffUser!.memberTenantIds.includes(active) && req.staffUser!.memberTenantIds.includes(supplier.tenantId)) {
+      const names = new Map((await prisma.tenant.findMany({ where: { id: { in: [active, supplier.tenantId] } }, select: { id: true, name: true } })).map((t) => [t.id, t.name]))
+      throw new AppError('SUPPLIER_NOT_IN_ACTIVE_COMPANY',
+        `${supplier.name} is a ${names.get(supplier.tenantId) ?? 'another company'} supplier, and this PO is being raised in ${names.get(active) ?? 'the company picked at the top'}. Pick a ${names.get(active) ?? ''} supplier, add this supplier to ${names.get(active) ?? 'it'} under Suppliers, or leave the supplier empty.`, 422)
+    }
     if (supplier.tenantId) await assertHoMayPropose(req, supplier.tenantId, true, 'a purchase order')
     if (body.buyerUserId && supplier.tenantId) await assertListedBuyer(prisma, supplier.tenantId, body.buyerUserId)
     const po = await createPo({ ...body, supplierId, createdBy: req.staffUser!.id })

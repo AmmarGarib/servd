@@ -105,7 +105,10 @@ export async function collectApprovals(ctx: ProviderContext, opts: CollectOption
       // legacy case (a company-less signup, an orphan supplier, a shared site
       // page) that its queue route already chose to show. A hand-over's
       // companies are kept whatever the view.
-      const keepRole = (id: string) => byRole && (p.spansMemberCompanies ? member.has(id) || reach.has(id) || inView.has(id) : inView.has(id))
+      // Owner, 2026-11-14 ("i see anushas leave application in g's kitchen approvals"): the caller's OWN companies
+      // follow the company picked at the top for HR steps too — the rest is counted as "waiting in your other
+      // companies" (the banner). Only a head-office login's REACHED companies (no company view of their own) still span.
+      const keepRole = (id: string) => byRole && (inView.has(id) || (!!p.spansMemberCompanies && reach.has(id) && !member.has(id)))
       const kept: Kept[] = []
       for (const i of rows) {
         // A company-less row is CEO-only by definition (shared servd:* pages,
