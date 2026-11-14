@@ -40,7 +40,7 @@ export function MovePoCompany({ poId, status, tenantId, onMoved }: { poId: strin
       onSubmit={(e) => { e.preventDefault(); if (to && !mut.isPending) mut.mutate() }}>
       <p className="text-xs text-s-muted">Raised in the wrong company? A new draft with the same lines is made in the company you pick, and this PO is cancelled. You submit it again there.</p>
       <Field label="Move to" required>
-        <Select value={to} onChange={(e) => setTo(e.target.value)}>
+        <Select value={to} onChange={(e) => setTo(e.target.value)} className="s-input w-full sm:w-80">
           <option value="">Choose a company…</option>
           {others.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
