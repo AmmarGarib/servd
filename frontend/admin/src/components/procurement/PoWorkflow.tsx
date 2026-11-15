@@ -284,11 +284,14 @@ function BuyCard({ po }: { po: WfPo }) {
         <RecordFiles ownerType="purchase_order" ownerId={po.id} canUpload={false} title="Supplier's invoice / bill" tenantId={po.supplier?.tenantId ?? undefined} lazy />
       )}
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => { setOpen(true); setTried(false); done.reset() }} disabled={noSupplier}>Enter quantities &amp; amounts, mark completed</Button>
+        <Button size="sm" onClick={() => { setOpen(true); setTried(false); done.reset() }} disabled={noSupplier}>
+          {draft.savedAt ? 'Continue — your entries are saved' : <>Enter quantities &amp; amounts, mark completed</>}
+        </Button>
       </div>
+      {draft.savedAt && !open && <p className="text-[11px] text-success">Your quantities and amounts are kept as a draft on this device until you mark it completed.</p>}
       <p className="text-[11px] text-s-muted">In the next step: the quantities and the whole amount paid per line (the rate is worked out), then attach the supplier&apos;s invoice and mark it completed.</p>
       {open && (
-        <Modal extraWide title={`Mark ${ref(po)} completed`} onClose={() => setOpen(false)} dirty={invoiceNumber !== ''}>
+        <Modal extraWide title={`Mark ${ref(po)} completed`} onClose={() => setOpen(false)}>
           <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!invoiceNumber.trim() || !invoiceDate || badQty(qtys) || done.isPending) return; done.mutate() }}>
             <DraftNotice draft={draft} />
             <p className="text-xs text-s-muted">Enter what you bought, attach the supplier&apos;s invoice at the bottom, then mark it completed. It then goes to whoever raised it to confirm what arrived.</p>
@@ -309,7 +312,7 @@ function BuyCard({ po }: { po: WfPo }) {
             {done.error && <p role="alert" className="text-xs text-s-red">{errOf(done.error)}</p>}
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={done.isPending}>Mark completed</Button>
-              <Button variant="secondary" onClick={() => setOpen(false)}>Back</Button>
+              <Button variant="secondary" onClick={() => setOpen(false)}>Back — keep my entries</Button>
             </div>
           </form>
         </Modal>
@@ -375,7 +378,7 @@ function ConfirmCard({ po }: { po: WfPo }) {
         <Button size="sm" variant="secondary" onClick={() => { setSendBack(true); setTried(false); reject.reset() }}>Not received — send back</Button>
       </div>
       {sendBack && (
-        <Modal title={`Send ${ref(po)} back to the buyer`} onClose={() => setSendBack(false)} dirty={note !== ''}>
+        <Modal title={`Send ${ref(po)} back to the buyer`} onClose={() => setSendBack(false)}>
           <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); setTried(true); if (note.trim().length < 10 || reject.isPending) return; reject.mutate() }}>
             <Field label="What did not arrive, or is wrong" required error={tried && note.trim().length < 10 ? 'At least 10 characters.' : null}>
               <Input value={note} onChange={(e) => setNote(e.target.value)} className="w-full" autoFocus />
@@ -603,7 +606,7 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
         </div>
       )}
       {returning && (
-        <Modal title={`Return ${g.grnNumber} to the buyer`} onClose={() => setReturning(false)} dirty={note !== ''}>
+        <Modal title={`Return ${g.grnNumber} to the buyer`} onClose={() => setReturning(false)}>
           <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (note.trim().length < 10 || act.isPending) return; act.mutate({ path: 'return', body: { note: note.trim() } }) }}>
             <DraftNotice draft={draft} />
             <Field label="What the buyer must correct" required error={note && note.trim().length < 10 ? 'At least 10 characters.' : null}>
