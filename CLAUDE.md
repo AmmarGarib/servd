@@ -1358,6 +1358,10 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   paid on/before the lock — or with no pay date — and still held, or cleared
   only by a conversion / resolving entry dated AFTER the lock; CEO-overridable
   with `acknowledge`), separate from the warn-only `vouchers_awaiting_docs`.
+- **Finance checks the documents of its own voucher (owner, 2026-11-15: "Finance may check its own").**
+  `/:id/verify-docs` no longer refuses the raiser / holder once the expense was booked at pay (`bookedAtPay`: the check
+  books nothing); `capsOf.canVerify` follows. A voucher still HELD on 1357 keeps the block (409 `SELF_APPROVE` — its
+  check posts the conversion); the screen then says someone else must check it (`verifyWaitsOnOther`).
 - **Legacy H3 rows** (`expenseOnVerify` false, paid before 2026-10-15) keep
   their rules: the pay was the expense (Dr 6xxx / Cr 1011,
   `cashRequestPayLine` / `cashRequestPaidAccountTx`), receipts book nothing,

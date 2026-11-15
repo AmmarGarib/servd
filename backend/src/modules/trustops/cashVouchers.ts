@@ -285,6 +285,9 @@ export interface CashRequestCaps {
   canRecordSpend: boolean
   /** Finance verifies the documents and books the expense (POST /:id/verify-docs). */
   canVerify: boolean
+  /** Finance raised or holds it, so someone else checks its documents (another finance login or the CEO) — the
+   *  screen says so instead of showing nothing. */
+  verifyWaitsOnOther: boolean
   /** Finance marks a voucher still held on 1357 as cleared by a manual journal (POST /:id/resolve-by-journal). */
   canResolveByJournal: boolean
   /** The holder confirms they received the cash (POST /:id/confirm-received). */
@@ -341,7 +344,8 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
     canSendBack: newPaid && docState.closed && viewer.financeApprover && !own,
     // Never since 1357 was retired (owner, 2026-10-16): the expense is one entry; finance corrects by manual journal.
     canRecordSpend: false,
-    canVerify: newPaid && viewer.financeApprover && !own && supportingCountOf(v) > 0 && (v.kind !== 'request' || !!v.cashReceivedAt),
+    canVerify: newPaid && viewer.financeApprover && (!own || v.bookedAtPay) && supportingCountOf(v) > 0 && (v.kind !== 'request' || !!v.cashReceivedAt),
+    verifyWaitsOnOther: newPaid && viewer.financeApprover && own && !v.bookedAtPay && supportingCountOf(v) > 0 && (v.kind !== 'request' || !!v.cashReceivedAt),
     canResolveByJournal: newPaid && !v.bookedAtPay && !v.postedAt && (!!v.pettyCashMovementId || !!v.payJournalEntryId)
       && viewer.financeApprover && !own,
     canConfirmReceived: v.kind === 'request' && !!holder && holder === me && !v.cashReceivedAt

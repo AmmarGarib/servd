@@ -539,11 +539,13 @@ describe('finance raises a voucher for an outside payee, with a discount', () =>
     // An outside payee has no login: the pay records the hand-over; Received by is the payee.
     expect(pay.json().voucher).toMatchObject({ receiverName: 'Ali Electric', paidByName: `${P} payA`, cashReceivedById: U['payA']!.id, canConfirmReceived: false })
     await upload('cashA', v.id, doc('quote.pdf', PDF, 'application/pdf'))
-    // The preparer may not verify their own voucher; another finance person does.
-    expect((await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})).json().error.code).toBe('SELF_APPROVE')
+    // Finance may check the documents of its own voucher (owner, 2026-11-15): the expense was booked at pay, so the
+    // check books nothing. The screen offers it.
+    expect((await call('finA', 'GET', `${V}/${v.id}`)).json().canVerify).toBe(true)
     // The pay was the one entry: Dr 6050 (repairs) / Cr 1011 for the total after discount; the check books nothing.
     expect(await entry(`pettycash.spend:${pay.json().movement.id}`)).toEqual([['1011', 'credit', 40_000], ['6050', 'debit', 40_000]])
-    expect((await call('finA2', 'POST', `${V}/${v.id}/verify-docs`, {})).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `${V}/${v.id}/verify-docs`, {})).statusCode).toBe(200)
+    expect((await call('finA2', 'POST', `${V}/${v.id}/verify-docs`, {})).json().error.code).toBe('ALREADY_POSTED')
     expect(await entry(`cashvoucher.post:${v.id}`)).toBeNull()
   })
 })

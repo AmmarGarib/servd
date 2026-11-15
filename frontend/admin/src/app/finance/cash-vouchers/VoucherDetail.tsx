@@ -285,6 +285,12 @@ export function VoucherDetail({ id }: { id: string }) {
         {/* Supporting documents travel with the voucher: listed and downloadable for everyone who can open it. */}
         {(paid || (v.status === 'approved' && v.canUpload)) && (newFlow || (v.documents?.length ?? 0) > 0 || v.canUpload) && <DocumentsPanel v={v} isKeeper={isKeeper} />}
         {v.status === 'disbursed' && newFlow && v.canVerify && <VerifyPanel v={v} isKeeper={isKeeper} />}
+        {v.status === 'disbursed' && newFlow && !v.canVerify && v.verifyWaitsOnOther && (
+          <div role="status" className="rounded-2xl border border-s-border bg-s-surface p-4">
+            <p className="text-sm font-bold text-s-text">Documents waiting to be checked — by someone else</p>
+            <p className="mt-1 text-xs text-s-muted">You raised or hold this voucher, so you cannot check its documents yourself. Another finance person or the CEO opens this voucher and presses &ldquo;Documents checked&rdquo;. Nothing more is booked either way.</p>
+          </div>
+        )}
         {v.status === 'disbursed' && newFlow && v.canResolveByJournal && <ResolveByJournalPanel v={v} />}
         {paid && !newFlow && <SettlePanel v={v} isKeeper={isKeeper} />}
         {v.status === 'posted' && (

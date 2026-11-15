@@ -561,7 +561,10 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
     if (v.status !== 'disbursed' || !v.expenseOnVerify) {
       throw wrongStatus('VOUCHER_NOT_AWAITING_DOCS', v, 'finance verifies a voucher paid under the 2026-10-15 flow')
     }
-    if (v.preparedById === viewer.id || v.payeeUserId === viewer.id) {
+    // Finance may check the documents of a voucher it raised or holds (owner, 2026-11-15: "Finance may check its
+    // own") — the check books nothing once the expense was booked at pay. A voucher still HELD on 1357 is different:
+    // its check posts the conversion, so that one stays with someone else.
+    if (!v.bookedAtPay && (v.preparedById === viewer.id || v.payeeUserId === viewer.id)) {
       throw new AppError('SELF_APPROVE', 'You raised or hold this voucher — another finance person verifies its documents', 409)
     }
     if (v.kind === 'request' && !v.cashReceivedAt) {

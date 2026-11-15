@@ -263,6 +263,7 @@ export interface CashVoucher {
   canRecordSpend?: boolean
   canExport?: boolean
   canVerify?: boolean
+  verifyWaitsOnOther?: boolean
   /** Still held on 1357 (old hold flow, not booked): finance / the CEO mark it cleared by a manual journal entry. */
   canResolveByJournal?: boolean
   canCancel: boolean
