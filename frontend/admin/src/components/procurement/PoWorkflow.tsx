@@ -280,17 +280,18 @@ function BuyCard({ po }: { po: WfPo }) {
       sub={<>{fmtPkrWhole(po.totalCents)} · {po.lines.length} line{po.lines.length === 1 ? '' : 's'} · {po.payByCash ? 'Paid in cash from your box' : 'On the supplier\'s credit'}</>}>
       {po.receiptReturnNote && <p className="text-xs text-s-red">Sent back by the requester: {po.receiptReturnNote}</p>}
       {noSupplier && <p className="text-xs text-s-amber">Choose the supplier on the Purchase Orders tab before completing it.</p>}
-      <RecordFiles ownerType="purchase_order" ownerId={po.id} canUpload title="Supplier's invoice / bill" tenantId={po.supplier?.tenantId ?? undefined}
-        emptyText="Attach the supplier's invoice or bill (photo, PDF or Office file)." />
+      {po.invoiceFiles > 0 && (
+        <RecordFiles ownerType="purchase_order" ownerId={po.id} canUpload={false} title="Supplier's invoice / bill" tenantId={po.supplier?.tenantId ?? undefined} lazy />
+      )}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" onClick={() => { setOpen(true); setTried(false); done.reset() }} disabled={noSupplier}>Enter quantities &amp; amounts, mark completed</Button>
       </div>
-      <p className="text-[11px] text-s-muted">Bought a different quantity or paid a different amount? Change them in the next step — type the whole amount per line, the rate is worked out.</p>
+      <p className="text-[11px] text-s-muted">In the next step: the quantities and the whole amount paid per line (the rate is worked out), then attach the supplier&apos;s invoice and mark it completed.</p>
       {open && (
         <Modal extraWide title={`Mark ${ref(po)} completed`} onClose={() => setOpen(false)} dirty={invoiceNumber !== ''}>
           <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); setTried(true); if (!invoiceNumber.trim() || !invoiceDate || badQty(qtys) || done.isPending) return; done.mutate() }}>
             <DraftNotice draft={draft} />
-            <p className="text-xs text-s-muted">It goes to whoever raised it to confirm what arrived. The invoice must be attached first.</p>
+            <p className="text-xs text-s-muted">Enter what you bought, attach the supplier&apos;s invoice at the bottom, then mark it completed. It then goes to whoever raised it to confirm what arrived.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Invoice / bill number" required error={tried && !invoiceNumber.trim() ? "Enter the supplier's invoice number." : null}>
                 <Input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} maxLength={100} className="w-full" autoFocus />
@@ -302,6 +303,9 @@ function BuyCard({ po }: { po: WfPo }) {
             <RateFields lines={po.lines} rates={rates} setRates={setRates} qtys={qtys} setQtys={setQtys} amounts={amounts} setAmounts={setAmounts} />
             {tried && badQty(qtys) && <p role="alert" className="text-xs text-s-red">Every quantity bought must be more than zero.</p>}
             <TaxFields cents={taxCents} setCents={setTaxCents} authority={taxBy} setAuthority={setTaxBy} />
+            {/* Attach here too (owner, 2026-11-15: "Give attachment option in enter quantities tab next to mark completed"). */}
+            <RecordFiles ownerType="purchase_order" ownerId={po.id} canUpload title="Supplier's invoice / bill" tenantId={po.supplier?.tenantId ?? undefined}
+              emptyText="Attach the supplier's invoice or bill (photo, PDF or Office file) — needed to mark it completed." />
             {done.error && <p role="alert" className="text-xs text-s-red">{errOf(done.error)}</p>}
             <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={done.isPending}>Mark completed</Button>
