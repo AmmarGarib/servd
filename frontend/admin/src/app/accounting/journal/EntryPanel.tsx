@@ -117,6 +117,12 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
   const splitPreview = usePreviewQuery({ sourceEntryId: entryId, tenantId, enabled: canSplitRole && !!e && e.status === 'live' && !e.reverses })
   const liveSplit = splitPreview.data?.liveSplit && splitPreview.data.liveSplit.status === 'posted' ? splitPreview.data.liveSplit : null
   const showSplit = canSplitRole && !!e && e.status === 'live' && !e.reverses && !!splitPreview.data && (!!liveSplit || splitPreview.data.canSplit)
+  const splitBlockedWhy = !e ? null
+    : e.status !== 'live' ? 'not for a cancelled entry.'
+    : e.reverses ? 'not for a cancelling entry.'
+    : splitPreview.error ? `could not check (${(splitPreview.error as Error).message}).`
+    : splitPreview.data && !splitPreview.data.canSplit && !liveSplit ? (splitPreview.data.blocker?.message ?? 'not possible for this entry.')
+    : null
   const canChange = !!e && e.canRequestChange && e.status === 'live' && !e.pendingChange
   const total = e ? e.totalCents : 0
 
@@ -249,6 +255,10 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
                 </div>
               )}
               {liveSplit && <p className="text-xs text-s-muted">{splitToText(liveSplit)}.</p>}
+              {/* Why there is no "Split to companies" (owner, 2026-11-15: "The split button isn't showing"). */}
+              {canSplitRole && mode === 'view' && !showSplit && splitBlockedWhy && (
+                <p className="text-xs text-s-muted">Split to companies: {splitBlockedWhy}</p>
+              )}
               {e.blockedReason && (!e.canTextEdit || !canChange) && <p className="text-xs text-s-muted">{e.blockedReason}</p>}
               {canChange && e.changeNeedsApproval && (
                 <p className="text-xs text-s-muted">A change of amount, and cancelling, waits for the CEO&apos;s approval. Text edits, and moving the account, brand or date with the same amounts, apply at once.</p>
