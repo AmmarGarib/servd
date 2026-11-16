@@ -2043,6 +2043,14 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   a `pending_approval` PO (`service.ts updatePoDraft {alsoWaiting}`): same checks as a draft edit, the PO STAYS
   waiting (no return, no resubmit), activity log + audit carry `whileStatus`. Everyone else: drafts only (409
   `PO_NOT_DRAFT`); once approved nobody edits it. Admin: "Edit" on the PO row. Tests: `tests/poApprovalChain.test.ts`.
+- **Pack units on a PO line (owner, 2026-11-16: "We need more designations in the PO quantity drop down … hard to
+  input items other than food").** A line may be ordered in a PACK — each, box, bottle, carton, bag, tin, roll… (any
+  label that is not a weight or a volume) — with the size of one typed on the line: `packSize` (+ `packSizeUnit`,
+  default the item's stock unit) on `poLineSchema`; `poUnits.ts packFactor` stores it as the line's `orderUnitFactor`,
+  which receiving, the buyer's completion and the bill already read. No size → 422 `PACK_SIZE_REQUIRED`; a weight /
+  volume label the server cannot convert stays 422 `UNIT_MISMATCH` (grams never become millilitres). Where the server
+  can convert the unit itself (kg, the item's buying unit) its own factor wins. The PO form's unit drop-down lists
+  "Packs & pieces" and asks "1 box = __ g". Tests: `tests/poMoveCompany.test.ts`, `tests/receiving.test.ts`.
 - **A PO's cash voucher waits for finance (owner, 2026-11-10: "Finance approval getting skipped, fix it").** The CEO's
   PO approval raises it `submitted` (CEO step already signed — `directorSignedById`); finance's `POST
   /trustops/cash-vouchers/:id/finance-approve {}` moves it straight to `approved` (ready to pay) — no account, no

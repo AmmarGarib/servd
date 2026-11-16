@@ -185,6 +185,9 @@ const poLineSchema = z.object({
   orderUnit:          z.string().trim().min(1).max(20).optional().nullable(),
   orderQuantity:      z.number().positive().finite().optional(),
   orderUnitCostCents: zInt4Cents('A rate').optional(),
+  // A pack unit (box, bottle, ea…): how much one holds, in packSizeUnit (default the item's stock unit) — poUnits.ts.
+  packSize:           z.number().positive().max(1_000_000).optional().nullable(),
+  packSizeUnit:       z.string().trim().min(1).max(20).optional().nullable(),
   notes:              z.string().optional().nullable(),
 }).refine((l) => (l.quantityOrdered != null && l.unitCostCents != null) || (l.orderQuantity != null && l.orderUnitCostCents != null), {
   message: 'Each line needs a quantity and a rate',

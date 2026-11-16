@@ -177,7 +177,7 @@ interface ReorderGroup {
 interface PoDraft {
   supplierId: string
   /** quantityOrdered / unitCostCents are in `unit` (the unit it is ordered in; empty = the item's stock unit). */
-  lines: Array<{ inventoryItemId: string; quantityOrdered: string; unitCostCents: string; notes: string; unit?: string }>
+  lines: Array<{ inventoryItemId: string; quantityOrdered: string; unitCostCents: string; notes: string; unit?: string; packSize?: string }>
   /** Editing a draft (owner, 2026-11-03): its other fields, kept as they are unless changed. */
   expectedDate?: string
   notes?: string
@@ -206,6 +206,12 @@ function orderUnitsOf(item: InventoryItem): Array<{ unit: string; factor: number
   if (pu && (item.purchaseUnitFactor ?? 0) > 0 && !out.some((o) => o.unit.toLowerCase() === pu.toLowerCase())) out.push({ unit: pu, factor: item.purchaseUnitFactor! })
   return out
 }
+/** Pack units a line may also be ordered in (owner, 2026-11-16: boxes, bottles, "1 ea" — not only g / kg). The size of
+ *  one is typed on the line ("1 box = 500 g") and the server keeps it on the line (poUnits.ts packFactor). */
+const PACK_UNITS = ['each', 'pcs', 'box', 'bottle', 'pack', 'packet', 'carton', 'bag', 'sack', 'tin', 'can', 'jar', 'roll', 'tray', 'crate', 'bundle', 'dozen']
+const isPackUnit = (item: InventoryItem | undefined, unit: string | undefined) =>
+  !!item && !!unit && !orderUnitsOf(item).some((o) => o.unit.toLowerCase() === unit.toLowerCase())
+const packUnitsFor = (item: InventoryItem) => PACK_UNITS.filter((u) => !orderUnitsOf(item).some((o) => o.unit.toLowerCase() === u) && !(unitFamily(item.unit).family === 'count' && (u === 'each' || u === 'pcs' || u === 'dozen')))
 const factorOf = (item: InventoryItem | undefined, unit: string | undefined) =>
   !item || !unit ? 1 : orderUnitsOf(item).find((o) => o.unit.toLowerCase() === unit.toLowerCase())?.factor ?? 1
 /** A new line is ordered in kg / litres when the item is kept in g / ml (owner, 2026-11-05). */
@@ -536,7 +542,7 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
             buyerUserId: editPo.buyerUserId ?? null,
             lines: (editPo.lines ?? []).map((l) => {
               const v = poLineShown(l)
-              return { inventoryItemId: l.inventoryItemId, quantityOrdered: String(v.qty), unitCostCents: String(v.rate / 100), notes: l.notes ?? '', unit: v.unit }
+              return { inventoryItemId: l.inventoryItemId, quantityOrdered: String(v.qty), unitCostCents: String(v.rate / 100), notes: l.notes ?? '', unit: v.unit, ...(l.orderUnit && (l.orderUnitFactor ?? 0) > 0 ? { packSize: String(l.orderUnitFactor) } : {}) }
             }),
           }}
           onClose={() => setEditId(null)} />
@@ -977,6 +983,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
         orderUnit: l.unit || invItems.find((x) => x.id === l.inventoryItemId)?.unit || null,
         orderQuantity: Number(l.quantityOrdered),
         orderUnitCostCents: Math.round(Number(l.unitCostCents) * 100),
+        ...(isPackUnit(invItems.find((x) => x.id === l.inventoryItemId), l.unit) && Number(l.packSize) > 0 ? { packSize: Number(l.packSize) } : {}),
         notes: l.notes || null,
       })),
     }),
@@ -1000,6 +1007,8 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
     setLines((prev) => prev.map((l, idx) => {
       if (idx !== i) return l
       const item = invItems.find((x) => x.id === l.inventoryItemId)
+      // To or from a pack unit (box, bottle…): its size is not known yet, so the figures are left as typed.
+      if (isPackUnit(item, unit) || isPackUnit(item, l.unit)) return { ...l, unit, ...(isPackUnit(item, unit) ? {} : { packSize: undefined }) }
       const ratio = factorOf(item, unit) / factorOf(item, l.unit || item?.unit)
       const q = numOf(l.quantityOrdered)
       const r = numOf(l.unitCostCents)
@@ -1015,9 +1024,10 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   const [tried, setTried] = useState(false)
   const lineBad = (l: typeof lines[number]) => !l.inventoryItemId || !(Number(l.quantityOrdered) > 0) || !l.unitCostCents
   // The supplier may be chosen later (owner, 2026-11-03: "POs should be able to go thru without supplier attached").
-  const valid = lines.length > 0 && !lines.some(lineBad)
+  const packBad = (l: typeof lines[number]) => isPackUnit(invItems.find((x) => x.id === l.inventoryItemId), l.unit) && !(Number(l.packSize) > 0)
+  const valid = lines.length > 0 && !lines.some(lineBad) && !lines.some(packBad)
   const msg = tried && !valid
-    ? (lines.length === 0 ? 'Add at least one line.' : 'Every line needs an item, a quantity above 0 and a unit cost.')
+    ? (lines.length === 0 ? 'Add at least one line.' : lines.some(lineBad) ? 'Every line needs an item, a quantity above 0 and a unit cost.' : 'Say how much one box / bottle / pack holds on each line ordered that way.')
     : null
 
   return (
@@ -1113,7 +1123,22 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
               <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Unit</span>
               <Select value={unitOf} disabled={!item} aria-label={`Line ${i + 1} unit`} onChange={(e) => changeUnit(i, e.target.value)} className={fi}>
                 {item ? orderUnitsOf(item).map((o) => <option key={o.unit} value={o.unit}>{o.unit}</option>) : <option value="">—</option>}
+                {item && (
+                  <optgroup label="Packs & pieces">
+                    {isPackUnit(item, unitOf) && !PACK_UNITS.includes(unitOf.toLowerCase()) && <option value={unitOf}>{unitOf}</option>}
+                    {packUnitsFor(item).map((u) => <option key={u} value={u}>{u}</option>)}
+                  </optgroup>
+                )}
               </Select>
+              {item && isPackUnit(item, unitOf) && (
+                <label className="mt-1 flex items-center gap-1 text-[11px] text-s-muted">
+                  <span className="shrink-0">1 {unitOf} =</span>
+                  <NumberField decimals={3} min={0} placeholder="size" aria-label={`Line ${i + 1}: how many ${item.unit} in one ${unitOf}`}
+                    value={numOf(line.packSize ?? '')} onValueChange={(v) => updateLine(i, 'packSize', textOf(v))}
+                    className={`${fi} !px-2 !py-1 ${tried && !(Number(line.packSize) > 0) ? 'border-s-red' : ''}`} />
+                  <span className="shrink-0">{item.unit}</span>
+                </label>
+              )}
             </div>
             <div className="col-span-5 sm:col-span-2">
               <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Rate per {unitOf || 'unit'} (PKR)</span>
@@ -1122,7 +1147,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
               {item && unitOf && (
                 <span className="mt-0.5 block text-[11px] text-s-muted">
                   <span className="hidden sm:inline">PKR per {unitOf}</span>
-                  {unitOf.toLowerCase() !== item.unit.toLowerCase() && <><span className="hidden sm:inline"> · </span>1 {unitOf} = {factorOf(item, unitOf).toLocaleString()} {item.unit}</>}
+                  {unitOf.toLowerCase() !== item.unit.toLowerCase() && !isPackUnit(item, unitOf) && <><span className="hidden sm:inline"> · </span>1 {unitOf} = {factorOf(item, unitOf).toLocaleString()} {item.unit}</>}
                 </span>
               )}
             </div>

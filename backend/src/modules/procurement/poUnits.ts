@@ -48,6 +48,29 @@ export interface TypedLine {
   inventoryItemId: string; notes?: string | null
   quantityOrdered?: number; unitCostCents?: number
   orderUnit?: string | null; orderQuantity?: number; orderUnitCostCents?: number
+  /** A PACK unit ("box", "bottle", "ea" on a gram item…): how much ONE holds, in `packSizeUnit` (default the item's
+   *  stock unit). Read only when the server cannot convert the order unit itself. */
+  packSize?: number | null; packSizeUnit?: string | null
+}
+
+/**
+ * Stock units in one PACK of this line (owner, 2026-11-16: "We need more designations in the PO quantity drop down …
+ * hard to input items other than food" — box, bottle, carton, each…). A pack label is any unit that is NOT a weight
+ * or a volume: "1 bottle = 500 ml", "1 ea = 250 g", "1 carton = 24 pcs". The size is typed on the line and kept on
+ * it (orderUnitFactor) — receiving and the bill read that stored factor. A weight or volume label the server cannot
+ * convert stays refused (grams never become millilitres — lib/units.ts).
+ */
+function packFactor(item: UnitItem, l: TypedLine, index: number): number | null {
+  const fam = unitFamily(l.orderUnit).family
+  if (fam === 'mass' || fam === 'volume') return null
+  if (l.packSize == null) {
+    throw new AppError('PACK_SIZE_REQUIRED', `Line ${index + 1}: say how much one ${l.orderUnit} of ${item.name} holds (in ${item.unit})`, 422)
+  }
+  const inStock = l.packSizeUnit && norm(l.packSizeUnit) !== norm(item.unit) ? convertUnits(l.packSize, l.packSizeUnit, item.unit) : l.packSize
+  if (inStock == null || !(inStock > 0) || !Number.isFinite(inStock)) {
+    throw new AppError('UNIT_MISMATCH', `Line ${index + 1}: ${item.name} is kept in ${item.unit} — give the size of one ${l.orderUnit} in ${item.unit}`, 422)
+  }
+  return inStock
 }
 export interface StoredLine {
   inventoryItemId: string; notes: string | null; quantityOrdered: number; unitCostCents: number
@@ -57,7 +80,7 @@ export interface StoredLine {
 /** A typed line → what is stored (stock-unit quantity and cost + the order unit as typed). */
 export function storedLine(item: UnitItem, l: TypedLine, index: number): StoredLine {
   if (l.orderUnit && norm(l.orderUnit) !== norm(item.unit)) {
-    const factor = orderUnitFactor(item, l.orderUnit)
+    const factor = orderUnitFactor(item, l.orderUnit) ?? packFactor(item, l, index)
     if (factor == null) {
       throw new AppError('UNIT_MISMATCH', `Line ${index + 1}: ${item.name} is kept in ${item.unit} — ${l.orderUnit} cannot be converted to it`, 422)
     }

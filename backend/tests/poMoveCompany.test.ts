@@ -73,6 +73,28 @@ describe('move a PO to another company', () => {
     expect(await prisma.auditLog.count({ where: { action: 'po.move_company', tenantId: { in: [A.tenantId, B.tenantId] }, OR: [{ entityId: id }, { entityId: body.newId }] } })).toBe(2)
   })
 
+  it('pack units: 1 bottle = 500 g is kept on the line, the size is required, grams never become millilitres, and a move keeps it', async () => {
+    const need = await app.inject({ method: 'POST', url: '/procurement/purchase-orders', headers: hdr(both, A.tenantId), payload: { supplierId: supA, lines: [{ inventoryItemId: itemA, orderUnit: 'bottle', orderQuantity: 2, orderUnitCostCents: 90000 }] } as never })
+    expect(need.statusCode).toBe(422)
+    expect(need.json().error.code).toBe('PACK_SIZE_REQUIRED')
+    const ml = await app.inject({ method: 'POST', url: '/procurement/purchase-orders', headers: hdr(both, A.tenantId), payload: { supplierId: supA, lines: [{ inventoryItemId: itemA, orderUnit: 'ml', orderQuantity: 2, orderUnitCostCents: 90000, packSize: 1 }] } as never })
+    expect(ml.json().error.code).toBe('UNIT_MISMATCH')
+    // itemA is kept in kg: 1 bottle = 500 g typed in grams → 0.5 kg a bottle.
+    const ok = await app.inject({ method: 'POST', url: '/procurement/purchase-orders', headers: hdr(both, A.tenantId), payload: { supplierId: supA, lines: [{ inventoryItemId: itemA, orderUnit: 'bottle', orderQuantity: 2, orderUnitCostCents: 90000, packSize: 500, packSizeUnit: 'g' }] } as never })
+    expect(ok.statusCode, ok.body).toBe(201)
+    const line = (await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: ok.json().id }, include: { lines: true } }))
+    expect(line.lines[0]).toMatchObject({ orderUnit: 'bottle', orderUnitFactor: 0.5, quantityOrdered: 1, orderUnitCostCents: 90000 })
+    expect(Number(line.totalCents)).toBe(180000)
+    const mv = await move(ok.json().id, B.tenantId)
+    expect(mv.statusCode, mv.body).toBe(200)
+    const moved = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: mv.json().newId }, include: { lines: { include: { inventoryItem: true } } } })
+    expect(moved.lines[0].orderUnit).toBe('bottle')
+    expect(Number(moved.totalCents)).toBe(180000)
+    // The target keeps the item in its own unit of the family; the bottle is still 500 g of it.
+    const per = moved.lines[0].inventoryItem.unit === 'g' ? 500 : 0.5
+    expect(moved.lines[0].orderUnitFactor).toBe(per)
+  })
+
   it('a PO with no supplier arrives with no supplier yet', async () => {
     const id = await mkPo([{ inventoryItemId: itemA, quantityOrdered: 1, unitCostCents: 170000 }], null)
     const r = await move(id, B.tenantId)

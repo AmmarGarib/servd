@@ -359,7 +359,12 @@ describe('PO lines ordered in another unit', () => {
       supplierId: supA, lines: [{ inventoryItemId: flour, orderUnit: 'dozen', orderQuantity: 1, orderUnitCostCents: 100 }],
     })
     expect(bad.statusCode).toBe(422)
-    expect(bad.json().error.code).toBe('UNIT_MISMATCH')
+    // A count / pack label on a weight item is a PACK (owner, 2026-11-16): it needs its size; ml on it never converts.
+    expect(bad.json().error.code).toBe('PACK_SIZE_REQUIRED')
+    const ml = await call('ceo', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, lines: [{ inventoryItemId: flour, orderUnit: 'ml', orderQuantity: 1, orderUnitCostCents: 100 }],
+    })
+    expect(ml.json().error.code).toBe('UNIT_MISMATCH')
     const ok = await call('ceo', 'POST', '/procurement/purchase-orders', {
       supplierId: supA, lines: [{ inventoryItemId: flour, orderUnit: 'g', orderQuantity: 500, orderUnitCostCents: 25 }],
     })

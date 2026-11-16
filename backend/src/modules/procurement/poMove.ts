@@ -83,6 +83,8 @@ export async function movePoToCompany(input: { poId: string; toTenantId: string;
       orderUnit:          typed ? l.orderUnit : l.inventoryItem.unit,
       orderQuantity:      typed ? l.quantityOrdered / l.orderUnitFactor : l.quantityOrdered,
       orderUnitCostCents: typed ? l.orderUnitCostCents! : l.unitCostCents,
+      // A pack line (box, bottle…) carries its size, in the OLD item's unit — poUnits converts it to the target's.
+      ...(typed ? { packSize: l.orderUnitFactor, packSizeUnit: l.inventoryItem.unit } : {}),
     }
   })
 
