@@ -179,6 +179,12 @@ describe('reading and costing', () => {
     const mine = rows.find((r) => r.id === cheeseRecipe)!
     expect(mine.kind).toBe('modifier')
     expect(mine.costPerPortionCents).toBe(Math.round(25 / 1000 * 200_000 * 1.1 - 5 / 1000 * 20_000 * 1.1))
+    // Dish + add-on (owner, 2026-11-16): the add-on's row also carries its dish's plate cost and the two together.
+    const row = mine as unknown as { dishCostPerPortionCents: number | null; withDishCostCents: number | null }
+    const dish = rows.find((r) => r.kind === 'plate')!
+    expect(row.dishCostPerPortionCents).toBe(dish.costPerPortionCents)
+    expect(row.dishCostPerPortionCents).toBeGreaterThan(0)
+    expect(Math.abs(row.withDishCostCents! - (dish.costPerPortionCents! + mine.costPerPortionCents!))).toBeLessThanOrEqual(1)
     expect(((await call(mgrB, 'GET', '/recipes')).json() as Array<{ id: string }>).map((r) => r.id)).not.toContain(cheeseRecipe)
     expect(((await call(mgrB, 'GET', `/recipes?conceptId=${A.conceptId}`)).json())).toEqual([])
   })

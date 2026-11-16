@@ -111,6 +111,10 @@ interface Recipe {
   avgTotalCostCents?: number | null
   avgCostPerPortionCents?: number | null
   avgCostPerGramCents?: number | null
+  // Add-on only: its dish's plate cost, and one dish + one add-on (null = the dish has no recipe yet).
+  dishCostPerPortionCents?: number | null
+  withDishCostCents?: number | null
+  avgWithDishCostCents?: number | null
 }
 
 // Lightweight option for the prep-recipe picker on ingredient rows.
@@ -142,6 +146,7 @@ const BLANK_ING: IngRow = {
 
 /** The recipe's headline cost at servd's 90-day average ingredient prices (latest is the main figure). */
 function avgHeadline(r: Recipe): string {
+  if (r.kind === 'modifier' && r.avgWithDishCostCents != null) return fmtPkr(r.avgWithDishCostCents)
   if (r.kind === 'plate' || r.kind === 'modifier') return r.avgCostPerPortionCents != null ? fmtPkr(r.avgCostPerPortionCents) : '—'
   return r.avgCostPerGramCents != null ? `PKR ${(r.avgCostPerGramCents / 100).toFixed(3)}/g` : '—'
 }
@@ -546,7 +551,10 @@ export default function RecipesPage() {
                         {r.kind === 'plate' ? (
                           <Metric label="Plate Cost"   value={fmtPkr(r.costPerPortionCents ?? 0)} teal />
                         ) : r.kind === 'modifier' ? (
-                          <Metric label="Cost / Add-on" value={fmtPkr(r.costPerPortionCents ?? 0)} teal />
+                          <>
+                            <Metric label="Add-on only" value={fmtPkr(r.costPerPortionCents ?? 0)} />
+                            <Metric label="Dish + add-on" value={r.withDishCostCents != null ? fmtPkr(r.withDishCostCents) : 'No dish recipe'} teal />
+                          </>
                         ) : (
                           <Metric
                             label="Cost / Gram"
@@ -619,7 +627,11 @@ export default function RecipesPage() {
                           ...(r.kind === 'plate'
                             ? [{ label: 'PLATE COST',     value: fmtPkr(r.costPerPortionCents ?? 0) }]
                             : r.kind === 'modifier'
-                            ? [{ label: 'COST / ADD-ON',  value: fmtPkr(r.costPerPortionCents ?? 0) }]
+                            ? [
+                                { label: 'ADD-ON ONLY',   value: fmtPkr(r.costPerPortionCents ?? 0) },
+                                { label: 'DISH',          value: r.dishCostPerPortionCents != null ? fmtPkr(r.dishCostPerPortionCents) : '—' },
+                                { label: 'DISH + ADD-ON', value: r.withDishCostCents != null ? fmtPkr(r.withDishCostCents) : '—' },
+                              ]
                             : [{ label: 'COST / GRAM',    value: r.costPerGramCents != null ? `PKR ${(r.costPerGramCents / 100).toFixed(3)}/g` : '—' }]),
                           { label: '90-DAY AVERAGE', value: avgHeadline(r) },
                         ].map(({ label, value }) => (
@@ -756,6 +768,12 @@ export default function RecipesPage() {
                             <span className="text-s-muted">Cost of one add-on: </span>
                             <span className="font-bold text-s-text">{fmtPkr(r.costPerPortionCents ?? 0)}</span>
                             <span className="text-s-dim"> — taken from stock on every sale of the add-on (a line that removes an ingredient takes less).</span>
+                            {r.withDishCostCents != null && (
+                              <>
+                                <span className="text-s-muted"> With the dish ({fmtPkr(r.dishCostPerPortionCents ?? 0)}): </span>
+                                <span className="font-bold text-s-text">{fmtPkr(r.withDishCostCents)}</span>
+                              </>
+                            )}
                           </span>
                         ) : r.kind === 'plate' ? (
                           <>

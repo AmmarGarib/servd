@@ -2449,6 +2449,11 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   cost of sales, food-cost actuals or anything posted — those stay FIFO at the price paid. Items and recipe lines
   expose `latestCostCents` / `latestCostAt`; price history: `GET /inventory/:id/price-history` (the one store,
   ItemPriceHistory; inventory auth).
+- **An add-on's row shows dish + add-on (owner, 2026-11-16: "It only takes the cost of what we're adding on, not the
+  cost of the total plus the add-on").** `GET /recipes` rows of kind `modifier` carry `dishCostPerPortionCents` (the
+  add-on's own dish's plate recipe, same costing function), `withDishCostCents` and `avgWithDishCostCents` (null when
+  the dish has no recipe; nulled for `costsHiddenFor`). The add-on's own cost (`costPerPortionCents`) is unchanged —
+  stock and cost of sales still take the dish and the add-on separately. Tests: `tests/modifierRecipes.test.ts`.
 - **The Ingredients sheet is servd's PRICING sheet, ONE servd price (owner, 2026-10-29: "the servd master sheet is
   not concerned with stocked or not stocked … a pure ingredient availability and pricing sheet … the stock in stock
   out business is at the per brand / per outlet level"; answers: one servd price, latest with the average shown,

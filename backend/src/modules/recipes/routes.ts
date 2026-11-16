@@ -1099,6 +1099,9 @@ function recipeRowWithoutCosts<R extends { ingredients: Array<Record<string, unk
     avgTotalCostCents:   null,
     avgCostPerPortionCents: null,
     avgCostPerGramCents: null,
+    dishCostPerPortionCents: null,
+    withDishCostCents:   null,
+    avgWithDishCostCents: null,
     mc:                  null,
     ...RECIPE_PRICING_NULLED,
     costsHidden:         true as const,
@@ -1243,7 +1246,17 @@ export async function recipeRoutes(fastify: FastifyInstance) {
 
       // THE plate cost (lib/recipeCost.ts) for every listed recipe, sub-recipes
       // at any depth, one memo so shared sub-recipes are costed once.
-      const graph = (await loadRecipeGraph({ id: { in: recipes.map((r) => r.id) } })).graph
+      // An add-on is sold ON its dish, so its row also shows dish + add-on (owner, 2026-11-16: "It only takes the cost
+      // of what we're adding on, not the cost of the total plus the add-on"). The dish's own plate recipe, costed by the
+      // same function; the dish is the add-on's own (same brand, same company), so nothing outside the scope is read.
+      const addOnIds = recipes.filter((r) => r.kind === 'modifier' && r.modifierId).map((r) => r.modifierId!)
+      const dishRecipeOfModifier = new Map<string, string>(addOnIds.length
+        ? (await prisma.modifier.findMany({
+            where: { id: { in: addOnIds } },
+            select: { id: true, group: { select: { menuItem: { select: { deletedAt: true, recipe: { select: { id: true } } } } } } },
+          })).flatMap((m) => (m.group.menuItem.recipe && !m.group.menuItem.deletedAt ? [[m.id, m.group.menuItem.recipe.id] as [string, string]] : []))
+        : [])
+      const graph = (await loadRecipeGraph({ id: { in: [...new Set([...recipes.map((r) => r.id), ...dishRecipeOfModifier.values()])] } })).graph
       // Each recipe priced at its OWN company when the viewer belongs to it (review N1) — one costed graph per company.
       const pendingCids = recipes.map((r) => (!r.menuItem ? (r.pendingMenuItem as { conceptId?: string } | null)?.conceptId : undefined)).filter((x): x is string => !!x)
       const pendingTenant = new Map(pendingCids.length ? (await prisma.concept.findMany({ where: { id: { in: pendingCids } }, select: { id: true, tenantId: true } })).map((c) => [c.id, c.tenantId]) : [])
@@ -1313,6 +1326,13 @@ export async function recipeRoutes(fastify: FastifyInstance) {
         const costPerGramCents = r.kind === 'component'
           ? cost.perGramCents                                      // sub-cent precision — fractions matter at gram scale
           : null
+        // Add-on only: one portion of its dish + one add-on (a 'removes' line already lowers the add-on's own cost).
+        const dishRecipeId = r.kind === 'modifier' && r.modifierId ? dishRecipeOfModifier.get(r.modifierId) : undefined
+        const dishCost     = dishRecipeId && P.graph.has(dishRecipeId) ? recipeCost(P.graph, dishRecipeId, P.memo) : null
+        const dishAvgCost  = dishRecipeId && P.avgGraph.has(dishRecipeId) ? recipeCost(P.avgGraph, dishRecipeId, P.avgMemo) : null
+        const dishCostPerPortionCents = dishCost ? Math.round(dishCost.perPortionCents) : null
+        const withDishCostCents = dishCost && costPerPortionCents !== null ? Math.round(dishCost.perPortionCents + cost.perPortionCents) : null
+        const avgWithDishCostCents = dishAvgCost && r.servings > 0 ? Math.round(dishAvgCost.perPortionCents + avgCost.perPortionCents) : null
         const priceCents     = r.menuItem?.priceCents ?? null
         const grossMarginPct = (priceCents && priceCents > 0 && costPerPortionCents !== null)
           ? Math.round(((priceCents - costPerPortionCents) / priceCents) * 100)
@@ -1346,6 +1366,10 @@ export async function recipeRoutes(fastify: FastifyInstance) {
           avgTotalCostCents: Math.round(avgCost.totalCents),
           avgCostPerPortionCents: (r.kind === 'plate' || r.kind === 'modifier') && r.servings > 0 ? Math.round(avgCost.perPortionCents) : null,
           avgCostPerGramCents: r.kind === 'component' ? avgCost.perGramCents : null,
+          // Add-on headline: its dish's plate cost, and dish + add-on.
+          dishCostPerPortionCents,
+          withDishCostCents,
+          avgWithDishCostCents,
         }
       })
       return hideCosts ? rows.map(recipeRowWithoutCosts) : rows
