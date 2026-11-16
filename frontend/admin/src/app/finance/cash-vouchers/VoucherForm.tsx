@@ -201,7 +201,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
     <Modal title={title} onClose={onClose} wide dirty={!save.isPending && (purpose !== (voucher?.purpose ?? '') || grossCents !== startGross || (expense && payeeName !== (voucher?.payeeName ?? '')))}>
       <form onSubmit={submit} className="space-y-3" noValidate>
       <DraftNotice draft={draft} />
-      <p className="text-xs text-s-muted">
+      {!isPurchase && <p className="text-xs text-s-muted">
         {expense
           ? (sendTo === 'ceo' || editing
             ? 'Finance prepares it, so it goes straight to the CEO for approval. After approval the cashier pays the payee.'
@@ -209,7 +209,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
           : editing
             ? 'Fix what was returned, then resubmit it from the voucher page.'
             : 'Saving creates the voucher and sends it to finance now. Then the CEO approves, the cashier pays you, and you upload the supporting documents.'}
-      </p>
+      </p>}
 
       {canRaisePo && (
         <label className="flex items-start gap-2 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text">
