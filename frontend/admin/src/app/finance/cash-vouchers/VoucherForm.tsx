@@ -23,6 +23,8 @@
 
 import { useServdSupplierPick } from '@/components/procurement/useServdSupplierPick'
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { usePermissions } from '@/hooks/useCan'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BankAccountSelect } from '../../../components/finance/BankAccountSelect'
 import { api } from '../../../lib/api'
@@ -55,6 +57,14 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
 }) {
   const editing = !!voucher
   const expense = editing ? voucher!.kind === 'expense' : mode === 'expense'
+  // "This is a purchase" (owner, 2026-11-16: "when asif puts in a cash request it generates a PO"): things bought for
+  // the kitchen go through a purchase order — its approval raises the cash for the buyer — so stock and food cost see
+  // them. Offered on a NEW cash request to a login that raises POs (the server decides; this only shows the tick).
+  const router = useRouter()
+  const { data: me } = usePermissions()
+  const canRaisePo = !editing && !expense && ['admin', 'owner', 'management', 'manager', 'fnb_manager', 'boh_management', 'foh_management', 'procurement'].includes(me?.role ?? '')
+    && (me?.role === 'admin' || (me?.modules ?? []).includes('procurement'))
+  const [isPurchase, setIsPurchase] = useState(false)
   const { data: cats } = useCategories()
   const categories = (cats?.categories ?? []).filter((c) => c.kind === 'expense')
   const { data: chart = [] } = useQuery<Array<{ code: string; name: string; isActive: boolean; tenantId: string | null }>>({
@@ -201,6 +211,36 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
             : 'Saving creates the voucher and sends it to finance now. Then the CEO approves, the cashier pays you, and you upload the supporting documents.'}
       </p>
 
+      {canRaisePo && (
+        <label className="flex items-start gap-2 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-sm text-s-text">
+          <input type="checkbox" checked={isPurchase} onChange={(e) => setIsPurchase(e.target.checked)} className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            <span className="font-semibold">This is a purchase</span>
+            <span className="block text-xs text-s-muted">Food, drinks, packaging, cleaning or anything else you are buying. Not for fuel, repairs, fares and the like.</span>
+          </span>
+        </label>
+      )}
+      {isPurchase && (
+        <div className="space-y-3">
+          <p className="text-sm text-s-text">
+            A purchase goes in as a purchase order: you list each item, how much and the price. The CEO approves it once, and the cash for it is raised in the buyer&rsquo;s name by itself — no separate cash request.
+          </p>
+          <Field label="What is it for?">
+            <Textarea id="cv-purpose-po" value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={2} maxLength={500}
+              placeholder="e.g. Supplies for the Flipd event" className={fieldCls} />
+          </Field>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
+            <Button type="button" onClick={() => {
+              draft.clear()
+              const q = new URLSearchParams({ new: 'po', from: 'cash' })
+              if (purpose.trim()) q.set('notes', purpose.trim())
+              router.push(`/procurement?${q.toString()}`)
+            }}>Add the items</Button>
+          </div>
+        </div>
+      )}
+      {!isPurchase && (<>
       {expense && (
         <Field label="Payee *" hint="The vendor or person being paid." error={shown('cv-payee')}>
           <Input id="cv-payee" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} maxLength={120} className={fieldCls} autoFocus />
@@ -335,6 +375,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
                 : 'Send to finance'}
         </Button>
       } />
+      </>)}
       </form>
     </Modal>
   )

@@ -333,7 +333,7 @@ export default function ProcurementPage() {
   // /procurement?new=po[&item=<id>&qty=<n>] — opened from Inventory's
   // "Purchase order" button: lands on Purchase Orders with the new-PO form
   // open (and, when an item is given, that item as its first line).
-  const [newPo, setNewPo] = useState<{ item: string | null; qty: string | null } | null>(null)
+  const [newPo, setNewPo] = useState<{ item: string | null; qty: string | null; fromCash?: boolean; notes?: string | null } | null>(null)
   // "Recover as copy" from the Trash: a voided supplier bill or payment opens
   // its own create form pre-filled (the server sends nothing that posts).
   const billPrefill = unwrapPrefill(useTrashPrefill('supplier_bill'))
@@ -349,7 +349,7 @@ export default function ProcurementPage() {
       if (wanted && ['tasks', 'pos', 'grns', 'bills', 'payments', 'suppliers', 'aging', 'reorder', 'approvals', 'history'].includes(wanted)) { pickedTab.current = true; setTab(wanted as Tab) }
       if (sp.get('grn')) setGrnOpen(sp.get('grn'))
       if (sp.get('po')) { pickedTab.current = true; setTab('pos'); setOpenPo(sp.get('po')) }
-      if (sp.get('new') === 'po') { setTab('pos'); setNewPo({ item: sp.get('item'), qty: sp.get('qty') }) }
+      if (sp.get('new') === 'po') { pickedTab.current = true; setTab('pos'); setNewPo({ item: sp.get('item'), qty: sp.get('qty'), fromCash: sp.get('from') === 'cash', notes: sp.get('notes') }) }
     } catch { /* no window */ }
   }, [])
 
@@ -407,7 +407,7 @@ export default function ProcurementPage() {
 // PURCHASE ORDERS TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
-function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: { item: string | null; qty: string | null } | null; openPo?: string | null }) {
+function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; newPo?: { item: string | null; qty: string | null; fromCash?: boolean; notes?: string | null } | null; openPo?: string | null }) {
   const router = useRouter()
   const [statusFilter, setStatusFilter] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -420,6 +420,9 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
     enabled: !!newPo?.item,
   })
   useEffect(() => { if (newPo) setShowCreate(true) }, [newPo])
+  const [fromCash, setFromCash] = useState(false)
+  const [sentNote, setSentNote] = useState<string | null>(null)
+  useEffect(() => { if (newPo?.fromCash) setFromCash(true) }, [newPo])
   const linkedItem = newPo?.item ? stockItems?.find((i) => i.id === newPo.item) ?? null : null
   const linkedDraft: PoDraft | undefined = linkedItem
     ? {
@@ -527,10 +530,18 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
         </Button>
       </div>
 
-      {showCreate && !waitingForItem && (
+      {sentNote && <p role="status" className="rounded-lg border border-s-border bg-s-surface px-3 py-2 text-sm font-semibold text-success">{sentNote}</p>}
+      {showCreate && !waitingForItem && (fromCash ? (
+        // From a cash request's "This is a purchase" tick (owner, 2026-11-16): the items are listed here and the PO goes
+        // straight to the CEO; the approval raises the cash for the buyer.
+        <CreatePoForm key="from-cash" qc={qc} sendToCeo title="Purchase request — list what you need to buy"
+          initial={{ supplierId: '', notes: newPo?.notes ?? '', lines: [] }}
+          onSent={(ref) => setSentNote(`${ref ?? 'Your purchase request'} was sent to the CEO. Once approved, the cash for it is raised in the buyer's name.`)}
+          onClose={() => { setShowCreate(false); setFromCash(false) }} />
+      ) : (
         <CreatePoForm key={linkedDraft ? 'linked' : 'blank'} qc={qc} initial={linkedDraft} title={linkedDraft ? `New purchase order for ${linkedItem?.name ?? 'this item'}` : undefined}
           onClose={() => setShowCreate(false)} />
-      )}
+      ))}
 
       {editId && editPo && editPo.id === editId && (
         <CreatePoForm key={`edit-${editId}`} qc={qc} editId={editId} title={`Edit ${editPo.reference ?? 'purchase order'}`}
@@ -925,7 +936,11 @@ function ChooseSupplier({ po, qc }: { po: PurchaseOrder; qc: ReturnType<typeof u
 
 // ─── Create PO form ───────────────────────────────────────────────────────────
 
-function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<typeof useQueryClient>; onClose: () => void; initial?: PoDraft; title?: string; editId?: string }) {
+function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }: {
+  qc: ReturnType<typeof useQueryClient>; onClose: () => void; initial?: PoDraft; title?: string; editId?: string
+  /** Create AND submit in one go (a purchase request that started as a cash request). */
+  sendToCeo?: boolean; onSent?: (reference: string | null) => void
+}) {
   const { data: suppliers = [] } = useQuery({
     queryKey: ['procurement', 'suppliers'],
     queryFn: () => api.get<Supplier[]>('/procurement/suppliers'),
@@ -952,7 +967,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   const [newSupplier, setNewSupplier] = useState<{ name: string; phone: string } | null>(null)
   // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts). Cleared once the PO is saved.
   const draft = useFormDraft(
-    editId ? `po:${editId}` : initial ? 'po:reorder' : 'po:new',
+    editId ? `po:${editId}` : sendToCeo ? 'po:from-cash' : initial ? 'po:reorder' : 'po:new',
     { supplierId, expectedDate, notes, buyerUserId, lines },
     (d) => {
       setSupplierId(d.supplierId ?? ''); setExpectedDate(d.expectedDate ?? ''); setNotes(d.notes ?? ''); setBuyerUserId(d.buyerUserId ?? '')
@@ -971,8 +986,18 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
   })
 
   // Editing a draft PATCHes it (its brand is kept); otherwise a new draft is created.
+  const createdRef = useRef<{ id: string; reference?: string | null } | null>(null)
   const mut = useMutation({
-    mutationFn: () => (editId ? (body: unknown) => api.patch(`/procurement/purchase-orders/${editId}`, body) : (body: unknown) => api.post('/procurement/purchase-orders', body))({
+    mutationFn: () => (editId ? (body: unknown) => api.patch(`/procurement/purchase-orders/${editId}`, body) : async (body: unknown) => {
+      // A purchase request is created once; a failed submit is retried on the same PO, never a second one.
+      if (!sendToCeo) return api.post<{ id: string; reference?: string | null }>('/procurement/purchase-orders', body)
+      // Made already and only the send failed: save what is on the form now onto the same draft, then send it.
+      if (createdRef.current) await api.patch(`/procurement/purchase-orders/${createdRef.current.id}`, body)
+      const made = createdRef.current ?? await api.post<{ id: string; reference?: string | null }>('/procurement/purchase-orders', body)
+      createdRef.current = made
+      await api.post(`/procurement/purchase-orders/${made.id}/submit`, {})
+      return made
+    })({
       ...(supplierId ? supplierPickBody(supplierId) : { supplierId: null }), expectedDate: expectedDate || null,
       notes: notes || null,
       buyerUserId: buyerUserId && buyerChoices.some((b) => b.userId === buyerUserId) ? buyerUserId : null,
@@ -987,7 +1012,8 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
         notes: l.notes || null,
       })),
     }),
-    onSuccess: () => {
+    onSuccess: (made) => {
+      if (sendToCeo) onSent?.((made as { reference?: string | null } | undefined)?.reference ?? null)
       void qc.invalidateQueries({ queryKey: ['procurement', 'pos'] })
       // What is on order changes what the reorder list suggests.
       void qc.invalidateQueries({ queryKey: ['procurement', 'reorder'] })
@@ -1038,6 +1064,9 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
         <LinkButton tone="muted" type="button" onClick={onClose} aria-label="Close"><FIcon name="x" size={14} /></LinkButton>
       </div>
       <DraftNotice draft={draft} />
+      {sendToCeo && (
+        <p className="text-xs text-s-muted">List each item, how much and the price. It goes to the CEO as a purchase order; once approved the cash is raised in the buyer&rsquo;s name — no separate cash request.</p>
+      )}
       {initial && !title && (
         <p className="text-xs text-s-muted">Quantities bring each item back to its par level, after what is already on order. Check them and the prices, then create the PO — it is a draft until you submit it.</p>
       )}
@@ -1171,7 +1200,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
         <p className="text-sm font-bold text-s-text">Total: {fmtPkrWhole(totalCents)}</p>
         <div className="flex gap-2">
           <Button type="submit" disabled={mut.isPending}>
-            {mut.isPending ? (editId ? 'Saving…' : 'Creating…') : editId ? 'Save changes' : 'Create PO'}
+            {mut.isPending ? (editId ? 'Saving…' : sendToCeo ? 'Sending…' : 'Creating…') : editId ? 'Save changes' : sendToCeo ? 'Send to the CEO' : 'Create PO'}
           </Button>
           <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
         </div>

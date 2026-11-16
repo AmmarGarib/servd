@@ -2049,6 +2049,12 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   a `pending_approval` PO (`service.ts updatePoDraft {alsoWaiting}`): same checks as a draft edit, the PO STAYS
   waiting (no return, no resubmit), activity log + audit carry `whileStatus`. Everyone else: drafts only (409
   `PO_NOT_DRAFT`); once approved nobody edits it. Admin: "Edit" on the PO row. Tests: `tests/poApprovalChain.test.ts`.
+- **A cash request that is a purchase becomes a PO (owner, 2026-11-16: "when asif puts in a cash request it generates
+  a PO"; answer: ask for the items on the request).** No second path: the PO's approval already raises its cash voucher.
+  The new cash request form shows "This is a purchase" to a login that raises POs (procurement team holding
+  `procurement`); ticked, it opens the PO form (`/procurement?new=po&from=cash&notes=…`) as a purchase request —
+  `CreatePoForm sendToCeo` creates the PO and submits it in one go ("Send to the CEO"; a failed send retries on the same
+  draft). Non-purchases (fuel, repairs) stay plain cash requests. Frontend only; the existing PO routes decide.
 - **Pack units on a PO line (owner, 2026-11-16: "We need more designations in the PO quantity drop down … hard to
   input items other than food").** A line may be ordered in a PACK — each, box, bottle, carton, bag, tin, roll… (any
   label that is not a weight or a volume) — with the size of one typed on the line: `packSize` (+ `packSizeUnit`,
