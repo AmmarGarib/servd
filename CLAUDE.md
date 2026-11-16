@@ -462,6 +462,12 @@ module id must be placed in a workspace in the same change.
   Tests: `tests/approvalsInboxHierarchy.test.ts`. `/hr/approvals` ("My
   approvals") redirects to `/ceo/approvals?type=hr_request`. Hand-over of
   approval types to head-office HODs comes with head office (after Monday).
+- **"Decided by you" on the approvals inbox (owner, 2026-11-16: approved POs "disappeared" — an approved item leaves
+  the inbox).** `GET /approvals/decided?days=30` (`approvals/decided.ts`, any staff login): the caller's OWN
+  `approval.decide` audit rows, newest first, with — for POs, GRNs and cash vouchers — the document's number, company
+  and status NOW (only when its company is one the caller belongs to). Read only, no new store; across all the
+  caller's companies whatever is in view. Admin: `components/approvals/DecidedByMe.tsx` at the foot of
+  `/ceo/approvals`. Tests: `tests/approvalsDecided.test.ts`.
 - **Module Access binds managers too (owner C2, 2026-10-26: "Make my Module Access ticks apply to managers
   too").** `opex/moduleGate.ts moduleGateForNewRoles` exempts nobody (the CEO holds every module): OpEx
   ('capital'), Positions ('staff_directory' | 'capital'), petty cash + deposit drops ('accounting'), the

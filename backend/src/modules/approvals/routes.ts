@@ -2,6 +2,7 @@
 //                          (?type= narrows the items, ?section= too, ?view=all
 //                          lists the CEO's handed-over items inline)
 // GET /approvals/counts  — counts only (the sidebar badge)
+// GET /approvals/decided — what the caller decided lately, and where each item is now (decided.ts)
 // + the hand-over routes (delegationRoutes.ts): /approvals/delegations*, /approvals/catalog
 //
 // Open to every staff login: what comes back is only what that login's
@@ -17,6 +18,7 @@ import { reachTenantIds } from '../../lib/headOffice.js'
 import { collectApprovals } from './service.js'
 import { LIVE_DELEGATIONS, type ApprovalDelegations } from './delegations.js'
 import { delegationRoutes } from './delegationRoutes.js'
+import { decidedRoutes } from './decided.js'
 import { APPROVAL_SECTIONS, APPROVAL_TYPES, type ProviderContext } from './types.js'
 
 export interface ApprovalsPluginOptions {
@@ -81,6 +83,8 @@ export async function approvalsRoutes(fastify: FastifyInstance, opts: ApprovalsP
 
   // The hand-over routes share the /approvals prefix.
   await fastify.register(delegationRoutes)
+  // GET /approvals/decided — the caller's own recent decisions (decided.ts).
+  await fastify.register(decidedRoutes)
 }
 
 /**

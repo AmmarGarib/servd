@@ -26,6 +26,7 @@ import { Modal, useHrLookups, useHrOrg } from '../../../components/hr/HrShell'
 import { RecordDetail } from '../../../components/hr/RecordDetail'
 import { PENDING_LAYOUTS_KEY } from '../../../components/storefront/ApprovalsPanel'
 import { ApprovalActionDialog } from '../../../components/approvals/ApprovalActionDialog'
+import { DecidedByMe } from '../../../components/approvals/DecidedByMe'
 import { JournalRequestDiff } from '../../accounting/journal/JournalRequestDiff'
 import {
   APPROVALS_INBOX_KEY, APPROVALS_ROOT, useHeadOffices,
@@ -355,6 +356,8 @@ function ApprovalsInbox() {
           </div>
         )}
       </div>
+
+      <DecidedByMe rootKey={APPROVALS_ROOT} />
 
       {chosen.length > 0 && (
         <div className="sticky bottom-3 mt-4 rounded-2xl px-4 py-3 flex flex-wrap items-center gap-3 shadow-lg" style={{ ...card, border: '1px solid var(--erp-primary)' }}>
