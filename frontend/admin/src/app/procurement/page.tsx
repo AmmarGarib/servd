@@ -1130,15 +1130,6 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
                   </optgroup>
                 )}
               </Select>
-              {item && isPackUnit(item, unitOf) && (
-                <label className="mt-1 flex items-center gap-1 text-[11px] text-s-muted">
-                  <span className="shrink-0">1 {unitOf} =</span>
-                  <NumberField decimals={3} min={0} placeholder="size" aria-label={`Line ${i + 1}: how many ${item.unit} in one ${unitOf}`}
-                    value={numOf(line.packSize ?? '')} onValueChange={(v) => updateLine(i, 'packSize', textOf(v))}
-                    className={`${fi} !px-2 !py-1 ${tried && !(Number(line.packSize) > 0) ? 'border-s-red' : ''}`} />
-                  <span className="shrink-0">{item.unit}</span>
-                </label>
-              )}
             </div>
             <div className="col-span-5 sm:col-span-2">
               <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Rate per {unitOf || 'unit'} (PKR)</span>
@@ -1158,6 +1149,18 @@ function CreatePoForm({ qc, onClose, initial, title, editId }: { qc: ReturnType<
             <div className="col-span-2 sm:col-span-1">
               <Button variant="danger" type="button" onClick={() => removeLine(i)} aria-label={`Remove line ${i + 1}`} className="w-full"><FIcon name="x" size={14} /></Button>
             </div>
+            {item && isPackUnit(item, unitOf) && (
+              <label className="col-span-12 flex flex-wrap items-center gap-2 rounded-lg border border-s-border bg-s-bg px-3 py-2 text-xs text-s-text">
+                <span className="font-semibold">How much is in one {unitOf}?</span>
+                <span className="flex items-center gap-1">
+                  <span className="shrink-0 text-s-muted">1 {unitOf} =</span>
+                  <NumberField decimals={3} min={0} placeholder="e.g. 500" aria-label={`Line ${i + 1}: how many ${item.unit} in one ${unitOf}`}
+                    value={numOf(line.packSize ?? '')} onValueChange={(v) => updateLine(i, 'packSize', textOf(v))}
+                    className={`s-input !w-28 !px-2 !py-1 ${tried && !(Number(line.packSize) > 0) ? 'border-s-red' : ''}`} />
+                  <span className="shrink-0 text-s-muted">{item.unit}</span>
+                </span>
+              </label>
+            )}
           </div>
           )
         })}
