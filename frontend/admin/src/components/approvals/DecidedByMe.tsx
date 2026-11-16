@@ -13,11 +13,20 @@ interface DecidedRow {
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 const verb = (d: string) => (d === 'approve' ? 'Approved' : d === 'reject' ? 'Rejected' : d === 'return' ? 'Returned' : d ? d.charAt(0).toUpperCase() + d.slice(1).replace(/_/g, ' ') : 'Decided')
-const NOW: Record<string, string> = {
+const PO_NOW: Record<string, string> = {
   approved: 'With the buyer', sent: 'With the buyer', partial: 'Part-received', completed: 'To confirm receipt', received: 'Received',
-  cancelled: 'Cancelled', draft: 'Draft', pending_approval: 'Waiting for the CEO', 'not found': 'No longer exists',
+  cancelled: 'Cancelled', draft: 'Draft', pending_approval: 'Waiting for the CEO',
 }
-const nowLabel = (s: string) => NOW[s] ?? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ')
+// A cash voucher's own stages (never the PO's words: an approved voucher waits for finance to pay it).
+const VOUCHER_NOW: Record<string, string> = {
+  submitted: 'Waiting for finance', draft: 'Waiting for finance', finance_approved: 'Waiting for the CEO', hod_signed: 'Waiting for the CEO',
+  approved: 'Approved — finance to pay', disbursed: 'Paid — documents due', posted: 'Paid and closed', settled: 'Paid and closed',
+  returned: 'Returned for correction', rejected: 'Rejected', cancelled: 'Cancelled', converted: 'Closed',
+}
+const isVoucher = (t: string) => t === 'cash_voucher' || t === 'cash_request_finance'
+const nowLabel = (type: string, s: string) =>
+  s === 'not found' ? 'No longer exists'
+    : (isVoucher(type) ? VOUCHER_NOW[s] : type === 'purchase_order' ? PO_NOW[s] : undefined) ?? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ')
 const pkr = (c: number) => `PKR ${(c / 100).toLocaleString('en-PK', { maximumFractionDigits: 2 })}`
 const when = (iso: string) => new Date(iso).toLocaleString('en-PK', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
 
@@ -55,7 +64,7 @@ export function DecidedByMe({ rootKey }: { rootKey: string }) {
                 <div className="text-xs sm:text-right">
                   <p className="font-bold text-white/75">{verb(r.decision)} · {when(r.decidedAt)}</p>
                   <p className="text-white/50">
-                    {r.statusNow ? `Now: ${nowLabel(r.statusNow)}` : ''}
+                    {r.statusNow ? `Now: ${nowLabel(r.type, r.statusNow)}` : ''}
                     {r.link && (
                       <Link href={r.link} className="font-bold hover:underline ml-2" style={{ color: 'var(--erp-primary-ink)' }}>Open</Link>
                     )}
