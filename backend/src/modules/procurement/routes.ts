@@ -886,12 +886,13 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     if (body.buyerUserId && po.supplier.tenantId) await assertListedBuyer(prisma, po.supplier.tenantId, body.buyerUserId)
     const before = await prisma.purchaseOrder.findUnique({ where: { id: po.id }, select: { supplierId: true, totalCents: true, notes: true, expectedDate: true, conceptId: true, buyerUserId: true } })
     const { masterSupplierId: _m, ...poBody } = body
-    const updated = await updatePoDraft(po.id, su.id, { ...poBody, supplierId })
+    // The CEO also corrects a PO waiting for the CEO's own approval (it stays waiting); everyone else: drafts only.
+    const updated = await updatePoDraft(po.id, su.id, { ...poBody, supplierId }, { alsoWaiting: su.role === 'admin' })
     await audit({
       category: 'accounting', action: 'po.edit', entity: 'PurchaseOrder', entityId: po.id,
       userId: su.id, userEmail: su.email ?? null, tenantId: po.supplier.tenantId,
       before: before ? { ...before, totalCents: toCents(before.totalCents) } : undefined,
-      after: { supplierId: updated.supplierId, totalCents: toCents(updated.totalCents), lineCount: updated.lines.length, notes: updated.notes, conceptId: updated.conceptId, buyerUserId: updated.buyerUserId },
+      after: { supplierId: updated.supplierId, totalCents: toCents(updated.totalCents), lineCount: updated.lines.length, notes: updated.notes, conceptId: updated.conceptId, buyerUserId: updated.buyerUserId, whileStatus: po.status },
     })
     return updated
   })

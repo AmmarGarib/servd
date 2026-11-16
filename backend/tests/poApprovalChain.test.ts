@@ -425,6 +425,25 @@ describe("the CEO's return / reject at approval, and editing a draft", () => {
     await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
     expect(code(await call('chefA', 'PATCH', `/procurement/purchase-orders/${po.id}`, { supplierId: supA, lines: [{ inventoryItemId: flour, quantityOrdered: 1, unitCostCents: 200 }] }))).toBe('PO_NOT_DRAFT')
   })
+
+  it('the CEO corrects a PO that is waiting for the CEO: it stays waiting, and is locked again once approved', async () => {
+    const po = await chefPo()
+    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+    const body = { supplierId: supA, notes: 'Corrected by the CEO', lines: [{ inventoryItemId: flour, quantityOrdered: 3, unitCostCents: 200 }] }
+    // The buyer and another company's CEO still cannot.
+    expect(code(await call('buyerA', 'PATCH', `/procurement/purchase-orders/${po.id}`, body))).toBe('PO_EDIT_RAISER_ONLY')
+    expect((await call('ceoB', 'PATCH', `/procurement/purchase-orders/${po.id}`, body)).statusCode).toBe(404)
+    const r = await call('ceoA', 'PATCH', `/procurement/purchase-orders/${po.id}`, body)
+    expect(r.statusCode, r.body).toBe(200)
+    const row = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } })
+    expect(row.status).toBe('pending_approval')
+    expect(row.notes).toBe('Corrected by the CEO')
+    expect(row.lines).toHaveLength(1)
+    expect(row.lines[0].quantityOrdered).toBe(3)
+    expect(Number(row.totalCents)).toBe(600)
+    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`, { payByCash: false })).statusCode).toBe(200)
+    expect(code(await call('ceoA', 'PATCH', `/procurement/purchase-orders/${po.id}`, body))).toBe('PO_NOT_DRAFT')
+  })
 })
 
 describe('company B: its own buyer rule, never A\'s people', () => {

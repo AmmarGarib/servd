@@ -765,7 +765,8 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
   const isCeo = role === 'admin'
   // An older PO (approved before the workflow): a manager receives it at the dock — never one who raised it.
   const canReceive = isManager && !ownPo
-  const canEdit = po.status === 'draft' && !!me && (me.role === 'admin' || po.createdBy === me.id)
+  // The CEO also corrects a PO that is waiting for the CEO (owner, 2026-11-16) — it stays waiting.
+  const canEdit = !!me && ((po.status === 'draft' && (me.role === 'admin' || po.createdBy === me.id)) || (po.status === 'pending_approval' && me.role === 'admin'))
   const actions: { label: string; action: string; cls: string; title?: string }[] = []
   if (canEdit) actions.push({ label: 'Edit', action: 'edit', cls: 'text-primary-ink hover:opacity-80' })
   if (po.status === 'draft') {

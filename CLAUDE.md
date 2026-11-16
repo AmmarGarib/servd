@@ -2038,6 +2038,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   writes `PoActivityLog` (GRN steps carry `grnId`). `GET /procurement/my-tasks` = the caller's own to buy / to confirm
   / to fix; finance and the CEO work the approvals inbox. Migration `20261105140000_po_grn_workflow` (moved
   buyer_check / finance_check POs to the CEO). Tests: `tests/poApprovalChain.test.ts`.
+- **The CEO edits a PO that is waiting for the CEO (owner, 2026-11-16: "I need to be able to edit his POs so I have
+  the correct information written on them").** `PATCH /procurement/purchase-orders/:id` by an `admin` login also takes
+  a `pending_approval` PO (`service.ts updatePoDraft {alsoWaiting}`): same checks as a draft edit, the PO STAYS
+  waiting (no return, no resubmit), activity log + audit carry `whileStatus`. Everyone else: drafts only (409
+  `PO_NOT_DRAFT`); once approved nobody edits it. Admin: "Edit" on the PO row. Tests: `tests/poApprovalChain.test.ts`.
 - **A PO's cash voucher waits for finance (owner, 2026-11-10: "Finance approval getting skipped, fix it").** The CEO's
   PO approval raises it `submitted` (CEO step already signed — `directorSignedById`); finance's `POST
   /trustops/cash-vouchers/:id/finance-approve {}` moves it straight to `approved` (ready to pay) — no account, no

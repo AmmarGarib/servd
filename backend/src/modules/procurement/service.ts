@@ -172,10 +172,13 @@ export type UpdatePoInput = Omit<CreatePoInput, 'createdBy' | 'reference'>
  * (409 PO_NOT_DRAFT). Refused (409 PO_HAS_DOCUMENTS) once anything was received or billed against it. The PO number
  * stays. Activity-logged ('edited', before → after totals); the route audits it. Submit again to restart the chain.
  */
-export async function updatePoDraft(poId: string, actorId: string, input: UpdatePoInput) {
+export async function updatePoDraft(poId: string, actorId: string, input: UpdatePoInput, opts: { alsoWaiting?: boolean } = {}) {
+  // The CEO corrects a PO that is WAITING for the CEO too (owner, 2026-11-16: "I need to be able to edit his POs so I
+  // have the correct information written on them"): it stays pending_approval — no return, no resubmit.
+  const editable = (st: string) => st === 'draft' || (!!opts.alsoWaiting && st === 'pending_approval')
   const cur = await prisma.purchaseOrder.findUnique({ where: { id: poId }, select: { status: true, totalCents: true, supplier: { select: { tenantId: true } } } })
   if (!cur) throw new NotFoundError('PurchaseOrder', poId)
-  if (cur.status !== 'draft') throw new AppError('PO_NOT_DRAFT', `This PO is ${cur.status.replace(/_/g, ' ')} — only a draft (or one returned for correction) is edited`, 409)
+  if (!editable(cur.status)) throw new AppError('PO_NOT_DRAFT', `This PO is ${cur.status.replace(/_/g, ' ')} — only a draft (or one returned for correction) is edited`, 409)
   const { tenantId, totalCents, lines } = await checkPoContent(input)
   if (tenantId !== cur.supplier.tenantId) {
     throw new AppError('SUPPLIER_NOT_IN_COMPANY', 'Pick a supplier of this PO\'s own company — raise a new PO for another company', 422)
@@ -183,7 +186,7 @@ export async function updatePoDraft(poId: string, actorId: string, input: Update
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM purchase_orders WHERE id = ${poId} FOR UPDATE`
     const po = await tx.purchaseOrder.findUniqueOrThrow({ where: { id: poId }, select: { status: true, lines: { select: { id: true, quantityReceived: true } } } })
-    if (po.status !== 'draft') throw new AppError('PO_NOT_DRAFT', `This PO is ${po.status.replace(/_/g, ' ')} — only a draft is edited`, 409)
+    if (!editable(po.status)) throw new AppError('PO_NOT_DRAFT', `This PO is ${po.status.replace(/_/g, ' ')} — only a draft is edited`, 409)
     const lineIds = po.lines.map((l) => l.id)
     const docs = lineIds.length === 0 ? 0 : (await tx.grniMatch.count({ where: { poLineId: { in: lineIds } } }))
       + (await tx.supplierBillLine.count({ where: { poLineId: { in: lineIds } } }))
@@ -210,7 +213,7 @@ export async function updatePoDraft(poId: string, actorId: string, input: Update
       },
     })
     await tx.poActivityLog.create({
-      data: { purchaseOrderId: poId, userId: actorId, action: 'edited', details: { beforeTotalCents: toCents(cur.totalCents), totalCents, lineCount: input.lines.length } },
+      data: { purchaseOrderId: poId, userId: actorId, action: 'edited', details: { beforeTotalCents: toCents(cur.totalCents), totalCents, lineCount: input.lines.length, ...(cur.status !== 'draft' && { whileStatus: cur.status }) } },
     })
     return tx.purchaseOrder.findUniqueOrThrow({ where: { id: poId }, include: { supplier: true, lines: { include: { inventoryItem: true } } } })
   })
