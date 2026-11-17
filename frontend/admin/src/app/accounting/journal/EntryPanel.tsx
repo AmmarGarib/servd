@@ -244,9 +244,11 @@ export function EntryPanel({ entryId, tenantId, onClose, onEditAmounts, onDuplic
                     title={!canChange ? (e.blockedReason ?? undefined) : undefined}>Edit amounts</Button>
                   <Button variant="danger" type="button" disabled={!canChange} onClick={() => { setMsg(null); setMode('cancel') }}
                     title={!canChange ? (e.blockedReason ?? undefined) : undefined}>Cancel entry</Button>
-                  {onDuplicate && e.sourceType === 'manual' && (
+                  {/* Any entry, not only hand-typed ones (owner, 2026-11-17: "Where's duplicate entry option?" on a cash
+                      voucher's entry): the copy is a NEW manual entry, nothing posts until it is posted. */}
+                  {onDuplicate && (
                     <Button variant="secondary" type="button" onClick={() => onDuplicate(e)}
-                      title="Open a new entry with the same type, lines and description — nothing posts until you post it">Duplicate</Button>
+                      title="Open a new manual entry with the same type, lines and description — nothing posts until you post it">Duplicate</Button>
                   )}
                   {showSplit && (
                     <Button variant="secondary" type="button" onClick={() => setSplitOpen(true)}
