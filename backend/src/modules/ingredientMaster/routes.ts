@@ -62,6 +62,7 @@ import { takeSnapshot } from '../trash/snapshot.js'
 import { itemUsage, INVENTORY_ITEM_TRASH } from '../inventory/unusedCleanup.js'
 import { applyMasterToItemsTx, cleanIngredientName, findOrCreateMasterTx, normalizeIngredientName, sameUnitFamily, unitFamily } from '../../lib/ingredientMaster.js'
 import { moveItemLotsToCategoryTx, costsHiddenFor } from '../inventory/routes.js'
+import { normalizeUnit } from '../../lib/units.js'
 import { AVERAGE_DAYS, displayUnitOf, masterPriceHistory, masterPricesMany, type MasterPrice } from '../../lib/ingredientPrices.js'
 
 /** Who fixes a master definition: the recipe editors (POST/PUT /recipes are MANAGERS). */
@@ -136,10 +137,11 @@ async function companyItems(req: FastifyRequest, masterIds: string[]): Promise<M
 /** The row's servd price, per display unit (kg / litre / pcs); null when hidden from the caller. */
 function priceOf(m: MasterDb, p: MasterPrice | undefined | null) {
   if (p === null) return null
-  const d = displayUnitOf(m.stockUnit)
+  const d = displayUnitOf(m.stockUnit, m.priceUnit)
   const at = (perBase: number | null | undefined) => (perBase == null ? null : Math.round(perBase * d.baseUnits * 100) / 100)
   return {
     displayUnit: d.unit,
+    baseUnits: d.baseUnits,
     latestCents: at(p?.latestPerBase),
     latestAt: p?.latestAt ?? null,
     latestSource: p?.latestSource ?? null,
@@ -154,6 +156,8 @@ function priceOf(m: MasterDb, p: MasterPrice | undefined | null) {
 function shape(m: MasterDb, companyItemId: string | null, price?: MasterPrice | null, group?: GroupRow | null) {
   return {
     id: m.id, name: m.name, stockUnit: m.stockUnit, category: m.category,
+    // The unit it is shown and priced in (the one picked for it, else the stock unit).
+    shownUnit: displayUnitOf(m.stockUnit, m.priceUnit).unit,
     groupId: m.groupId, group: group ? groupShape(group) : null, allergens: m.allergens, yieldPct: m.yieldPct,
     purchaseUnit: m.purchaseUnit, purchaseUnitFactor: m.purchaseUnitFactor, spec: m.spec, specFields: m.specFields,
     perishable: m.perishable, shelfLifeDays: m.shelfLifeDays,
@@ -284,8 +288,8 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: { id: string } }>('/:id/prices', readers, async (req) => {
     const m = await loadLive(req.params.id)
     if (costsHiddenFor(req)) return { ingredientId: m.id, costsHidden: true, points: [] }
-    const points = await masterPriceHistory(m.id, m.stockUnit)
-    return { ingredientId: m.id, displayUnit: displayUnitOf(m.stockUnit).unit, points: points.map((x) => ({ ...x, priceCents: Math.round(x.priceCents * 100) / 100 })) }
+    const points = await masterPriceHistory(m.id, m.stockUnit, 200, undefined, m.priceUnit)
+    return { ingredientId: m.id, displayUnit: displayUnitOf(m.stockUnit, m.priceUnit).unit, points: points.map((x) => ({ ...x, priceCents: Math.round(x.priceCents * 100) / 100 })) }
   })
 
   // Type the servd price on the sheet (owner, 2026-10-29: "just make this editable within the table"). Paisa per
@@ -293,10 +297,10 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
   // keeps every typed price. It is the latest price until a newer delivery comes in (lib/ingredientPrices.ts).
   fastify.put<{ Params: { id: string } }>('/:id/price', { preHandler: [requireAuth(...MASTER_CREATORS), requireModule(...READ_MODULES)] }, async (req) => {
     if (costsHiddenFor(req)) throw new ForbiddenError('Prices are not shown to this login')
-    const { priceCents } = z.object({ priceCents: z.number().int().positive().max(100_000_000_00) }).parse(req.body)
+    const { priceCents } = z.object({ priceCents: z.number().positive().max(100_000_000_00) }).parse(req.body)
     const m = await loadLive(req.params.id)
     if (m.mergedIntoId) throw new AppError('MASTER_MERGED', `${m.name} was merged into another ingredient — price that one`, 409)
-    const disp = displayUnitOf(m.stockUnit)
+    const disp = displayUnitOf(m.stockUnit, m.priceUnit)
     const before = (await masterPricesMany([m.id])).get(m.id)
     await prisma.ingredientMasterPrice.create({ data: { masterIngredientId: m.id, perBaseCents: priceCents / disp.baseUnits, setById: req.staffUser!.id } })
     await audit({
@@ -326,8 +330,15 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     }, { userId: req.staffUser!.id, tenantId: req.staffUser!.tenantId ?? null }, 'needs_review'))
     // An existing item keeps its group; a new one (or one with none that fits) takes the group picked.
     let master = found
+    // The unit it was added in is the unit it is shown and priced in (kg stays kg on the sheet; stock stays in g).
+    if (created) {
+      const typed = normalizeUnit(body.unit)
+      if (typed && typed !== found.stockUnit && sameUnitFamily(typed, found.stockUnit)) {
+        master = await prisma.ingredientMaster.update({ where: { id: found.id }, data: { priceUnit: typed } })
+      }
+    }
     if (group && !found.groupId && (!found.category || found.category === group.category)) {
-      master = await prisma.ingredientMaster.update({ where: { id: found.id }, data: { groupId: group.id } })
+      master = await prisma.ingredientMaster.update({ where: { id: master.id }, data: { groupId: group.id } })
     }
     if (created) {
       await audit({
@@ -350,6 +361,10 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     }
     // The master is kept in its family's base unit (g / ml / pcs): a unit of the same family is no change.
     const stockUnit = body.unit !== undefined ? unitFamily(body.unit).base : before.stockUnit
+    // The unit picked is the unit it is shown and priced in (owner, 2026-11-17); the base unit itself = none stored.
+    // A pick inside the same family (g → kg) changes nothing in stock or recipes, so any sheet editor may make it.
+    const pickedUnit = body.unit !== undefined ? normalizeUnit(body.unit) : undefined
+    const priceUnit = pickedUnit === undefined ? undefined : (pickedUnit === stockUnit || !sameUnitFamily(pickedUnit, stockUnit) ? null : pickedUnit)
     const categoryChanges = body.category !== undefined && body.category !== before.category
     // Category and unit reach every company's books / stock: the CEO's and the F&B manager's only (owner review).
     if ((categoryChanges || stockUnit !== before.stockUnit) && !isReviewer) {
@@ -404,6 +419,7 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
         where: { id: before.id },
         data: {
           name, normalizedName, stockUnit,
+          ...(priceUnit !== undefined && { priceUnit }),
           ...(body.category !== undefined && { category: body.category }),
           ...(body.allergens !== undefined && { allergens: body.allergens }),
           ...(body.yieldPct !== undefined && { yieldPct: body.yieldPct }),

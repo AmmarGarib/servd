@@ -25,11 +25,14 @@ import { useMyTenants } from '../../../components/ui/TenantPicker'
 import { INVENTORY_CATEGORY_OPTIONS, categoryLabel, stockErrorText } from '../../../lib/stockUi'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
 import { Button, Dialog, DialogFooter, ErrorBanner, Field, Input, SidePanel, Textarea } from '../../../components/finance/ui'
-import type { IngredientGroup, MasterPrice, MasterRow } from '../../../components/kitchen/MasterIngredientPicker'
+import { priceCentsFor, type IngredientGroup, type MasterPrice, type MasterRow } from '../../../components/kitchen/MasterIngredientPicker'
+import { sameUnitFamily, unitFamily } from '@/lib/units'
 
 const UNITS = ['g', 'ml', 'pcs', 'kg', 'litres', 'each']
-/** The master is kept in its family's base unit: changing kg → g is no change, so the table offers the bases. */
-const BASE_UNITS = ['g', 'ml', 'pcs']
+/** The unit an ingredient is shown and priced in (owner, 2026-11-17): the one picked for it, else its stock unit. */
+const unitOf = (m: MasterRow) => m.shownUnit ?? m.stockUnit
+/** Units offered for it: any for the CEO / F&B manager (another kind of unit re-bases it); its own kind for the rest. */
+const unitChoices = (current: string, all: boolean) => [...new Set([current, ...UNITS.filter((u) => all || sameUnitFamily(u, current))])]
 const REVIEWERS = new Set(['admin', 'fnb_manager'])
 
 interface Draft {
@@ -39,7 +42,7 @@ interface Draft {
   pieceGrams: string; pieceLabel: string
 }
 const draftOf = (m: MasterRow): Draft => ({
-  name: m.name, unit: m.stockUnit, category: m.category ?? '', allergens: m.allergens.join(', '), yieldPct: String(m.yieldPct),
+  name: m.name, unit: unitOf(m), category: m.category ?? '', allergens: m.allergens.join(', '), yieldPct: String(m.yieldPct),
   purchaseUnit: m.purchaseUnit ?? '', purchaseUnitFactor: String(m.purchaseUnitFactor),
   spec: m.spec ?? '', specFields: Object.entries(m.specFields ?? {}).map(([k, v]) => ({ k, v })),
   perishable: !!m.perishable, shelfLifeDays: m.shelfLifeDays != null ? String(m.shelfLifeDays) : '',
@@ -162,8 +165,8 @@ export default function IngredientsPage() {
                     )}
                   </td>
                   <td className="px-2 py-1 text-s-muted min-w-[5rem]">
-                    <InlineSelect value={m.stockUnit} label={`Unit of ${m.name}`} disabled={!isReviewer}
-                      options={[...new Set([m.stockUnit, ...BASE_UNITS])].map((u) => ({ value: u, label: u }))} onSave={cell(m, 'unit')} />
+                    <InlineSelect value={unitOf(m)} label={`Unit of ${m.name}`} disabled={!canEdit}
+                      options={unitChoices(unitOf(m), isReviewer).map((u) => ({ value: u, label: u }))} onSave={cell(m, 'unit')} />
                     {m.purchaseUnit && <p className="px-1 text-[11px] text-s-muted whitespace-nowrap">bought by {m.purchaseUnit} ({m.purchaseUnitFactor})</p>}
                   </td>
                   <td className="px-2 py-1 text-s-muted min-w-[9.5rem]">
@@ -206,16 +209,24 @@ export default function IngredientsPage() {
 
 function AddDialog({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
-  const [f, setF] = useState({ name: '', unit: 'kg', category: '', spec: '' })
+  const [f, setF] = useState({ name: '', unit: '', category: '', spec: '', price: '' })
   const add = useMutation({
-    mutationFn: () => api.post('/ingredient-master', { name: f.name.trim(), unit: f.unit, category: f.category || null, spec: f.spec.trim() || null }),
+    mutationFn: async () => {
+      const m = await api.post<MasterRow>('/ingredient-master', { name: f.name.trim(), unit: f.unit, category: f.category || null, spec: f.spec.trim() || null })
+      // The price typed with it (owner, 2026-11-17: "there's no option to add price here"), per the unit picked.
+      const pkr = Number(f.price)
+      const cents = f.price.trim() && pkr > 0 ? priceCentsFor(m, pkr, f.unit) : null
+      if (cents != null && cents > 0) await api.put(`/ingredient-master/${m.id}/price`, { priceCents: cents })
+      return m
+    },
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['ingredient-master'] }); onClose() },
   })
   return (
     <Dialog title="Add ingredient" onClose={onClose} dirty={!!f.name}>
       <div className="space-y-3">
         <Field label="Name" required><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
-        <Field label="Stock unit"><select className="s-input" value={f.unit} onChange={(e) => setF({ ...f, unit: e.target.value })}>{UNITS.map((u) => <option key={u}>{u}</option>)}</select></Field>
+        <Field label="Stock unit" required hint="What it is kept and priced in"><select className="s-input" value={f.unit} onChange={(e) => setF({ ...f, unit: e.target.value })}><option value="">Pick a unit…</option>{UNITS.map((u) => <option key={u}>{u}</option>)}</select></Field>
+        <Field label={`Price (PKR per ${f.unit || 'unit'})`} hint="Optional"><Input inputMode="decimal" value={f.price} onChange={(e) => setF({ ...f, price: e.target.value.replace(/[^0-9.]/g, '') })} placeholder="e.g. 1250" /></Field>
         <Field label="Category"><select className="s-input" value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
           <option value="">—</option>{INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select></Field>
@@ -224,7 +235,7 @@ function AddDialog({ onClose }: { onClose: () => void }) {
         {add.error && <ErrorBanner message={stockErrorText(add.error)} />}
       </div>
       <DialogFooter onCancel={onClose}>
-        <Button disabled={!f.name.trim() || add.isPending} onClick={() => add.mutate()}>Add</Button>
+        <Button disabled={!f.name.trim() || !f.unit || add.isPending} onClick={() => add.mutate()}>Add</Button>
       </DialogFooter>
     </Dialog>
   )
@@ -245,7 +256,7 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
       spec: d.spec.trim() || null,
       perishable: d.perishable,
       shelfLifeDays: d.perishable && Number(d.shelfLifeDays) >= 1 ? Math.round(Number(d.shelfLifeDays)) : null,
-      ...(d.unit === 'pcs' ? {} : { pieceGrams: Number(d.pieceGrams) > 0 ? Number(d.pieceGrams) : null, pieceLabel: d.pieceLabel.trim() || null }),
+      ...(unitFamily(d.unit).family === 'count' ? {} : { pieceGrams: Number(d.pieceGrams) > 0 ? Number(d.pieceGrams) : null, pieceLabel: d.pieceLabel.trim() || null }),
       specFields: d.specFields.filter((r) => r.k.trim()).length ? Object.fromEntries(d.specFields.filter((r) => r.k.trim()).map((r) => [r.k.trim(), r.v.trim()])) : null,
       ...extra,
     }),
@@ -288,8 +299,8 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
       <div className="space-y-3">
         <Field label="Name"><Input value={d.name} onChange={set('name')} disabled={!canEdit} /></Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Stock unit" hint="Fixed once a company stocks or cooks it"><select className="s-input" value={d.unit} onChange={set('unit')} disabled={!canEdit}>
-            {[...new Set([d.unit, ...UNITS])].map((u) => <option key={u}>{u}</option>)}
+          <Field label="Stock unit" hint="Prices are per this unit. g ↔ kg and ml ↔ litres can be switched any time."><select className="s-input" value={d.unit} onChange={set('unit')} disabled={!canEdit}>
+            {unitChoices(d.unit, isReviewer).map((u) => <option key={u}>{u}</option>)}
           </select></Field>
           <Field label="Category"><select className="s-input" value={d.category} onChange={set('category')} disabled={!canEdit}>
             <option value="">—</option>{INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -308,12 +319,12 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
             <Input inputMode="numeric" value={d.shelfLifeDays} onChange={set('shelfLifeDays')} disabled={!canEdit || !d.perishable} />
           </Field>
         </div>
-        {d.unit !== 'pcs' && (
+        {unitFamily(d.unit).family !== 'count' && (
           <div className="grid grid-cols-2 gap-3">
             <Field label="A piece is called" hint="Optional — e.g. slice, patty, bun">
               <Input value={d.pieceLabel} onChange={set('pieceLabel')} disabled={!canEdit} maxLength={20} placeholder="slice" />
             </Field>
-            <Field label={`One ${d.pieceLabel.trim() || 'piece'} weighs (${d.unit === 'ml' || d.unit === 'litres' ? 'ml' : 'g'})`} hint="Recipes can then say 1 slice instead of 20 g">
+            <Field label={`One ${d.pieceLabel.trim() || 'piece'} weighs (${unitFamily(d.unit).family === 'volume' ? 'ml' : 'g'})`} hint="Recipes can then say 1 slice instead of 20 g">
               <Input inputMode="decimal" value={d.pieceGrams} onChange={set('pieceGrams')} disabled={!canEdit} placeholder="e.g. 20" />
             </Field>
           </div>
@@ -380,10 +391,13 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
 
 const SOURCE_LABEL: Record<string, string> = { delivery: 'Delivery', sheet: 'Typed on sheet', bill: 'Bill', manual: 'Cost typed', estimate: 'Estimate' }
 
+/** Rupees with 2 decimals; a price under a rupee (per gram) keeps up to 4 so it is not shown as 0.00. */
+const pkrText = (cents: number) => (cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: Math.abs(cents) < 100 ? 4 : 2 })
+
 /** "PKR 1,250.00 / kg" — or a dash. */
 function priceText(cents: number | null | undefined, p: MasterPrice | null | undefined): string {
   if (cents == null || !p) return '—'
-  return `PKR ${(cents / 100).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / ${p.displayUnit}`
+  return `PKR ${pkrText(cents)} / ${p.displayUnit}`
 }
 
 /**
@@ -398,7 +412,7 @@ function packOf(m: MasterRow): Pack | null {
   const unit = (m.purchaseUnit ?? '').trim()
   if (!unit || !(factor > 0) || factor === 1) return null
   const d = m.price?.displayUnit ?? ''
-  return { unit, factor, baseUnits: d === 'kg' || d === 'litre' ? 1000 : 1 }
+  return { unit, factor, baseUnits: m.price?.baseUnits ?? (d === 'kg' || d === 'litre' ? 1000 : 1) }
 }
 const packCents = (displayCents: number, p: Pack) => (displayCents / p.baseUnits) * p.factor
 const displayCentsFromPack = (pack: number, p: Pack) => (pack / p.factor) * p.baseUnits
@@ -446,7 +460,7 @@ function ServdPriceHistory({ ingredientId }: { ingredientId: string }) {
 function SetPrice({ master, onSaved }: { master: MasterRow; onSaved: (saved: MasterRow) => void }) {
   const qc = useQueryClient()
   const pack = packOf(master)
-  const unit = pack ? packLabel(master, pack) : (master.price?.displayUnit ?? 'kg')
+  const unit = pack ? packLabel(master, pack) : (master.price?.displayUnit ?? unitOf(master))
   const [v, setV] = useState('')
   const save = useMutation({
     mutationFn: () => api.put<MasterRow>(`/ingredient-master/${master.id}/price`, { priceCents: priceCentsOf(master, Number(v)) }),
@@ -515,9 +529,9 @@ function InlinePrice({ master, onSave, label, disabled }: {
   // Bought in a pack: the cell is the PACK price (what is paid); the price per kg / litre / pcs is shown under it.
   const pack = packOf(master)
   const cents = master.price?.latestCents ?? null
-  const unit = pack ? pack.unit : (master.price?.displayUnit ?? 'kg')
+  const unit = pack ? pack.unit : (master.price?.displayUnit ?? unitOf(master))
   const shownCents = cents == null ? null : pack ? packCents(cents, pack) : cents
-  const shown = shownCents != null ? (shownCents / 100).toFixed(2) : ''
+  const shown = shownCents != null ? (shownCents / 100).toFixed(Math.abs(shownCents) < 100 ? 4 : 2).replace(/(\.\d\d)0+$/, '$1') : ''
   const c = useCell(shown, onSave)
   return (
     <label className="flex items-center justify-end gap-1 font-mono text-xs whitespace-nowrap">
@@ -539,7 +553,7 @@ function InlinePrice({ master, onSave, label, disabled }: {
 function priceCentsOf(m: MasterRow, pkr: number): number {
   const pack = packOf(m)
   const cents = pkr * 100
-  return Math.round(pack ? displayCentsFromPack(cents, pack) : cents)
+  return Math.round((pack ? displayCentsFromPack(cents, pack) : cents) * 100) / 100
 }
 
 /** Under a pack price: what one kg / litre / pcs comes to. */

@@ -2485,6 +2485,16 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   `costsHiddenFor` login; audit `ingredient_master.price`), stored in `IngredientMasterPrice` (platform table, no
   tenantId, one row per edit, never edited): a typed price is the LATEST until a newer delivery comes in (source
   `sheet`, in the history). Tests: `tests/ingredientMaster.test.ts`, `tests/recipeCompanyShare.test.ts`.
+- **An ingredient's price is per ITS unit, and the unit is picked (owner, 2026-11-17: "Just change price per kg to
+  price per stock unit everywhere. And let stock unit be selected" — REPLACES "shown per kg / litre / pcs").**
+  `IngredientMaster.priceUnit` (nullable; any unit of `stockUnit`'s family — kg for g, litres for ml; NULL = the stock
+  unit; migration `20261117100000`). `ingredientPrices.ts displayUnitOf(stockUnit, priceUnit)` is the one rule: rows
+  carry `shownUnit` and `price.displayUnit` + `price.baseUnits`; `PUT /:id/price` takes paisa per that unit (fractions
+  allowed — a per-gram price). Display and entry only: stock, recipes and the stored price stay in the base unit.
+  `PATCH {unit}` inside the same family only sets `priceUnit` (any MASTER_EDITOR); another kind of unit stays the
+  reviewers' (and `MASTER_UNIT_IN_USE`). A new ingredient keeps the unit it was added in. Both "add ingredient" forms
+  make the unit a required pick (no kg default) and take an optional price per that unit
+  (`MasterIngredientPicker.tsx priceCentsFor`). Tests: `tests/ingredientMaster.test.ts`.
 - **Suppliers belong to servd (owner, 2026-11-14: "we need to make suppliers belong to servd. just like the ingredient
   master list").** `SupplierMaster` (`supplier_masters`, deliberately NO `tenantId`): the DEFINITION — name, category,
   phone, email, WhatsApp, address, NTN, filer status, WHT exemption, default tax authority / WHT section. Each company's

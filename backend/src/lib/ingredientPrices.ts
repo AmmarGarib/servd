@@ -8,7 +8,7 @@
 // own, at the price it paid (lib/stockLedger.ts) — this is for RECIPE costing and the Ingredients sheet only.
 //
 // Prices are held per BASE unit of the ingredient's family (g / ml / pcs — lib/ingredientMaster.ts unitFamily), so
-// a kg-bought item and a g-bought item of one ingredient compare. Shown per kg / litre / pcs (displayUnitOf).
+// a kg-bought item and a g-bought item of one ingredient compare. Shown per the ingredient's own unit (displayUnitOf).
 //
 //   latest  = the newest delivery (a goods-receipt stock lot) of the ingredient anywhere in servd, or the newest price
 //             typed on the Ingredients sheet (ingredient_master_prices; owner, 2026-10-29: "just make this editable
@@ -19,6 +19,7 @@
 import { Prisma } from '@prisma/client'
 import { serviceClient } from './prisma.js'
 import { unitFamily } from './ingredientMaster.js'
+import { normalizeUnit } from './units.js'
 
 export const AVERAGE_DAYS = 90
 
@@ -36,13 +37,19 @@ export interface MasterPrice {
   avgDeliveries: number
 }
 
-/** How a family's price is SHOWN: per kg, per litre, per pcs (or the ingredient's own unit). */
-export function displayUnitOf(stockUnit: string): { unit: string; baseUnits: number } {
-  const f = unitFamily(stockUnit)
-  if (f.family === 'mass') return { unit: 'kg', baseUnits: 1000 }
-  if (f.family === 'volume') return { unit: 'litre', baseUnits: 1000 }
-  if (f.family === 'count') return { unit: 'pcs', baseUnits: 1 }
-  return { unit: f.base, baseUnits: 1 }
+/**
+ * How an ingredient's price is SHOWN and TYPED: per its own unit (owner, 2026-11-17: "price per stock unit everywhere.
+ * And let stock unit be selected") — the unit picked for it (`priceUnit`, any unit of the stock unit's family: kg for
+ * a gram item, litres for ml), else the stock unit itself. `baseUnits` = base units (g / ml / pcs) in ONE of it.
+ */
+export function displayUnitOf(stockUnit: string, priceUnit?: string | null): { unit: string; baseUnits: number } {
+  const base = unitFamily(stockUnit)
+  const picked = normalizeUnit(priceUnit)
+  if (picked) {
+    const f = unitFamily(picked)
+    if (f.family === base.family && f.perUnit > 0) return { unit: picked, baseUnits: f.perUnit }
+  }
+  return { unit: base.base, baseUnits: 1 }
 }
 
 interface ItemRow { id: string; masterIngredientId: string | null; unit: string; unitCostCents: number | null; tenantId: string | null }
@@ -181,8 +188,8 @@ export interface PricePoint {
 }
 
 /** Every price of one ingredient across servd, newest first (deliveries, sheet prices, bills, manual costs). */
-export async function masterPriceHistory(masterId: string, stockUnit: string, limit = 200, db: Db = serviceClient): Promise<PricePoint[]> {
-  const disp = displayUnitOf(stockUnit)
+export async function masterPriceHistory(masterId: string, stockUnit: string, limit = 200, db: Db = serviceClient, priceUnit?: string | null): Promise<PricePoint[]> {
+  const disp = displayUnitOf(stockUnit, priceUnit)
   const sheet: PricePoint[] = (await db.ingredientMasterPrice.findMany({
     where: { masterIngredientId: masterId }, orderBy: { setAt: 'desc' }, take: limit, select: { perBaseCents: true, setAt: true },
   })).map((t) => ({ at: t.setAt, source: 'sheet' as const, priceCents: t.perBaseCents * disp.baseUnits, displayUnit: disp.unit, qty: null, supplier: null, company: null }))

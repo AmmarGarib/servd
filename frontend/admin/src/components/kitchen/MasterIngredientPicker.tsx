@@ -11,7 +11,7 @@ import { api } from '../../lib/api'
 import { INVENTORY_CATEGORY_OPTIONS } from '../../lib/stockUi'
 import { stockErrorText } from '../../lib/stockUi'
 import { AnchoredMenu } from '../ui/AnchoredMenu'
-import { unitFamily } from '@/lib/units'
+import { convertUnits, unitFamily } from '@/lib/units'
 
 export interface MasterRow {
   id: string
@@ -31,6 +31,8 @@ export interface MasterRow {
   specFields: Record<string, string> | null
   status: 'approved' | 'needs_review'
   companyItemId: string | null
+  /** The unit it is shown and priced in (the one picked for it, else the stock unit). */
+  shownUnit?: string
   /** Item group under the category (owner, 2026-11-07: Sea food, Meat, …). */
   groupId?: string | null
   group?: { id: string; name: string; category: string } | null
@@ -40,6 +42,8 @@ export interface MasterRow {
 
 export interface MasterPrice {
   displayUnit: string
+  /** Base units (g / ml / pcs) in ONE display unit. */
+  baseUnits?: number
   latestCents: number | null
   latestAt: string | null
   latestSource: 'delivery' | 'sheet' | 'bill' | 'manual' | 'estimate' | null
@@ -57,8 +61,13 @@ const categoryLabel = (c: string) => INVENTORY_CATEGORY_OPTIONS.find((o) => o.va
 export interface PickedItem { id: string; name: string; unit: string; category: string | null; yieldPct: number; masterIngredientId: string }
 
 const UNITS = ['g', 'ml', 'pcs', 'kg', 'litres', 'each']
-/** servd prices are per kg / litre / pcs whatever the stock unit (lib/ingredientPrices.ts). */
-const priceUnitOf = (u: string) => { const f = unitFamily(u).family; return f === 'mass' ? 'kg' : f === 'volume' ? 'litre' : 'pcs' }
+/** A price is per the ingredient's own unit — the one picked here (owner, 2026-11-17: "price per stock unit"). */
+const priceUnitOf = (u: string) => u || 'unit'
+/** A price typed per `typedUnit`, as paisa per the ingredient's shown unit (an existing ingredient may show another). */
+export function priceCentsFor(m: Pick<MasterRow, 'shownUnit' | 'stockUnit'>, pkr: number, typedUnit: string): number | null {
+  const f = convertUnits(1, m.shownUnit ?? m.stockUnit, typedUnit)
+  return f == null ? null : Math.round(pkr * 100 * f * 100) / 100
+}
 const inputCls = 'rounded-md border border-s-border bg-s-bg px-2 py-1 text-sm text-s-text focus:border-primary focus:outline-none'
 
 export function MasterIngredientPicker({ label, onPicked, className = '', tenantId }: {
@@ -135,11 +144,12 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
       // The price typed with it (owner, 2026-11-03: "Adding here should allow me to add price too") — servd's ONE
       // price, per kg / litre / pcs (PUT /ingredient-master/:id/price, the same as the Ingredients sheet).
       const price = Number(adding.price)
-      if (adding.price.trim() && Number.isFinite(price) && price > 0) {
-        await api.put(`/ingredient-master/${m.id}/price`, { priceCents: Math.round(price * 100) })
+      const cents = adding.price.trim() && Number.isFinite(price) && price > 0 ? priceCentsFor(m, price, adding.unit) : null
+      if (cents != null && cents > 0) {
+        await api.put(`/ingredient-master/${m.id}/price`, { priceCents: cents })
       }
       await pick(m.id, adding.price.trim() && Number.isFinite(price) && price > 0
-        ? { displayUnit: priceUnitOf(adding.unit), latestCents: Math.round(price * 100), latestAt: null, latestSource: 'sheet', latestSupplier: null, latestCompany: null, averageCents: null, averageDays: 90, averageDeliveries: 0 }
+        ? { displayUnit: m.shownUnit ?? adding.unit, latestCents: cents ?? Math.round(price * 100), latestAt: null, latestSource: 'sheet', latestSupplier: null, latestCompany: null, averageCents: null, averageDays: 90, averageDeliveries: 0 }
         : null)
     } catch (e) {
       setErr(stockErrorText(e)); setBusy(false)
@@ -160,7 +170,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
       const r = rows[active]
       if (open && r && !busy) void pick(r.id)
       // Nothing matches: Enter opens "Add new" so a typed item is saved, never lost (owner, 2026-11-07).
-      else if (open && !r && q.trim() && !adding) setAdding({ unit: 'kg', category: '', price: '', groupId: groupFilter, newGroup: null })
+      else if (open && !r && q.trim() && !adding) setAdding({ unit: '', category: '', price: '', groupId: groupFilter, newGroup: null })
     }
     else if (e.key === 'Escape') { setOpen(false); setQ('') }
   }
@@ -192,7 +202,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
               <li key={r.id}>
                 <button type="button" disabled={busy} onMouseDown={(e) => e.preventDefault()} onMouseEnter={() => setActive(i)} onClick={() => void pick(r.id)}
                   className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-s-bg-soft disabled:opacity-50 ${i === active ? 'bg-s-bg-soft' : ''}`}>
-                  <span className="truncate text-s-text">{r.name} <span className="text-xs text-s-muted">({r.stockUnit}{r.price?.latestCents != null ? ` · PKR ${(r.price.latestCents / 100).toLocaleString('en-PK')}/${r.price.displayUnit}` : ''}){r.group ? ` · ${r.group.name}` : ''}</span></span>
+                  <span className="truncate text-s-text">{r.name} <span className="text-xs text-s-muted">({r.shownUnit ?? r.stockUnit}{r.price?.latestCents != null ? ` · PKR ${(r.price.latestCents / 100).toLocaleString('en-PK')}/${r.price.displayUnit}` : ''}){r.group ? ` · ${r.group.name}` : ''}</span></span>
                   <span className="shrink-0 text-[11px] text-s-muted">
                     {r.status === 'needs_review' ? 'needs review' : r.companyItemId ? 'in stock list' : 'not stocked yet'}
                   </span>
@@ -206,7 +216,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
               {!adding ? (
                 <button type="button" onClick={() => {
                   const g = groups.find((x) => x.id === groupFilter)
-                  setAdding({ unit: 'kg', category: g?.category ?? '', price: '', groupId: g?.id ?? '', newGroup: null })
+                  setAdding({ unit: '', category: g?.category ?? '', price: '', groupId: g?.id ?? '', newGroup: null })
                 }} className="text-xs font-semibold text-primary-ink hover:underline">
                   Add new ingredient &ldquo;{q.trim()}&rdquo;
                 </button>
@@ -215,6 +225,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
                   <p className="text-[11px] text-s-muted">Joins servd&rsquo;s ingredients now, marked for review.</p>
                   <div className="flex gap-2">
                     <select value={adding.unit} onChange={(e) => setAdding({ ...adding, unit: e.target.value })} className={inputCls} aria-label="Stock unit">
+                      <option value="">Unit…</option>
                       {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
                     </select>
                     <select value={adding.category} onChange={(e) => {
@@ -254,9 +265,10 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
                       onChange={(e) => setAdding({ ...adding, price: e.target.value.replace(/[^0-9.]/g, '') })} className={`${inputCls} w-full min-w-0`} />
                   </label>
                   {Number(adding.price) > 0 && (
-                    <p className="text-[11px] text-s-muted">Saves as PKR {Number(adding.price).toLocaleString('en-PK', { maximumFractionDigits: 2 })} per {priceUnitOf(adding.unit)}</p>
+                    <p className="text-[11px] text-s-muted">Saves as PKR {Number(adding.price).toLocaleString('en-PK', { maximumFractionDigits: 4 })} per {priceUnitOf(adding.unit)}</p>
                   )}
-                  <button type="button" disabled={busy} onClick={() => void addNew()} className="s-btn-primary px-3 py-1 text-xs font-bold disabled:opacity-50">Add and use</button>
+                  {!adding.unit && <p className="text-[11px] text-s-red">Pick the unit it is kept and priced in.</p>}
+                  <button type="button" disabled={busy || !adding.unit} onClick={() => void addNew()} className="s-btn-primary px-3 py-1 text-xs font-bold disabled:opacity-50">Add and use</button>
                 </div>
               )}
             </div>

@@ -2875,6 +2875,10 @@ model IngredientMaster {
   name               String
   normalizedName     String
   stockUnit          String
+  // The unit people SEE and price it in (owner, 2026-11-17: "price per stock unit everywhere. And let stock unit be
+  // selected") — any unit of stockUnit's family (kg for g, litres for ml). NULL = stockUnit itself. Display + price
+  // entry only: stock, recipes and the stored price stay in the base unit (stockUnit).
+  priceUnit          String?
   category           String?
   allergens          String[] @default([])
   yieldPct           Float    @default(100)

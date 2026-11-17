@@ -305,7 +305,9 @@ describe('buying units and the twin trail (owner review N3, N4)', () => {
 
 describe('the servd price (owner, 2026-10-29: "a pure ingredient availability and pricing sheet")', () => {
   it('latest = the newest delivery anywhere in servd; average = 90-day quantity-weighted; history names company', async () => {
-    const m = await call(u.chefA!, 'POST', '/ingredient-master', { name: 'Pricing Saffron', unit: 'g', category: 'dry_goods' })
+    // Added in kg: stocked in grams, shown and priced per kg (owner, 2026-11-17: price per the unit picked).
+    const m = await call(u.chefA!, 'POST', '/ingredient-master', { name: 'Pricing Saffron', unit: 'kg', category: 'dry_goods' })
+    expect(m.json()).toMatchObject({ stockUnit: 'g', shownUnit: 'kg' })
     expect(m.statusCode, m.body).toBe(201)
     const id = m.json().id as string
     // Not stocked anywhere yet: no price, never an error.
@@ -367,6 +369,30 @@ describe('the servd price (owner, 2026-10-29: "a pure ingredient availability an
     }))
     const after = (await call(u.chefA!, 'GET', `/ingredient-master/${id}`)).json().price
     expect(after).toMatchObject({ latestCents: 4_200, latestSource: 'delivery' })
+  })
+
+  it('the price is per the unit picked for the ingredient; a sheet editor switches g ↔ kg, another kind of unit is the reviewers\'', async () => {
+    const m = await call(u.chefA!, 'POST', '/ingredient-master', { name: 'Unit Pick Vanilla', unit: 'g', category: 'dry_goods' })
+    expect(m.statusCode, m.body).toBe(201)
+    const id = m.json().id as string
+    expect(m.json()).toMatchObject({ stockUnit: 'g', shownUnit: 'g' })
+    // PKR 4.10 per GRAM, typed per gram (fractions of a paisa are kept).
+    const g = await call(u.buyerA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 410 })
+    expect(g.json().price).toMatchObject({ displayUnit: 'g', baseUnits: 1, latestCents: 410 })
+    // A chef (not a reviewer) shows it per kg: same price, ×1000; nothing about stock changes.
+    const kg = await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { unit: 'kg' })
+    expect(kg.statusCode, kg.body).toBe(200)
+    expect(kg.json()).toMatchObject({ stockUnit: 'g', shownUnit: 'kg' })
+    expect(kg.json().price).toMatchObject({ displayUnit: 'kg', baseUnits: 1000, latestCents: 410_000 })
+    // Typed per kg now.
+    const typed = await call(u.buyerA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 300_000 })
+    expect(typed.json().price.latestCents).toBe(300_000)
+    const back = await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { unit: 'g' })
+    expect(back.json()).toMatchObject({ shownUnit: 'g' })
+    expect(back.json().price).toMatchObject({ displayUnit: 'g', latestCents: 300 })
+    // Another KIND of unit (g → pcs) is still the CEO's / F&B manager's.
+    const pcs = await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { unit: 'pcs' })
+    expect(pcs.statusCode).toBe(403)
   })
 
   it('an ingredient no company stocks takes its typed price; recipes would cost it at that price', async () => {
