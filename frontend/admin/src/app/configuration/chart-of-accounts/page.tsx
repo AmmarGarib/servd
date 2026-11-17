@@ -42,8 +42,15 @@ export default function ChartOfAccountsPage() {
   const [editing, setEditing] = useState<Account | null>(null)
   const [adding, setAdding] = useState(false)
   const [openSubs, setOpenSubs] = useState<string | null>(null)
-  const { data = [] } = useQuery<Account[]>({ queryKey: ['chart-of-accounts'], queryFn: () => api.get('/setup/chart-of-accounts') })
+  const [q, setQ] = useState('')
+  const { data: all = [] } = useQuery<Account[]>({ queryKey: ['chart-of-accounts'], queryFn: () => api.get('/setup/chart-of-accounts') })
 
+  // Search by code, name or description (owner, 2026-11-17: "Give search bar for chart of accounts").
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const data = words.length === 0 ? all : all.filter((a) => {
+    const hay = `${a.code} ${a.name} ${a.description ?? ''}`.toLowerCase()
+    return words.every((w) => hay.includes(w))
+  })
   const grouped = data.reduce<Record<AccountType, Account[]>>((acc, a) => {
     if (!acc[a.type]) acc[a.type] = []
     acc[a.type].push(a)
@@ -88,15 +95,27 @@ export default function ChartOfAccountsPage() {
         </div>
       </header>
 
-      <div className="px-7 py-6 max-w-4xl mx-auto space-y-6">
-        {(['asset', 'liability', 'equity', 'revenue', 'expense'] as AccountType[]).map((t) => (
+      <div className="px-4 sm:px-7 py-6 max-w-4xl mx-auto space-y-6">
+        <div className="flex flex-wrap items-center gap-3">
+          <input type="search" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off"
+            placeholder="Search by code or name, e.g. 6030 or wages" aria-label="Search accounts"
+            className="s-input flex-1 min-w-[14rem]" />
+          {words.length > 0 && <span className="text-xs text-white/50">{data.length} of {all.length} accounts</span>}
+        </div>
+        {words.length > 0 && data.length === 0 && (
+          <p className="rounded-2xl p-5 text-sm text-white/50" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
+            No accounts match “{q.trim()}”. <button type="button" className="underline" onClick={() => setQ('')}>Clear search</button>
+          </p>
+        )}
+        {(['asset', 'liability', 'equity', 'revenue', 'expense'] as AccountType[]).filter((t) => words.length === 0 || grouped[t].length > 0).map((t) => (
           <section key={t}>
-            <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">{t}s · {grouped[t].length}</h2>
+            <h2 className="text-xs font-black uppercase tracking-[0.24em] text-white/55 mb-3">{t === 'liability' ? 'liabilities' : `${t}s`} · {grouped[t].length}</h2>
             <div className="rounded-2xl overflow-hidden" style={{ background: 'rgb(var(--fg-rgb) / 0.025)', border: '1px solid rgb(var(--fg-rgb) / 0.06)' }}>
               {grouped[t].length === 0 && <p className="p-5 text-xs text-white/35">No {t} accounts.</p>}
               {(t === 'asset' || t === 'liability')
                 ? (t === 'asset' ? (['non_current', 'current'] as Term[]) : (['current', 'non_current'] as Term[])).map((term) => {
                   const list = grouped[t].filter((a) => (a.term ?? 'current') === term)
+                  if (words.length > 0 && list.length === 0) return null
                   return (
                     <div key={term}>
                       <p className="px-4 py-2 text-[11px] font-black uppercase tracking-wider text-white/50" style={{ background: 'rgb(var(--fg-rgb) / 0.03)' }}>{TERM_TITLE[term]} {t === 'asset' ? 'assets' : 'liabilities'} · {list.length}</p>
