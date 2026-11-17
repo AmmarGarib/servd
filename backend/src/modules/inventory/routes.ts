@@ -266,7 +266,7 @@ const updateItemSchema = z.object({
   unitCostCents: zInt4Cents('The unit cost').nullable().optional(),
   category: z.enum(INVENTORY_CATEGORIES).nullable().optional(),
   // Unmeasured consumables (oil, salt): each receipt is issued straight to
-  // cost of sales. Managers with the inventory module; audited.
+  // cost of sales. Managers and procurement with the inventory module, finance with accounting (this field alone); audited.
   issueOnReceipt: z.boolean().optional(),
   notes: z.string().nullable().optional(),
   parLevel: z.number().min(0).optional(),
@@ -526,7 +526,9 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       const { tenantId, issueOnReceipt, ...data } = updateItemSchema.parse(req.body)
       const assigning = tenantId !== undefined && tenantId !== item.tenantId
 
-      if (!(ITEM_MASTER_EDITORS as string[]).includes(role)) {
+      // Finance may also switch issue-on-receipt alone (owner, 2026-11-17: "Show it to finance also for time being").
+      const financeIorOnly = role === 'finance' && issueOnReceipt !== undefined && !assigning && Object.keys(data).length === 0
+      if (!(ITEM_MASTER_EDITORS as string[]).includes(role) && !financeIorOnly) {
         const others = Object.keys(data).filter((k) => k !== 'unitCostCents')
         if (!assigning || item.tenantId || others.length > 0 || issueOnReceipt !== undefined) {
           throw new ForbiddenError('Finance can only give a company-less ingredient its company here.')
@@ -608,10 +610,13 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       }
       const iorChanges = issueOnReceipt !== undefined && issueOnReceipt !== item.issueOnReceipt
       if (iorChanges) {
-        if (!isInventoryManager(req)) throw new ForbiddenError('Only a manager sets an ingredient to be issued on receipt.')
+        // Whoever edits the item (managers + procurement, owner 2026-11-17: the buyer had no tick), with the inventory module.
+        if (!(ITEM_MASTER_EDITORS as string[]).includes(role) && !financeIorOnly) throw new ForbiddenError('Only a manager, the buying team or finance sets an ingredient to be issued on receipt.')
         const u = await prisma.user.findUnique({ where: { id: req.staffUser!.id }, select: { moduleAllow: true, moduleDeny: true } })
         const modules = await effectiveModulesForUser({ role: role as UserRole, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
-        if (!modules.has('inventory')) throw new ForbiddenError('Your account does not have the inventory module. Ask the CEO to enable it in Module Access.')
+        if (financeIorOnly ? !modules.has('accounting') : !modules.has('inventory')) {
+          throw new ForbiddenError(`Your account does not have the ${financeIorOnly ? 'accounting' : 'inventory'} module. Ask the CEO to enable it in Module Access.`)
+        }
       }
 
       // A category change on an item of a company: the cut-over must be in

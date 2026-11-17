@@ -2566,6 +2566,10 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   `tenantId: tenantFilter` lookup failed open on a null filter). Never re-add a second brand check. Recipes'
   `scopedConceptIdSet` calls `conceptIdsInScope` for write / create; its read keeps its own query (read mode would
   narrow to the brand picked at the top). Tests: `tests/conceptAccessOneRule.test.ts`.
+- **Issue on receipt — who sets it (owner, 2026-11-17: the buyer had no tick; "Show it to finance also for time being").**
+  `PATCH /inventory/:id {issueOnReceipt}`: managers and procurement (`ITEM_MASTER_EDITORS`) holding `inventory`, and
+  finance holding `accounting` for that field ALONE (with any other field 403); audited `inventory.issue_on_receipt`.
+  The Inventory edit form shows finance only that tick. Tests: `tests/itemCategoryReclass.test.ts`.
 - **Item groups under a category (owner, 2026-11-07: "In PO, make item categories like Sea food … Meat …"; answer:
   groups UNDER the existing category, the PO maker can add groups).** `IngredientGroup` (`ingredient_groups`, servd-wide
   like the master — no tenantId, deliberately; unique by normalised name; under ONE `INVENTORY_CATEGORIES` category;

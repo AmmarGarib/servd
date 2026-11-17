@@ -6,7 +6,7 @@
 //     'inventory.item_reclass:<itemId>:<auditLogId>' Dr new class / Cr old.
 //   - unitCostCents is a typed estimate only while the item has no lots (422
 //     COST_FROM_DELIVERIES after that); costSource follows.
-//   - issue-on-receipt: managers only, audited.
+//   - issue-on-receipt: managers, procurement and finance (that field alone), audited.
 //   - GET: onHandValueCents for the financial viewers and stock keepers only;
 //     the line cook sees no cost; B gets 404 on A's item.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -172,14 +172,26 @@ describe('category and cost class', () => {
     expect((await call(u.mgrA!, 'GET', `/inventory/${held.id}`)).json().costSource).toBe('deliveries')
   })
 
-  it('issue-on-receipt: managers only, audited', async () => {
+  it('issue-on-receipt: managers, the buying team and finance (that field alone), audited; B gets 404', async () => {
     const oil = await item(A)
-    expect((await call(u.buyerA!, 'PATCH', `/inventory/${oil.id}`, { issueOnReceipt: true })).statusCode).toBe(403)
     const res = await call(u.mgrA!, 'PATCH', `/inventory/${oil.id}`, { issueOnReceipt: true })
     expect(res.statusCode, res.body).toBe(200)
     expect(res.json().issueOnReceipt).toBe(true)
     const row = await prisma.auditLog.findFirstOrThrow({ where: { action: 'inventory.issue_on_receipt', entityId: oil.id } })
     expect(row).toMatchObject({ tenantId: A.tenantId, userId: u.mgrA!.id })
+    // The buyer (owner, 2026-11-17: no tick for the buying team).
+    const buyer = await call(u.buyerA!, 'PATCH', `/inventory/${oil.id}`, { issueOnReceipt: false })
+    expect(buyer.statusCode, buyer.body).toBe(200)
+    expect(buyer.json().issueOnReceipt).toBe(false)
+    // Finance (owner, 2026-11-17: "Show it to finance also for time being") — the tick alone.
+    const fin = await call(u.finA!, 'PATCH', `/inventory/${oil.id}`, { issueOnReceipt: true })
+    expect(fin.statusCode, fin.body).toBe(200)
+    expect(fin.json().issueOnReceipt).toBe(true)
+    expect((await call(u.finA!, 'PATCH', `/inventory/${oil.id}`, { issueOnReceipt: false, parLevel: 5 })).statusCode).toBe(403)
+    expect((await call(u.finA!, 'PATCH', `/inventory/${oil.id}`, { parLevel: 5 })).statusCode).toBe(403)
+    // The kitchen floor never; another company's item is 404.
+    expect((await call(u.cookA!, 'PATCH', `/inventory/${oil.id}`, { issueOnReceipt: false })).statusCode).toBe(403)
+    expect((await call(u.mgrB!, 'PATCH', `/inventory/${oil.id}`, { issueOnReceipt: false })).statusCode).toBe(404)
   })
 })
 

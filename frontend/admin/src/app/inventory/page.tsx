@@ -199,6 +199,8 @@ export default function InventoryPage() {
   // The CEO's "Remove ingredients not in a recipe" (moved here from the retired Sourcing sheet, 2026-10-29).
   const [cleaning, setCleaning] = useState(false)
   const managerRoles = useManagerRoles()
+  // Finance edits only the issue-on-receipt tick here (owner, 2026-11-17: "Show it to finance also for time being").
+  const financeOnly = me?.role === 'finance'
   const { data: perms } = usePermissions()
   const canOpen = (path: string) => !!perms && canOpenPath(path, perms.role, perms.modules ?? [])
   // The uploaded photo: its public URL (sent as photoUrl) and a local preview.
@@ -612,6 +614,7 @@ export default function InventoryPage() {
             <form noValidate className="rounded-xl border border-primary bg-s-surface p-4 space-y-3"
               onSubmit={(e) => { e.preventDefault(); if (!editMutation.isPending) editMutation.mutate(editItem) }}>
               <p className="font-bold text-s-text text-sm">Edit — {editItem.name}</p>
+              {!financeOnly && (<>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <F label="Category">
                   <Select value={editForm.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value })} className={fi}>
@@ -672,7 +675,9 @@ export default function InventoryPage() {
                   </F>
                 </div>
               )}
-              {managerRoles.has(me?.role ?? '') && (
+              </>)}
+              {financeOnly && <p className="text-xs text-s-muted">Finance can set only whether this item is expensed on receipt.</p>}
+              {(managerRoles.has(me?.role ?? '') || me?.role === 'procurement' || financeOnly) && (
                 <label className="flex items-start gap-2 text-sm text-s-text cursor-pointer">
                   <input type="checkbox" className="accent-accent mt-0.5" checked={editForm.issueOnReceipt}
                     onChange={(e) => setEditForm({ ...editForm, issueOnReceipt: e.target.checked })} />
