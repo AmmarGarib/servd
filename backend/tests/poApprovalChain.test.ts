@@ -171,6 +171,10 @@ describe('the whole flow: CEO → buyer → requester → GRN → finance → CE
     expect(r.statusCode, r.body).toBe(200)
     const box = await prisma.pettyCashBox.findFirstOrThrow({ where: { tenantId: T.A, custodianId: U.buyerA!.id } })
     expect(box.floatCents).toBe(3_500)
+    // The buyer's own box is never where a PO's cash comes from (owner, 2026-11-17): not listed as a source.
+    const src = await call('finA', 'GET', `/trustops/cash-vouchers/${voucherId}/pay-sources`)
+    expect(src.statusCode, src.body).toBe(200)
+    expect(src.json().boxes.map((b: { id: string }) => b.id)).not.toContain(box.id)
   })
 
   it('only the buyer completes it, with an invoice file and number; the actual rate is logged', async () => {

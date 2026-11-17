@@ -1823,6 +1823,11 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       select: { id: true, name: true, floatCents: true, custodianId: true },
       orderBy: { name: 'asc' },
     })
+    // A PO's cash TOPS UP the buyer's own box (poCash.ts), so that box is never where the cash comes from (owner,
+    // 2026-11-17: "remove a holder's own box from the Pay from list on their own voucher").
+    if (v.purchaseOrderId && v.payeeUserId) {
+      for (let i = boxes.length - 1; i >= 0; i--) if (boxes[i]!.custodianId === v.payeeUserId) boxes.splice(i, 1)
+    }
     const custodians = await prisma.user.findMany({ where: { id: { in: [...new Set(boxes.map((b) => b.custodianId))] } }, select: { id: true, name: true } })
     const direct = viewer.financeApprover
     const banks = direct
@@ -1934,6 +1939,10 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
       if (!box.isActive) throw new AppError('BOX_UNAVAILABLE', `${box.name} is closed — pick another box`, 409)
       if (box.custodianId !== me && !viewer.keeper) {
         throw new AppError('NOT_CUSTODIAN', `Only the cashier who holds ${box.name}, finance or a manager can pay from it`, 403)
+      }
+      // A PO's cash goes INTO the buyer's box: paying it from that same box moves nothing (owner, 2026-11-17).
+      if (v.purchaseOrderId && v.payeeUserId && box.custodianId === v.payeeUserId) {
+        throw new AppError('OWN_BOX_NOT_A_SOURCE', `${box.name} is the buyer's own box — this cash goes into it. Pay from cash on hand, a bank or another box.`, 422)
       }
     }
     if (v.kind === 'request' && !v.payeeUserId) {
