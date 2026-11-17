@@ -1,6 +1,6 @@
 'use client'
 import { useServdSupplierPick } from '@/components/procurement/useServdSupplierPick'
-import { CompanyTicks } from '../../components/ui/TenantPicker'
+import { CompanyTicks, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
 import { MasterIngredientPicker, type MasterPrice } from '../../components/kitchen/MasterIngredientPicker'
 import { fmtUnitCost, priceSourceLabel } from '../../lib/unitCost'
 import { Button, CheckLabel, FieldLabel, Input, LinkButton } from '@/components/finance/ui'
@@ -15,6 +15,7 @@ import { ApAging } from '../../components/finance/ApAging'
 import { BankAccountSelect } from '../../components/finance/BankAccountSelect'
 import { fmtPkrWhole, todayPktIso } from '../../lib/money'
 import { useAuthStore } from '../../store/auth'
+import { readLensTenant } from '../../lib/api'
 import { useManagerRoles } from '../../lib/roles'
 import { canOpenPath } from '../../lib/moduleCatalog'
 import { usePermissions } from '../../hooks/useCan'
@@ -183,6 +184,9 @@ interface PoDraft {
   notes?: string
   conceptId?: string | null
   buyerUserId?: string | null
+  /** The company the PO is raised in (owner, 2026-11-17: "add a header for company the same way there is for supplier
+   *  and buyer"). Empty = pick on the form. */
+  tenantId?: string | null
 }
 
 const errText = (e: unknown) => stockErrorText(e)
@@ -190,7 +194,7 @@ const rupeesToPaisa = (v: string) => Math.round(Number(v) * 100)
 /** A stored instant (the end of a PKT day) as the PKT calendar date YYYY-MM-DD. */
 const pktDate = (iso: string) => new Date(new Date(iso).getTime() + 5 * 3_600_000).toISOString().slice(0, 10)
 
-interface InventoryItem { id: string; name: string; unit: string; supplierId?: string | null; unitCostCents?: number | null; latestCostCents?: number | null; purchaseUnit?: string | null; purchaseUnitFactor?: number | null }
+interface InventoryItem { id: string; name: string; unit: string; tenantId?: string | null; supplierId?: string | null; unitCostCents?: number | null; latestCostCents?: number | null; purchaseUnit?: string | null; purchaseUnitFactor?: number | null }
 
 /** The units a PO line may be ordered in — the same rule as backend procurement/poUnits.ts (the server's factor wins).
  *  Families from lib/units.ts (THE unit rule): g ↔ kg, ml ↔ l, pcs ↔ items ↔ dozen — grams never become millilitres. */
@@ -953,6 +957,20 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
   const { data: servd = [] } = useServdSuppliers()
   // Finance raises POs but never edits the supplier master (owner, 2026-11-10): no "+ New supplier" for it.
   const isFinance = useAuthStore((st) => st.user?.role) === 'finance'
+  // The company the PO is raised in — a field like Supplier and Buyer (owner, 2026-11-17: "can't u guys just add a header
+  // for company the same way there is for supplier and buyer"). It drives the supplier, buyer and item lists and pins
+  // the save to that company (x-servd-active-tenant), so a PO never lands in another company by its supplier.
+  const viewAll = useViewAllTenants()
+  const { data: myCompanies = [] } = useMyTenants()
+  const editTenant = editId ? (suppliers.find((x) => x.id === initial?.supplierId)?.tenantId ?? null) : null
+  const [companyId, setCompanyId] = useState<string>(initial?.tenantId ?? '')
+  // Starts on the company picked at the top; "All companies" leaves it to be chosen.
+  useEffect(() => {
+    if (editId || companyId || viewAll || readLensTenant()) return
+    const active = (myCompanies as Array<{ id: string; isActive?: boolean }>).find((t) => t.isActive)
+    if (active) setCompanyId(active.id)
+  }, [myCompanies, viewAll, editId, companyId])
+  const poCompany = editId ? editTenant : (companyId || (myCompanies.length === 1 ? myCompanies[0]!.id : null))
   // A draft from the Reorder tab arrives pre-filled; the buyer can still change anything.
   const [supplierId, setSupplierId] = useState(initial?.supplierId ?? '')
   const [expectedDate, setExpectedDate] = useState(initial?.expectedDate ?? '')
@@ -960,7 +978,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
   // The buyer, picked from the company's buyers list (owner, 2026-11-10: "anyone who's raising PO could select buyer").
   const [buyerUserId, setBuyerUserId] = useState(initial?.buyerUserId ?? '')
   const { data: buyers = [] } = useQuery({ queryKey: ['procurement', 'buyers', 'active'], queryFn: () => api.get<PoBuyerRow[]>('/procurement/buyers?active=1') })
-  const supplierTenant = suppliers.find((x) => x.id === supplierId)?.tenantId ?? null
+  const supplierTenant = poCompany ?? suppliers.find((x) => x.id === supplierId)?.tenantId ?? null
   const buyerChoices = buyers.filter((b) => !supplierTenant || b.tenantId === supplierTenant)
   const [lines, setLines] = useState(initial?.lines.length ? initial.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
   // "+ New supplier…" right in the PO (owner, 2026-11-03: create the supplier from here, not another tab).
@@ -968,8 +986,9 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
   // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts). Cleared once the PO is saved.
   const draft = useFormDraft(
     editId ? `po:${editId}` : sendToCeo ? 'po:from-cash' : initial ? 'po:reorder' : 'po:new',
-    { supplierId, expectedDate, notes, buyerUserId, lines },
+    { supplierId, expectedDate, notes, buyerUserId, lines, companyId },
     (d) => {
+      if (!editId && d.companyId) setCompanyId(d.companyId)
       setSupplierId(d.supplierId ?? ''); setExpectedDate(d.expectedDate ?? ''); setNotes(d.notes ?? ''); setBuyerUserId(d.buyerUserId ?? '')
       setLines(Array.isArray(d.lines) && d.lines.length ? d.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
     },
@@ -989,13 +1008,14 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
   const createdRef = useRef<{ id: string; reference?: string | null } | null>(null)
   const mut = useMutation({
     mutationFn: () => (editId ? (body: unknown) => api.patch(`/procurement/purchase-orders/${editId}`, body) : async (body: unknown) => {
+      const pin = poCompany ? { tenantId: poCompany } : undefined
       // A purchase request is created once; a failed submit is retried on the same PO, never a second one.
-      if (!sendToCeo) return api.post<{ id: string; reference?: string | null }>('/procurement/purchase-orders', body)
+      if (!sendToCeo) return api.post<{ id: string; reference?: string | null }>('/procurement/purchase-orders', body, pin)
       // Made already and only the send failed: save what is on the form now onto the same draft, then send it.
-      if (createdRef.current) await api.patch(`/procurement/purchase-orders/${createdRef.current.id}`, body)
-      const made = createdRef.current ?? await api.post<{ id: string; reference?: string | null }>('/procurement/purchase-orders', body)
+      if (createdRef.current) await api.patch(`/procurement/purchase-orders/${createdRef.current.id}`, body, pin)
+      const made = createdRef.current ?? await api.post<{ id: string; reference?: string | null }>('/procurement/purchase-orders', body, pin)
       createdRef.current = made
-      await api.post(`/procurement/purchase-orders/${made.id}/submit`, {})
+      await api.post(`/procurement/purchase-orders/${made.id}/submit`, {}, pin)
       return made
     })({
       ...(supplierId ? supplierPickBody(supplierId) : { supplierId: null }), expectedDate: expectedDate || null,
@@ -1051,9 +1071,10 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
   const lineBad = (l: typeof lines[number]) => !l.inventoryItemId || !(Number(l.quantityOrdered) > 0) || !l.unitCostCents
   // The supplier may be chosen later (owner, 2026-11-03: "POs should be able to go thru without supplier attached").
   const packBad = (l: typeof lines[number]) => isPackUnit(invItems.find((x) => x.id === l.inventoryItemId), l.unit) && !(Number(l.packSize) > 0)
-  const valid = lines.length > 0 && !lines.some(lineBad) && !lines.some(packBad)
+  const companyMissing = !editId && myCompanies.length > 1 && !companyId
+  const valid = !companyMissing && lines.length > 0 && !lines.some(lineBad) && !lines.some(packBad)
   const msg = tried && !valid
-    ? (lines.length === 0 ? 'Add at least one line.' : lines.some(lineBad) ? 'Every line needs an item, a quantity above 0 and a unit cost.' : 'Say how much one box / bottle / pack holds on each line ordered that way.')
+    ? (companyMissing ? 'Pick the company this PO is for.' : lines.length === 0 ? 'Add at least one line.' : lines.some(lineBad) ? 'Every line needs an item, a quantity above 0 and a unit cost.' : 'Say how much one box / bottle / pack holds on each line ordered that way.')
     : null
 
   return (
@@ -1072,6 +1093,25 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
       )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {!editId && myCompanies.length > 1 && (
+          <TenantField className="col-span-2 sm:col-span-4" label="Company" required autoDefault={false} value={companyId}
+            onChange={(id) => {
+              if (id === companyId) return
+              setCompanyId(id)
+              // Another company: its own supplier account, buyers and stock items — the picks of the old one go.
+              setBuyerUserId('')
+              setSupplierId((cur) => {
+                const t = suppliers.find((x) => x.id === cur)?.tenantId
+                if (!cur || cur.startsWith('master:') || !t || t === id) return cur
+                const m = servd.find((r) => r.companySupplierId === cur)
+                return m ? `master:${m.id}` : ''
+              })
+              setLines((prev) => prev.map((l) => {
+                const t = invItems.find((x) => x.id === l.inventoryItemId)?.tenantId
+                return t && t !== id ? { ...l, inventoryItemId: '', unit: undefined } : l
+              }))
+            }} />
+        )}
         <Field label="Supplier">
           <Select value={newSupplier ? '__new' : supplierId} onChange={(e) => {
             if (e.target.value === '__new') { setNewSupplier({ name: '', phone: '' }); return }
@@ -1079,7 +1119,12 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
           }} className={fi}>
             <option value="">No supplier yet (choose later)</option>
             {/* servd's one supplier list; a supplier already picked that is not on it (an older draft) stays listed. */}
-            {servd.map((m) => <option key={m.id} value={servdPickValue(m)}>{m.name}</option>)}
+            {servd.map((m) => {
+              // The company's own account when the listed one is it; another company's account → the servd supplier.
+              const acctTenant = m.companySupplierId ? suppliers.find((x) => x.id === m.companySupplierId)?.tenantId : null
+              const v = poCompany && m.companySupplierId && acctTenant && acctTenant !== poCompany ? `master:${m.id}` : servdPickValue(m)
+              return <option key={m.id} value={v}>{m.name}</option>
+            })}
             {suppliers.filter((s) => s.id === supplierId && !servd.some((m) => m.companySupplierId === s.id)).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             {!isFinance && <option value="__new">+ New supplier…</option>}
           </Select>
@@ -1125,7 +1170,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
               {/* servd's ingredient list, with "Add new ingredient" (owner, 2026-11-03: "give option to add from
                   here also. same as recipe area"); the stock item is made in the SUPPLIER's company. */}
               <MasterIngredientPicker className="w-full"
-                tenantId={suppliers.find((s) => s.id === supplierId)?.tenantId ?? null}
+                tenantId={poCompany ?? suppliers.find((s) => s.id === supplierId)?.tenantId ?? null}
                 label={item ? `${item.name} (${item.unit})` : ''}
                 onPicked={(picked, price) => {
                   qc.setQueryData<InventoryItem[]>(['inventory'], (prev = []) => prev.some((x) => x.id === picked.id) ? prev : [...prev, { id: picked.id, name: picked.name, unit: picked.unit }])
