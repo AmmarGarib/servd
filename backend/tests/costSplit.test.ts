@@ -277,6 +277,33 @@ describe('payroll already processed', () => {
     expect((await call(fin, 'GET', `/splits?payrollRunId=${run.id}`)).json().items).toHaveLength(1)
   })
 
+  it('office wages moved from 6032 to Wages Expense are split from Wages Expense, never 6032 (owner, 2026-11-17)', async () => {
+    await prisma.account.create({ data: { tenantId: A, code: '6039', name: 'Wages Expense', type: 'expense', isActive: true } })
+    const run = await prisma.hrPayrollRun.create({ data: { tenantId: A, period: '2026-08', status: 'approved', settings: {} } })
+    await postJournalEntry({
+      tenantId: A, sourceType: 'hr.payroll.accrual', sourceId: run.id, description: 'Payroll accrual 2026-08', entryDate: at(daysAgo(6)), postedBy: ceo.id,
+      lines: [
+        { accountCode: '6032', type: 'debit', amountCents: 100_000 },
+        { accountCode: '2020', type: 'credit', amountCents: 100_000 },
+      ],
+    })
+    await postJournalEntry({
+      tenantId: A, sourceType: 'hr.payroll.wages_reclass', sourceId: run.id, description: 'office wages moved', entryDate: at(daysAgo(6)), postedBy: ceo.id,
+      lines: [
+        { accountCode: '6039', type: 'debit', amountCents: 100_000 },
+        { accountCode: '6032', type: 'credit', amountCents: 100_000 },
+      ],
+    })
+    const pv = (await call(fin, 'GET', `/splits/preview?payrollRunId=${run.id}`)).json()
+    expect(pv.baseCents).toBe(100_000)
+    const before = await balances(A)
+    const r = await call(fin, 'POST', '/splits', { payrollRunId: run.id, mode: 'percent', shares: [{ tenantId: B, percent: 50 }], memo: 'Flipd share of August payroll' })
+    expect(r.statusCode, r.body).toBe(201)
+    const after = await balances(A)
+    expect((after.get('6032') ?? 0) - (before.get('6032') ?? 0)).toBe(0)
+    expect((after.get('6039') ?? 0) - (before.get('6039') ?? 0)).toBe(-50_000)
+  })
+
   it('a draft payroll is not split', async () => {
     const run = await prisma.hrPayrollRun.create({ data: { tenantId: A, period: '2026-09', status: 'draft', settings: {} } })
     const r = await call(fin, 'POST', '/splits', { payrollRunId: run.id, mode: 'percent', shares: [{ tenantId: B, percent: 50 }], memo: 'draft' })

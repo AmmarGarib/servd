@@ -61,6 +61,12 @@ const PRESETS: Array<{ key: string; label: string; range: () => { from: string; 
   { key: '90d',       label: 'Last 90 days', range: () => ({ from: shiftDays(todayPktIso(), -89), to: todayPktIso() }) },
 ]
 
+// A deduction section shows its costs in brackets; a credit balance on a cost account (it LOWERS the cost) shows as a
+// plain amount marked "credit", never "(-PKR …)" (owner, 2026-11-17: "??" on a cost line shown as (-PKR 7,500)).
+function deduction(cents: number): string {
+  return cents < 0 ? `${fmtPkrWhole(-cents)} credit` : `(${fmtPkrWhole(cents)})`
+}
+
 function Section({ title, rows, total, neg }: { title: string; rows: PL['revenue']; total: number; neg?: boolean }) {
   return (
     <div className="mb-3">
@@ -73,7 +79,7 @@ function Section({ title, rows, total, neg }: { title: string; rows: PL['revenue
               <td className="px-4 py-1.5 font-mono text-xs text-s-muted w-20">{r.code}</td>
               <td className="px-4 py-1.5 text-s-text">{r.name}</td>
               <td className={`px-4 py-1.5 text-right font-mono text-xs ${neg ? 'text-s-red' : 'text-s-text'}`}>
-                {neg ? '(' + fmtPkrWhole(r.amountCents) + ')' : fmtPkrWhole(r.amountCents)}
+                {neg ? deduction(r.amountCents) : fmtPkrWhole(r.amountCents)}
               </td>
             </tr>
           ))}
@@ -85,7 +91,7 @@ function Section({ title, rows, total, neg }: { title: string; rows: PL['revenue
       </div>
       <div className="px-4 py-1.5 bg-s-bg-soft border border-s-border border-t-0 text-sm font-semibold text-s-text rounded-b flex justify-between">
         <span>Total {title}</span>
-        <span className={`font-mono ${neg ? 'text-s-red' : ''}`}>{neg ? '(' + fmtPkrWhole(total) + ')' : fmtPkrWhole(total)}</span>
+        <span className={`font-mono ${neg ? 'text-s-red' : ''}`}>{neg ? deduction(total) : fmtPkrWhole(total)}</span>
       </div>
     </div>
   )

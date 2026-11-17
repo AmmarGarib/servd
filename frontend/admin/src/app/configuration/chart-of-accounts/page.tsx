@@ -185,6 +185,12 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
           <div className="grid grid-cols-[120px_1fr] gap-3">
             <Field label="Code *">
               <input value={code} onChange={(e) => setCode(e.target.value)} disabled={!!account} placeholder="6210" className={fieldCls + ' font-mono'} autoFocus />
+              {!account && type === 'expense' && /^\s*5/.test(code) && (
+                <p role="alert" className="mt-1 text-xs" style={{ color: 'var(--erp-danger)' }}>
+                  Codes starting with 5 are COST OF SALES (food, drinks, packaging): the P&amp;L shows them above gross profit.
+                  For a running cost (IT, rent, repairs) use a 6xxx code, e.g. 6210. The code cannot be changed later.
+                </p>
+              )}
             </Field>
             <Field label="Type *">
               <Select value={type} onChange={(e) => setType(e.target.value as AccountType)} disabled={!!account} className={fieldCls}>

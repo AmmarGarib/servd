@@ -1774,7 +1774,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   source and every receiver (403 `NOT_IN_BOTH_COMPANIES`). Audit `cost_split.post` / `.reverse` in every company; bell
   `cost_split.posted` / `.reversed` to each company's CEO(s). Tables `cost_splits` / `cost_split_shares` (tenantId =
   source / receiver, RLS, merge repoint; migration `20261107140000_cost_splits`). Not built: sub-account tags on the
-  split lines. Tests: `tests/costSplit.test.ts`.
+  split lines. **A payroll run whose office wages were moved 6032 → Wages Expense (`hr.payroll.wages_reclass:<runId>`,
+  live) is split from Wages Expense, never 6032** (`costSplit.ts applyWagesMove`; owner, 2026-11-17: a split credited
+  6032 after the move and left it negative). Tests: `tests/costSplit.test.ts`.
 - **Journals between companies (owner, 2026-11-12: "When i pass journal in GS which is related to Flipd, it should also
   appear in FLIPD to book same entry as receiving voucher with same details (editable)"; "It should not require CEO's
   approval, CEO should get a notification instead"; answer: EXTEND — a draft in the other company, the inter-company

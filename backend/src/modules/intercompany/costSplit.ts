@@ -56,7 +56,7 @@ import { AppError, NotFoundError } from '../../lib/errors.js'
 import { assertMoneyFits, toCents } from '../../lib/money.js'
 import { fmtPktDate } from '../accounting/dates.js'
 import { deadEntryIds } from '../reconciliation/service.js'
-import { liveRunAccrual, RUN_ACCRUAL, runIdOfAccrualSource } from '../hr/ledger.js'
+import { liveRunAccrual, RUN_ACCRUAL, runIdOfAccrualSource, WAGES_RECLASS } from '../hr/ledger.js'
 import { splitByBps } from '../headOffices/splits.js'
 import {
   assertOpenInBoth, postSystemTransferTx, reverseSystemTransfer, transferDateOf,
@@ -165,12 +165,45 @@ export async function resolveSource(
     .filter((l) => l.type === 'debit' && l.account.type === 'expense' && !l.account.controlledBy && !inRange(l.account.code))
     .map((l) => ({ lineId: l.id, accountCode: l.account.code, accountName: l.account.name, conceptId: l.conceptId, amountCents: toCents(l.amountCents) }))
     .filter((l) => l.amountCents > 0)
+  if (payrollRunId && live) await applyWagesMove(db, entry.tenantId, payrollRunId, lines)
   if (!notSplittableReason && lines.length === 0) notSplittableReason = 'This entry has no expense debit lines to split'
   return {
     kind: payrollRunId ? 'payroll_run' : 'journal_entry',
     entryId: entry.id, payrollRunId, payrollPeriod, tenantId: entry.tenantId, reference: entry.reference, voucherNo: entry.voucherNo,
     description: entry.description, entryDate: entry.entryDate, live, splittable: !notSplittableReason, notSplittableReason, lines,
   }
+}
+
+/**
+ * A payroll run accrued before office pay went to the company's own Wages Expense account had its office wages MOVED
+ * there afterwards by ONE entry `hr.payroll.wages_reclass:<runId>` (Dr Wages Expense / Cr 6032). The cost now sits on
+ * Wages Expense, so the split takes it from there: the move's credits come off the base lines of that account and
+ * its debits are added (owner, 2026-11-17: a payroll split credited 6032 after the move and left 6032 negative —
+ * "There should be no amount in Wages Management"). A move that was reversed (the run reopened) is ignored.
+ */
+async function applyWagesMove(db: Tx | typeof serviceClient, tenantId: string, runId: string, lines: SplitLine[]): Promise<void> {
+  const move = await db.journalEntry.findFirst({
+    where: { tenantId, reference: `${WAGES_RECLASS}:${runId}` },
+    select: { lines: { select: { id: true, type: true, amountCents: true, conceptId: true, account: { select: { code: true, name: true, type: true } } } } },
+  })
+  if (!move) return
+  if (await db.journalEntry.findFirst({ where: { tenantId, reference: `${WAGES_RECLASS}.reversal:${runId}` }, select: { id: true } })) return
+  for (const ml of move.lines) {
+    const cents = toCents(ml.amountCents)
+    if (ml.type === 'credit') {
+      let left = cents
+      for (const l of lines) {
+        if (left === 0) break
+        if (l.accountCode !== ml.account.code) continue
+        const take = Math.min(l.amountCents, left)
+        l.amountCents -= take
+        left -= take
+      }
+    } else if (ml.account.type === 'expense') {
+      lines.push({ lineId: ml.id, accountCode: ml.account.code, accountName: ml.account.name, conceptId: ml.conceptId, amountCents: cents })
+    }
+  }
+  for (let i = lines.length - 1; i >= 0; i--) if (lines[i]!.amountCents <= 0) lines.splice(i, 1)
 }
 
 // ─── Arithmetic (pure) ───────────────────────────────────────────────────────
