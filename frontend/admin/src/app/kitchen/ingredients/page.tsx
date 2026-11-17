@@ -13,8 +13,10 @@
 //     kg / litre / pcs (editors and the buyer; PUT /ingredient-master/:id/price — the latest until a newer delivery).
 //     A cell saves when you leave it or press Enter; Esc puts it back. "Details" opens the rest.
 //   • Search runs on the server (GET /ingredient-master?q=).
-//   • A chef's new ingredient joins at once, marked "needs review" (K2). The CEO or the F&B manager marks it reviewed
-//     or MERGES a duplicate into the right one (a company that stocks both must merge its stock items first).
+//   • Every change waits for the CEO (owner, 2026-11-17: "remove the 'needs review' … changes in this sheet need to be
+//     approved by me"): anyone else's edit answers 202 and the row shows "Waiting for the CEO" with the change; the CEO
+//     approves it in the approvals inbox. The CEO's own edits apply at once. A first price, and a group on an ungrouped
+//     ingredient, apply at once. Merging duplicates and deleting are the CEO's only.
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -33,7 +35,9 @@ const UNITS = ['g', 'ml', 'pcs', 'kg', 'litres', 'each']
 const unitOf = (m: MasterRow) => m.shownUnit ?? m.stockUnit
 /** Units offered for it: any for the CEO / F&B manager (another kind of unit re-bases it); its own kind for the rest. */
 const unitChoices = (current: string, all: boolean) => [...new Set([current, ...UNITS.filter((u) => all || sameUnitFamily(u, current))])]
-const REVIEWERS = new Set(['admin', 'fnb_manager'])
+type Saved = MasterRow | { pendingApproval: true; request: { id: string } }
+const isPending = (x: unknown): x is { pendingApproval: true } => !!x && typeof x === 'object' && 'pendingApproval' in x
+const WAITING_NOTE = 'Sent to the CEO for approval — it applies once approved.'
 
 interface Draft {
   name: string; unit: string; category: string; allergens: string; yieldPct: string
@@ -54,42 +58,50 @@ export default function IngredientsPage() {
   const role = useAuthStore((s) => s.user?.role) ?? ''
   const managers = useManagerRoles()
   const canEdit = managers.has(role)
-  const isReviewer = REVIEWERS.has(role)
+  // The CEO's edits apply at once; everyone else's wait for the CEO (the server decides).
+  const isCeo = role === 'admin'
   // The buyer may type a price too (PROCUREMENT_TEAM on the API).
   const canPrice = canEdit || role === 'procurement'
   const [q, setQ] = useState('')
   const [debounced, setDebounced] = useState('')
-  const [tab, setTab] = useState<'all' | 'needs_review'>('all')
   const [open, setOpen] = useState<MasterRow | null>(null)
   const [adding, setAdding] = useState(false)
   useEffect(() => { const t = setTimeout(() => setDebounced(q.trim()), 250); return () => clearTimeout(t) }, [q])
 
   const { data: rows = [], isLoading } = useQuery<MasterRow[]>({
-    queryKey: ['ingredient-master', 'page', debounced, tab],
-    queryFn: () => api.get<MasterRow[]>(`/ingredient-master?limit=500${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}${tab === 'needs_review' ? '&status=needs_review' : ''}`),
+    queryKey: ['ingredient-master', 'page', debounced],
+    queryFn: () => api.get<MasterRow[]>(`/ingredient-master?limit=500${debounced ? `&q=${encodeURIComponent(debounced)}` : ''}`),
   })
   const pricesShown = rows.some((r) => r.price != null)
+  const waitingCount = rows.filter((r) => r.pendingChange).length
   // Item groups under each category (owner, 2026-11-07: Sea food, Meat, …).
   const { data: groups = [] } = useQuery<IngredientGroup[]>({ queryKey: ['ingredient-master', 'groups'], queryFn: () => api.get<IngredientGroup[]>('/ingredient-master/groups') })
   const groupOptions = (m: MasterRow) => [{ value: '', label: 'No group' },
     ...groups.filter((g) => !m.category || g.category === m.category).map((g) => ({ value: g.id, label: m.category ? g.name : `${g.name} (${categoryLabel(g.category)})` }))]
-  const listKey = ['ingredient-master', 'page', debounced, tab]
+  const listKey = ['ingredient-master', 'page', debounced]
   const [cellError, setCellError] = useState('')
+  const [notice, setNotice] = useState('')
   // One cell's save: PATCH the field (or PUT the price), then put the saved row back into the list.
   const saveCell = useMutation({
     mutationFn: ({ m, field, value }: { m: MasterRow; field: 'name' | 'spec' | 'category' | 'unit' | 'price' | 'group'; value: string }) =>
       field === 'group'
-        ? api.put<MasterRow>(`/ingredient-master/${m.id}/group`, { groupId: value || null })
+        ? api.put<Saved>(`/ingredient-master/${m.id}/group`, { groupId: value || null })
         : field === 'price'
-        ? api.put<MasterRow>(`/ingredient-master/${m.id}/price`, { priceCents: priceCentsOf(m, Number(value)) })
-        : api.patch<MasterRow>(`/ingredient-master/${m.id}`, { [field]: field === 'category' || field === 'spec' ? (value || null) : value }),
-    onMutate: () => setCellError(''),
-    onSuccess: (saved) => {
+        ? api.put<Saved>(`/ingredient-master/${m.id}/price`, { priceCents: priceCentsOf(m, Number(value)) })
+        : api.patch<Saved>(`/ingredient-master/${m.id}`, { [field]: field === 'category' || field === 'spec' ? (value || null) : value }),
+    onMutate: () => { setCellError(''); setNotice('') },
+    onSuccess: (saved, v) => {
+      if (isPending(saved)) {
+        // Not applied: the row goes back to today's value and shows what waits for the CEO.
+        setNotice(`${v.m.name}: ${WAITING_NOTE}`)
+        void qc.invalidateQueries({ queryKey: ['ingredient-master'] })
+        throw new Error('pending')
+      }
       qc.setQueryData<MasterRow[]>(listKey, (old) => old?.map((r) => (r.id === saved.id ? { ...r, ...saved } : r)))
       void qc.invalidateQueries({ queryKey: ['ingredient-master', saved.id] })
       void qc.invalidateQueries({ queryKey: ['inventory'] })
     },
-    onError: (e, v) => setCellError(`${v.m.name}: ${stockErrorText(e)}`),
+    onError: (e, v) => { if (!(e instanceof Error && e.message === 'pending')) setCellError(`${v.m.name}: ${stockErrorText(e)}`) },
   })
   const cell = (m: MasterRow, field: 'name' | 'spec' | 'category' | 'unit' | 'price' | 'group') => (value: string) =>
     saveCell.mutateAsync({ m, field, value })
@@ -107,18 +119,16 @@ export default function IngredientsPage() {
 
       <div className="p-6 max-w-6xl mx-auto space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ingredients…" className="s-input w-auto min-w-[16rem]" aria-label="Search ingredients" />
-          <div role="tablist" className="flex gap-1 text-sm">
-            {(['all', 'needs_review'] as const).map((t) => (
-              <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
-                className={`px-3 py-1.5 border-b-2 ${tab === t ? 'border-accent font-semibold text-s-text' : 'border-transparent text-s-muted'}`}>
-                {t === 'all' ? 'All' : 'Needs review'}
-              </button>
-            ))}
-          </div>
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search ingredients…" className="s-input w-full sm:w-auto sm:min-w-[16rem]" aria-label="Search ingredients" />
+          {waitingCount > 0 && (
+            <span className="text-xs text-s-muted">
+              {waitingCount} change{waitingCount === 1 ? '' : 's'} waiting for the CEO{isCeo ? <> — <Link href="/ceo/approvals?type=ingredient_change" className="text-primary-ink underline">review in Approvals</Link></> : ''}
+            </span>
+          )}
         </div>
         {cellError && <ErrorBanner message={cellError} />}
-        {(canEdit || canPrice) && <p className="hidden sm:block text-xs text-s-muted">Click a cell to change it — it saves when you leave the cell or press Enter; Esc puts it back. A price you type is the latest price until a newer delivery comes in.</p>}
+        {notice && <p role="status" className="s-card px-3 py-2 text-sm text-s-text">{notice}</p>}
+        {(canEdit || canPrice) && <p className="hidden sm:block text-xs text-s-muted">Click a cell to change it — it saves when you leave the cell or press Enter; Esc puts it back. {isCeo ? 'Your changes apply at once.' : 'Changes go to the CEO for approval before they apply.'} A price is the latest price until a newer delivery comes in.</p>}
         {/* Phone: one compact row per ingredient — name, price, average; nothing to swipe. */}
         <ul className="s-card sm:hidden divide-y divide-s-border">
           {rows.map((m) => (
@@ -129,8 +139,9 @@ export default function IngredientsPage() {
                   <span className="text-sm font-mono whitespace-nowrap">{priceText(m.price?.latestCents, m.price)}</span>
                 </div>
                 <p className="text-xs text-s-muted break-words">
-                  {[categoryLabel(m.category), m.price?.averageCents != null ? `avg ${priceText(m.price.averageCents, m.price)}` : null, lastBought(m.price), m.status === 'needs_review' ? 'needs review' : null].filter(Boolean).join(' · ')}
+                  {[categoryLabel(m.category), m.price?.averageCents != null ? `avg ${priceText(m.price.averageCents, m.price)}` : null, lastBought(m.price)].filter(Boolean).join(' · ')}
                 </p>
+                {m.pendingChange && <PendingNote change={m.pendingChange} />}
               </button>
             </li>
           ))}
@@ -157,20 +168,20 @@ export default function IngredientsPage() {
                 <tr key={m.id} className="border-t border-s-border hover:bg-s-bg-soft align-top">
                   <td className="px-2 py-1 text-s-text min-w-[11rem]">
                     <InlineText value={m.name} label={`Name of ${m.name}`} disabled={!canEdit} required onSave={cell(m, 'name')} />
-                    {(m.status === 'needs_review' || m.perishable) && (
+                    {m.perishable && (
                       <div className="px-1 pb-1 flex flex-wrap gap-1">
-                        {m.status === 'needs_review' && <span className="s-badge-purple text-[10px] px-1.5 py-0.5 rounded">needs review</span>}
-                        {m.perishable && <span className="s-badge-teal text-[10px] px-1.5 py-0.5 rounded">perishable{m.shelfLifeDays ? ` · ${m.shelfLifeDays} d` : ''}</span>}
+                        <span className="s-badge-teal text-[10px] px-1.5 py-0.5 rounded">perishable{m.shelfLifeDays ? ` · ${m.shelfLifeDays} d` : ''}</span>
                       </div>
                     )}
+                    {m.pendingChange && <div className="px-1 pb-1"><PendingNote change={m.pendingChange} /></div>}
                   </td>
                   <td className="px-2 py-1 text-s-muted min-w-[5rem]">
                     <InlineSelect value={unitOf(m)} label={`Unit of ${m.name}`} disabled={!canEdit}
-                      options={unitChoices(unitOf(m), isReviewer).map((u) => ({ value: u, label: u }))} onSave={cell(m, 'unit')} />
+                      options={unitChoices(unitOf(m), isCeo).map((u) => ({ value: u, label: u }))} onSave={cell(m, 'unit')} />
                     {m.purchaseUnit && <p className="px-1 text-[11px] text-s-muted whitespace-nowrap">bought by {m.purchaseUnit} ({m.purchaseUnitFactor})</p>}
                   </td>
                   <td className="px-2 py-1 text-s-muted min-w-[9.5rem]">
-                    <InlineSelect value={m.category ?? ''} label={`Category of ${m.name}`} disabled={!isReviewer}
+                    <InlineSelect value={m.category ?? ''} label={`Category of ${m.name}`} disabled={!canEdit}
                       options={[{ value: '', label: 'Uncategorised' }, ...INVENTORY_CATEGORY_OPTIONS]} onSave={cell(m, 'category')} />
                   </td>
                   <td className="px-2 py-1 text-s-muted min-w-[8.5rem]">
@@ -200,7 +211,7 @@ export default function IngredientsPage() {
         </div>
       </div>
 
-      {open && <Editor master={open} canEdit={canEdit} canPrice={canPrice} isReviewer={isReviewer} onClose={() => setOpen(null)} onPriced={(saved) => setOpen({ ...open, ...saved })} />}
+      {open && <Editor master={open} canEdit={canEdit} canPrice={canPrice} isCeo={isCeo} onClose={() => setOpen(null)} onPriced={(saved) => setOpen({ ...open, ...saved })} onWaiting={(name) => setNotice(`${name}: ${WAITING_NOTE}`)} />}
       {adding && <AddDialog onClose={() => setAdding(false)} />}
     </div>
   )
@@ -231,7 +242,6 @@ function AddDialog({ onClose }: { onClose: () => void }) {
           <option value="">—</option>{INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select></Field>
         <Field label="Spec" hint="What we buy — e.g. 80/20, coarse ground"><Textarea rows={2} value={f.spec} onChange={(e) => setF({ ...f, spec: e.target.value })} /></Field>
-        <p className="text-xs text-s-muted">A new ingredient is marked for review until the CEO or the F&amp;B manager checks it.</p>
         {add.error && <ErrorBanner message={stockErrorText(add.error)} />}
       </div>
       <DialogFooter onCancel={onClose}>
@@ -241,14 +251,25 @@ function AddDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { master: MasterRow; canEdit: boolean; canPrice: boolean; isReviewer: boolean; onClose: () => void; onPriced: (saved: MasterRow) => void }) {
+/** "Waiting for the CEO: Price PKR 75 → PKR 80 / pcs" — what someone asked for, not applied yet. */
+function PendingNote({ change }: { change: NonNullable<MasterRow['pendingChange']> }) {
+  return (
+    <div className="mt-1 text-[11px] leading-snug text-s-muted break-words">
+      <span className="s-badge-purple text-[10px] px-1.5 py-0.5 rounded mr-1">Waiting for the CEO</span>
+      {change.changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join(' · ') || 'A change'}
+      {change.requestedByName ? ` · asked by ${change.requestedByName}` : ''}
+    </div>
+  )
+}
+
+function Editor({ master, canEdit, canPrice, isCeo, onClose, onPriced, onWaiting }: { master: MasterRow; canEdit: boolean; canPrice: boolean; isCeo: boolean; onClose: () => void; onPriced: (saved: MasterRow) => void; onWaiting: (name: string) => void }) {
   const qc = useQueryClient()
   const [d, setD] = useState<Draft>(draftOf(master))
   const [mergeQ, setMergeQ] = useState('')
   const [mergeErr, setMergeErr] = useState('')
   const refresh = () => { void qc.invalidateQueries({ queryKey: ['ingredient-master'] }); void qc.invalidateQueries({ queryKey: ['inventory'] }) }
   const save = useMutation({
-    mutationFn: (extra: Record<string, unknown> = {}) => api.patch<MasterRow>(`/ingredient-master/${master.id}`, {
+    mutationFn: (extra: Record<string, unknown> = {}) => api.patch<Saved>(`/ingredient-master/${master.id}`, {
       name: d.name.trim(), unit: d.unit, category: d.category || null,
       allergens: d.allergens.split(',').map((a) => a.trim()).filter(Boolean),
       yieldPct: Number(d.yieldPct) || 100,
@@ -260,12 +281,12 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
       specFields: d.specFields.filter((r) => r.k.trim()).length ? Object.fromEntries(d.specFields.filter((r) => r.k.trim()).map((r) => [r.k.trim(), r.v.trim()])) : null,
       ...extra,
     }),
-    onSuccess: () => { refresh(); onClose() },
+    onSuccess: (saved) => { if (isPending(saved)) onWaiting(master.name); refresh(); onClose() },
   })
   const { data: candidates = [] } = useQuery<MasterRow[]>({
     queryKey: ['ingredient-master', 'merge', mergeQ],
     queryFn: () => api.get<MasterRow[]>(`/ingredient-master?q=${encodeURIComponent(mergeQ)}&limit=10`),
-    enabled: isReviewer && mergeQ.trim().length > 1,
+    enabled: isCeo && mergeQ.trim().length > 1,
   })
   const merge = useMutation({
     mutationFn: (intoId: string) => api.post(`/ingredient-master/${master.id}/merge`, { intoId }),
@@ -274,7 +295,7 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
       ? `${e.message}. On Inventory, move the stock of one item into the other (count one to zero and the other up), then merge here.`
       : stockErrorText(e)),
   })
-  // Delete (owner, 2026-11-12): CEO / F&B manager, unused ingredients only — the API says why when it is in use.
+  // Delete (owner, 2026-11-12; CEO only since 2026-11-17): unused ingredients only — the API says why when it is in use.
   const confirm = useConfirm()
   const [delErr, setDelErr] = useState('')
   const del = useMutation({
@@ -295,12 +316,13 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
   const set = (k: keyof Draft) => (e: { target: { value: string } }) => setD({ ...d, [k]: e.target.value })
 
   return (
-    <SidePanel title={master.name} subtitle={master.status === 'needs_review' ? 'Needs review' : 'Reviewed'} onClose={onClose} wide>
+    <SidePanel title={master.name} subtitle={isCeo ? undefined : 'Changes go to the CEO for approval'} onClose={onClose} wide>
       <div className="space-y-3">
+        {master.pendingChange && <PendingNote change={master.pendingChange} />}
         <Field label="Name"><Input value={d.name} onChange={set('name')} disabled={!canEdit} /></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Stock unit" hint="Prices are per this unit. g ↔ kg and ml ↔ litres can be switched any time."><select className="s-input" value={d.unit} onChange={set('unit')} disabled={!canEdit}>
-            {unitChoices(d.unit, isReviewer).map((u) => <option key={u}>{u}</option>)}
+            {unitChoices(d.unit, isCeo).map((u) => <option key={u}>{u}</option>)}
           </select></Field>
           <Field label="Category"><select className="s-input" value={d.category} onChange={set('category')} disabled={!canEdit}>
             <option value="">—</option>{INVENTORY_CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -348,7 +370,7 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
               Latest {priceText(master.price.latestCents, master.price)}{lastBought(master.price) ? ` (${lastBought(master.price)})` : ''} — what recipes use.
               {' '}90-day average {priceText(master.price.averageCents, master.price)}{master.price.averageDeliveries ? ` over ${master.price.averageDeliveries} deliveries` : ''}.
             </p>
-            {canPrice && <SetPrice master={master} onSaved={onPriced} />}
+            {canPrice && <SetPrice master={master} onSaved={onPriced} onWaiting={() => { onWaiting(master.name); onClose() }} />}
             <ServdPriceHistory ingredientId={master.id} />
           </div>
         )}
@@ -356,11 +378,10 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
         {save.error && <ErrorBanner message={stockErrorText(save.error)} />}
         {canEdit && (
           <div className="flex flex-wrap gap-2">
-            <Button disabled={save.isPending} onClick={() => save.mutate({})}>Save</Button>
-            {isReviewer && master.status === 'needs_review' && <Button variant="secondary" disabled={save.isPending} onClick={() => save.mutate({ status: 'approved' })}>Save and mark reviewed</Button>}
+            <Button disabled={save.isPending} onClick={() => save.mutate({})}>{isCeo ? 'Save' : 'Send to the CEO'}</Button>
           </div>
         )}
-        {isReviewer && (
+        {isCeo && (
           <div className="border-t border-s-border pt-3">
             <p className="text-sm font-semibold text-s-text">Merge a duplicate</p>
             <p className="text-xs text-s-muted mb-2">Every company&rsquo;s stock item for &ldquo;{master.name}&rdquo; moves to the ingredient you pick; this one is retired.</p>
@@ -376,7 +397,7 @@ function Editor({ master, canEdit, canPrice, isReviewer, onClose, onPriced }: { 
             {mergeErr && <ErrorBanner message={mergeErr} />}
           </div>
         )}
-        {isReviewer && (
+        {isCeo && (
           <div className="border-t border-s-border pt-3">
             <p className="text-sm font-semibold text-s-text">Delete ingredient</p>
             <p className="text-xs text-s-muted mb-2">Only for an ingredient no recipe uses and no company has bought, counted or holds stock of. Otherwise merge it into the right one above.</p>
@@ -457,14 +478,17 @@ function ServdPriceHistory({ ingredientId }: { ingredientId: string }) {
 }
 
 /** Type the servd price from the side panel (the phone's way in). */
-function SetPrice({ master, onSaved }: { master: MasterRow; onSaved: (saved: MasterRow) => void }) {
+function SetPrice({ master, onSaved, onWaiting }: { master: MasterRow; onSaved: (saved: MasterRow) => void; onWaiting: () => void }) {
   const qc = useQueryClient()
   const pack = packOf(master)
   const unit = pack ? packLabel(master, pack) : (master.price?.displayUnit ?? unitOf(master))
   const [v, setV] = useState('')
   const save = useMutation({
-    mutationFn: () => api.put<MasterRow>(`/ingredient-master/${master.id}/price`, { priceCents: priceCentsOf(master, Number(v)) }),
-    onSuccess: (saved) => { setV(''); onSaved(saved); void qc.invalidateQueries({ queryKey: ['ingredient-master'] }) },
+    mutationFn: () => api.put<Saved>(`/ingredient-master/${master.id}/price`, { priceCents: priceCentsOf(master, Number(v)) }),
+    onSuccess: (saved) => {
+      setV(''); void qc.invalidateQueries({ queryKey: ['ingredient-master'] })
+      if (isPending(saved)) onWaiting(); else onSaved(saved)
+    },
   })
   const ok = Number(v) > 0
   return (

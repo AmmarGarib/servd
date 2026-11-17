@@ -87,10 +87,11 @@ describe('delete from the Ingredients sheet', () => {
     expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: itemA } })).masterIngredientId).toBe(id)
   })
 
-  it('the F&B manager may delete; a chef gets 403', async () => {
+  it('deleting is the CEO\'s only (owner, 2026-11-17): the F&B manager and a chef get 403', async () => {
     const id = await ingredient('Old flour')
     expect((await call(u.chef!, 'DELETE', `/ingredient-master/${id}`)).statusCode).toBe(403)
-    expect((await call(u.fnb!, 'DELETE', `/ingredient-master/${id}`)).statusCode).toBe(200)
+    expect((await call(u.fnb!, 'DELETE', `/ingredient-master/${id}`)).statusCode).toBe(403)
+    expect((await call(u.ceo!, 'DELETE', `/ingredient-master/${id}`)).statusCode).toBe(200)
   })
 
   it('a line on a CANCELLED purchase order does not block the delete; an open PO line does', async () => {

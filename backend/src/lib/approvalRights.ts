@@ -103,6 +103,8 @@ export const APPROVAL_TYPES = [
   'social_connection',     // a brand's Facebook / Instagram page Marketing connected, waiting for the CEO
   // Kitchen stations (owner C3, 2026-10-26).
   'station_change',        // a new kitchen station or a change the F&B manager / chef raised, waiting for the CEO
+  // Ingredients sheet (owner, 2026-11-17).
+  'ingredient_change',     // a change to servd's Ingredients sheet (name, unit, category, group, spec, price…) waiting for the CEO
   // Overbooking (owner C10, 2026-10-26).
   'reservation_overbook',  // a booking (or a change of one) past capacity a manager raised, waiting for the CEO
   // Brand stock moves (owner, 2026-10-27).
@@ -323,6 +325,13 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // 2026-10-26: "F&B manager and kitchen managers may add or change kitchen stations, with CEO approval";
     // "Approval stays with me").
     label: 'Kitchen station changes', section: 'ceo', queueModule: 'kds_config', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  ingredient_change: {
+    // POST /ingredient-master/requests/:id/approve | reject (modules/ingredientMaster/changeRequests.ts): the CEO
+    // only, never handed over (owner, 2026-11-17: "changes in this sheet need to be approved by me"). The sheet is
+    // servd-wide, so the item has no company (ceoOnly by tenantId null). The CEO's own edit applies at once.
+    label: 'Ingredients sheet changes', section: 'ceo', queueModule: 'recipes', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   staff_offboard: {
@@ -1165,6 +1174,11 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const r = await db.stationChangeRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, requestedAt: true, kind: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.requestedAt, kind: r.kind })
     }
+    case 'ingredient_change': {
+      // Servd-wide (no company): companyIds [] + ownerTenantId null → the CEO's.
+      const r = await db.ingredientMasterChangeRequest.findUnique({ where: { id }, select: { status: true, requestedById: true, requestedAt: true } })
+      return r && subject({ companyIds: [], ownerTenantId: null, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.requestedAt })
+    }
     case 'staff_offboard': {
       const r = await db.loginOffboardRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, createdAt: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.createdAt })
@@ -1327,6 +1341,7 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   work_pin: ['pending'],
   social_connection: ['pending'],
   station_change: ['pending'],
+  ingredient_change: ['pending'],
   staff_offboard: ['pending'],
   employee_delete: ['pending'],
   intern_enrollment: ['pending_approval'],

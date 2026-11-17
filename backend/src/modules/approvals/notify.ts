@@ -155,6 +155,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   work_pin: spec(() => '/hr/employees'),
   social_connection: spec(() => '/calendar/social'),
   station_change: spec(() => '/kds/config'),
+  ingredient_change: spec(() => '/kitchen/ingredients'),
   staff_offboard: spec(() => '/hr/employees'),
   employee_delete: spec(() => '/hr/employees'),
   // Intern Management (owner, 2026-11-06): the CEO approves enrolments; stipends go HR → finance → the CEO.
@@ -335,6 +336,12 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       const b = await db.concept.findUnique({ where: { id: r.conceptId }, select: { name: true } })
       const name = (r.changes as { name?: string } | null)?.name
       return { ref: `${r.kind === 'create' ? 'New kitchen station' : 'Kitchen station change'}${name ? ` "${name}"` : ''} — ${b?.name ?? 'a brand'}` }
+    }
+    case 'ingredient_change': {
+      const r = await db.ingredientMasterChangeRequest.findUnique({ where: { id }, select: { masterIngredientId: true } })
+      if (!r) return null
+      const m = await db.ingredientMaster.findUnique({ where: { id: r.masterIngredientId }, select: { name: true } })
+      return { ref: `Ingredients sheet change — ${m?.name ?? 'an ingredient'}` }
     }
     case 'staff_offboard': {
       const r = await db.loginOffboardRequest.findUnique({ where: { id }, select: { userId: true } })

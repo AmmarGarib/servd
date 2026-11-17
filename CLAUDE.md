@@ -2495,6 +2495,19 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   reviewers' (and `MASTER_UNIT_IN_USE`). A new ingredient keeps the unit it was added in. Both "add ingredient" forms
   make the unit a required pick (no kg default) and take an optional price per that unit
   (`MasterIngredientPicker.tsx priceCentsFor`). Tests: `tests/ingredientMaster.test.ts`.
+- **Every change to the Ingredients sheet waits for the CEO (owner, 2026-11-17: "remove the 'needs review' … changes
+  in this sheet need to be approved by me"; REPLACES K2's needs-review marking).** Contract: header of
+  `modules/ingredientMaster/changeRequests.ts`. Anyone but the CEO editing the sheet (`PATCH /ingredient-master/:id`,
+  `PUT /:id/price`, `PUT /:id/group`) gets 202 `{ pendingApproval, request }` and nothing changes; the CEO's own edit
+  applies at once. Filling a blank applies at once (an ingredient's FIRST price; a group on an ungrouped ingredient);
+  adding a new ingredient stays at once. ONE pending `IngredientMasterChangeRequest` per ingredient (servd-wide, no
+  tenantId — deliberate; migration `20261117120000`); the same person's edits add to it, anyone else's is 409
+  `CHANGE_PENDING`. Approval type `ingredient_change` (section ceo, no company, never delegable): `GET
+  /ingredient-master/requests`, `POST /requests/:id/approve` (applies through the sheet's own engines —
+  `applyMasterPatch` / `applyMasterGroup` / `applyMasterPrice` — every check re-runs; a refusal leaves it pending) |
+  `/reject {note ≥10}` | `/cancel` (the asker). Merge and delete are the CEO's only (`SHEET_APPROVERS`). Rows carry
+  `pendingChange` ("Waiting for the CEO: Price PKR 75 → PKR 80"); the "needs review" badge, tab and spec-list column
+  are gone (`IngredientMaster.status` stays, unread). Tests: `tests/ingredientMaster.test.ts`.
 - **Suppliers belong to servd (owner, 2026-11-14: "we need to make suppliers belong to servd. just like the ingredient
   master list").** `SupplierMaster` (`supplier_masters`, deliberately NO `tenantId`): the DEFINITION — name, category,
   phone, email, WhatsApp, address, NTN, filer status, WHT exemption, default tax authority / WHT section. Each company's

@@ -30,6 +30,8 @@ export interface MasterRow {
   spec: string | null
   specFields: Record<string, string> | null
   status: 'approved' | 'needs_review'
+  /** A change someone asked for that waits for the CEO (owner, 2026-11-17) — not applied yet. */
+  pendingChange?: { id: string; requestedById: string; requestedByName: string | null; requestedAt: string; changes: Array<{ field: string; label: string; from: string; to: string }> } | null
   companyItemId: string | null
   /** The unit it is shown and priced in (the one picked for it, else the stock unit). */
   shownUnit?: string
@@ -204,7 +206,7 @@ export function MasterIngredientPicker({ label, onPicked, className = '', tenant
                   className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-s-bg-soft disabled:opacity-50 ${i === active ? 'bg-s-bg-soft' : ''}`}>
                   <span className="truncate text-s-text">{r.name} <span className="text-xs text-s-muted">({r.shownUnit ?? r.stockUnit}{r.price?.latestCents != null ? ` · PKR ${(r.price.latestCents / 100).toLocaleString('en-PK')}/${r.price.displayUnit}` : ''}){r.group ? ` · ${r.group.name}` : ''}</span></span>
                   <span className="shrink-0 text-[11px] text-s-muted">
-                    {r.status === 'needs_review' ? 'needs review' : r.companyItemId ? 'in stock list' : 'not stocked yet'}
+                    {r.companyItemId ? 'in stock list' : 'not stocked yet'}
                   </span>
                 </button>
               </li>

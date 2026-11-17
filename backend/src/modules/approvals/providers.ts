@@ -27,6 +27,7 @@ import { locationPins } from '../locations/approvalProvider.js'
 import { workPins } from '../hr/workPinApprovalProvider.js'
 import { socialConnections } from '../socialConnections/approvalProvider.js'
 import { stationChanges } from '../stations/approvalProvider.js'
+import { ingredientChanges } from '../ingredientMaster/approvalProvider.js'
 import { staffOffboards } from '../auth/offboardApprovalProvider.js'
 import { employeeDeletes } from '../hr/employeeDeleteApprovalProvider.js'
 import { internEnrollments, internPayrollFinanceReviews, internPayrollRuns } from '../hr/internApprovalProvider.js'
@@ -1590,6 +1591,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   workPins,
   socialConnections,
   stationChanges,
+  ingredientChanges,
   staffOffboards,
   employeeDeletes,
   internEnrollments,

@@ -73,7 +73,7 @@ describe('master → company items: one copy rule', () => {
   })
 
   it('a master edit reaches every company\'s item: allergens, yield, use-by, name', async () => {
-    const r = await call(u.chefA!, 'PATCH', `/ingredient-master/${saffron}`, { name: `${P} Saffron threads`, allergens: ['sulphites'], yieldPct: 90, perishable: true, shelfLifeDays: 30 })
+    const r = await call(u.ceo!, 'PATCH', `/ingredient-master/${saffron}`, { name: `${P} Saffron threads`, allergens: ['sulphites'], yieldPct: 90, perishable: true, shelfLifeDays: 30 })
     expect(r.statusCode, r.body).toBe(200)
     for (const id of [itemA, itemB]) {
       expect(await def(id)).toMatchObject({ name: `${P} Saffron threads`, allergens: ['sulphites'], yieldPct: 90, perishable: true, shelfLifeDays: 30 })
@@ -82,7 +82,7 @@ describe('master → company items: one copy rule', () => {
 
   it('an item that drifted from the sheet is brought back on the next master edit', async () => {
     await prisma.inventoryItem.update({ where: { id: itemB }, data: { allergens: [], yieldPct: 50, perishable: false, shelfLifeDays: null } })
-    const r = await call(u.chefA!, 'PATCH', `/ingredient-master/${saffron}`, { spec: 'Grade 1, Iranian' })
+    const r = await call(u.ceo!, 'PATCH', `/ingredient-master/${saffron}`, { spec: 'Grade 1, Iranian' })
     expect(r.statusCode, r.body).toBe(200)
     expect(await def(itemB)).toMatchObject({ allergens: ['sulphites'], yieldPct: 90, perishable: true, shelfLifeDays: 30 })
   })

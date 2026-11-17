@@ -2939,6 +2939,28 @@ model IngredientGroup {
 // like its ingredient — DELIBERATELY no tenantId (platform data: the one servd price, lib/ingredientPrices.ts). Rows
 // are never edited or deleted: each edit is a new row, so the history keeps every typed price. Paisa per BASE unit
 // (g / ml / pcs) — fractional, as a kg price is typed.
+// A change to servd's Ingredients sheet waiting for the CEO (owner, 2026-11-17: "changes in this sheet need to be
+// approved by me"). SERVD-WIDE platform data like the master itself — deliberately NO tenantId (the sheet belongs to
+// no company). One pending request per ingredient (advisory lock in modules/ingredientMaster/changeRequests.ts); the
+// same person's further edits add to it. `changes` = { patch?, price?: {perBaseCents, priceCents, displayUnit},
+// group?: {groupId} }. Applied through the sheet's own engines when the CEO approves.
+model IngredientMasterChangeRequest {
+  id                 String    @id @default(uuid())
+  masterIngredientId String
+  status             String    @default("pending") // pending | approved | rejected | cancelled
+  changes            Json
+  requestedById      String
+  requestedAt        DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  decidedById        String?
+  decidedAt          DateTime?
+  decisionNote       String?
+
+  @@index([masterIngredientId, status])
+  @@index([status, requestedAt])
+  @@map("ingredient_master_change_requests")
+}
+
 model IngredientMasterPrice {
   id                 String           @id @default(uuid())
   masterIngredientId String

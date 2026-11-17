@@ -46,6 +46,10 @@
 //   GET /ingredient-master?groupId filters by group; POST /ingredient-master takes groupId (its category defaults to
 //   the group's). Groups are platform data like the master (no tenantId, deliberately).
 // Every write is audited (entity IngredientMaster, no company — platform data).
+//
+// SINCE 2026-11-17 (owner: "changes in this sheet need to be approved by me") every edit above by anyone but the CEO
+// answers 202 { pendingApproval, request } and waits for the CEO (changeRequests.ts); merge and delete are the CEO's
+// only. The role rules above still apply when the CEO's approval applies the change.
 
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
@@ -64,11 +68,19 @@ import { applyMasterToItemsTx, cleanIngredientName, findOrCreateMasterTx, normal
 import { moveItemLotsToCategoryTx, costsHiddenFor } from '../inventory/routes.js'
 import { normalizeUnit } from '../../lib/units.js'
 import { AVERAGE_DAYS, displayUnitOf, masterPriceHistory, masterPricesMany, type MasterPrice } from '../../lib/ingredientPrices.js'
+import { changedPatchFields, ingredientChangeRoutes, pendingChangesOf, raiseIngredientChange, type PendingChange } from './changeRequests.js'
 
 /** Who fixes a master definition: the recipe editors (POST/PUT /recipes are MANAGERS). */
 export const MASTER_EDITORS = MANAGERS
 /** Who marks a new ingredient reviewed and merges duplicates (K2): the CEO and the F&B manager. */
 export const MASTER_REVIEWERS = ['admin', 'fnb_manager'] as UserRole[]
+/**
+ * Who changes servd's Ingredients sheet without asking (owner, 2026-11-17: "changes in this sheet need to be approved
+ * by me"): the CEO only. Everyone else's edit is a request the CEO approves (changeRequests.ts); deleting and merging
+ * ingredients are the CEO's alone.
+ */
+export const SHEET_APPROVERS = ['admin'] as UserRole[]
+export const isCeo = (req: FastifyRequest) => (SHEET_APPROVERS as string[]).includes(req.staffUser?.role ?? '')
 /** Who adds a new ingredient: the recipe editors and the buyer. */
 const MASTER_CREATORS = PROCUREMENT_TEAM
 // Whoever raises a PO adds a new item / group from the PO form — finance too (owner, 2026-11-10). Prices stay
@@ -93,15 +105,15 @@ const createSchema = z.object({
   shelfLifeDays: z.number().int().min(1).max(3650).nullable().optional(),
   groupId: z.string().uuid().nullable().optional(),
 })
-const patchSchema = createSchema.omit({ groupId: true }).partial().extend({
+export const patchSchema = createSchema.omit({ groupId: true }).partial().extend({
   status: z.enum(['approved', 'needs_review']).optional(),
   // One piece (a slice, a patty) of a weighed ingredient, in grams / ml — recipe lines can then be typed in pieces.
   pieceGrams: z.number().positive().max(100_000).nullable().optional(),
   pieceLabel: z.string().trim().max(20).nullable().optional(),
 })
 
-type MasterDb = Prisma.IngredientMasterGetPayload<object>
-type GroupRow = { id: string; name: string; category: string; active: boolean }
+export type MasterDb = Prisma.IngredientMasterGetPayload<object>
+export type GroupRow = { id: string; name: string; category: string; active: boolean }
 
 const groupShape = (g: GroupRow) => ({ id: g.id, name: g.name, category: g.category, active: g.active })
 
@@ -114,7 +126,7 @@ async function groupsById(ids: Array<string | null>): Promise<Map<string, GroupR
 }
 
 /** A live group that fits the ingredient's category (a group never moves an account). */
-async function assertGroupFits(groupId: string, category: string | null): Promise<GroupRow> {
+export async function assertGroupFits(groupId: string, category: string | null): Promise<GroupRow> {
   const g = await prisma.ingredientGroup.findUnique({ where: { id: groupId } })
   if (!g) throw new NotFoundError('IngredientGroup', groupId)
   if (!g.active) throw new AppError('GROUP_SWITCHED_OFF', `The group "${g.name}" is switched off`, 422)
@@ -153,8 +165,10 @@ function priceOf(m: MasterDb, p: MasterPrice | undefined | null) {
   }
 }
 
-function shape(m: MasterDb, companyItemId: string | null, price?: MasterPrice | null, group?: GroupRow | null) {
+function shape(m: MasterDb, companyItemId: string | null, price?: MasterPrice | null, group?: GroupRow | null, pending?: PendingChange | null) {
   return {
+    // A change someone asked for that waits for the CEO (owner, 2026-11-17) — shown on the sheet, not applied.
+    pendingChange: pending ?? null,
     id: m.id, name: m.name, stockUnit: m.stockUnit, category: m.category,
     // The unit it is shown and priced in (the one picked for it, else the stock unit).
     shownUnit: displayUnitOf(m.stockUnit, m.priceUnit).unit,
@@ -168,7 +182,7 @@ function shape(m: MasterDb, companyItemId: string | null, price?: MasterPrice | 
   }
 }
 
-async function loadLive(id: string): Promise<MasterDb> {
+export async function loadLive(id: string): Promise<MasterDb> {
   const m = await prisma.ingredientMaster.findUnique({ where: { id } })
   if (!m) throw new NotFoundError('IngredientMaster', id)
   return m
@@ -177,6 +191,9 @@ async function loadLive(id: string): Promise<MasterDb> {
 export async function ingredientMasterRoutes(fastify: FastifyInstance) {
 
   const readers = { preHandler: [requireAuth(...ALL_STAFF), requireModule(...READ_MODULES)] }
+
+  // Changes waiting for the CEO: GET /requests, POST /requests/:id/approve | reject | cancel.
+  await ingredientChangeRoutes(fastify, { readers })
 
   // ── Item groups (owner, 2026-11-07) ────────────────────────────────────────────────────────────────────────────
   fastify.get<{ Querystring: { category?: string; all?: string } }>('/groups', readers, async (req) => {
@@ -242,17 +259,19 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     return groupShape(g)
   })
 
-  fastify.put<{ Params: { id: string } }>('/:id/group', { preHandler: [requireAuth(...PO_ITEM_ADDERS), requireModule(...READ_MODULES)] }, async (req) => {
+  // Putting an ungrouped ingredient in a group applies at once (it fills a blank — the PO form does it); MOVING one
+  // to another group, or out of one, waits for the CEO (owner, 2026-11-17), unless the CEO does it.
+  fastify.put<{ Params: { id: string } }>('/:id/group', { preHandler: [requireAuth(...PO_ITEM_ADDERS), requireModule(...READ_MODULES)] }, async (req, reply) => {
     const { groupId } = z.object({ groupId: z.string().uuid().nullable() }).parse(req.body)
     const m = await loadLive(req.params.id)
     if (m.mergedIntoId) throw new AppError('MASTER_MERGED', `${m.name} was merged into another ingredient — group that one`, 409)
     const g = groupId ? await assertGroupFits(groupId, m.category) : null
-    const updated = await prisma.ingredientMaster.update({ where: { id: m.id }, data: { groupId } })
-    await audit({
-      category: 'identity', action: 'ingredient_master.group', entity: 'IngredientMaster', entityId: m.id,
-      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
-      before: { groupId: m.groupId }, after: { groupId, group: g?.name ?? null, actorRole: req.staffUser!.role },
-    })
+    if (!isCeo(req) && m.groupId !== null) {
+      if (groupId === m.groupId) throw new AppError('NOTHING_TO_CHANGE', 'That is how the ingredient is already.', 409)
+      const request = await raiseIngredientChange(req, m, { group: { groupId } })
+      return reply.status(202).send({ pendingApproval: true, request })
+    }
+    const updated = await applyMasterGroup(req, m, groupId, g)
     const mine = await companyItems(req, [m.id])
     const hide = costsHiddenFor(req)
     return shape(updated, mine.get(m.id) ?? null, hide ? null : (await masterPricesMany([m.id])).get(m.id), g)
@@ -277,12 +296,13 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     const ids = rows.map((r) => r.id)
     const hide = costsHiddenFor(req)
     // Independent reads in parallel (owner, 2026-11-12: the ingredient drop-down lagged while typing).
-    const [mine, prices, groups] = await Promise.all([
+    const [mine, prices, groups, pending] = await Promise.all([
       companyItems(req, ids),
       hide ? Promise.resolve(new Map<string, MasterPrice>()) : masterPricesMany(ids),
       groupsById(rows.map((r) => r.groupId)),
+      pendingChangesOf(ids, { hidePrices: hide }),
     ])
-    return rows.map((r) => shape(r, mine.get(r.id) ?? null, hide ? null : prices.get(r.id), r.groupId ? groups.get(r.groupId) : null))
+    return rows.map((r) => shape(r, mine.get(r.id) ?? null, hide ? null : prices.get(r.id), r.groupId ? groups.get(r.groupId) : null, pending.get(r.id)))
   })
 
   fastify.get<{ Params: { id: string } }>('/:id/prices', readers, async (req) => {
@@ -295,20 +315,22 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
   // Type the servd price on the sheet (owner, 2026-10-29: "just make this editable within the table"). Paisa per
   // DISPLAY unit (per kg / litre / pcs, as the sheet shows it); stored per base unit as a new row, so the history
   // keeps every typed price. It is the latest price until a newer delivery comes in (lib/ingredientPrices.ts).
-  fastify.put<{ Params: { id: string } }>('/:id/price', { preHandler: [requireAuth(...MASTER_CREATORS), requireModule(...READ_MODULES)] }, async (req) => {
+  fastify.put<{ Params: { id: string } }>('/:id/price', { preHandler: [requireAuth(...MASTER_CREATORS), requireModule(...READ_MODULES)] }, async (req, reply) => {
     if (costsHiddenFor(req)) throw new ForbiddenError('Prices are not shown to this login')
     const { priceCents } = z.object({ priceCents: z.number().positive().max(100_000_000_00) }).parse(req.body)
     const m = await loadLive(req.params.id)
     if (m.mergedIntoId) throw new AppError('MASTER_MERGED', `${m.name} was merged into another ingredient — price that one`, 409)
     const disp = displayUnitOf(m.stockUnit, m.priceUnit)
-    const before = (await masterPricesMany([m.id])).get(m.id)
-    await prisma.ingredientMasterPrice.create({ data: { masterIngredientId: m.id, perBaseCents: priceCents / disp.baseUnits, setById: req.staffUser!.id } })
-    await audit({
-      category: 'identity', action: 'ingredient_master.price', entity: 'IngredientMaster', entityId: m.id,
-      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
-      before: { latestCents: before?.latestPerBase != null ? Math.round(before.latestPerBase * disp.baseUnits * 100) / 100 : null, source: before?.latestSource ?? null },
-      after: { priceCents, displayUnit: disp.unit, actorRole: req.staffUser!.role },
-    })
+    // The FIRST price of an ingredient with none applies at once (a new ingredient priced as it is added); changing a
+    // price waits for the CEO (owner, 2026-11-17), unless the CEO types it.
+    if (!isCeo(req)) {
+      const now = (await masterPricesMany([m.id])).get(m.id)
+      if (now?.latestPerBase != null) {
+        const request = await raiseIngredientChange(req, m, { price: { perBaseCents: priceCents / disp.baseUnits, priceCents, displayUnit: disp.unit } })
+        return reply.status(202).send({ pendingApproval: true, request })
+      }
+    }
+    await applyMasterPrice(req, m, { perBaseCents: priceCents / disp.baseUnits, priceCents, displayUnit: disp.unit }, req.staffUser!.id)
     const mine = await companyItems(req, [m.id])
     return shape(m, mine.get(m.id) ?? null, (await masterPricesMany([m.id])).get(m.id))
   })
@@ -317,7 +339,7 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     const m = await loadLive(req.params.id)
     const mine = await companyItems(req, [m.id])
     const hide = costsHiddenFor(req)
-    return shape(m, mine.get(m.id) ?? null, hide ? null : (await masterPricesMany([m.id])).get(m.id), (await groupsById([m.groupId])).get(m.groupId ?? '') ?? null)
+    return shape(m, mine.get(m.id) ?? null, hide ? null : (await masterPricesMany([m.id])).get(m.id), (await groupsById([m.groupId])).get(m.groupId ?? '') ?? null, (await pendingChangesOf([m.id], { hidePrices: hide })).get(m.id))
   })
 
   fastify.post('/', { preHandler: requireAuth(...PO_ITEM_ADDERS) }, async (req, reply) => {
@@ -351,118 +373,18 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     return reply.status(created ? 201 : 200).send({ ...shape(master as MasterDb, mine.get(master.id) ?? null, undefined, (await groupsById([master.groupId ?? null])).get(master.groupId ?? '') ?? null), existing: !created })
   })
 
-  fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MASTER_EDITORS) }, async (req) => {
+  // Every change to the sheet waits for the CEO (owner, 2026-11-17: "changes in this sheet need to be approved by me"):
+  // anyone but the CEO gets 202 { pendingApproval, request } and nothing changes (changeRequests.ts). The CEO's own
+  // edit applies at once.
+  fastify.patch<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MASTER_EDITORS) }, async (req, reply) => {
     const body = patchSchema.parse(req.body)
-    const before = await loadLive(req.params.id)
-    if (before.mergedIntoId) throw new AppError('MASTER_MERGED', 'This ingredient was merged into another — edit that one', 409, { mergedIntoId: before.mergedIntoId })
-    const isReviewer = (MASTER_REVIEWERS as string[]).includes(req.staffUser!.role)
-    if (body.status !== undefined && body.status !== before.status && !isReviewer) {
-      throw new ForbiddenError('Only the CEO or the F&B manager marks an ingredient reviewed')
+    if (!isCeo(req)) {
+      const m = await loadLive(req.params.id)
+      if (m.mergedIntoId) throw new AppError('MASTER_MERGED', 'This ingredient was merged into another — edit that one', 409, { mergedIntoId: m.mergedIntoId })
+      const request = await raiseIngredientChange(req, m, { patch: changedPatchFields(m, body) })
+      return reply.status(202).send({ pendingApproval: true, request })
     }
-    // The master is kept in its family's base unit (g / ml / pcs): a unit of the same family is no change.
-    const stockUnit = body.unit !== undefined ? unitFamily(body.unit).base : before.stockUnit
-    // The unit picked is the unit it is shown and priced in (owner, 2026-11-17); the base unit itself = none stored.
-    // A pick inside the same family (g → kg) changes nothing in stock or recipes, so any sheet editor may make it.
-    const pickedUnit = body.unit !== undefined ? normalizeUnit(body.unit) : undefined
-    const priceUnit = pickedUnit === undefined ? undefined : (pickedUnit === stockUnit || !sameUnitFamily(pickedUnit, stockUnit) ? null : pickedUnit)
-    const categoryChanges = body.category !== undefined && body.category !== before.category
-    // Category and unit reach every company's books / stock: the CEO's and the F&B manager's only (owner review).
-    if ((categoryChanges || stockUnit !== before.stockUnit) && !isReviewer) {
-      throw new ForbiddenError('Only the CEO or the F&B manager changes an ingredient\'s category or unit')
-    }
-    // Buying unit + factor (owner review N3): reviewers only; a new buying unit must come with its factor. They reach
-    // only the companies that buy in the master's buying unit — a company buying in its own unit ("bag") keeps it.
-    const newPurchaseUnit = body.purchaseUnit !== undefined ? (body.purchaseUnit?.trim() || null) : before.purchaseUnit
-    const buyingChanges = newPurchaseUnit !== before.purchaseUnit || (body.purchaseUnitFactor !== undefined && body.purchaseUnitFactor !== before.purchaseUnitFactor)
-    if (buyingChanges && !isReviewer) throw new ForbiddenError('Only the CEO or the F&B manager changes how an ingredient is bought')
-    if (newPurchaseUnit !== before.purchaseUnit && body.purchaseUnitFactor === undefined) {
-      throw new AppError('FACTOR_REQUIRED', 'Give how many stock units one new buying unit holds (purchaseUnitFactor) with the new buying unit', 400)
-    }
-    if (body.pieceGrams != null && stockUnit === 'pcs') {
-      throw new AppError('PIECE_ON_COUNT_UNIT', 'This ingredient is already counted in pieces — a piece weight is only for ingredients kept in grams or ml', 422)
-    }
-    const name = body.name !== undefined ? cleanIngredientName(body.name) : before.name
-    const normalizedName = normalizeIngredientName(name)
-    if (normalizedName !== before.normalizedName || stockUnit !== before.stockUnit) {
-      const clash = await prisma.ingredientMaster.findFirst({ where: { id: { not: before.id }, mergedIntoId: null, normalizedName, stockUnit }, select: { id: true } })
-      if (clash) throw new AppError('MASTER_NAME_TAKEN', `"${name}" in ${stockUnit} is already in servd's ingredients — merge the two instead`, 409, { existingId: clash.id })
-    }
-    const linked = await prisma.inventoryItem.findMany({
-      where: { masterIngredientId: before.id, deletedAt: null }, select: { id: true, name: true, tenantId: true, category: true, unit: true, purchaseUnit: true },
-    })
-    if (categoryChanges) {
-      // A category change posts a class move in EVERY company that stocks it — only an editor of all of them.
-      const members = new Set(req.staffUser!.memberTenantIds ?? [])
-      const outside = [...new Set(linked.map((i) => i.tenantId).filter((t): t is string => !!t && !members.has(t)))]
-      if (outside.length > 0) {
-        throw new AppError('MASTER_CATEGORY_NEEDS_MEMBERSHIP', `${outside.length} other compan${outside.length === 1 ? 'y stocks' : 'ies stock'} this ingredient — a category change books in each, so it needs someone who belongs to all of them`, 409, { companies: outside.length })
-      }
-    }
-    const linkedIds = linked.map((i) => i.id)
-    if (stockUnit !== before.stockUnit && linkedIds.length > 0) {
-      // A unit change rescales every recipe quantity and every lot — only before anything was stocked or cooked.
-      const [lots, lines, poLines] = await Promise.all([
-        prisma.stockLot.count({ where: { inventoryItemId: { in: linkedIds } } }),
-        prisma.recipeIngredient.count({ where: { inventoryItemId: { in: linkedIds } } }),
-        prisma.purchaseOrderLine.count({ where: { inventoryItemId: { in: linkedIds } } }),
-      ])
-      const stocked = await prisma.inventoryItem.count({ where: { id: { in: linkedIds }, currentStock: { not: 0 } } })
-      if (lots + lines + poLines + stocked > 0) {
-        throw new AppError('MASTER_UNIT_IN_USE', 'Companies already stock, buy or cook this ingredient in its current unit — add a new ingredient in the new unit instead', 409)
-      }
-    }
-    if (categoryChanges) {
-      for (const t of new Set(linked.map((i) => i.tenantId).filter((x): x is string => !!x))) await ensureFifoReady(t)
-    }
-    const after = await prisma.$transaction(async (tx) => {
-      const row = await tx.ingredientMaster.update({
-        where: { id: before.id },
-        data: {
-          name, normalizedName, stockUnit,
-          ...(priceUnit !== undefined && { priceUnit }),
-          ...(body.category !== undefined && { category: body.category }),
-          ...(body.allergens !== undefined && { allergens: body.allergens }),
-          ...(body.yieldPct !== undefined && { yieldPct: body.yieldPct }),
-          ...(body.purchaseUnit !== undefined && { purchaseUnit: body.purchaseUnit?.trim() || null }),
-          ...(body.purchaseUnitFactor !== undefined && { purchaseUnitFactor: body.purchaseUnitFactor }),
-          ...(body.spec !== undefined && { spec: body.spec?.trim() || null }),
-          ...(body.specFields !== undefined && { specFields: body.specFields === null ? Prisma.DbNull : (body.specFields as Prisma.InputJsonValue) }),
-          ...(body.status !== undefined && { status: body.status }),
-          ...(body.perishable !== undefined && { perishable: body.perishable }),
-          ...(body.shelfLifeDays !== undefined && { shelfLifeDays: body.shelfLifeDays }),
-          ...(body.pieceGrams !== undefined && { pieceGrams: body.pieceGrams }),
-          ...(body.pieceLabel !== undefined && { pieceLabel: body.pieceLabel?.trim() || null }),
-        },
-      })
-      if (linkedIds.length > 0) {
-        // THE copy rule (lib/ingredientMaster.ts applyMasterToItemsTx): every linked item mirrors the master's
-        // allergens, yield and use-by definition; a rename reaches each company's item (unless it has another item of
-        // that name); a unit change reaches all; the buying unit + factor reach only items buying in the old one.
-        await applyMasterToItemsTx(tx, row, linkedIds, {
-          rename: name !== before.name,
-          unit: stockUnit !== before.stockUnit,
-          ...(buyingChanges ? { buyingFrom: { purchaseUnit: before.purchaseUnit } } : {}),
-        })
-        if (categoryChanges) {
-          // Each company's lots move to the new cost class with their own posting (the inventory reclass).
-          await lockItemsTx(tx, linkedIds)
-          for (const it of linked) {
-            const fresh = await tx.inventoryItem.findUniqueOrThrow({ where: { id: it.id }, select: { tenantId: true, category: true } })
-            if (fresh.tenantId) {
-              await moveItemLotsToCategoryTx(tx, { itemId: it.id, itemName: it.name, tenantId: fresh.tenantId, fromCategory: fresh.category, toCategory: body.category ?? null, actor: req.staffUser! })
-            }
-            await tx.inventoryItem.update({ where: { id: it.id }, data: { category: body.category ?? null } })
-          }
-        }
-      }
-      return row
-    }, { maxWait: 10_000, timeout: 60_000 })
-    await audit({
-      category: 'identity', action: 'ingredient_master.update', entity: 'IngredientMaster', entityId: before.id,
-      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
-      before: { name: before.name, stockUnit: before.stockUnit, category: before.category, allergens: before.allergens, yieldPct: before.yieldPct, purchaseUnit: before.purchaseUnit, purchaseUnitFactor: before.purchaseUnitFactor, spec: before.spec, perishable: before.perishable, shelfLifeDays: before.shelfLifeDays, status: before.status },
-      after: { name: after.name, stockUnit: after.stockUnit, category: after.category, allergens: after.allergens, yieldPct: after.yieldPct, purchaseUnit: after.purchaseUnit, purchaseUnitFactor: after.purchaseUnitFactor, spec: after.spec, perishable: after.perishable, shelfLifeDays: after.shelfLifeDays, status: after.status, linkedItems: linkedIds.length },
-    })
+    const after = await applyMasterPatch(req, req.params.id, body)
     const mine = await companyItems(req, [after.id])
     return shape(after, mine.get(after.id) ?? null, costsHiddenFor(req) ? null : (await masterPricesMany([after.id])).get(after.id))
   })
@@ -474,7 +396,7 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
   // MASTER_IN_USE with the reasons (merge it into the right one instead). Those empty stock items go to the Trash with
   // it (inventory_item, each its own company); the ingredient itself is parked as a snapshot (`ingredient_master`,
   // with its typed prices) under the ACTIVE company and comes back from the Trash with its stock items re-linked.
-  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...MASTER_REVIEWERS) }, async (req) => {
+  fastify.delete<{ Params: { id: string } }>('/:id', { preHandler: requireAuth(...SHEET_APPROVERS) }, async (req) => {
     const m = await loadLive(req.params.id)
     if (m.mergedIntoId) throw new AppError('MASTER_MERGED', 'This ingredient was already merged into another', 409, { mergedIntoId: m.mergedIntoId })
     const result = await prisma.$transaction(async (tx) => {
@@ -525,7 +447,7 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
     return { deleted: m.id, ...result }
   })
 
-  fastify.post<{ Params: { id: string } }>('/:id/merge', { preHandler: requireAuth(...MASTER_REVIEWERS) }, async (req) => {
+  fastify.post<{ Params: { id: string } }>('/:id/merge', { preHandler: requireAuth(...SHEET_APPROVERS) }, async (req) => {
     const { intoId } = z.object({ intoId: z.string().min(1).max(64) }).parse(req.body)
     if (intoId === req.params.id) throw new AppError('MERGE_SAME', 'Pick another ingredient to merge into', 422)
     const src = await loadLive(req.params.id)
@@ -590,4 +512,152 @@ export async function ingredientMasterRoutes(fastify: FastifyInstance) {
 async function repointRecipeLinesTx(tx: Prisma.TransactionClient, fromId: string, toId: string): Promise<number> {
   const r = await tx.$executeRaw`UPDATE recipe_ingredients SET "masterIngredientId" = ${toId} WHERE "masterIngredientId" = ${fromId}`
   return r
+}
+
+/**
+ * Apply a change to a master definition — THE one engine behind the CEO's own edit on the sheet and the CEO's approval
+ * of an Ingredients sheet change (changeRequests.ts). `req` is whoever applies it now (the CEO): its role and company
+ * memberships decide the reviewer-only fields and the category reclass. `requestedBy` = the request it comes from.
+ */
+/** Put an ingredient in a group (or out of one) — the CEO's own edit, a blank filled, or an approved request. */
+export async function applyMasterGroup(req: FastifyRequest, m: MasterDb, groupId: string | null, g: GroupRow | null, requestedBy?: { id: string; requestId: string } | null): Promise<MasterDb> {
+  const updated = await prisma.ingredientMaster.update({ where: { id: m.id }, data: { groupId } })
+  await audit({
+    category: 'identity', action: 'ingredient_master.group', entity: 'IngredientMaster', entityId: m.id,
+    userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
+    before: { groupId: m.groupId }, after: { groupId, group: g?.name ?? null, actorRole: req.staffUser!.role, ...(requestedBy ? { requestedById: requestedBy.id, changeRequestId: requestedBy.requestId } : {}) },
+  })
+  return updated
+}
+
+/** Record a typed servd price (a new history row) — the CEO's own, an ingredient's first, or an approved request. */
+export async function applyMasterPrice(
+  req: FastifyRequest, m: MasterDb, p: { perBaseCents: number; priceCents: number; displayUnit: string }, setById: string,
+  requestedBy?: { id: string; requestId: string } | null,
+): Promise<void> {
+  const disp = displayUnitOf(m.stockUnit, m.priceUnit)
+  const before = (await masterPricesMany([m.id])).get(m.id)
+  await prisma.ingredientMasterPrice.create({ data: { masterIngredientId: m.id, perBaseCents: p.perBaseCents, setById } })
+  await audit({
+    category: 'identity', action: 'ingredient_master.price', entity: 'IngredientMaster', entityId: m.id,
+    userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
+    before: { latestCents: before?.latestPerBase != null ? Math.round(before.latestPerBase * disp.baseUnits * 100) / 100 : null, source: before?.latestSource ?? null },
+    after: { priceCents: p.priceCents, displayUnit: p.displayUnit, actorRole: req.staffUser!.role, ...(requestedBy ? { requestedById: requestedBy.id, changeRequestId: requestedBy.requestId } : {}) },
+  })
+}
+
+export async function applyMasterPatch(
+  req: FastifyRequest, id: string, body: z.infer<typeof patchSchema>, requestedBy?: { id: string; requestId: string } | null,
+): Promise<MasterDb> {
+  const before = await loadLive(id)
+  if (before.mergedIntoId) throw new AppError('MASTER_MERGED', 'This ingredient was merged into another — edit that one', 409, { mergedIntoId: before.mergedIntoId })
+  const isReviewer = (MASTER_REVIEWERS as string[]).includes(req.staffUser!.role)
+  if (body.status !== undefined && body.status !== before.status && !isReviewer) {
+    throw new ForbiddenError('Only the CEO or the F&B manager marks an ingredient reviewed')
+  }
+  // The master is kept in its family's base unit (g / ml / pcs): a unit of the same family is no change.
+  const stockUnit = body.unit !== undefined ? unitFamily(body.unit).base : before.stockUnit
+  // The unit picked is the unit it is shown and priced in (owner, 2026-11-17); the base unit itself = none stored.
+  // A pick inside the same family (g → kg) changes nothing in stock or recipes, so any sheet editor may make it.
+  const pickedUnit = body.unit !== undefined ? normalizeUnit(body.unit) : undefined
+  const priceUnit = pickedUnit === undefined ? undefined : (pickedUnit === stockUnit || !sameUnitFamily(pickedUnit, stockUnit) ? null : pickedUnit)
+  const categoryChanges = body.category !== undefined && body.category !== before.category
+  // Category and unit reach every company's books / stock: the CEO's and the F&B manager's only (owner review).
+  if ((categoryChanges || stockUnit !== before.stockUnit) && !isReviewer) {
+    throw new ForbiddenError('Only the CEO or the F&B manager changes an ingredient\'s category or unit')
+  }
+  // Buying unit + factor (owner review N3): reviewers only; a new buying unit must come with its factor. They reach
+  // only the companies that buy in the master's buying unit — a company buying in its own unit ("bag") keeps it.
+  const newPurchaseUnit = body.purchaseUnit !== undefined ? (body.purchaseUnit?.trim() || null) : before.purchaseUnit
+  const buyingChanges = newPurchaseUnit !== before.purchaseUnit || (body.purchaseUnitFactor !== undefined && body.purchaseUnitFactor !== before.purchaseUnitFactor)
+  if (buyingChanges && !isReviewer) throw new ForbiddenError('Only the CEO or the F&B manager changes how an ingredient is bought')
+  if (newPurchaseUnit !== before.purchaseUnit && body.purchaseUnitFactor === undefined) {
+    throw new AppError('FACTOR_REQUIRED', 'Give how many stock units one new buying unit holds (purchaseUnitFactor) with the new buying unit', 400)
+  }
+  if (body.pieceGrams != null && stockUnit === 'pcs') {
+    throw new AppError('PIECE_ON_COUNT_UNIT', 'This ingredient is already counted in pieces — a piece weight is only for ingredients kept in grams or ml', 422)
+  }
+  const name = body.name !== undefined ? cleanIngredientName(body.name) : before.name
+  const normalizedName = normalizeIngredientName(name)
+  if (normalizedName !== before.normalizedName || stockUnit !== before.stockUnit) {
+    const clash = await prisma.ingredientMaster.findFirst({ where: { id: { not: before.id }, mergedIntoId: null, normalizedName, stockUnit }, select: { id: true } })
+    if (clash) throw new AppError('MASTER_NAME_TAKEN', `"${name}" in ${stockUnit} is already in servd's ingredients — merge the two instead`, 409, { existingId: clash.id })
+  }
+  const linked = await prisma.inventoryItem.findMany({
+    where: { masterIngredientId: before.id, deletedAt: null }, select: { id: true, name: true, tenantId: true, category: true, unit: true, purchaseUnit: true },
+  })
+  if (categoryChanges) {
+    // A category change posts a class move in EVERY company that stocks it — only an editor of all of them.
+    const members = new Set(req.staffUser!.memberTenantIds ?? [])
+    const outside = [...new Set(linked.map((i) => i.tenantId).filter((t): t is string => !!t && !members.has(t)))]
+    if (outside.length > 0) {
+      throw new AppError('MASTER_CATEGORY_NEEDS_MEMBERSHIP', `${outside.length} other compan${outside.length === 1 ? 'y stocks' : 'ies stock'} this ingredient — a category change books in each, so it needs someone who belongs to all of them`, 409, { companies: outside.length })
+    }
+  }
+  const linkedIds = linked.map((i) => i.id)
+  if (stockUnit !== before.stockUnit && linkedIds.length > 0) {
+    // A unit change rescales every recipe quantity and every lot — only before anything was stocked or cooked.
+    const [lots, lines, poLines] = await Promise.all([
+      prisma.stockLot.count({ where: { inventoryItemId: { in: linkedIds } } }),
+      prisma.recipeIngredient.count({ where: { inventoryItemId: { in: linkedIds } } }),
+      prisma.purchaseOrderLine.count({ where: { inventoryItemId: { in: linkedIds } } }),
+    ])
+    const stocked = await prisma.inventoryItem.count({ where: { id: { in: linkedIds }, currentStock: { not: 0 } } })
+    if (lots + lines + poLines + stocked > 0) {
+      throw new AppError('MASTER_UNIT_IN_USE', 'Companies already stock, buy or cook this ingredient in its current unit — add a new ingredient in the new unit instead', 409)
+    }
+  }
+  if (categoryChanges) {
+    for (const t of new Set(linked.map((i) => i.tenantId).filter((x): x is string => !!x))) await ensureFifoReady(t)
+  }
+  const after = await prisma.$transaction(async (tx) => {
+    const row = await tx.ingredientMaster.update({
+      where: { id: before.id },
+      data: {
+        name, normalizedName, stockUnit,
+        ...(priceUnit !== undefined && { priceUnit }),
+        ...(body.category !== undefined && { category: body.category }),
+        ...(body.allergens !== undefined && { allergens: body.allergens }),
+        ...(body.yieldPct !== undefined && { yieldPct: body.yieldPct }),
+        ...(body.purchaseUnit !== undefined && { purchaseUnit: body.purchaseUnit?.trim() || null }),
+        ...(body.purchaseUnitFactor !== undefined && { purchaseUnitFactor: body.purchaseUnitFactor }),
+        ...(body.spec !== undefined && { spec: body.spec?.trim() || null }),
+        ...(body.specFields !== undefined && { specFields: body.specFields === null ? Prisma.DbNull : (body.specFields as Prisma.InputJsonValue) }),
+        ...(body.status !== undefined && { status: body.status }),
+        ...(body.perishable !== undefined && { perishable: body.perishable }),
+        ...(body.shelfLifeDays !== undefined && { shelfLifeDays: body.shelfLifeDays }),
+        ...(body.pieceGrams !== undefined && { pieceGrams: body.pieceGrams }),
+        ...(body.pieceLabel !== undefined && { pieceLabel: body.pieceLabel?.trim() || null }),
+      },
+    })
+    if (linkedIds.length > 0) {
+      // THE copy rule (lib/ingredientMaster.ts applyMasterToItemsTx): every linked item mirrors the master's
+      // allergens, yield and use-by definition; a rename reaches each company's item (unless it has another item of
+      // that name); a unit change reaches all; the buying unit + factor reach only items buying in the old one.
+      await applyMasterToItemsTx(tx, row, linkedIds, {
+        rename: name !== before.name,
+        unit: stockUnit !== before.stockUnit,
+        ...(buyingChanges ? { buyingFrom: { purchaseUnit: before.purchaseUnit } } : {}),
+      })
+      if (categoryChanges) {
+        // Each company's lots move to the new cost class with their own posting (the inventory reclass).
+        await lockItemsTx(tx, linkedIds)
+        for (const it of linked) {
+          const fresh = await tx.inventoryItem.findUniqueOrThrow({ where: { id: it.id }, select: { tenantId: true, category: true } })
+          if (fresh.tenantId) {
+            await moveItemLotsToCategoryTx(tx, { itemId: it.id, itemName: it.name, tenantId: fresh.tenantId, fromCategory: fresh.category, toCategory: body.category ?? null, actor: req.staffUser! })
+          }
+          await tx.inventoryItem.update({ where: { id: it.id }, data: { category: body.category ?? null } })
+        }
+      }
+    }
+    return row
+  }, { maxWait: 10_000, timeout: 60_000 })
+  await audit({
+    category: 'identity', action: 'ingredient_master.update', entity: 'IngredientMaster', entityId: before.id,
+    userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: null,
+    before: { name: before.name, stockUnit: before.stockUnit, category: before.category, allergens: before.allergens, yieldPct: before.yieldPct, purchaseUnit: before.purchaseUnit, purchaseUnitFactor: before.purchaseUnitFactor, spec: before.spec, perishable: before.perishable, shelfLifeDays: before.shelfLifeDays, status: before.status },
+    after: { name: after.name, stockUnit: after.stockUnit, category: after.category, allergens: after.allergens, yieldPct: after.yieldPct, purchaseUnit: after.purchaseUnit, purchaseUnitFactor: after.purchaseUnitFactor, spec: after.spec, perishable: after.perishable, shelfLifeDays: after.shelfLifeDays, status: after.status, linkedItems: linkedIds.length, ...(requestedBy ? { requestedById: requestedBy.id, changeRequestId: requestedBy.requestId, approvedByCeo: true } : {}) },
+  })
+  return after
 }

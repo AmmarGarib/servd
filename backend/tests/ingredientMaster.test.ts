@@ -58,6 +58,15 @@ beforeAll(async () => {
 
 afterAll(async () => { await app?.close() })
 
+/** A sheet edit by anyone but the CEO waits (202); the CEO approves it; the ingredient as it is now. */
+async function approvedByCeo(res: { statusCode: number; body: string; json: () => any }) {
+  expect(res.statusCode, res.body).toBe(202)
+  const reqId = res.json().request.id as string
+  const ok = await call(u.ceo!, 'POST', `/ingredient-master/requests/${reqId}/approve`, {})
+  expect(ok.statusCode, ok.body).toBe(200)
+  return (await call(u.ceo!, 'GET', `/ingredient-master/${res.json().request.ingredientId}`)).json()
+}
+
 let beefId: string
 
 describe('the master', () => {
@@ -148,12 +157,13 @@ describe('company items from the master', () => {
 describe('editing and merging the master', () => {
   it('allergens reach every company\'s item; only a reviewer marks it reviewed', async () => {
     const r = await call(u.chefA!, 'PATCH', `/ingredient-master/${beefId}`, { allergens: ['beef'], spec: '80/20, coarse, no sinew' })
-    expect(r.statusCode, r.body).toBe(200)
+    await approvedByCeo(r)
     const items = await prisma.inventoryItem.findMany({ where: { masterIngredientId: beefId } })
     expect(items).toHaveLength(2)
     for (const it of items) expect(it.allergens).toEqual(['beef'])
-    expect((await call(u.chefA!, 'PATCH', `/ingredient-master/${beefId}`, { status: 'approved' })).statusCode).toBe(403)
-    const ok = await call(u.fnbA!, 'PATCH', `/ingredient-master/${beefId}`, { status: 'approved' })
+    // Marking reviewed is retired for everyone but the CEO (nothing to ask for).
+    expect((await call(u.fnbA!, 'PATCH', `/ingredient-master/${beefId}`, { status: 'approved' })).json().error.code).toBe('NOTHING_TO_CHANGE')
+    const ok = await call(u.ceo!, 'PATCH', `/ingredient-master/${beefId}`, { status: 'approved' })
     expect(ok.statusCode).toBe(200)
     expect(ok.json().status).toBe('approved')
   })
@@ -166,10 +176,14 @@ describe('editing and merging the master', () => {
     }))
     // Beef is not a drink, but the class move is what we are testing.
     // Category is the reviewers' — and only one who belongs to every company that stocks it (A and B here).
-    expect((await call(u.chefA!, 'PATCH', `/ingredient-master/${beefId}`, { category: 'beverage' })).statusCode).toBe(403)
-    const notAll = await call(u.fnbA!, 'PATCH', `/ingredient-master/${beefId}`, { category: 'beverage' })
-    expect(notAll.statusCode).toBe(409)
-    expect(notAll.json().error.code).toBe('MASTER_CATEGORY_NEEDS_MEMBERSHIP')
+    // A chef asks; the CEO turns it down (nothing moves); the CEO's own edit applies at once.
+    const asked = await call(u.chefA!, 'PATCH', `/ingredient-master/${beefId}`, { category: 'beverage' })
+    expect(asked.statusCode, asked.body).toBe(202)
+    // Someone else's edit while it waits is refused.
+    expect((await call(u.fnbA!, 'PATCH', `/ingredient-master/${beefId}`, { category: 'dairy' })).json().error.code).toBe('CHANGE_PENDING')
+    expect((await call(u.ceo!, 'POST', `/ingredient-master/requests/${asked.json().request.id}/reject`, { note: 'short' })).statusCode).toBe(400)
+    expect((await call(u.ceo!, 'POST', `/ingredient-master/requests/${asked.json().request.id}/reject`, { note: 'Beef is not a drink' })).statusCode).toBe(200)
+    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: itemA } })).category).toBe('protein')
     const r = await call(u.ceo!, 'PATCH', `/ingredient-master/${beefId}`, { category: 'beverage' })
     expect(r.statusCode, r.body).toBe(200)
     const items = await prisma.inventoryItem.findMany({ where: { masterIngredientId: beefId } })
@@ -180,7 +194,15 @@ describe('editing and merging the master', () => {
   })
 
   it('a unit change once a company holds stock is 409 MASTER_UNIT_IN_USE', async () => {
-    expect((await call(u.chefA!, 'PATCH', `/ingredient-master/${beefId}`, { unit: 'pcs' })).statusCode).toBe(403)
+    // Asked by a chef: the CEO's approval re-runs the check, refuses, and the request waits again.
+    const asked = await call(u.chefA!, 'PATCH', `/ingredient-master/${beefId}`, { unit: 'pcs' })
+    expect(asked.statusCode, asked.body).toBe(202)
+    const refused = await call(u.ceo!, 'POST', `/ingredient-master/requests/${asked.json().request.id}/approve`, {})
+    expect(refused.json().error.code).toBe('MASTER_UNIT_IN_USE')
+    expect((await prisma.ingredientMasterChangeRequest.findUniqueOrThrow({ where: { id: asked.json().request.id } })).status).toBe('pending')
+    // Only the asker withdraws it.
+    expect((await call(u.fnbA!, 'POST', `/ingredient-master/requests/${asked.json().request.id}/cancel`, {})).statusCode).toBe(403)
+    expect((await call(u.chefA!, 'POST', `/ingredient-master/requests/${asked.json().request.id}/cancel`, {})).statusCode).toBe(200)
     const r = await call(u.ceo!, 'PATCH', `/ingredient-master/${beefId}`, { unit: 'pcs' })
     expect(r.statusCode).toBe(409)
     expect(r.json().error.code).toBe('MASTER_UNIT_IN_USE')
@@ -200,7 +222,9 @@ describe('editing and merging the master', () => {
     const keep = (await call(u.chefA!, 'POST', '/ingredient-master', { name: 'Sesame seeds', unit: 'kg' })).json()
     const twin = (await call(u.chefB!, 'POST', '/ingredient-master', { name: 'Seeds sesame', unit: 'kg' })).json()
     const tItem = (await call(u.chefB!, 'POST', '/inventory/from-master', { masterIngredientId: twin.id })).json()
-    const ok = await call(u.fnbA!, 'POST', `/ingredient-master/${twin.id}/merge`, { intoId: keep.id })
+    // Merging is the CEO's only (owner, 2026-11-17).
+    expect((await call(u.fnbA!, 'POST', `/ingredient-master/${twin.id}/merge`, { intoId: keep.id })).statusCode).toBe(403)
+    const ok = await call(u.ceo!, 'POST', `/ingredient-master/${twin.id}/merge`, { intoId: keep.id })
     expect(ok.statusCode, ok.body).toBe(200)
     expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: tItem.id } })).masterIngredientId).toBe(keep.id)
     expect((await prisma.ingredientMaster.findUniqueOrThrow({ where: { id: twin.id } })).mergedIntoId).toBe(keep.id)
@@ -276,7 +300,9 @@ describe('buying units and the twin trail (owner review N3, N4)', () => {
     const itA = (await call(u.chefA!, 'POST', '/inventory/from-master', { masterIngredientId: m.id })).json()
     const itB = (await call(u.chefB!, 'POST', '/inventory/from-master', { masterIngredientId: m.id })).json()
     await prisma.inventoryItem.update({ where: { id: itB.id }, data: { purchaseUnit: 'bag', purchaseUnitFactor: 5_000 } })
-    expect((await call(u.chefA!, 'PATCH', `/ingredient-master/${m.id}`, { purchaseUnitFactor: 12_000 })).statusCode).toBe(403)
+    const asked = await call(u.chefA!, 'PATCH', `/ingredient-master/${m.id}`, { purchaseUnitFactor: 12_000 })
+    expect(asked.statusCode).toBe(202)
+    await call(u.chefA!, 'POST', `/ingredient-master/requests/${asked.json().request.id}/cancel`, {})
     const noFactor = await call(u.ceo!, 'PATCH', `/ingredient-master/${m.id}`, { purchaseUnit: 'carton' })
     expect(noFactor.statusCode).toBe(400)
     expect(noFactor.json().error.code).toBe('FACTOR_REQUIRED')
@@ -351,13 +377,28 @@ describe('the servd price (owner, 2026-10-29: "a pure ingredient availability an
     const id = (await call(u.chefA!, 'GET', '/ingredient-master?q=pricing saffron')).json()[0].id as string
     const cook = await call(u.cookA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 5_000_00 })
     expect(cook.statusCode).toBe(403)
+    // Changing a price that exists waits for the CEO; the sheet shows it as waiting.
     const r = await call(u.buyerA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 5_000_00 })
-    expect(r.statusCode, r.body).toBe(200)
-    expect(r.json().price).toMatchObject({ latestCents: 5_000_00, latestSource: 'sheet', averageCents: 4000 })
+    expect(r.statusCode, r.body).toBe(202)
+    const waiting = (await call(u.chefA!, 'GET', `/ingredient-master/${id}`)).json()
+    expect(waiting.price.latestCents).not.toBe(5_000_00)
+    expect(waiting.pendingChange.changes).toEqual([expect.objectContaining({ field: 'price', to: 'PKR 5,000 / kg' })])
+    // The cook (prices hidden) never sees the price in it.
+    expect((await call(u.cookA!, 'GET', `/ingredient-master/${id}`)).json().pendingChange.changes).toEqual([])
+    // Only the CEO decides it; it is in the CEO's inbox registry as a company-less, CEO-only item.
+    expect((await call(u.fnbA!, 'POST', `/ingredient-master/requests/${r.json().request.id}/approve`, {})).statusCode).toBe(403)
+    const { approvalSubject } = await import('../src/lib/approvalRights.js')
+    expect(await approvalSubject('ingredient_change', r.json().request.id)).toMatchObject({ companyIds: [], ownerTenantId: null })
+    const queue = (await call(u.ceo!, 'GET', '/ingredient-master/requests?status=pending')).json().items as Array<{ id: string; changes: unknown[] }>
+    expect(queue.find((q) => q.id === r.json().request.id)?.changes).toHaveLength(1)
+    // The same buyer edits again: one request, the newer price.
+    expect((await call(u.buyerA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 5_000_00 })).json().request.id).toBe(r.json().request.id)
+    const priced = await approvedByCeo(r)
+    expect(priced.price).toMatchObject({ latestCents: 5_000_00, latestSource: 'sheet', averageCents: 4000 })
+    expect(priced.pendingChange).toBeNull()
     // Editing the name keeps the price on the row the table puts back.
-    const renamed = await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { name: 'Pricing Saffron Threads' })
-    expect(renamed.statusCode, renamed.body).toBe(200)
-    expect(renamed.json().price.latestCents).toBe(5_000_00)
+    const renamed = await approvedByCeo(await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { name: 'Pricing Saffron Threads' }))
+    expect(renamed.price.latestCents).toBe(5_000_00)
     const h = (await call(u.chefA!, 'GET', `/ingredient-master/${id}/prices`)).json()
     expect(h.points[0]).toMatchObject({ source: 'sheet', priceCents: 5_000_00, company: null })
     expect(await prisma.auditLog.count({ where: { action: 'ingredient_master.price', entityId: id } })).toBe(1)
@@ -380,19 +421,16 @@ describe('the servd price (owner, 2026-10-29: "a pure ingredient availability an
     const g = await call(u.buyerA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 410 })
     expect(g.json().price).toMatchObject({ displayUnit: 'g', baseUnits: 1, latestCents: 410 })
     // A chef (not a reviewer) shows it per kg: same price, ×1000; nothing about stock changes.
-    const kg = await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { unit: 'kg' })
-    expect(kg.statusCode, kg.body).toBe(200)
-    expect(kg.json()).toMatchObject({ stockUnit: 'g', shownUnit: 'kg' })
-    expect(kg.json().price).toMatchObject({ displayUnit: 'kg', baseUnits: 1000, latestCents: 410_000 })
+    expect(g.statusCode, g.body).toBe(200)
+    const kg = await approvedByCeo(await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { unit: 'kg' }))
+    expect(kg).toMatchObject({ stockUnit: 'g', shownUnit: 'kg' })
+    expect(kg.price).toMatchObject({ displayUnit: 'kg', baseUnits: 1000, latestCents: 410_000 })
     // Typed per kg now.
-    const typed = await call(u.buyerA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 300_000 })
-    expect(typed.json().price.latestCents).toBe(300_000)
-    const back = await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { unit: 'g' })
+    const typed = await approvedByCeo(await call(u.buyerA!, 'PUT', `/ingredient-master/${id}/price`, { priceCents: 300_000 }))
+    expect(typed.price.latestCents).toBe(300_000)
+    const back = await call(u.ceo!, 'PATCH', `/ingredient-master/${id}`, { unit: 'g' })
     expect(back.json()).toMatchObject({ shownUnit: 'g' })
     expect(back.json().price).toMatchObject({ displayUnit: 'g', latestCents: 300 })
-    // Another KIND of unit (g → pcs) is still the CEO's / F&B manager's.
-    const pcs = await call(u.chefA!, 'PATCH', `/ingredient-master/${id}`, { unit: 'pcs' })
-    expect(pcs.statusCode).toBe(403)
   })
 
   it('an ingredient no company stocks takes its typed price; recipes would cost it at that price', async () => {
@@ -433,8 +471,9 @@ describe('item groups (owner, 2026-11-07: "Sea food will contain all types of fi
     const inGroup = (await call(u.cookA!, 'GET', `/ingredient-master?groupId=${sea.id}`)).json() as Array<{ id: string }>
     expect(inGroup.map((m) => m.id)).toEqual([fish.json().id])
     // Ungroup / regroup by the PO maker; audited; the category stays.
-    const off = await call(u.buyerA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: null })
-    expect(off.json()).toMatchObject({ groupId: null, category: 'protein' })
+    // Taking it out of its group waits for the CEO; putting an ungrouped one in a group applies at once.
+    const off = await approvedByCeo(await call(u.buyerA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: null }))
+    expect(off).toMatchObject({ groupId: null, category: 'protein' })
     expect((await call(u.cashA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: sea.id })).statusCode).toBe(403)
     expect((await call(u.buyerA!, 'PUT', `/ingredient-master/${fish.json().id}/group`, { groupId: sea.id })).json().groupId).toBe(sea.id)
     expect(await prisma.auditLog.count({ where: { action: 'ingredient_master.group', entityId: fish.json().id } })).toBe(2)

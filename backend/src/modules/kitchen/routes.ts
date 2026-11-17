@@ -335,7 +335,6 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
         boughtBy: i.purchaseUnit ? `${i.purchaseUnit} (${i.purchaseUnitFactor} ${i.unit})` : i.unit,
         spec: i.masterIngredient?.spec ?? '',
         specDetails: fields ? Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join('; ') : '',
-        status: i.masterIngredient?.status === 'needs_review' ? 'needs review' : '',
       }
     }).sort((a, b) => a.supplier.localeCompare(b.supplier) || a.ingredient.localeCompare(b.ingredient))
     const format = exportFormatOf(req.query.format)
@@ -344,7 +343,7 @@ export async function kitchenRoutes(fastify: FastifyInstance) {
       title: 'Spec list — what we buy',
       rows: rows.map(({ supplierId: _s, masterIngredientId: _m, ...r }) => r),
       sectionKey: 'supplier',
-      labels: { supplier: 'Supplier', ingredient: 'Ingredient', unit: 'Stock unit', boughtBy: 'Bought by', spec: 'Spec', specDetails: 'Spec details', status: 'Review' },
+      labels: { supplier: 'Supplier', ingredient: 'Ingredient', unit: 'Stock unit', boughtBy: 'Bought by', spec: 'Spec', specDetails: 'Spec details' },
       wrapKeys: ['spec', 'specDetails'],
     })
   })

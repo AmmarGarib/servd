@@ -57,6 +57,7 @@ beforeAll(async () => {
   await prisma.conceptLocation.create({ data: { conceptId: A.conceptId, locationId: A.locationId, isPrimary: true } })
   supA = (await prisma.supplier.create({ data: { name: 'UB Greens', tenantId: A.tenantId } })).id
   u.mgrA = await mkUser('ubMgrA', 'manager', A.tenantId)
+  u.ceo = await mkUser('ubCeo', 'admin', A.tenantId)
   u.chefA = await mkUser('ubChefA', 'boh_management', A.tenantId)
   u.cookA = await mkUser('ubCookA', 'boh', A.tenantId)
   u.mgrB = await mkUser('ubMgrB', 'manager', B.tenantId)
@@ -85,7 +86,7 @@ describe('perishable is the master\'s definition', () => {
     const masterId = m.json().id as string
     const itA = (await call(u.mgrA!, 'POST', '/inventory/from-master', { masterIngredientId: masterId })).json().id as string
     const itB = (await call(u.mgrB!, 'POST', '/inventory/from-master', { masterIngredientId: masterId })).json().id as string
-    const p = await call(u.mgrA!, 'PATCH', `/ingredient-master/${masterId}`, { perishable: true, shelfLifeDays: 4 })
+    const p = await call(u.ceo!, 'PATCH', `/ingredient-master/${masterId}`, { perishable: true, shelfLifeDays: 4 })
     expect(p.statusCode, p.body).toBe(200)
     expect(p.json()).toMatchObject({ perishable: true, shelfLifeDays: 4 })
     for (const id of [itA, itB]) expect(await prisma.inventoryItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ perishable: true, shelfLifeDays: 4 })
