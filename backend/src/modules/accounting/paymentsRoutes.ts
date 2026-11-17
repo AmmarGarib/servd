@@ -102,13 +102,15 @@ async function register(req: FastifyRequest) {
   }
 }
 
-/** Owner, 2026-10-20: the register export is Date · Voucher no. · Narration · Payment method · Total amount · Classification. */
+/** Owner, 2026-10-20 (+ expense account, 2026-11-17): the register export is Date · Voucher no. · Category · Expense account · Narration · Payment method · Total amount · Classification. */
 const CLASS_SHORT: Record<string, string> = { official: 'O', unofficial: 'U', unclassified: 'UC' }
 function recordsOf(rows: Array<PaymentRow & { companyName: string | null }>, multi: boolean) {
   const out: Array<Record<string, string>> = rows.map((r) => ({
     ...(multi && { company: r.companyName ?? '' }),
     date: fmtPktDate(new Date(r.entryDate)),
     voucher_no: r.voucherNo ?? r.voucherNumber,
+    category: r.categoryLabel,
+    expense_account: r.expenseAccounts.map((x) => `${x.code} ${x.name}`).join('; '),
     narration: r.narration,
     payment_method: r.methodLabel,
     total_amount: fmtPkr(r.netCents),
@@ -116,7 +118,7 @@ function recordsOf(rows: Array<PaymentRow & { companyName: string | null }>, mul
   }))
   if (out.length) {
     out.push({
-      ...(multi && { company: '' }), date: '', voucher_no: '', narration: 'TOTAL', payment_method: '',
+      ...(multi && { company: '' }), date: '', voucher_no: '', category: '', expense_account: '', narration: 'TOTAL', payment_method: '',
       total_amount: fmtPkr(rows.reduce((s, r) => s + r.netCents, 0)), classification: '',
     })
   }
@@ -146,7 +148,7 @@ function sendRegister(req: FastifyRequest, reply: FastifyReply, format: ExportFo
     period: `${out.from} to ${out.to}`,
     rows: recordsOf(out.rows, out.multiCompany),
     types: { total_amount: 'pkr' },
-    labels: { voucher_no: 'Voucher no.', payment_method: 'Payment method', total_amount: 'Total amount', classification: 'Class' },
+    labels: { voucher_no: 'Voucher no.', expense_account: 'Expense account', payment_method: 'Payment method', total_amount: 'Total amount', classification: 'Class' },
     notes: ['Class: O = Official, U = Unofficial, UC = Unclassified. Total amount = the amount paid (after tax withheld).', out.note],
   })
 }

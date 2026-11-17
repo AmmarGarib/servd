@@ -259,7 +259,7 @@ describe('the register', () => {
     // CSV with the report columns.
     const csv = await call('finA', 'GET', `/accounting/payments/payments.csv?from=${today()}&to=${today()}&classification=unofficial`)
     expect(csv.statusCode).toBe(200)
-    expect(csv.body.split('\n')[0]).toContain('date,voucher_no,narration,payment_method,total_amount,classification')
+    expect(csv.body.split('\n')[0]).toContain('date,voucher_no,category,expense_account,narration,payment_method,total_amount,classification')
     expect(csv.body).toContain(',U\r\n')
     expect(csv.body).toContain('Fast Couriers')
     expect(csv.body).not.toContain(`Mill ${RUN}`)

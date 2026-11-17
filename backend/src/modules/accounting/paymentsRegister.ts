@@ -384,6 +384,11 @@ export interface PaymentRow {
   payee: string
   category: PaymentCategory
   categoryLabel: string
+  /** The account(s) the payment is charged to — its debit lines off the money accounts, largest first (owner,
+   *  2026-11-17: "Add expense account next to category"). A supplier / payroll payment shows the payable it clears. */
+  expenseAccounts: Array<{ code: string; name: string; cents: number }>
+  /** "6110 Repairs" — or "6110 Repairs + 1 more" when the payment is charged to several accounts. */
+  expenseAccount: string
   narration: string
   method: PaymentMethodKind
   methodLabel: string
@@ -415,7 +420,7 @@ export async function paymentRows(db: Db, tenantIds: string[], from: Date, to: D
   const [lines, classes, banks] = await Promise.all([
     db.journalLine.findMany({
       where: { journalEntryId: { in: ids } },
-      select: { journalEntryId: true, type: true, amountCents: true, account: { select: { code: true } } },
+      select: { journalEntryId: true, type: true, amountCents: true, account: { select: { code: true, name: true } } },
     }),
     db.paymentClassification.findMany({ where: { journalEntryId: { in: ids } } }),
     db.bankAccount.findMany({
@@ -488,6 +493,16 @@ export async function paymentRows(db: Db, tenantIds: string[], from: Date, to: D
     const c = classOf.get(a.id)
     const recordedStatus = (c?.taxStatus as TaxStatus | null | undefined) ?? null
     const category = categoryOfReference(a.reference)
+    const charged = new Map<string, { code: string; name: string; cents: number }>()
+    for (const l of ls) {
+      if (l.type !== 'debit' || isMoney(l.account.code)) continue
+      const cur = charged.get(l.account.code) ?? { code: l.account.code, name: l.account.name, cents: 0 }
+      cur.cents += toCents(l.amountCents)
+      charged.set(l.account.code, cur)
+    }
+    const expenseAccounts = [...charged.values()].sort((x, y) => y.cents - x.cents || x.code.localeCompare(y.code))
+    const expenseAccount = expenseAccounts.length === 0 ? ''
+      : `${expenseAccounts[0]!.code} ${expenseAccounts[0]!.name}${expenseAccounts.length > 1 ? ` + ${expenseAccounts.length - 1} more` : ''}`
     out.push({
       journalEntryId: a.id,
       tenantId: a.tenantId,
@@ -498,6 +513,8 @@ export async function paymentRows(db: Db, tenantIds: string[], from: Date, to: D
       payee: d.payee ?? a.description,
       category,
       categoryLabel: d.categoryOverride ? PAYMENT_CATEGORIES[d.categoryOverride] : PAYMENT_CATEGORIES[category],
+      expenseAccounts,
+      expenseAccount,
       narration: narrate(a),
       method,
       methodLabel,
@@ -722,7 +739,7 @@ export function filterRows(rows: PaymentRow[], f: RegisterFilters): PaymentRow[]
     (!f.classification || f.classification === 'all' || r.classification === f.classification)
     && (!f.category || r.category === f.category)
     && (!f.method || r.method === f.method)
-    && (!q || [r.voucherNo ?? '', r.voucherNumber, r.payee, r.narration, r.categoryLabel, r.methodLabel, r.reference ?? ''].some((s) => s.toLowerCase().includes(q))))
+    && (!q || [r.voucherNo ?? '', r.voucherNumber, r.payee, r.narration, r.categoryLabel, ...r.expenseAccounts.map((x) => `${x.code} ${x.name}`), r.methodLabel, r.reference ?? ''].some((s) => s.toLowerCase().includes(q))))
 }
 
 export interface ClassTotals { count: number; grossCents: number; whtCents: number; netCents: number }

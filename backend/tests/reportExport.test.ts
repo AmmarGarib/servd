@@ -403,10 +403,12 @@ describe('payments register', () => {
     const recs: Array<Record<string, string>> = out.rows.map((r) => ({
       ...(out.multiCompany && { company: (r['companyName'] as string) ?? '' }),
       date: fmtPktDate(new Date(r.entryDate)), voucher_no: ((r['voucherNo'] as string | null) ?? (r['voucherNumber'] as string)),
+      category: r['categoryLabel'] as string,
+      expense_account: (r['expenseAccounts'] as Array<{ code: string; name: string }>).map((x) => `${x.code} ${x.name}`).join('; '),
       narration: r['narration'] as string, payment_method: r['methodLabel'] as string,
       total_amount: fmtPkr(r['netCents'] as number), classification: SHORT[r['classification'] as string]!,
     }))
-    recs.push({ ...(out.multiCompany && { company: '' }), date: '', voucher_no: '', narration: 'TOTAL', payment_method: '', total_amount: fmtPkr(out.rows.reduce((t, r) => t + (r['netCents'] as number), 0)), classification: '' })
+    recs.push({ ...(out.multiCompany && { company: '' }), date: '', voucher_no: '', category: '', expense_account: '', narration: 'TOTAL', payment_method: '', total_amount: fmtPkr(out.rows.reduce((t, r) => t + (r['netCents'] as number), 0)), classification: '' })
     const legacy = toCsv(recs)
     const a = await get('ceoA', `/accounting/payments/payments.csv?from=${monthStart}&to=${today}`)
     expect(a.statusCode).toBe(200)

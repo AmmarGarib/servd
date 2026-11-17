@@ -47,6 +47,8 @@ interface Row {
   payee: string
   category: string
   categoryLabel: string
+  expenseAccount: string
+  expenseAccounts: Array<{ code: string; name: string; cents: number }>
   narration: string
   method: string
   methodLabel: string
@@ -195,7 +197,7 @@ export default function PaymentsRegisterPage() {
               {Object.entries(data?.methods ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </Select>
           </Field>
-          <Field label="Search"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Payee, voucher, narration" /></Field>
+          <Field label="Search"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Payee, voucher, account, narration" /></Field>
         </div>
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -238,6 +240,7 @@ export default function PaymentsRegisterPage() {
                     {data?.multiCompany && <th className="px-3 py-3 font-semibold">Company</th>}
                     <th className="px-3 py-3 font-semibold">Payee / employee</th>
                     <th className="px-3 py-3 font-semibold">Category</th>
+                    <th className="px-3 py-3 font-semibold">Expense account</th>
                     <th className="px-3 py-3 font-semibold">Narration</th>
                     <th className="px-3 py-3 font-semibold">Method</th>
                     <th className="px-3 py-3 text-right font-semibold">Gross</th>
@@ -263,6 +266,13 @@ export default function PaymentsRegisterPage() {
                       {data?.multiCompany && <td className="px-3 py-2.5 text-white/60">{r.companyName ?? '—'}</td>}
                       <td className="px-3 py-2.5 text-white/85">{r.payee}</td>
                       <td className="px-3 py-2.5 text-white/65">{r.categoryLabel}</td>
+                      <td className="min-w-[9rem] max-w-[14rem] px-3 py-2.5 text-white/75"
+                        title={r.expenseAccounts.map((x) => `${x.code} ${x.name}`).join('\n')}>
+                        {r.expenseAccounts[0] ? (<>
+                          <span className="font-mono text-xs text-white/50">{r.expenseAccounts[0].code}</span>{' '}{r.expenseAccounts[0].name}
+                          {r.expenseAccounts.length > 1 && <span className="block text-xs text-s-muted">+ {r.expenseAccounts.length - 1} more</span>}
+                        </>) : '—'}
+                      </td>
                       <td className="max-w-[16rem] truncate px-3 py-2.5 text-white/55" title={r.narration}>{r.narration}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-white/65">{r.methodLabel}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-right text-white/75">{fmtPkr(r.grossCents)}</td>
@@ -432,6 +442,11 @@ function Panel({ id, canClassify, onClose, onSaved }: { id: string; canClassify:
             <section className="space-y-1">
               <KV k="Date" v={fmtDate(p.entryDate)} />
               <KV k="Method" v={p.methodLabel} />
+              <KV k={p.expenseAccounts.length > 1 ? 'Expense accounts' : 'Expense account'} v={p.expenseAccounts.length === 0 ? '—' : (
+                <span className="block space-y-0.5">{p.expenseAccounts.map((x) => (
+                  <span key={x.code} className="block">{x.code} {x.name}{p.expenseAccounts.length > 1 ? ` — ${fmtPkr(x.cents)}` : ''}</span>
+                ))}</span>
+              )} />
               <KV k="Gross" v={fmtPkr(p.grossCents)} />
               <KV k="Withholding tax" v={fmtPkr(p.whtCents)} />
               <KV k="Net paid" v={fmtPkr(p.netCents)} />
