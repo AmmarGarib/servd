@@ -38,6 +38,7 @@ import {
 } from './data'
 import { Button, dateBounds, ErrorBanner, Field, fieldCls, firstMissing, focusField, Footer, Input, Modal, primaryBtn, Textarea, useSubmitOnce } from './ui'
 import { Select } from '@/components/ui/Select'
+import { isOperatingExpenseAccount } from '@/lib/accountSection'
 import {
   EMPTY_PAYMENT_CLASSIFICATION, PaymentClassificationFields, paymentClassificationBody, paymentClassificationError,
   type PaymentClassificationValue,
@@ -124,7 +125,7 @@ export function VoucherForm({ mode = 'request', voucher, isKeeper, onClose, onSa
     tenantId: tenantId ?? opts?.tenantId ?? null, ownIds: (opts?.suppliers ?? []).map((x) => x.id), enabled: payFrom === 'credit',
     onOpened: (sp) => { setSupplierId(sp.id); void qc.invalidateQueries({ queryKey: [CV_ROOT, 'raise-options'] }) },
   })
-  const expenseAccounts = chart.filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!tenantId || a.tenantId === tenantId))
+  const expenseAccounts = chart.filter((a) => isOperatingExpenseAccount(a) && a.isActive && (!tenantId || a.tenantId === tenantId))
   const isCode = /^\d{4}$/.test(category)
   const assetClassId = category.startsWith('asset:') ? category.slice(6) : ''
   const assetClass = opts?.classes.find((c) => c.id === assetClassId) ?? null

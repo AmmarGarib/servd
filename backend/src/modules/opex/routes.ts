@@ -45,8 +45,9 @@ export function assertNotFuturePaid(paidAt: Date | null | undefined, now: Date =
   }
 }
 
-/** The 6xxx code a category is booked to: `^6\d{3}$`, null clears it. */
-const zExpenseCode = z.string().regex(/^6\d{3}$/, 'An operating-expense account is a 6xxx code').nullable().optional()
+/** The operating-expense account a category is booked to (checked against the chart by assertExpenseCode — the
+ *  account's stored P&L section, never its code); null clears it. */
+const zExpenseCode = z.string().trim().min(1).max(20).nullable().optional()
 
 const cadenceEnum = z.enum(['monthly', 'quarterly', 'annual', 'per_use'])
 
@@ -659,7 +660,7 @@ export async function opexRoutes(fastify: FastifyInstance) {
     receiptUrl:    z.string().url().max(2048).nullable().optional(),
     notes:         z.string().nullable().optional(),
     // The 6xxx account the payment is booked to (accounting/expenseCategories.ts).
-    expenseAccountCode: z.string().regex(/^6\d{3}$/).nullable().optional(),
+    expenseAccountCode: z.string().trim().min(1).max(20).nullable().optional(),
     // Where this payment's money came from, when not the line's own account.
     payFrom:       z.enum(['bank', 'cash']).optional(),
     bankAccountId: z.string().min(1).nullable().optional(),

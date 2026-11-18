@@ -53,6 +53,7 @@ import { randomUUID } from 'node:crypto'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
+import { isOperatingExpense } from '../../lib/accountSection.js'
 import { flagException, type ExceptionKind } from '../../lib/exceptions.js'
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
@@ -824,11 +825,15 @@ function assertReceivable(status: string) {
  * food item kept as stock reaches it through sales), never one only its own module posts to (6200–6249 head-office
  * charges, 6990–6999 recharges) and never a register-controlled one. 422 EXPENSE_ACCOUNT_NOT_ALLOWED otherwise.
  */
+/** The rule itself (also the PO's expense-account list): an operating-expense account by its stored P&L section
+ *  (lib/accountSection.ts — never its code), live, not controlled, not a module's own 6200–6249 / 6990–6999. */
+export function receiptExpenseAccountOk(a: { code: string; type: string; isActive: boolean; controlledBy: string | null; plSection: string | null }): boolean {
+  const n = Number(a.code.slice(0, 4))
+  return a.isActive && !a.controlledBy && isOperatingExpense(a) && !(n >= 6200 && n <= 6249) && !(n >= 6990 && n <= 6999)
+}
+
 export async function assertReceiptExpenseAccountTx(tx: Tx, tenantId: string, code: string): Promise<{ code: string; name: string }> {
-  const acc = await tx.account.findFirst({ where: { tenantId, code }, select: { code: true, name: true, type: true, isActive: true, controlledBy: true } })
-  const n = Number(code.slice(0, 4))
-  const ok = !!acc && acc.isActive && acc.type === 'expense' && !acc.controlledBy && /^6\d{3}/.test(code)
-    && !(n >= 6200 && n <= 6249) && !(n >= 6990 && n <= 6999)
-  if (!ok) throw new AppError('EXPENSE_ACCOUNT_NOT_ALLOWED', `${code} cannot take a received item — pick a 6xxx expense account of this company`, 422)
+  const acc = await tx.account.findFirst({ where: { tenantId, code }, select: { code: true, name: true, type: true, isActive: true, controlledBy: true, plSection: true } })
+  if (!acc || !receiptExpenseAccountOk(acc)) throw new AppError('EXPENSE_ACCOUNT_NOT_ALLOWED', `${code} cannot take a received item — pick an operating-expense account of this company`, 422)
   return { code: acc!.code, name: acc!.name }
 }

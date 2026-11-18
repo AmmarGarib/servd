@@ -351,29 +351,29 @@ describe('Books and the month close — October 2026, companies A and B', () => 
     await sim.ledger.assertBalanced(A)
   }, 60_000)
 
-  it('16 Oct: the chart — finance adds and renames an account; reserved ranges are refused', async () => {
+  it('16 Oct: the chart — finance adds and renames an account; servd picks the code', async () => {
     const A = sim.A
     sim.clock.at('2026-10-16', '10:00')
     const fin = sim.as(A.finance, A)
-    const created = ok(await fin.post('/setup/chart-of-accounts', { code: '6197', name: 'Staff uniforms', type: 'expense' }), 201)
+    // servd picks the code (owner, 2026-11-18); a typed one is refused.
+    const created = ok(await fin.post('/setup/chart-of-accounts', { name: 'Staff uniforms', type: 'expense' }), 201)
     expect(created.tenantId).toBe(A.tenantId)
+    expect(created.plSection).toBe('operating_expense')
+    const newCode = created.code as string
     st.newAccountId = created.id
-    accountIds.A.set('6197', created.id)
+    accountIds.A.set(newCode, created.id)
     const renamed = ok(await fin.patch(`/setup/chart-of-accounts/${created.id}`, { name: 'Staff uniforms & aprons' }), 200)
     expect(renamed.name).toBe('Staff uniforms & aprons')
-    expect(errCode(await fin.post('/setup/chart-of-accounts', { code: '6197', name: 'dup', type: 'expense' }))).toBe('ACCOUNT_CODE_TAKEN')
-    // The same code is free in company B (charts are per company).
-    ok(await sim.as(sim.B.finance, sim.B).post('/setup/chart-of-accounts', { code: '6197', name: 'Uniforms', type: 'expense' }), 201)
-    for (const code of ['1450', '1555', '1599.01', '2012', '2150', '6210', '6995']) {
-      expect(errCode(await fin.post('/setup/chart-of-accounts', { code, name: `Reserved ${code}`, type: 'asset' })), `finance ${code}`).toBe('ACCOUNT_CODE_RESERVED')
-    }
-    expect(errCode(await sim.as(sim.ceo, A).post('/setup/chart-of-accounts', { code: '1520', name: 'Hand-made asset', type: 'asset' })), 'the CEO too').toBe('ACCOUNT_CODE_RESERVED')
-    expect((await sim.as(A.manager, A).post('/setup/chart-of-accounts', { code: '6186', name: 'x', type: 'expense' })).statusCode).toBe(403)
+    expect(errCode(await fin.post('/setup/chart-of-accounts', { code: '6197', name: 'typed', type: 'expense' }))).toBe('ACCOUNT_CODE_IS_AUTOMATIC')
+    // Company B's new account gets its own code — never one another company uses.
+    const inB = ok(await sim.as(sim.B.finance, sim.B).post('/setup/chart-of-accounts', { name: 'Uniforms', type: 'expense' }), 201)
+    expect(inB.code).not.toBe(newCode)
+    expect((await sim.as(A.manager, A).post('/setup/chart-of-accounts', { name: 'x', type: 'expense' })).statusCode).toBe(403)
     // Company B: A's account is 404.
     expect((await sim.as(sim.B.finance, sim.B).patch(`/setup/chart-of-accounts/${created.id}`, { name: 'hijack' })).statusCode).toBe(404)
     // The new account takes a posting (finance, open month).
     ok(await fin.post('/accounting/journal', manual(A, 'Aprons for the Simmer line', '2026-10-16', [
-      { code: '6197', type: 'debit', cents: 300_000, conceptId: A.brands.srb.id }, { code: '1010', type: 'credit', cents: 300_000 },
+      { code: newCode, type: 'debit', cents: 300_000, conceptId: A.brands.srb.id }, { code: '1010', type: 'credit', cents: 300_000 },
     ])), 201)
   }, 60_000)
 

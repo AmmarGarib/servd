@@ -25,6 +25,7 @@ import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF, ADMIN_ONLY } from '../auth/middleware.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
+import { receiptExpenseAccountOk } from './receiving.js'
 import { audit } from '../../lib/audit.js'
 import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { APPROVAL_RIGHTS, approvalInputOf, approvalSubject, assertCanApprove, auditApproval, type ApprovalGrant } from '../../lib/approvalRights.js'
@@ -88,10 +89,10 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     const tenantId = po.supplier.tenantId
     if (!tenantId) return []
     const rows = await prisma.account.findMany({
-      where: { tenantId, type: 'expense', isActive: true, controlledBy: null, code: { startsWith: '6' } },
-      select: { code: true, name: true }, orderBy: { code: 'asc' },
+      where: { tenantId, type: 'expense', isActive: true, controlledBy: null },
+      select: { code: true, name: true, type: true, isActive: true, controlledBy: true, plSection: true }, orderBy: { code: 'asc' },
     })
-    return rows.filter((a) => /^6\d{3}/.test(a.code)).filter((a) => { const n = Number(a.code.slice(0, 4)); return !(n >= 6200 && n <= 6249) && !(n >= 6990 && n <= 6999) })
+    return rows.filter(receiptExpenseAccountOk).map((a) => ({ code: a.code, name: a.name }))
   })
 
   fastify.post<{ Params: { id: string } }>('/purchase-orders/:id/complete', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {

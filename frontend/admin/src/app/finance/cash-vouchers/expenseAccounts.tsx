@@ -6,6 +6,7 @@
 // (GET /setup/chart-of-accounts); a login that cannot read it just keeps the short list.
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../../lib/api'
+import { isOperatingExpenseAccount } from '@/lib/accountSection'
 
 interface ChartRow { code: string; name: string; isActive: boolean; tenantId: string | null }
 
@@ -17,7 +18,7 @@ export function useExpenseAccounts(tenantId: string | null | undefined, enabled 
     retry: false, meta: { background: true }, staleTime: 300_000,
   })
   return chart
-    .filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!tenantId || a.tenantId === tenantId))
+    .filter((a) => isOperatingExpenseAccount(a) && a.isActive && (!tenantId || a.tenantId === tenantId))
     .sort((a, b) => a.code.localeCompare(b.code))
 }
 

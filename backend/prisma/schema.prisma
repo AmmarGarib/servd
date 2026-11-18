@@ -3811,6 +3811,11 @@ model Account {
   /// Current / non-current for an asset or liability (owner, 2026-10-31). NULL = the default by code
   /// (lib/accountTerm.ts termOf, the ONE reading). Always NULL on revenue / expense / equity.
   classification     String?
+  /// Where a revenue / expense account shows in the P&L (owner, 2026-11-18: the code must not decide) — 'revenue' |
+  /// 'other_income' | 'cost_of_sales' | 'contra_revenue' | 'operating_expense'. Read ONLY through
+  /// lib/accountSection.ts plSectionOf (NULL = a module-created account: its fixed code's default). Always NULL on
+  /// asset / liability / equity.
+  plSection          String?
 
   /// Who controls postings to this account (journal.ts postJournalEntry) — ONE controlled-account mechanism (wave B):
   ///   'intercompany' — "Due from/to <company>" of ONE company pair: only sourceType 'ic.*'

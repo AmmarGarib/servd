@@ -28,6 +28,7 @@
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
+import { isOperatingExpense } from '../../lib/accountSection.js'
 
 type Db = Pick<typeof prisma, 'account'> | Prisma.TransactionClient
 
@@ -149,11 +150,12 @@ export function isPayrollCategory(name: string | null | undefined): boolean {
  * caller's transaction when it holds one.
  */
 export async function assertExpenseCode(tenantId: string, code: string, db: Db = prisma): Promise<void> {
-  if (!/^6\d{3}$/.test(code)) {
-    throw new AppError('NOT_AN_EXPENSE_CODE', `${code} is not an operating-expense (6xxx) account`, 422)
+  const acct = await db.account.findFirst({ where: { tenantId, code }, select: { id: true, code: true, type: true, plSection: true, isActive: true } })
+  // Operating expense = the account's stored P&L section (lib/accountSection.ts), never its code.
+  if (acct ? !isOperatingExpense(acct) : !/^6\d{3}$/.test(code)) {
+    throw new AppError('NOT_AN_EXPENSE_CODE', `${code} is not an operating-expense account`, 422)
   }
-  const acct = await db.account.findFirst({ where: { tenantId, code, isActive: true, type: 'expense' }, select: { id: true } })
-  if (!acct) throw new AppError('ACCOUNT_NOT_FOUND', `This company's chart has no active expense account ${code}`, 422)
+  if (!acct || !acct.isActive) throw new AppError('ACCOUNT_NOT_FOUND', `This company's chart has no active expense account ${code}`, 422)
 }
 
 /**

@@ -50,6 +50,7 @@
 // shows the split under Unassigned); a source entry reversed AFTER its split leaves the split standing (reverse the
 // split too — the preview's `sourceLive` says so).
 
+import { plSectionOf } from '../../lib/accountSection.js'
 import { Prisma } from '@prisma/client'
 import { serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
@@ -369,7 +370,7 @@ export async function createCostSplit(actor: TransferActor, input: CreateSplitIn
       const fresh = await resolveSource(tx, actor, { sourceEntryId: src.entryId })
       if (!fresh.splittable) throw new AppError(fresh.live ? 'SOURCE_NOT_SPLITTABLE' : 'SOURCE_REVERSED', fresh.notSplittableReason!, 409)
 
-      const accounts = await tx.account.findMany({ where: { tenantId: S, code: { in: Array.from(new Set(lines.map((l) => l.accountCode))) } }, select: { code: true, name: true, type: true, description: true } })
+      const accounts = await tx.account.findMany({ where: { tenantId: S, code: { in: Array.from(new Set(lines.map((l) => l.accountCode))) } }, select: { code: true, name: true, type: true, description: true, plSection: true } })
       const srcAccount = new Map(accounts.map((a) => [a.code, a]))
       const row = await tx.costSplit.create({
         data: {
@@ -392,7 +393,7 @@ export async function createCostSplit(actor: TransferActor, input: CreateSplitIn
             continue
           }
           const a = srcAccount.get(code)!
-          const made = await tx.account.createMany({ data: [{ tenantId: X, code, name: a.name, type: 'expense', description: a.description }], skipDuplicates: true })
+          const made = await tx.account.createMany({ data: [{ tenantId: X, code, name: a.name, type: 'expense', description: a.description, plSection: plSectionOf(a) }], skipDuplicates: true })
           if (made.count > 0) createdAccounts.push({ tenantId: X, code, name: a.name })
         }
         const chargeLines: ChargeLine[] = []

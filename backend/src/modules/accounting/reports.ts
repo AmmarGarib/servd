@@ -1,4 +1,5 @@
 import { termOf, type AccountTerm } from '../../lib/accountTerm.js'
+import { plSectionOf, type PlSection } from '../../lib/accountSection.js'
 // Financial reports built from the journal — the ledger is the source of truth.
 //
 // Every report aggregates JournalLine rows by account; nothing reads from
@@ -31,10 +32,6 @@ export function isBrandSalesCode(code: string): boolean {
   return /^40\d\d$/.test(code)
 }
 
-/** Other income (42xx): below operating revenue, never a sales KPI. */
-export function isOtherIncomeCode(code: string): boolean {
-  return code.startsWith('42')
-}
 
 /** The contra accounts netted off brand sales for the cost-of-sales denominator: discounts and loyalty redemptions. */
 export const BRAND_SALES_CONTRA_CODES: readonly string[] = [ACCT.DISCOUNTS, ACCT.LOYALTY_REDEMPTIONS]
@@ -68,6 +65,8 @@ interface AccountAggregation {
   // same code appears once per company, so every row carries its company.
   tenantId: string | null
   code: string
+  /** Where it shows in the P&L (lib/accountSection.ts); null for balance-sheet accounts. */
+  plSection: PlSection | null
   name: string
   type: AccountType
   debitCents: number
@@ -126,7 +125,7 @@ async function aggregateByAccount(opts: {
   const accountIds = Array.from(new Set(grouped.map((g) => g.accountId)))
   const accounts = await prisma.account.findMany({
     where: { id: { in: accountIds } },
-    select: { id: true, tenantId: true, code: true, name: true, type: true },
+    select: { id: true, tenantId: true, code: true, name: true, type: true, plSection: true },
   })
   const accountMap = new Map(accounts.map((a) => [a.id, a]))
 
@@ -147,6 +146,7 @@ async function aggregateByAccount(opts: {
       accountId,
       tenantId: acc.tenantId,
       code: acc.code,
+      plSection: plSectionOf(acc),
       name: acc.name,
       type: acc.type,
       debitCents: sums.debit,
@@ -527,29 +527,28 @@ export interface ProfitAndLossReport {
   }
 }
 
-const COGS_PREFIX = '5'
-const CONTRA_REVENUE_PREFIX = '7'
+// Which section an account shows in is STORED on the account (lib/accountSection.ts plSectionOf) — never its code.
 
 export async function profitAndLoss(tenantIds: string[], dateFrom: Date, dateTo: Date): Promise<ProfitAndLossReport> {
   const rows = await aggregateByAccount({ tenantIds, dateFrom, dateTo })
 
   const revenueRows = rows.filter((r) => r.type === 'revenue')
   const revenue = revenueRows
-    .filter((r) => !isOtherIncomeCode(r.code))
+    .filter((r) => r.plSection !== 'other_income')
     .map((r) => ({ code: r.code, name: r.name, amountCents: r.balanceCents }))
   const otherIncome = revenueRows
-    .filter((r) => isOtherIncomeCode(r.code))
+    .filter((r) => r.plSection === 'other_income')
     .map((r) => ({ code: r.code, name: r.name, amountCents: r.balanceCents }))
 
   const expenses = rows.filter((r) => r.type === 'expense')
   const cogs = expenses
-    .filter((r) => r.code.startsWith(COGS_PREFIX))
+    .filter((r) => r.plSection === 'cost_of_sales')
     .map((r) => ({ code: r.code, name: r.name, amountCents: r.balanceCents }))
   const contraRevenue = expenses
-    .filter((r) => r.code.startsWith(CONTRA_REVENUE_PREFIX))
+    .filter((r) => r.plSection === 'contra_revenue')
     .map((r) => ({ code: r.code, name: r.name, amountCents: r.balanceCents }))
   const opex = expenses
-    .filter((r) => !r.code.startsWith(COGS_PREFIX) && !r.code.startsWith(CONTRA_REVENUE_PREFIX))
+    .filter((r) => r.plSection === 'operating_expense')
     .map((r) => ({ code: r.code, name: r.name, amountCents: r.balanceCents }))
 
   const revenueCents       = revenue.reduce((s, r) => s + r.amountCents, 0)
@@ -616,7 +615,7 @@ export async function pnlByConcept(tenantIds: string[], dateFrom: Date, dateTo: 
   const accountIds = Array.from(new Set(grouped.map((g) => g.accountId)))
   const accounts = await prisma.account.findMany({
     where: { id: { in: accountIds } },
-    select: { id: true, code: true, type: true },
+    select: { id: true, code: true, type: true, plSection: true },
   })
   const accMap = new Map(accounts.map((a) => [a.id, a]))
 
@@ -639,12 +638,13 @@ export async function pnlByConcept(tenantIds: string[], dateFrom: Date, dateTo: 
     const b = ensure(row.conceptId)
     if (acc.type === 'revenue') {
       const signed = row.type === 'credit' ? amt : -amt
-      if (isOtherIncomeCode(acc.code)) b.otherIncomeCents += signed
+      if (plSectionOf(acc) === 'other_income') b.otherIncomeCents += signed
       else b.revenueCents += signed
     } else if (acc.type === 'expense') {
       const signed = row.type === 'debit' ? amt : -amt // expense increases on debit
-      if (acc.code.startsWith(COGS_PREFIX)) b.cogsCents += signed
-      else if (acc.code.startsWith(CONTRA_REVENUE_PREFIX)) b.contraRevenueCents += signed
+      const section = plSectionOf(acc)
+      if (section === 'cost_of_sales') b.cogsCents += signed
+      else if (section === 'contra_revenue') b.contraRevenueCents += signed
       else b.opexCents += signed
     }
     // asset / liability / equity lines are not part of the P&L
@@ -1095,7 +1095,7 @@ export async function brandPnl(
   ])
   const accounts = await prisma.account.findMany({
     where: { id: { in: Array.from(new Set(grouped.map((g) => g.accountId))) } },
-    select: { id: true, code: true, type: true, name: true },
+    select: { id: true, code: true, type: true, name: true, plSection: true },
   })
   const accMap = new Map(accounts.map((a) => [a.id, a]))
   const known = new Map(brands.map((b) => [b.id, b.name]))
@@ -1111,12 +1111,13 @@ export async function brandPnl(
     const bucket = bucketOf(row.conceptId)
     if (acc.type === 'revenue') {
       const signed = row.type === 'credit' ? amt : -amt
-      if (isOtherIncomeCode(acc.code)) bucket.other += signed
+      if (plSectionOf(acc) === 'other_income') bucket.other += signed
       else bucket.revenue += signed
     } else if (acc.type === 'expense') {
       const signed = row.type === 'debit' ? amt : -amt
-      if (acc.code.startsWith(COGS_PREFIX)) bucket.cogs += signed
-      else if (acc.code.startsWith(CONTRA_REVENUE_PREFIX)) bucket.contra += signed
+      const section = plSectionOf(acc)
+      if (section === 'cost_of_sales') bucket.cogs += signed
+      else if (section === 'contra_revenue') bucket.contra += signed
       else {
         bucket.opex += signed
         // The company's own Wages Expense account is wages too (payroll books office pay there, owner 2026-11-04).

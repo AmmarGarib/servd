@@ -29,7 +29,11 @@ import { WORKSPACES, WORKSPACE_OF_MODULE } from '../../lib/workspaces.js'
 import { SCHEDULED_REPORT_MODULES, mayScheduleReport } from '../../lib/moduleAccess.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { requireModule } from '../notifications/requireModule.js'
-import { REQUIRED_ACCOUNT_CODES } from '../../lib/chartOfAccounts.js'
+import { REQUIRED_ACCOUNT_CODES, CHART_OF_ACCOUNTS } from '../../lib/chartOfAccounts.js'
+import { PL_SECTIONS, plSectionOf, assertSectionFitsType, codeBandOf, nextAccountCodeTx } from '../../lib/accountSection.js'
+
+/** Codes the chart template creates — servd's modules post to them by code. */
+const SYSTEM_ACCOUNT_CODES: ReadonlySet<string> = new Set(CHART_OF_ACCOUNTS.map((a) => a.code))
 import { ACCT, revenueCodeForConcept } from '../accounting/journal.js'
 import { AUTHORITY_LIST } from '../accounting/taxAuthorities.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
@@ -1186,7 +1190,8 @@ export async function setupRoutes(fastify: FastifyInstance) {
     // Sub-accounts only for accounts whose sub-accounts are switched on (owner, 2026-10-23).
     // `term`: current / non-current for assets and liabilities (owner, 2026-10-31; lib/accountTerm.ts) —
     // `classification` is the stored pick (null = the default by code).
-    return rows.map(({ tenant, ...a }) => ({ ...a, term: termOf(a), companyName: tenant?.name ?? null, ...(withSubs && !a.subAccountsEnabled ? { subAccounts: [] } : {}) }))
+    // `plSection` is the RESOLVED P&L section (lib/accountSection.ts); `sectionFixed` = a servd-posted account.
+    return rows.map(({ tenant, ...a }) => ({ ...a, plSection: plSectionOf(a), sectionFixed: !!a.controlledBy || SYSTEM_ACCOUNT_CODES.has(a.code), term: termOf(a), companyName: tenant?.name ?? null, ...(withSubs && !a.subAccountsEnabled ? { subAccounts: [] } : {}) }))
   })
   // Adding, renaming or switching off an account changes what can post, so
   // both writes go on the accounting trail (category 'accounting').
@@ -1195,46 +1200,43 @@ export async function setupRoutes(fastify: FastifyInstance) {
   // finance (with the accounting module, so the CEO's untick closes it).
   // Switching an account off or back on — the chart's "delete" — is theirs
   // too (owner, 2026-10-16); the books' own guards below still refuse it.
-  const RESERVED_ACCOUNT_RANGES: ReadonlyArray<readonly [number, number]> = [
-    [1400, 1599], [2012, 2012], [2100, 2199], [6200, 6249], [6990, 6999],
-  ]
-  // The leading 4-digit code ('1555', '1555.01', '1555-A') decides the range.
-  const isReservedAccountCode = (code: string): boolean => {
-    const m = /^\s*(\d{4})(?!\d)/.exec(code)
-    if (!m) return false
-    const n = Number(m[1])
-    return RESERVED_ACCOUNT_RANGES.some(([lo, hi]) => n >= lo && n <= hi)
-  }
   const CHART_EDITORS = ['admin', 'finance'] as UserRole[]
   const chartEditorGate = [requireAuth(...CHART_EDITORS), requireModule('accounting')]
+  // Codes are picked by servd, never typed (owner, 2026-11-18: "Accounts codes should be picked on auto and each
+  // account will carry a unique code, no duplication"): the first free code of the kind's band that NO company uses
+  // (lib/accountSection.ts nextAccountCodeTx), so it can never land in a range a module owns (the register's
+  // 1500–1599 / 2012, inter-company 1400–1499 / 2100–2199, head-office charges 6200–6249, recharges 6990–6999) nor on
+  // a code servd posts to. A typed code is refused (422 ACCOUNT_CODE_IS_AUTOMATIC). Where the account SHOWS is
+  // stored, not read from the code: `plSection` for revenue / expense (an expense with none named is an OPERATING
+  // expense — cost of sales is always an explicit pick), current / non-current for assets and liabilities.
   fastify.post('/chart-of-accounts', { preHandler: chartEditorGate }, async (req, reply) => {
+    if (req.body && typeof req.body === 'object' && 'code' in (req.body as Record<string, unknown>)) {
+      throw new AppError('ACCOUNT_CODE_IS_AUTOMATIC', 'servd picks the account code itself — leave it out', 422)
+    }
     const body = z.object({
-      code:        z.string().min(1).max(20),
-      name:        z.string().min(1).max(120),
+      name:        z.string().trim().min(1).max(120),
       type:        z.enum(['asset', 'liability', 'equity', 'revenue', 'expense']),
       description: z.string().max(500).nullable().optional(),
       classification: z.enum(['current', 'non_current']).nullable().optional(),
+      plSection:   z.enum(PL_SECTIONS).nullable().optional(),
+      /** An asset that is a bank / cash-at-bank account: its code comes from the 10xx bank band. */
+      isBank:      z.boolean().optional(),
     }).parse(req.body)
-    if (body.classification && body.type !== 'asset' && body.type !== 'liability') {
+    const hasTerm = body.type === 'asset' || body.type === 'liability'
+    if (body.classification && !hasTerm) {
       throw new AppError('TERM_ONLY_ASSET_LIABILITY', 'Current / non-current is only for asset and liability accounts', 422)
     }
-    // Ranges a module owns (finance audit 2026-10-16): the fixed-asset
-    // register 1500–1599 and 2012, the inter-company / head-office pair
-    // accounts 1400–1499 and 2100–2199, the head-office charge accounts
-    // 6200–6249 and the group recharge accounts 6990–6999. Those accounts are
-    // created by their module (chart template, ensurePairAccounts, head
-    // offices) with controlledBy set — a hand-made one would have no control
-    // and take hand journals the register / pair never sees.
-    if (isReservedAccountCode(body.code)) {
-      throw new AppError('ACCOUNT_CODE_RESERVED',
-        `Code ${body.code} is in a range servd's modules create themselves (fixed assets 1500–1599 and 2012, inter-company 1400–1499 / 2100–2199, head-office charges 6200–6249, group recharges 6990–6999). Pick another code.`, 422)
-    }
+    const hasSection = body.type === 'revenue' || body.type === 'expense'
+    if (body.plSection && !hasSection) throw new AppError('SECTION_NOT_FOR_TYPE', 'Only revenue and expense accounts have a P&L section', 422)
+    if (body.isBank && body.type !== 'asset') throw new AppError('BANK_IS_AN_ASSET', 'A bank account is an asset account', 422)
+    const plSection = hasSection ? (body.plSection ?? (body.type === 'revenue' ? 'revenue' : 'operating_expense')) : null
+    if (plSection) assertSectionFitsType(body.type, plSection)
+    const classification = hasTerm ? (body.classification ?? 'current') : null
     const tenantId = activeTenantId(req)
-    const created = await prisma.account.create({ data: { ...body, tenantId } }).catch((err: unknown) => {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        throw new AppError('ACCOUNT_CODE_TAKEN', `Account code ${body.code} already exists in this company.`, 409)
-      }
-      throw err
+    // The service client: the code must be free in EVERY company, which a company-scoped read cannot see.
+    const created = await serviceClient.$transaction(async (tx) => {
+      const code = await nextAccountCodeTx(tx, codeBandOf({ type: body.type, plSection, isBank: body.isBank }))
+      return tx.account.create({ data: { code, name: body.name, type: body.type, description: body.description ?? null, classification, plSection, tenantId } })
     })
     await audit({ category: 'accounting',
       action: 'account.create',
@@ -1318,6 +1320,10 @@ export async function setupRoutes(fastify: FastifyInstance) {
       isActive:    z.boolean().optional(),
       // Current / non-current (owner, 2026-10-31); null = back to the default by code.
       classification: z.enum(['current', 'non_current']).nullable().optional(),
+      // "Shows in" — where a revenue / expense account sits in the P&L (lib/accountSection.ts). A label for the
+      // reports: it re-sorts every period's P&L, posts nothing. Never on an account a servd module posts to by its
+      // code (422 SECTION_FIXED).
+      plSection: z.enum(PL_SECTIONS).optional(),
       // Linked to another company (owner, 2026-11-12; accounting/mirrorDrafts.ts): a journal on this account raises a
       // pre-filled draft there, on its account `relatedAccountCode`. Both, or null to unlink.
       relatedTenantId:    z.string().min(1).max(64).nullable().optional(),
@@ -1341,6 +1347,17 @@ export async function setupRoutes(fastify: FastifyInstance) {
     }
     if (body.classification && existing.type !== 'asset' && existing.type !== 'liability') {
       throw new AppError('TERM_ONLY_ASSET_LIABILITY', 'Current / non-current is only for asset and liability accounts', 422)
+    }
+    if (body.plSection !== undefined && body.plSection !== plSectionOf(existing)) {
+      assertSectionFitsType(existing.type, body.plSection)
+      const brand = existing.tenantId ? await prisma.concept.findFirst({
+        where: { tenantId: existing.tenantId, OR: [{ revenueAccountCode: existing.code }, { servdRevenueAccountCode: existing.code }] }, select: { id: true },
+      }) : null
+      if (existing.controlledBy || brand || SYSTEM_ACCOUNT_CODES.has(existing.code)) {
+        throw new AppError('SECTION_FIXED', `${existing.code} ${existing.name} is an account servd posts to itself — where it shows cannot be changed`, 422)
+      }
+    } else {
+      delete body.plSection
     }
     // Finance switches accounts off / on too (owner, 2026-10-16: "Give access to finance also").
     if (body.isActive === false && existing.isActive) await assertAccountMayBeSwitchedOff(existing)

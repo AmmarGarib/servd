@@ -25,7 +25,25 @@ interface Account {
   /** Linked to another company (owner, 2026-11-12): a journal on it drafts the other company's side. */
   relatedTenantId?: string | null
   relatedAccountCode?: string | null
+  /** Where a revenue / expense account shows in the P&L (owner, 2026-11-18; backend lib/accountSection.ts) — stored
+   *  on the account, never read from its code. */
+  plSection?: PlSection | null
+  /** An account servd posts to itself: where it shows cannot be changed. */
+  sectionFixed?: boolean
 }
+type PlSection = 'revenue' | 'other_income' | 'cost_of_sales' | 'contra_revenue' | 'operating_expense'
+const SECTION_OPTIONS: Record<'revenue' | 'expense', Array<{ value: PlSection; label: string }>> = {
+  revenue: [
+    { value: 'revenue', label: 'Sales / operating revenue' },
+    { value: 'other_income', label: 'Other income (below operating profit)' },
+  ],
+  expense: [
+    { value: 'operating_expense', label: 'Operating expenses (IT, rent, repairs, admin…)' },
+    { value: 'cost_of_sales', label: 'Cost of sales (food, drinks, packaging)' },
+    { value: 'contra_revenue', label: 'Discounts & refunds (taken off sales)' },
+  ],
+}
+const SECTION_SHORT: Record<PlSection, string> = { revenue: 'Sales / operating revenue', other_income: 'Other income', cost_of_sales: 'Cost of sales', contra_revenue: 'Discounts & refunds', operating_expense: 'Operating expenses' }
 type Term = 'current' | 'non_current'
 const TERM_TITLE: Record<Term, string> = { current: 'Current', non_current: 'Non-current' }
 
@@ -65,6 +83,7 @@ export default function ChartOfAccountsPage() {
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-white/85">{a.name}</p>
                       {a.description && <p className="text-xs text-white/40">{a.description}</p>}
+                      {a.plSection && <p className="text-[11px] text-white/50">P&amp;L: {SECTION_SHORT[a.plSection]}</p>}
                     </div>
                     {!a.isActive && <span className="text-[10px] text-white/30">PAUSED</span>}
                     {a.subAccountsEnabled && <span className="s-badge-green text-[10px]">Sub-accounts on</span>}
@@ -88,7 +107,7 @@ export default function ChartOfAccountsPage() {
           <div>
             <h1 className="text-2xl font-black text-white/90">Chart of accounts</h1>
             <p className="text-sm text-white/40 mt-1 max-w-2xl">
-              The ledger codes the platform posts against. Add custom accounts (e.g. <code className="text-primary-ink">6210 — Marketing software</code>) to mirror your accountant's tree.
+              The ledger codes the platform posts against. Add your own accounts (e.g. Marketing software) to mirror your accountant&apos;s tree — servd numbers them itself.
             </p>
           </div>
           <button onClick={() => setAdding(true)} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-black text-primary-on hover:opacity-90">+ New account</button>
@@ -139,13 +158,17 @@ export default function ChartOfAccountsPage() {
 }
 
 function Modal({ account, onClose, onSaved }: { account: Account | null; onClose: () => void; onSaved: () => void }) {
-  const [code, setCode] = useState(account?.code ?? '')
   const [name, setName] = useState(account?.name ?? '')
   const [type, setType] = useState<AccountType>(account?.type ?? 'expense')
   const [description, setDescription] = useState(account?.description ?? '')
   const [isActive, setIsActive] = useState(account?.isActive ?? true)
   const [term, setTerm] = useState<Term>(account?.term ?? 'current')
   const hasTerm = type === 'asset' || type === 'liability'
+  const hasSection = type === 'revenue' || type === 'expense'
+  const [section, setSection] = useState<PlSection | ''>(account?.plSection ?? '')
+  const sectionOptions = hasSection ? SECTION_OPTIONS[type as 'revenue' | 'expense'] : []
+  const pickedSection: PlSection | '' = sectionOptions.some((o) => o.value === section) ? section : ''
+  const [isBank, setIsBank] = useState(false)
   // Linked to another company (owner, 2026-11-12): journals on this account draft the other company's side.
   const { data: companies = [] } = useMyTenants()
   const others = companies.filter((c) => c.id !== account?.tenantId)
@@ -165,9 +188,10 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
     mutationFn: () => {
       if (account) return api.patch(`/setup/chart-of-accounts/${account.id}`, {
         name: name.trim(), description: description || null, isActive, ...(hasTerm && { classification: term }),
+        ...(hasSection && !account.sectionFixed && pickedSection && pickedSection !== account.plSection && { plSection: pickedSection }),
         ...(linkChanged && { relatedTenantId: relatedTenantId || null, relatedAccountCode: relatedTenantId ? (relatedAccountCode.trim() || null) : null }),
       })
-      return api.post('/setup/chart-of-accounts', { code: code.trim(), name: name.trim(), type, description: description || null, ...(hasTerm && { classification: term }) })
+      return api.post('/setup/chart-of-accounts', { name: name.trim(), type, description: description || null, ...(hasTerm && { classification: term }), ...(hasSection && { plSection: pickedSection }), ...(type === 'asset' && isBank && { isBank: true }) })
     },
     onSuccess: () => onSaved(),
   })
@@ -183,14 +207,8 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
         </div>
         <div className="p-5 space-y-3">
           <div className="grid grid-cols-[120px_1fr] gap-3">
-            <Field label="Code *">
-              <input value={code} onChange={(e) => setCode(e.target.value)} disabled={!!account} placeholder="6210" className={fieldCls + ' font-mono'} autoFocus />
-              {!account && type === 'expense' && /^\s*5/.test(code) && (
-                <p role="alert" className="mt-1 text-xs" style={{ color: 'var(--erp-danger)' }}>
-                  Codes starting with 5 are COST OF SALES (food, drinks, packaging): the P&amp;L shows them above gross profit.
-                  For a running cost (IT, rent, repairs) use a 6xxx code, e.g. 6210. The code cannot be changed later.
-                </p>
-              )}
+            <Field label="Code">
+              <input value={account?.code ?? 'Automatic'} disabled readOnly className={fieldCls + ' font-mono'} />
             </Field>
             <Field label="Type *">
               <Select value={type} onChange={(e) => setType(e.target.value as AccountType)} disabled={!!account} className={fieldCls}>
@@ -202,6 +220,25 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
               </Select>
             </Field>
           </div>
+          {!account && <p className="text-[11px] text-white/55 -mt-1">servd gives the account its own number. The number never decides where the account shows in a report — the choice below does.</p>}
+          {hasSection && (
+            <Field label="Shows in the P&L under *">
+              <Select value={pickedSection} onChange={(e) => setSection(e.target.value as PlSection)} disabled={!!account?.sectionFixed} className={fieldCls}>
+                {!pickedSection && <option value="">— pick one —</option>}
+                {sectionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </Select>
+              {account?.sectionFixed && <p className="mt-1 text-[11px] text-white/55">servd posts to this account itself, so this cannot be changed.</p>}
+              {account && !account.sectionFixed && pickedSection && pickedSection !== account.plSection && (
+                <p className="mt-1 text-[11px]" style={{ color: 'var(--erp-danger)' }}>This moves the account&apos;s whole balance in every P&amp;L, past months included. Nothing is re-posted.</p>
+              )}
+            </Field>
+          )}
+          {!account && type === 'asset' && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={isBank} onChange={(e) => setIsBank(e.target.checked)} className="accent-accent" />
+              <span className="text-xs text-white/65">This is a bank account</span>
+            </label>
+          )}
           {hasTerm && (
             <Field label={type === 'asset' ? 'Current or non-current asset *' : 'Current or non-current liability *'}>
               <Select value={term} onChange={(e) => setTerm(e.target.value as Term)} className={fieldCls}>
@@ -245,7 +282,7 @@ function Modal({ account, onClose, onSaved }: { account: Account | null; onClose
         {save.isError && <p role="alert" className="px-5 pb-3 text-xs" style={{ color: 'var(--erp-danger)' }}>{(save.error as Error).message}</p>}
         <div className="flex justify-between gap-3 border-t border-white/[0.05] p-4 bg-white/[0.01]">
           <button onClick={onClose} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/55 hover:text-white">Cancel</button>
-          <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || (!account && !code.trim())}
+          <button onClick={() => save.mutate()} disabled={save.isPending || !name.trim() || (hasSection && !pickedSection)}
             className="rounded-xl bg-primary px-5 py-2.5 text-sm font-black text-primary-on hover:opacity-90 disabled:opacity-50">
             {save.isPending ? 'Saving…' : account ? 'Save' : 'Create'}
           </button>

@@ -40,6 +40,7 @@ import { MovePoCompany } from '../../components/procurement/MovePoCompany'
 import { DraftNotice } from '@/components/ui/DraftNotice'
 import { bulkUnitOf, convertUnits, unitFamily, type UnitFamilyName } from '@/lib/units'
 import { MyTasksTab, GrnsTab, BuyerPicker, useMyPoTasks, taskCount } from '@/components/procurement/PoWorkflow'
+import { isOperatingExpenseAccount } from '@/lib/accountSection'
 
 // Only the API's MANAGERS take a delivery in (owner decision 27, R2-UI-02) —
 // the list comes from the server (lib/roles.ts). The buyer sees the dock read-only.
@@ -1960,7 +1961,7 @@ function CreateBillForm({ qc, onClose, prefill }: { qc: ReturnType<typeof useQue
     retry: false, meta: { background: true }, staleTime: 300_000,
   })
   const expenseAccounts = chart
-    .filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!supplier?.tenantId || a.tenantId === supplier.tenantId))
+    .filter((a) => isOperatingExpenseAccount(a) && a.isActive && (!supplier?.tenantId || a.tenantId === supplier.tenantId))
     .sort((a, b) => a.code.localeCompare(b.code))
 
   function patchLine(key: string, p: Partial<BillLine>) { setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l))) }

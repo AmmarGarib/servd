@@ -39,6 +39,7 @@ import { PendingFilesPicker } from '@/components/files/PendingFilesPicker'
 import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFiles'
 import { Button, CheckLabel, dangerBtn, dateBounds, Dialog, ErrorBanner as SharedErrorBanner, Field, fieldCls, FieldLabel, firstMissing, focusField, Hint, Input, LinkButton, primaryBtn, SectionCard, StickyActionBar, StickySummary, Textarea, useSubmitOnce } from '../../../components/finance/ui'
 import { FIcon, categoryIcon } from '../../../components/finance/ui/icons'
+import { isOperatingExpenseAccount } from '@/lib/accountSection'
 
 type Cadence = 'monthly' | 'quarterly' | 'annual' | 'per_use'
 
@@ -269,7 +270,7 @@ function useExpenseAccounts(tenantId: string | null | undefined) {
     staleTime: 60_000,
     retry: false,
   })
-  const accounts = (q.data ?? []).filter((a) => a.tenantId === tenantId && a.type === 'expense' && a.isActive && /^6\d{3}$/.test(a.code))
+  const accounts = (q.data ?? []).filter((a) => a.tenantId === tenantId && a.type === 'expense' && a.isActive && isOperatingExpenseAccount(a))
   return { accounts, isLoading: q.isLoading, isError: q.isError }
 }
 

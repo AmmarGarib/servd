@@ -147,10 +147,13 @@ describe('OpEx category expense account', () => {
     // An explicit null leaves it undecided even when the name maps.
     expect((await call('adminA', 'POST', '/opex/categories', { name: 'Insurance', expenseAccountCode: null })).json().expenseAccountCode).toBeNull()
 
-    // Not an operating expense (COGS, stock) → refused by shape; a 6xxx the chart
-    // lacks or has switched off → 422.
-    expect((await call('adminA', 'POST', '/opex/categories', { name: 'Food', expenseAccountCode: '5010' })).statusCode).toBe(400)
-    expect((await call('adminA', 'POST', '/opex/categories', { name: 'Stock', expenseAccountCode: '1210' })).statusCode).toBe(400)
+    // Not an operating expense (cost of sales, stock) → 422 by the account's stored P&L section (owner, 2026-11-18:
+    // never by its code); an account the chart lacks or has switched off → 422.
+    for (const [name, code] of [['Food', '5010'], ['Stock', '1210']] as const) {
+      const res = await call('adminA', 'POST', '/opex/categories', { name, expenseAccountCode: code })
+      expect(res.statusCode, code).toBe(422)
+      expect(res.json().error.code, code).toBe('NOT_AN_EXPENSE_CODE')
+    }
     expect((await call('adminA', 'POST', '/opex/categories', { name: 'Odd', expenseAccountCode: '6999' })).json().error.code).toBe('ACCOUNT_NOT_FOUND')
     await prisma.account.updateMany({ where: { tenantId: tenantA, code: '6130' }, data: { isActive: false } })
     expect((await call('adminA', 'POST', '/opex/categories', { name: 'Property tax', expenseAccountCode: '6130' })).json().error.code).toBe('ACCOUNT_NOT_FOUND')

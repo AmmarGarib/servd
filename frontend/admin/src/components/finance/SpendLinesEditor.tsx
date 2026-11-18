@@ -27,6 +27,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
 import { MoneyInput } from '../ui/MoneyInput'
 import { Select } from '@/components/ui/Select'
+import { isOperatingExpenseAccount } from '@/lib/accountSection'
 
 export type SpendLineKind = 'expense' | 'stock' | 'capex'
 /** Every line kind this editor knows. */
@@ -86,7 +87,7 @@ export function lineReady(l: SpendLine): boolean {
   if (!(l.amountCents > 0)) return false
   if (l.kind === 'stock') return !!l.inventoryItemId && qtyOf(l) > 0
   if (l.kind === 'capex') return !!l.capexLineId && !!l.description.trim()
-  return (!!l.categoryKey || /^6\d{3}$/.test(l.accountCode)) && !!l.description.trim()
+  return (!!l.categoryKey || !!l.accountCode.trim()) && !!l.description.trim()
 }
 
 /**
@@ -148,7 +149,7 @@ export function SpendLinesEditor({
     enabled: canPickAccount,
     retry: false, meta: { background: true }, staleTime: 300_000,
   })
-  const expenseAccounts = chart.filter((a) => /^6\d{3}$/.test(a.code) && a.isActive && (!tenantId || a.tenantId === tenantId))
+  const expenseAccounts = chart.filter((a) => isOperatingExpenseAccount(a) && a.isActive && (!tenantId || a.tenantId === tenantId))
   const { data: stockItems, isError: stockHidden } = useQuery<StockItem[]>({
     queryKey: ['inventory-items-picker'],
     queryFn: () => api.get('/inventory'),

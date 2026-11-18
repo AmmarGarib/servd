@@ -1626,6 +1626,25 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   ONE move `hr.payroll.wages_reclass:<runId>` (Dr Wages Expense / Cr 6032, tagged per employee; boot step
   `moveOfficeWagesToWagesExpense`), reversed with the accrual on reopen. Labour % and the brand P&L count the account
   as wages. Not in the head-office pool (6030–6036). Tests: `tests/payrollWagesExpense.test.ts`.
+- **An account's code never decides where it shows (owner, 2026-11-18: "account code should not decide where an
+  account balance will reflect in P&L or BS … codes should be picked on auto and each account will carry a unique
+  code … It should not happen again" — an IT expense account opened under a 5-code sat in Cost of sales).**
+  `Account.plSection` (revenue: `revenue` | `other_income`; expense: `cost_of_sales` | `contra_revenue` |
+  `operating_expense`; migration `20261118140000` stored it on every account, and current / non-current on every
+  asset / liability) read ONLY through `lib/accountSection.ts plSectionOf` / `isOperatingExpense` (NULL = an account
+  a module created by its fixed code → that code's default). The P&L, brand P&L, labour %, `assertExpenseCode`, the
+  PO / receipt expense-account rule and the admin expense pickers (`frontend/admin/src/lib/accountSection.ts`) read
+  it — never a code prefix (REPLACES the 5xxx warning of 17 Nov). `POST /setup/chart-of-accounts` takes NO code (a
+  typed one 422 `ACCOUNT_CODE_IS_AUTOMATIC`): `nextAccountCodeTx` picks the first code of the kind's band that no
+  company of servd uses (bank 1040–1099, asset 1700–1999, liability 2300–2999, equity 3040–3099, revenue 4300–4899,
+  other income 4900–4999, cost of sales 5100–5999, operating expense 6300–6989, contra 7100–7999 — never a template
+  or module-owned code; `ACCOUNT_CODE_RESERVED` is gone). An expense with no section named is an OPERATING expense;
+  cost of sales is always an explicit pick. `PATCH {plSection}` ("Shows in the P&L under", CHART_EDITORS) moves a
+  hand-made account — a label, posts nothing, re-sorts every period; an account servd posts to (template code,
+  controlled, a brand's sales account) is 422 `SECTION_FIXED`. A cost split's copied account carries the section.
+  Still by code, on purpose: which SYSTEM account a module posts to, brand sales (40xx), the cost-of-sales food /
+  drinks / packaging split (5010–5030), reserved ranges, bank codes (10xx), cash-flow categories. Tests:
+  `tests/setupChartGuards.test.ts`.
 - **Trial balance presentation (owner, 2026-10-16):** ONE net balance per
   account — debits − credits in the Debit column when positive, the Credit
   column when negative, never both — and accounts at zero are not listed (a
@@ -1640,10 +1659,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   guards ACCOUNT_IN_USE / ACCOUNT_CONTROLLED still refuse). **An account
   holding a balance cannot be switched off** (owner, 2026-10-22, the 9272
   case: a switched-off account refuses every journal, so its balance was stuck)
-  — 422 `ACCOUNT_HAS_BALANCE` until a journal clears it to zero. A duplicate code in the company is 409
-  `ACCOUNT_CODE_TAKEN`. 1400–1599, 2012, 2100–2199, 6200–6249 and 6990–6999
-  are refused for everyone, the CEO included (422 `ACCOUNT_CODE_RESERVED`; the
-  leading four digits decide): only their own modules create them.
+  — 422 `ACCOUNT_HAS_BALANCE` until a journal clears it to zero. Codes are servd's
+  (2026-11-18, above): never typed, so 1400–1599, 2012, 2100–2199, 6200–6249 and 6990–6999
+  can only be created by their own modules.
   **Current / non-current (owner, 2026-10-31):** `Account.classification`
   ('current' | 'non_current', assets and liabilities only — 422
   `TERM_ONLY_ASSET_LIABILITY`; NULL = the default by code) read ONLY through
