@@ -866,13 +866,19 @@ function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean;
     },
   })
   const where = v.paySource === 'box' ? `back into ${v.paidFrom ?? 'the petty-cash box'}` : v.paySource === 'bank' ? `back to ${v.paidFrom ?? 'the bank'}` : 'back to cash on hand'
+  // What the void does, in words (the server's voidEffect covers PO cash and pay-backs).
+  const effect = v.voidEffect ?? `the money goes ${where} and the expense is undone`
 
   if (v.status === 'voided') {
     return (
       <div className="rounded-2xl p-4 bg-s-red-dim border border-s-red/30">
         <p className="text-sm font-black text-s-red">Voided{v.voidedByName ? ` by ${v.voidedByName}` : ''}{v.voidedAt ? ` · ${fmtDateTime(v.voidedAt)}` : ''}</p>
         {v.voidReason && <p className="text-sm text-white/75 mt-1 whitespace-pre-wrap">{v.voidReason}</p>}
-        <p className="text-xs text-s-muted mt-1">The PKR {formatPkr(v.amountCents)} went {where} and the expense was undone. The documents stay below.</p>
+        <p className="text-xs text-s-muted mt-1">{v.purchaseOrderId
+          ? `The PO cash still with the buyer came back out of his box (${where.replace(/^back /, '')}); the buyer is paid back at the PO's bill instead.`
+          : v.voidedBillId
+            ? 'The supplier payment was undone — the bill owes again and a new pay-back voucher was raised.'
+            : `The PKR ${formatPkr(v.amountCents)} went ${where} and the expense was undone.`} The documents stay below.</p>
       </div>
     )
   }
@@ -882,11 +888,11 @@ function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean;
       <div className="rounded-2xl p-4 border space-y-2" style={{ background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', borderColor: 'var(--erp-warning)' }}>
         <p className="text-sm font-black text-white/90">Void waiting for the CEO{r.requestedByName ? ` — asked by ${r.requestedByName}` : ''} · {fmtDateTime(r.createdAt)}</p>
         <p className="text-sm text-white/80 whitespace-pre-wrap">{r.reason}</p>
-        <p className="text-xs text-s-muted">Nothing has changed yet. Once approved, the PKR {formatPkr(v.amountCents)} goes {where} and the expense is undone.</p>
+        <p className="text-xs text-s-muted">Nothing has changed yet. Once approved, {effect}.</p>
         <div className="flex flex-wrap gap-2">
           {r.canDecide && (
             <Button size="sm" type="submit" disabled={m.isPending}
-              onClick={async () => { if (await confirm({ title: `Void ${v.number}?`, body: `PKR ${formatPkr(v.amountCents)} goes ${where} and the expense is undone.`, confirmLabel: 'Approve void' })) m.mutate({ path: `void-requests/${r.id}/approve`, body: {} }) }}>
+              onClick={async () => { if (await confirm({ title: `Void ${v.number}?`, body: `${effect[0]!.toUpperCase()}${effect.slice(1)}.`, confirmLabel: 'Approve void' })) m.mutate({ path: `void-requests/${r.id}/approve`, body: {} }) }}>
               Approve void
             </Button>
           )}
@@ -926,7 +932,7 @@ function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean;
     <div className="rounded-2xl p-4 space-y-2" style={card}>
       {!open ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-s-muted">Paid by mistake, or the cash came back? Void it: the money goes {where} and the expense is undone{isCeo ? '' : ' — once the CEO approves'}.</p>
+          <p className="text-xs text-s-muted">Paid by mistake, or the cash came back? Void it: {effect}{isCeo ? '' : ' — once the CEO approves'}.</p>
           <Button variant="danger" size="sm" type="submit" onClick={() => setOpen(true)}>{isCeo ? 'Void voucher' : 'Request void'}</Button>
         </div>
       ) : (
@@ -937,7 +943,7 @@ function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean;
           <div className="flex gap-2">
             <Button variant="danger" size="sm" type="submit" disabled={m.isPending || reason.trim().length < 10}
               onClick={async () => {
-                if (!isCeo || await confirm({ title: `Void ${v.number} now?`, body: `PKR ${formatPkr(v.amountCents)} goes ${where} and the expense is undone.`, confirmLabel: 'Void it' })) {
+                if (!isCeo || await confirm({ title: `Void ${v.number} now?`, body: `${effect[0]!.toUpperCase()}${effect.slice(1)}.`, confirmLabel: 'Void it' })) {
                   m.mutate({ path: `${v.id}/void`, body: { reason: reason.trim() } })
                 }
               }}>

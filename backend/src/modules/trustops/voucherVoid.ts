@@ -10,8 +10,21 @@
 //
 // What can be voided: a voucher booked in ONE entry when finance paid it (bookedAtPay), paid in cash — from a
 // petty-cash box, cash on hand or a bank — with its documents open or checked (status disbursed | posted). Never a
-// voucher on credit (void its supplier bill), equipment (CapEx), a PO's cash or a buyer's pay-back (their PO / bill
-// carries them), an old 1357 hold, or one with change / conversions recorded (assertVoidable says which, 422).
+// voucher on credit (void its supplier bill), equipment (CapEx), an old 1357 hold, or one with change / conversions
+// recorded (voidBlockOf says which, 422).
+//
+// A PO's vouchers (owner, 2026-11-18: "Add voiding for PO vouchers too"):
+//   * the buyer's cash ADVANCE (purchaseOrderId — the cash went into the buyer's box, Dr 1011): the cash still with him
+//     (given − extra already returned) comes back OUT of his box to where it came from — the safe / the bank through
+//     recordPettyCashReturnTx (Dr 1010 | the bank / Cr 1011), finance's box through a box → box transfer (no entry).
+//     Refused once he paid the supplier from that box (409 VOID_PO_CASH_SPENT) or the box holds less (400
+//     INSUFFICIENT_FLOAT). With no advance left the PO's buyer is paid back at its bill (poCash.ts noAdvanceGivenTx):
+//     a GRN already approved gets its pay-back voucher in the same transaction.
+//   * the buyer's PAY-BACK (reimbursesBillId — its pay was the supplier payment of the bill): that payment is taken off
+//     the bill and reversed (procurement voidPayBackPaymentTx: 'supplier.payment.void:<id>' Dr the money / Cr 2010);
+//     paid from finance's box, the cash also goes back into that box (top-up source safe: Dr 1011 / Cr 1010, which nets
+//     the reversal's Dr 1010 to Dr 1011 / Cr 2010). The bill owes again; the voucher keeps it as voidedBillId
+//     (reimbursesBillId cleared) and a FRESH pay-back voucher is raised for what the bill owes, ready to pay.
 //
 // What a void does (one transaction, the voucher row locked; the CEO's approval is the authority):
 //   * paid from a BOX: the cash goes back into the SAME box — a petty-cash top-up (source cash_request) through
@@ -45,7 +58,7 @@ const VOID_SELECT = {
   id: true, tenantId: true, number: true, status: true, bookedAtPay: true, paySource: true, payJournalEntryId: true,
   pettyCashMovementId: true, postedJournalEntryId: true, supplierBillId: true, assetClassId: true, capexLineId: true,
   purchaseOrderId: true, reimbursesBillId: true, returnedCents: true, convertedCents: true, amountCents: true,
-  payeeName: true, purpose: true, voidedAt: true,
+  payeeName: true, purpose: true, voidedAt: true, boxId: true, payBankAccountId: true, payeeUserId: true,
 } satisfies Prisma.CashVoucherSelect
 type VoidRow = Prisma.CashVoucherGetPayload<{ select: typeof VOID_SELECT }>
 
@@ -57,9 +70,8 @@ export async function voidBlockOf(db: Db, v: VoidRow): Promise<AppError | null> 
   if (v.status !== 'disbursed' && v.status !== 'posted') {
     return no('VOUCHER_NOT_PAID', `Cash voucher ${v.number} is not paid — cancel or reject it instead`, 409)
   }
-  if (v.purchaseOrderId || v.reimbursesBillId) {
-    return no('VOID_PO_VOUCHER', `Cash voucher ${v.number} carries a purchase order's money — correct it on the PO / its bill`)
-  }
+  if (v.purchaseOrderId) return poAdvanceBlock(db, v)
+  if (v.reimbursesBillId) return payBackBlock(db, v)
   if (v.paySource === 'credit' || v.supplierBillId) {
     return no('VOID_USE_SUPPLIER_BILL', `Cash voucher ${v.number} was booked on credit as a supplier bill — void that bill instead`)
   }
@@ -89,15 +101,155 @@ export async function voidBlockOf(db: Db, v: VoidRow): Promise<AppError | null> 
   return no('VOID_UNKNOWN_SOURCE', `Cash voucher ${v.number} was paid in a way that cannot be voided here`)
 }
 
+/** Where a PO advance's cash sits now: the buyer's box it was paid into. */
+async function advanceBoxOf(db: Db, v: VoidRow): Promise<{ id: string; name: string; tenantId: string; floatCents: number; deletedAt: Date | null } | null> {
+  if (!v.pettyCashMovementId) return null
+  const m = await db.pettyCashMovement.findUnique({ where: { id: v.pettyCashMovementId }, select: { boxId: true } })
+  if (!m) return null
+  const b = await db.pettyCashBox.findUnique({ where: { id: m.boxId }, select: { id: true, name: true, tenantId: true, floatCents: true, deletedAt: true } })
+  return b ? { ...b, tenantId: b.tenantId! } : null
+}
+
+/** The PO's bills the buyer already paid from the box the advance went into. */
+async function advanceSpentOnBills(db: Db, poId: string, boxId: string): Promise<number> {
+  const bills = await db.supplierBill.findMany({ where: { poId, status: { not: 'void' } }, select: { id: true } })
+  if (bills.length === 0) return 0
+  const apps = await db.supplierPaymentApplication.findMany({ where: { billId: { in: bills.map((b) => b.id) } }, select: { paymentId: true } })
+  if (apps.length === 0) return 0
+  return db.pettyCashMovement.count({ where: { boxId, type: 'spend', supplierPaymentId: { in: apps.map((a) => a.paymentId) } } })
+}
+
+async function poAdvanceBlock(db: Db, v: VoidRow): Promise<AppError | null> {
+  if (!v.bookedAtPay) return no('VOID_OLD_FLOW', `Cash voucher ${v.number} was paid under an older flow — correct it with a manual journal`)
+  if (v.convertedCents > 0) return no('VOID_HAS_CHANGE', `Cash voucher ${v.number} already has a conversion recorded — correct it with a manual journal`)
+  const back = v.amountCents - v.returnedCents
+  if (back <= 0) return no('VOID_NOTHING_LEFT', `All the cash of ${v.number} has already been returned — there is nothing to void`, 409)
+  const box = await advanceBoxOf(db, v)
+  if (!box) return no('PAYMENT_NOT_BOOKED', `The box ${v.number}'s cash went into is not known — return it from Petty cash`, 409)
+  if (box.deletedAt) return no('BOX_REMOVED', `The buyer's box "${box.name}" has been removed — correct it with a manual journal`)
+  if (await advanceSpentOnBills(db, v.purchaseOrderId!, box.id) > 0) {
+    return no('VOID_PO_CASH_SPENT', `The buyer already paid the supplier with ${v.number}'s cash — return any extra with "Return extra cash" instead`, 409)
+  }
+  if (box.floatCents < back) {
+    return no('INSUFFICIENT_FLOAT', `"${box.name}" holds ${fmtPkrCents(box.floatCents)}, less than the ${fmtPkrCents(back)} to take back — count the box first`, 409)
+  }
+  if (v.paySource === 'box') {
+    if (!v.boxId) return no('PAYMENT_NOT_BOOKED', `The box ${v.number} was paid from is not known`, 409)
+    const from = await db.pettyCashBox.findUnique({ where: { id: v.boxId }, select: { deletedAt: true, isActive: true, name: true } })
+    if (!from || from.deletedAt || !from.isActive) return no('BOX_REMOVED', `The box ${v.number} was paid from is closed — correct it with a manual journal`)
+    return null
+  }
+  if (v.paySource === 'cash_on_hand' || v.paySource === 'bank') return null
+  return no('VOID_UNKNOWN_SOURCE', `Cash voucher ${v.number} was paid in a way that cannot be voided here`)
+}
+
+/** The supplier payment a pay-back voucher's pay made. */
+async function payBackPaymentOf(db: Db, v: VoidRow): Promise<{ id: string; voidedAt: Date | null } | null> {
+  if (v.paySource === 'box' && v.pettyCashMovementId) {
+    const m = await db.pettyCashMovement.findUnique({ where: { id: v.pettyCashMovementId }, select: { supplierPaymentId: true } })
+    if (!m?.supplierPaymentId) return null
+    return db.supplierPayment.findUnique({ where: { id: m.supplierPaymentId }, select: { id: true, voidedAt: true } })
+  }
+  return db.supplierPayment.findFirst({
+    where: { reference: { startsWith: `${v.number} — paid back` }, supplier: { tenantId: v.tenantId }, applications: { some: { billId: v.reimbursesBillId! } } },
+    select: { id: true, voidedAt: true }, orderBy: { createdAt: 'desc' },
+  })
+}
+
+async function payBackBlock(db: Db, v: VoidRow): Promise<AppError | null> {
+  if (v.status !== 'posted') return no('VOUCHER_NOT_PAID', `Cash voucher ${v.number} is not paid — cancel or reject it instead`, 409)
+  const p = await payBackPaymentOf(db, v)
+  if (!p) return no('PAYMENT_NOT_BOOKED', `The supplier payment of ${v.number} is not found`, 409)
+  if (p.voidedAt) return no('ALREADY_VOIDED', `The supplier payment of ${v.number} is already void`, 409)
+  if (v.paySource === 'box') {
+    if (!v.boxId) return no('PAYMENT_NOT_BOOKED', `The box ${v.number} was paid from is not known`, 409)
+    const from = await db.pettyCashBox.findUnique({ where: { id: v.boxId }, select: { deletedAt: true, isActive: true } })
+    if (!from || from.deletedAt || !from.isActive) return no('BOX_REMOVED', `The box ${v.number} was paid from is closed — correct it with a manual journal`)
+  } else if (v.paySource !== 'cash_on_hand' && v.paySource !== 'bank') {
+    return no('VOID_UNKNOWN_SOURCE', `Cash voucher ${v.number} was paid in a way that cannot be voided here`)
+  }
+  return null
+}
+
+/** Void a PO advance inside `tx`: the cash still with the buyer goes back where it came from. */
+async function voidPoAdvanceTx(tx: Prisma.TransactionClient, v: VoidRow, actorId: string, reason: string): Promise<{ entryId: string | null; boxId: string | null; raised: Array<{ id: string; number: string }> }> {
+  const { recordPettyCashReturnTx, recordPettyCashTransferTx } = await import('./pettyCash.js')
+  const buyerBox = (await advanceBoxOf(tx, v))!
+  const back = v.amountCents - v.returnedCents
+  const why = `${v.number} voided — PO cash taken back: ${reason}`.slice(0, 200)
+  let entryId: string | null = null
+  if (v.paySource === 'box') {
+    const from = await tx.pettyCashBox.findUniqueOrThrow({ where: { id: v.boxId! }, select: { id: true, name: true, tenantId: true } })
+    await recordPettyCashTransferTx(tx, { fromBox: buyerBox, toBox: { ...from, tenantId: from.tenantId! }, amountCents: back, reason: why, createdById: actorId })
+  } else {
+    const r = await recordPettyCashReturnTx(tx, {
+      boxId: buyerBox.id, amountCents: back, destination: v.paySource === 'bank' ? 'bank' : 'safe',
+      bankAccountId: v.paySource === 'bank' ? v.payBankAccountId : null, reason: why, actorId,
+    })
+    entryId = r.movement.journalEntryId ?? null
+    if (!entryId) throw new AppError('VOID_NOT_BOOKED', `The cash taken back for ${v.number} could not be booked`, 409)
+  }
+  // No advance is left: a GRN of this PO already approved gets its pay-back voucher now (poCash.ts).
+  const raised: Array<{ id: string; number: string }> = []
+  const po = await tx.purchaseOrder.findUnique({ where: { id: v.purchaseOrderId! }, select: { id: true, payByCash: true } })
+  if (po?.payByCash) {
+    const { raiseReimbursementTx } = await import('../procurement/poCash.js')
+    const grns = await tx.goodsReceipt.findMany({
+      where: { poId: po.id, grnStatus: 'approved', supplierBillId: { not: null } },
+      select: { grnNumber: true, supplierBillId: true, approvedById: true, financeCheckedById: true },
+    })
+    for (const g of grns) {
+      const bill = await tx.supplierBill.findUnique({ where: { id: g.supplierBillId! }, select: { status: true } })
+      if (!bill || bill.status === 'void' || bill.status === 'paid') continue
+      if (await tx.cashVoucher.findUnique({ where: { reimbursesBillId: g.supplierBillId! }, select: { id: true } })) continue
+      const nv = await raiseReimbursementTx(tx, { billId: g.supplierBillId!, poId: po.id, grnNumber: g.grnNumber ?? 'GRN', approverId: g.approvedById ?? actorId, financeCheckedById: g.financeCheckedById })
+      if (nv) raised.push({ id: nv.id, number: nv.number })
+    }
+  }
+  return { entryId, boxId: buyerBox.id, raised }
+}
+
+/** Void a buyer's pay-back inside `tx`: the supplier payment undone, the bill owes again, a fresh pay-back raised. */
+async function voidPayBackTx(tx: Prisma.TransactionClient, v: VoidRow, actorId: string, reason: string): Promise<{ entryId: string | null; boxId: string | null; raised: Array<{ id: string; number: string }> }> {
+  const { voidPayBackPaymentTx } = await import('../procurement/service.js')
+  const p = (await payBackPaymentOf(tx, v))!
+  const { entryId } = await voidPayBackPaymentTx(tx, p.id, actorId, `${v.number} voided: ${reason}`.slice(0, 200))
+  let boxId: string | null = null
+  if (v.paySource === 'box') {
+    boxId = v.boxId!
+    await recordPettyCashTopupTx(tx, {
+      box: { id: boxId }, amountCents: v.amountCents, source: 'safe', cashVoucherId: v.id,
+      reason: `${v.number} voided — pay-back cash put back: ${reason}`.slice(0, 500), createdById: actorId,
+    })
+  }
+  const billId = v.reimbursesBillId!
+  await tx.cashVoucher.update({ where: { id: v.id }, data: { reimbursesBillId: null, voidedBillId: billId } })
+  const raised: Array<{ id: string; number: string }> = []
+  const g = await tx.goodsReceipt.findFirst({
+    where: { supplierBillId: billId, poId: { not: null } },
+    select: { poId: true, grnNumber: true, approvedById: true, financeCheckedById: true },
+  })
+  if (g) {
+    const { raiseReimbursementTx } = await import('../procurement/poCash.js')
+    const nv = await raiseReimbursementTx(tx, { billId, poId: g.poId!, grnNumber: g.grnNumber ?? 'GRN', approverId: g.approvedById ?? actorId, financeCheckedById: g.financeCheckedById })
+    if (nv) raised.push({ id: nv.id, number: nv.number })
+  }
+  return { entryId, boxId, raised }
+}
+
 /** Void `voucherId` inside `tx` (the CEO's authority): put the cash back / reverse the pay, mark it voided. */
-export async function voidVoucherTx(tx: Prisma.TransactionClient, voucherId: string, actorId: string, reason: string): Promise<{ entryId: string; boxId: string | null }> {
+export async function voidVoucherTx(tx: Prisma.TransactionClient, voucherId: string, actorId: string, reason: string): Promise<{ entryId: string | null; boxId: string | null; raised: Array<{ id: string; number: string }> }> {
   await tx.$queryRaw`SELECT id FROM cash_vouchers WHERE id = ${voucherId} FOR UPDATE`
   const v = await tx.cashVoucher.findUniqueOrThrow({ where: { id: voucherId }, select: VOID_SELECT })
   const block = await voidBlockOf(tx, v)
   if (block) throw block
-  let entryId: string
+  let entryId: string | null
   let boxId: string | null = null
-  if (v.paySource === 'box') {
+  let raised: Array<{ id: string; number: string }> = []
+  if (v.purchaseOrderId || v.reimbursesBillId) {
+    const r = v.purchaseOrderId ? await voidPoAdvanceTx(tx, v, actorId, reason) : await voidPayBackTx(tx, v, actorId, reason)
+    entryId = r.entryId; boxId = r.boxId; raised = r.raised
+  } else if (v.paySource === 'box') {
     const m = await tx.pettyCashMovement.findUniqueOrThrow({ where: { id: v.pettyCashMovementId! }, select: { boxId: true } })
     boxId = m.boxId
     const top = await recordPettyCashTopupTx(tx, {
@@ -117,7 +269,15 @@ export async function voidVoucherTx(tx: Prisma.TransactionClient, voucherId: str
     data: { status: 'voided', voidedAt: new Date(), voidedById: actorId, voidReason: reason, voidEntryId: entryId },
   })
   if (claimed.count === 0) throw new AppError('VOUCHER_CHANGED', `Cash voucher ${v.number} changed meanwhile — reload it`, 409)
-  return { entryId, boxId }
+  return { entryId, boxId, raised }
+}
+
+/** What a void of this voucher does, in words, for the screen. */
+export function voidEffectOf(v: Pick<VoidRow, 'purchaseOrderId' | 'reimbursesBillId' | 'paySource'>): string {
+  const to = v.paySource === 'box' ? 'the box it was paid from' : v.paySource === 'bank' ? 'the bank' : 'cash on hand'
+  if (v.purchaseOrderId) return `the cash still with the buyer comes back out of his box to ${to}; the buyer is then paid back at the PO's bill instead`
+  if (v.reimbursesBillId) return `the supplier payment is undone (the money goes back to ${to}), the bill owes again and a new pay-back voucher is raised, ready to pay`
+  return `the money goes back to ${to} and the expense is undone`
 }
 
 /** What the voucher screen shows about voiding: the pending request, who may ask, and why not. */
@@ -133,6 +293,7 @@ export async function voidStateOf(v: VoidRow & { voidedById: string | null; void
     voidBlockedReason: paid && block ? block.message : null,
     /** Finance / the CEO always see the void card on a paid voucher — with the reason when it cannot be voided. */
     canSeeVoid: paid && viewer.financeApprover,
+    voidEffect: paid ? voidEffectOf(v) : null,
     voidRequest: pending
       ? { id: pending.id, reason: pending.reason, requestedById: pending.requestedById, requestedByName: names.get(pending.requestedById) ?? null, createdAt: pending.createdAt,
         canWithdraw: viewer.isAdmin || pending.requestedById === viewer.id, canDecide: viewer.isAdmin }
@@ -173,7 +334,8 @@ export async function voucherVoidRoutes(fastify: FastifyInstance) {
         })
         return r
       })
-      await auditVoid(req, 'cash_voucher.void', v.tenantId, 'CashVoucher', v.id, { number: v.number, amountCents: v.amountCents, reason, entryId: out.entryId, boxId: out.boxId, direct: true })
+      if (v.purchaseOrderId) await (await import('../procurement/poCashSync.js')).refreshPoCashExcessFlag(v.id, viewer.id).catch(() => undefined)
+      await auditVoid(req, 'cash_voucher.void', v.tenantId, 'CashVoucher', v.id, { number: v.number, amountCents: v.amountCents, reason, entryId: out.entryId, boxId: out.boxId, payBacksRaised: out.raised, direct: true })
       return reply.status(200).send(await detailOf(v.id, viewer))
     }
 
@@ -256,15 +418,16 @@ export async function voucherVoidRoutes(fastify: FastifyInstance) {
       if (claimed.count === 0) throw notPending()
       return voidVoucherTx(tx, r.voucherId, req.staffUser!.id, r.reason)
     })
-    const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: r.voucherId }, select: { number: true, amountCents: true } })
+    const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: r.voucherId }, select: { number: true, amountCents: true, purchaseOrderId: true } })
+    if (v.purchaseOrderId) await (await import('../procurement/poCashSync.js')).refreshPoCashExcessFlag(r.voucherId, req.staffUser!.id).catch(() => undefined)
     await auditVoid(req, 'cash_voucher.void', r.tenantId, 'CashVoucher', r.voucherId, {
-      number: v.number, amountCents: v.amountCents, reason: r.reason, entryId: out.entryId, boxId: out.boxId, requestId: r.id, requestedBy: r.requestedById,
+      number: v.number, amountCents: v.amountCents, reason: r.reason, entryId: out.entryId, boxId: out.boxId, payBacksRaised: out.raised, requestId: r.id, requestedBy: r.requestedById,
     })
     await auditApproval(req, {
       type: 'cash_voucher_void', id: r.id, tenantId: r.tenantId, decision: 'approve', grant, entity: 'CashVoucherVoidRequest',
       metadata: { voucherId: r.voucherId, note: body.note ?? null, decidedAt, amount: fmtPkrCents(v.amountCents) },
     })
-    return { id: r.id, approved: true, voucherId: r.voucherId, entryId: out.entryId }
+    return { id: r.id, approved: true, voucherId: r.voucherId, entryId: out.entryId, payBacksRaised: out.raised }
   })
 
   // POST /void-requests/:id/reject {note ≥10} — the CEO turns it down; the voucher stays as it is.

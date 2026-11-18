@@ -225,12 +225,12 @@ export async function raiseReimbursementTx(tx: Tx, a: {
 /**
  * No cash was advanced to the buyer for this PO (owner, 2026-11-18: "I rejected the voucher before, now on ceo's
  * approval it should generate a new CV to pay"): an older PO (cashAfterPurchase false) whose advance voucher was
- * rejected or cancelled — or never raised — is paid back like a no-advance PO, at the bill. An advance still waiting,
+ * rejected, cancelled or voided — or never raised — is paid back like a no-advance PO, at the bill. An advance still waiting,
  * approved or paid keeps the advance design.
  */
 export async function noAdvanceGivenTx(tx: Tx | typeof prisma, poId: string): Promise<boolean> {
   const adv = await tx.cashVoucher.findUnique({ where: { purchaseOrderId: poId }, select: { status: true } })
-  return !adv || adv.status === 'rejected' || adv.status === 'cancelled'
+  return !adv || adv.status === 'rejected' || adv.status === 'cancelled' || adv.status === 'voided'
 }
 
 /** Does this PO's buyer get a pay-back voucher at its bill? A cash PO with no advance given. */

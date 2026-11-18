@@ -1378,7 +1378,17 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `VOID_PENDING`). Approval type `cash_voucher_void` (section ceo, never delegable): `/void-requests/:id/approve | reject
   {note ≥10} | withdraw`. Only a voucher booked at pay (bookedAtPay) paid from a box / cash on hand / a bank (status
   disbursed | posted); never credit (void its bill — 422 `VOID_USE_SUPPLIER_BILL`), equipment (`VOID_EQUIPMENT`), a PO's
-  cash or pay-back (`VOID_PO_VOUCHER`), an old 1357 hold (`VOID_OLD_FLOW`), change / conversions (`VOID_HAS_CHANGE`).
+  an old 1357 hold (`VOID_OLD_FLOW`), change / conversions (`VOID_HAS_CHANGE`).
+  **PO vouchers void too (owner, 2026-11-18: "Add voiding for PO vouchers too"):** a PO's cash ADVANCE — what is still
+  with the buyer (amount − returned) comes back out of his box to where it came from (safe / bank:
+  `recordPettyCashReturnTx` Dr 1010 | bank / Cr 1011; finance's box: a box → box transfer); refused once he paid the
+  supplier from that box (409 `VOID_PO_CASH_SPENT`) or the box holds less (409 `INSUFFICIENT_FLOAT`); with no advance
+  left an approved GRN's bill gets the buyer's pay-back voucher in the same transaction (`noAdvanceGivenTx` counts
+  voided). A buyer's PAY-BACK — its supplier payment is taken off the bill and reversed (`procurement/service.ts
+  voidPayBackPaymentTx`, `supplier.payment.void:<id>`; from a box the cash also goes back in, top-up source safe), the
+  bill owes again, the voucher keeps it as `voidedBillId` (reimbursesBillId cleared, migration `20261118140000`) and a
+  fresh pay-back voucher is raised, ready to pay. The screen reads `voidEffect`; finance / the CEO always see the void
+  card on a paid voucher (`canSeeVoid`), greyed with the reason when blocked.
   Void = a box: the cash goes back into the SAME box (top-up source cash_request: Dr 1011 / Cr the expense the pay
   debited, the pay's brand); cash on hand / a bank: `cashvoucher.pay.reversal:<id>`. Status `voided` (+ voidedAt /
   voidedById / voidReason / voidEntryId); its spend line can no longer be reclassed (409 `VOUCHER_VOIDED`). Tests:

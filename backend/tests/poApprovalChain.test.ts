@@ -721,6 +721,68 @@ describe('old advance vouchers follow the buyer\'s actual amounts (owner, 2026-1
     expect((await raiseMissedPayBacks()).find((v) => v.id === raised[0]!.id)).toBeUndefined()
   })
 
+  it('voiding PO vouchers (owner, 2026-11-18): the advance comes back out of the buyer\'s box, then the pay-back is undone and raised again', async () => {
+    const { po, voucherId } = await oldAdvancePo(250)
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/finance-approve`, {})).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, { source: 'cash_on_hand' })).statusCode).toBe(200)
+    const box = await prisma.pettyCashBox.findFirstOrThrow({ where: { tenantId: T.A, custodianId: U.buyerA!.id } })
+    // The buyer buys and the GRN is approved; he has not paid the supplier from the box yet.
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-VOID1`, invoiceDate: today(), lines: [{ poLineId: po.lines[0]!.id, amountCents: 1_260 }] })).statusCode).toBe(200)
+    const ok = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: [{ poLineId: po.lines[0]!.id, quantityReceived: 10 }] })
+    expect(ok.statusCode, ok.body).toBe(201)
+    const grnId = ok.json().grn.id as string
+    expect((await call('finA', 'POST', `/procurement/grns/${grnId}/finance-pass`)).statusCode).toBe(200)
+    const ap = await call('ceoA', 'POST', `/procurement/grns/${grnId}/approve`)
+    expect(ap.statusCode, ap.body).toBe(200)
+    const billId = ap.json().supplierBillId as string
+    expect(await prisma.cashVoucher.findUnique({ where: { reimbursesBillId: billId } })).toBeNull()   // the advance pays it
+
+    // The void card shows on the advance; finance asks, another company 404; the CEO approves.
+    const d = (await call('finA', 'GET', `/trustops/cash-vouchers/${voucherId}`)).json()
+    expect(d).toMatchObject({ canRequestVoid: true, canSeeVoid: true })
+    expect(d.voidEffect).toContain("buyer")
+    expect((await call('finB', 'POST', `/trustops/cash-vouchers/${voucherId}/void`, { reason: 'Advance given by mistake' })).statusCode).toBe(404)
+    const ask = await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/void`, { reason: 'Advance given by mistake' })
+    expect(ask.statusCode, ask.body).toBe(202)
+    const floatBefore = (await prisma.pettyCashBox.findUniqueOrThrow({ where: { id: box.id } })).floatCents
+    const cashBefore = await netDebit(T.A, '1010')
+    const yes = await call('ceoA', 'POST', `/trustops/cash-vouchers/void-requests/${ask.json().request.id}/approve`, {})
+    expect(yes.statusCode, yes.body).toBe(200)
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })).status).toBe('voided')
+    expect((await prisma.pettyCashBox.findUniqueOrThrow({ where: { id: box.id } })).floatCents).toBe(floatBefore - 2_500)
+    expect(await netDebit(T.A, '1010') - cashBefore).toBe(2_500)
+    // No advance left: the buyer's pay-back for the bill was raised in the same go.
+    const pb = await prisma.cashVoucher.findUniqueOrThrow({ where: { reimbursesBillId: billId } })
+    expect(pb).toMatchObject({ status: 'approved', amountCents: 1_260, payeeUserId: U.buyerA!.id })
+    expect(yes.json().payBacksRaised.map((x: { id: string }) => x.id)).toEqual([pb.id])
+
+    // Finance pays it back, then the CEO voids that pay-back: the payment is undone and a fresh voucher raised.
+    const paid = await call('finA', 'POST', `/trustops/cash-vouchers/${pb.id}/pay`, { source: 'cash_on_hand', classification: 'official', taxStatus: 'not_applicable' })
+    expect(paid.statusCode, paid.body).toBe(200)
+    const paymentId = paid.json().supplierPaymentId as string
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })).status).toBe('paid')
+    const ap2010 = await netDebit(T.A, '2010')
+    const cash2 = await netDebit(T.A, '1010')
+    const gone = await call('ceoA', 'POST', `/trustops/cash-vouchers/${pb.id}/void`, { reason: 'Paid back from the wrong account' })
+    expect(gone.statusCode, gone.body).toBe(200)
+    expect(await prisma.cashVoucher.findUniqueOrThrow({ where: { id: pb.id } })).toMatchObject({ status: 'voided', reimbursesBillId: null, voidedBillId: billId })
+    expect((await prisma.supplierPayment.findUniqueOrThrow({ where: { id: paymentId } })).voidedAt).not.toBeNull()
+    expect(await entryLines(`supplier.payment.void:${paymentId}`)).toEqual([['1010', 'debit', 1_260], ['2010', 'credit', 1_260]])
+    expect(await netDebit(T.A, '1010') - cash2).toBe(1_260)
+    expect(await netDebit(T.A, '2010') - ap2010).toBe(-1_260)
+    const bill = await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })
+    expect(Number(bill.paidCents)).toBe(0)
+    const again = await prisma.cashVoucher.findUniqueOrThrow({ where: { reimbursesBillId: billId } })
+    expect(again.id).not.toBe(pb.id)
+    expect(again).toMatchObject({ status: 'approved', amountCents: 1_260 })
+    // The PO lists both pay-backs; the new one pays as normal.
+    const det = (await call('chefA', 'GET', `/procurement/purchase-orders/${po.id}`)).json()
+    expect(det.payBackVouchers.map((x: { id: string }) => x.id).sort()).toEqual([pb.id, again.id].sort())
+    const repay = await call('finA', 'POST', `/trustops/cash-vouchers/${again.id}/pay`, { source: 'cash_on_hand', classification: 'official', taxStatus: 'not_applicable' })
+    expect(repay.statusCode, repay.body).toBe(200)
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })).status).toBe('paid')
+  })
+
   it('the boot sweep fixes vouchers already out of step', async () => {
     const { po, voucherId } = await oldAdvancePo(300)
     await prisma.purchaseOrder.update({ where: { id: po.id }, data: { totalCents: 1_800 } })   // changed without the sync (as on live)

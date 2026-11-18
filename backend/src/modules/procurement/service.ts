@@ -1368,7 +1368,12 @@ export async function allocatePayment(
  * which bill it settles. Under the payment's then the bill's row lock.
  */
 export async function unapplyPayment(paymentId: string, billId: string, actor: { userId: string | null; reason?: string | null } = { userId: null }) {
-  return prisma.$transaction(async (tx) => {
+  return prisma.$transaction((tx) => unapplyPaymentTx(tx, paymentId, billId, actor))
+}
+
+/** unapplyPayment inside the caller's transaction. */
+export async function unapplyPaymentTx(tx: Prisma.TransactionClient, paymentId: string, billId: string, actor: { userId: string | null; reason?: string | null } = { userId: null }) {
+  {
     await tx.$queryRaw`SELECT id FROM supplier_payments WHERE id = ${paymentId} FOR UPDATE`
     await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${billId} FOR UPDATE`
     const application = await tx.supplierPaymentApplication.findUnique({
@@ -1404,7 +1409,24 @@ export async function unapplyPayment(paymentId: string, billId: string, actor: {
       data:  { appliedCents: { decrement: amount } },
     })
     return { payment, bill: { id: bill.id, billNumber: bill.billNumber, status, paidCents: toCents(bill.paidCents) }, amountCents: amount }
-  })
+  }
+}
+
+/**
+ * Undo the supplier payment a buyer's pay-back voucher made (trustops/voucherVoid.ts, the CEO's authority): take it off
+ * every bill it settles (the bills owe again), mark it void and reverse its entry ('supplier.payment.void:<id>',
+ * Dr the money account / Cr 2010). Paid from a box, the CALLER puts the cash back into that box in the same transaction
+ * — which is why the cash-box refusal of voidPayment does not apply here.
+ */
+export async function voidPayBackPaymentTx(tx: Prisma.TransactionClient, paymentId: string, userId: string, reason: string) {
+  await tx.$queryRaw`SELECT id FROM supplier_payments WHERE id = ${paymentId} FOR UPDATE`
+  const payment = await tx.supplierPayment.findUniqueOrThrow({ where: { id: paymentId }, include: { applications: { select: { billId: true } } } })
+  if (payment.voidedAt) throw new AppError('ALREADY_VOIDED', 'This payment is already void', 409)
+  for (const a of payment.applications) await unapplyPaymentTx(tx, paymentId, a.billId, { userId, reason })
+  await tx.supplierPayment.update({ where: { id: paymentId }, data: { voidedAt: new Date(), voidReason: reason.slice(0, 500) } })
+  const reversal = await postSupplierPaymentVoid(paymentId, reason, { tx, postedBy: userId })
+  if (!reversal.entryId) throw new AppError('VOID_NOT_BOOKED', 'The supplier payment could not be reversed on the books', 409)
+  return { entryId: reversal.entryId, billIds: payment.applications.map((a) => a.billId) }
 }
 
 /**

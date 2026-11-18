@@ -9500,6 +9500,9 @@ model CashVoucher {
   voidedById                String?
   voidReason                String?
   voidEntryId               String?
+  // A pay-back voucher that was voided (owner, 2026-11-18: "Add voiding for PO vouchers too"): the bill it repaid.
+  // reimbursesBillId is cleared so a fresh pay-back voucher can be raised for the same bill (voucherVoid.ts).
+  voidedBillId              String?
 
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
   // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).
@@ -9512,6 +9515,7 @@ model CashVoucher {
   @@index([tenantId, status, createdAt])
   @@index([tenantId, status, dueBy])
   @@index([tenantId, kind, status])
+  @@index([voidedBillId])
   @@map("cash_vouchers")
 }
 

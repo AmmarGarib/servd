@@ -830,7 +830,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         where: { purchaseOrderId: po.id },   // the PO was read in the caller's scope above; its voucher is its company's
         select: voucherSelect,
       })
-      const payBacks = billIds.length ? await prisma.cashVoucher.findMany({ where: { reimbursesBillId: { in: billIds } }, select: voucherSelect, orderBy: { createdAt: 'asc' } }) : []
+      const payBacks = billIds.length ? await prisma.cashVoucher.findMany({ where: { OR: [{ reimbursesBillId: { in: billIds } }, { voidedBillId: { in: billIds } }] }, select: voucherSelect, orderBy: { createdAt: 'asc' } }) : []
       return {
         ...po,
         names: {
@@ -839,7 +839,7 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           buyer: nameOf(po.buyerUserId), completedBy: nameOf(po.completedById), receiptReturnedBy: nameOf(po.receiptReturnedById),
         },
         // A rejected / cancelled advance gave the buyer nothing: the pay-back voucher is the PO's cash (owner, 2026-11-18).
-        cashVoucher: (voucher && voucher.status !== 'rejected' && voucher.status !== 'cancelled' ? voucher : payBacks[0] ?? voucher) ?? null,
+        cashVoucher: (voucher && voucher.status !== 'rejected' && voucher.status !== 'cancelled' && voucher.status !== 'voided' ? voucher : payBacks[0] ?? voucher) ?? null,
         payBackVouchers: payBacks,
         grns: grns.map((g) => ({ ...g, receivedBy: nameOf(g.receivedById), financeCheckedBy: nameOf(g.financeCheckedById), approvedBy: nameOf(g.approvedById) })),
       }
