@@ -2358,10 +2358,38 @@ async function payPoCashVoucher(
  * to the bill in full (the bill must still owe exactly the voucher — 409 BILL_ALREADY_PAID / VOUCHER_CHANGED), the box
  * spend when from a box. Never the buyer's own box (it is his money coming back). Finance only.
  */
-async function payBuyerBack(
-  req: FastifyRequest, v: VoucherRow, viewer: Viewer,
-  body: { source?: 'box' | 'cash_on_hand' | 'bank' | 'credit'; boxId?: string; bankAccountId?: string; toBoxId?: string; supplierId?: string; billDueDate?: string },
-) {
+type PayBackBody = { source?: 'box' | 'cash_on_hand' | 'bank' | 'credit'; boxId?: string; bankAccountId?: string; toBoxId?: string; supplierId?: string; billDueDate?: string }
+
+/**
+ * The buyer's pay-back, with a time limit (owner, 2026-11-18: the pay kept ending in "Failed to fetch" — no answer
+ * reached the browser). Every step is named; a lock wait inside the transaction gives up after 15 s, and the whole pay
+ * answers within PAY_BACK_LIMIT_MS with the step it was on (503 PAY_TIMED_OUT) instead of hanging past the proxy's
+ * limit. The transaction is all-or-nothing, so a stopped pay books nothing.
+ */
+const PAY_BACK_LIMIT_MS = 45_000
+async function payBuyerBack(req: FastifyRequest, v: VoucherRow, viewer: Viewer, body: PayBackBody) {
+  const track = { step: 'start', started: Date.now() }
+  let timer: NodeJS.Timeout | undefined
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new AppError('PAY_TIMED_OUT',
+      `Paying ${v.number} stopped after ${PAY_BACK_LIMIT_MS / 1000} s at step "${track.step}" — nothing was booked. Tell IT this step.`, 503)), PAY_BACK_LIMIT_MS)
+  })
+  try {
+    return await Promise.race([payBuyerBackSteps(req, v, viewer, body, track), limit])
+  } catch (err) {
+    const msg = (err as Error)?.message ?? String(err)
+    console.error(`[cash-voucher pay-back] ${v.number} failed at step "${track.step}" after ${Date.now() - track.started} ms: ${msg}`)
+    if (err instanceof AppError) throw err
+    if (/lock timeout|lock_not_available|55P03/i.test(msg)) {
+      throw new AppError('PAY_BLOCKED', `Paying ${v.number} waited too long at step "${track.step}" — something else is holding that record. Nothing was booked; try again in a minute.`, 409)
+    }
+    throw new AppError('PAY_FAILED', `Paying ${v.number} failed at step "${track.step}": ${msg.slice(0, 300)}`, 500)
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function payBuyerBackSteps(req: FastifyRequest, v: VoucherRow, viewer: Viewer, body: PayBackBody, track: { step: string }) {
   const me = viewer.id
   const source = body.source ?? 'cash_on_hand'
   if (source === 'credit' || body.supplierId || body.billDueDate || body.toBoxId) {
@@ -2371,6 +2399,7 @@ async function payBuyerBack(
   if (source !== 'bank' && body.bankAccountId) throw new AppError('BANK_NOT_FOR_SOURCE', 'A bank account is only picked when paying from a bank', 422)
   if (source !== 'box' && !viewer.financeApprover) throw new AppError('PAY_SOURCE_FINANCE_ONLY', 'Only finance or the CEO pays a voucher from cash on hand or a bank account', 403)
   if (!v.payeeUserId) throw new AppError('HOLDER_REQUIRED', `${v.number} names nobody to pay back`, 422)
+  track.step = 'reading the buyer and the bill'
   const holder = await prisma.user.findUnique({ where: { id: v.payeeUserId }, select: { id: true, name: true } })
   if (!holder) throw new AppError('HOLDER_REQUIRED', `${v.number} names nobody to pay back`, 422)
   const bill = await prisma.supplierBill.findFirst({
@@ -2400,8 +2429,12 @@ async function payBuyerBack(
   const reason = reasonFull.length > 200 ? `${reasonFull.slice(0, 199)}…` : reasonFull
   const { createPaymentTx, billDueCents } = await import('../procurement/service.js')
   // Where the money leaves (the voucher's company): cash on hand 1010, the named / only bank, or the box (1011).
+  track.step = 'finding the money account'
   const money = source === 'box' ? null : await moneyAccountCode(prisma, v.tenantId, { method: source === 'bank' ? 'bank_transfer' : 'cash', bankAccountId: body.bankAccountId ?? null })
+  track.step = 'opening the transaction'
   const result = await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '15s'`)
+    track.step = 'claiming the voucher'
     const claimed = await tx.cashVoucher.updateMany({
       where: { id: v.id, tenantId: v.tenantId, status: 'approved', amountCents: v.amountCents, payeeUserId: v.payeeUserId, reimbursesBillId: v.reimbursesBillId },
       data: {
@@ -2415,6 +2448,7 @@ async function payBuyerBack(
       if (PAID_STATUSES.includes(cur.status)) throw new AppError('ALREADY_PAID', `Cash request ${v.number} has already been paid`, 409)
       throw new AppError('VOUCHER_CHANGED', `Cash request ${v.number} was changed while it was being paid — reload and pay again`, 409)
     }
+    track.step = 'locking the bill'
     await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${bill.id} FOR UPDATE`
     const fresh = await tx.supplierBill.findUniqueOrThrow({ where: { id: bill.id }, select: { status: true, totalCents: true, whtCents: true, paidCents: true, creditedCents: true } })
     const due = billDueCents(fresh)
@@ -2422,6 +2456,7 @@ async function payBuyerBack(
     if (due !== v.amountCents) {
       throw new AppError('BILL_ALREADY_PAID', `Bill ${bill.billNumber} now owes ${due}, not the voucher's ${v.amountCents} — it was paid or credited meanwhile`, 409)
     }
+    track.step = 'booking the supplier payment'
     const payment = await createPaymentTx(tx, {
       supplierId: bill.supplierId, paymentDate: now.toISOString(),
       method: source === 'bank' ? 'bank_transfer' : 'cash',
@@ -2440,6 +2475,7 @@ async function payBuyerBack(
       })
       movementId = done.movementId
     }
+    track.step = 'classifying the payment'
     await tx.cashVoucher.update({ where: { id: v.id }, data: { pettyCashMovementId: movementId } })
     // Internal payment classification (2026-10-20): a label on the supplier payment's entry, same transaction.
     const { classifyByReferenceTx } = await import('../accounting/paymentsRegister.js')
@@ -2447,10 +2483,12 @@ async function payBuyerBack(
     return { paymentId: payment.id, movementId }
   }, { timeout: 20_000, maxWait: 10_000 })
 
+  track.step = 'paid — writing the history'
   await auditVoucher(req, 'pay', v, {
     status: 'posted', amountCents: v.amountCents, paySource: source, reimbursesBillId: v.reimbursesBillId, billNumber: bill.billNumber,
     supplierPaymentId: result.paymentId, pettyCashMovementId: result.movementId, boxId: box?.id ?? null, paidBackTo: holder.id,
   }, { status: v.status })
+  track.step = 'paid — reading the voucher back'
   return { voucher: await detailOf(v.id, viewer), supplierPaymentId: result.paymentId, movement: result.movementId ? { id: result.movementId } : null }
 }
 
