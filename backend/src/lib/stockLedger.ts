@@ -1378,6 +1378,49 @@ async function issueOnReceiptTx(tx: Tx, item: StockItem, lot: LotNow, receivedAt
 }
 
 /**
+ * Issue what an issue-on-receipt item ALREADY holds (owner, 2026-11-18: ticked items still showed stock received
+ * before the tick — "issued on receipt items not going to COS, why?" → "Yesss, do it"). Every live lot of the item
+ * (any outlet, any brand) is issued now through the same movement + posting as a delivery's issue:
+ * 'issue_on_receipt' movement (dated now), then postIssueOnReceiptTx → 'inventory.issue_on_receipt:<lotId>'
+ * Dr 50x0 / Cr 12x0 at the value left on the lot (FIFO price paid), split to the lot's own brand when it has one,
+ * else the item's brand usage. Non-food lots (already expensed) are skipped. A lot is issued once (its value is then
+ * 0, and the posting key is the lot). Inside the caller's transaction; returns what was issued.
+ */
+export async function issueItemOnHandTx(tx: Tx, itemId: string, createdById: string | null): Promise<{ lots: number; qty: number; valueCents: number }> {
+  await lockItemsTx(tx, [itemId])
+  const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: itemId }, select: { id: true, tenantId: true } })
+  if (!item.tenantId) return { lots: 0, qty: 0, valueCents: 0 }
+  const lots = await tx.stockLot.findMany({
+    where: { inventoryItemId: itemId, tenantId: item.tenantId, OR: [{ remainingQty: { gt: STOCK_EPS } }, { remainingValueCents: { gt: 0 } }] },
+    select: { id: true, tenantId: true, locationId: true, conceptId: true, costClass: true, remainingQty: true, remainingValueCents: true, unitCostCents: true },
+    orderBy: { receivedAt: 'asc' },
+  })
+  const now = new Date()
+  let qty = 0, valueCents = 0, count = 0
+  for (const l of lots) {
+    if (l.costClass === NON_FOOD_CLASS) continue
+    const value = toCents(l.remainingValueCents)
+    const shares: BrandShare[] = l.conceptId ? [{ conceptId: l.conceptId, share: 1 }] : await brandUsageShares(tx, item.tenantId, itemId, now)
+    await tx.stockMovement.create({
+      data: {
+        tenantId: item.tenantId, inventoryItemId: itemId, lotId: l.id, lotKey: l.id, kind: 'issue_on_receipt', locationId: l.locationId,
+        qty: -l.remainingQty, valueCents: -value, unitCostCents: l.unitCostCents, costClass: l.costClass,
+        brandShares: brandSharesJson(shares),
+        sourceType: STOCK_SOURCE.issueOnReceipt, sourceId: l.id, occurredAt: now, createdById,
+      },
+    })
+    await tx.stockLot.update({ where: { id: l.id }, data: { remainingQty: 0, remainingValueCents: 0 } })
+    if (value > 0) {
+      const { postIssueOnReceiptTx } = await import('../modules/accounting/inventoryPosting.js')
+      await postIssueOnReceiptTx(tx, { lotId: l.id })
+    }
+    qty += l.remainingQty; valueCents += value; count += 1
+  }
+  if (count > 0) await syncItemTx(tx, itemId)
+  return { lots: count, qty, valueCents }
+}
+
+/**
  * Finance turns a received STOCK line into an EXPENSE at its GRN check (owner, 2026-11-18: "Receiver picks, finance can
  * change"): every lot the line opened must be untouched (409 STOCK_ALREADY_USED otherwise — some of it was used,
  * moved or counted); each is issued at once ('issue_on_receipt' movement, class non_food = expensed, never cost of

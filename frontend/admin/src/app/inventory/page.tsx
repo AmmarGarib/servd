@@ -1,4 +1,5 @@
 'use client'
+import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -212,16 +213,28 @@ export default function InventoryPage() {
     return next
   })
   const bulkIor = useMutation({
-    mutationFn: (issueOnReceipt: boolean) => api.post<{ changed: Array<{ id: string }>; unchanged: number; failed: Array<{ name: string | null; message: string }> }>(
+    mutationFn: (issueOnReceipt: boolean) => api.post<{ changed: Array<{ id: string }>; unchanged: number; failed: Array<{ name: string | null; message: string }>; issuedOnHand?: Array<{ id: string; valueCents: number }> }>(
       '/inventory/issue-on-receipt', { itemIds: [...picked], issueOnReceipt }),
     onSuccess: (r, issueOnReceipt) => {
       void qc.invalidateQueries({ queryKey: ['inventory'] })
       const parts = [`${r.changed.length} item${r.changed.length === 1 ? '' : 's'} ${issueOnReceipt ? 'set to issued on receipt' : 'back to normal stock'}`]
       if (r.unchanged) parts.push(`${r.unchanged} already ${issueOnReceipt ? 'were' : 'normal'}`)
+      const issued = r.issuedOnHand ?? []
+      if (issued.length) parts.push(`stock on hand of ${issued.length} item${issued.length === 1 ? '' : 's'} sent to cost of sales (PKR ${Math.round(issued.reduce((t, x) => t + x.valueCents, 0) / 100).toLocaleString('en-PK')})`)
       if (r.failed.length) parts.push(`${r.failed.length} not changed: ${r.failed.slice(0, 5).map((f) => f.name ? `${f.name} — ${f.message}` : f.message).join('; ')}${r.failed.length > 5 ? '…' : ''}`)
       setIorNote(parts.join(' · '))
       setPicked(new Set())
       if (!r.failed.length) setPicking(false)
+    },
+    onError: (e: Error) => setIorNote(e.message),
+  })
+  // Issue what a ticked item already holds (owner, 2026-11-18): Dr cost of sales / Cr stock, at the price paid.
+  const confirmIssue = useConfirm()
+  const issueOnHand = useMutation({
+    mutationFn: (it: { id: string }) => api.post<{ name: string; lots: number; qty: number; valueCents: number }>(`/inventory/${it.id}/issue-on-hand`, {}),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['inventory'] })
+      setIorNote(r.lots ? `${r.name}: ${r.qty} on hand sent to cost of sales (PKR ${Math.round(r.valueCents / 100).toLocaleString('en-PK')})` : `${r.name}: nothing on hand to issue`)
     },
     onError: (e: Error) => setIorNote(e.message),
   })
@@ -707,7 +720,7 @@ export default function InventoryPage() {
                     onChange={(e) => setEditForm({ ...editForm, issueOnReceipt: e.target.checked })} />
                   <span>
                     <span className="font-semibold">Issue on receipt</span>
-                    <span className="block text-xs text-s-muted">For oil, salt and other items no recipe measures: each delivery goes straight to cost of sales instead of sitting in stock.</span>
+                    <span className="block text-xs text-s-muted">For oil, salt and other items no recipe measures: each delivery goes straight to cost of sales instead of sitting in stock. Ticking it also sends what is on hand now to cost of sales.</span>
                   </span>
                 </label>
               )}
@@ -935,7 +948,7 @@ export default function InventoryPage() {
                           className="text-xs font-semibold text-primary-ink hover:underline">Select all shown</button>
                         <button type="button" onClick={() => { setPicking(false); setPicked(new Set()) }}
                           className="text-xs font-semibold text-s-muted hover:underline ml-auto">Done</button>
-                        <p className="basis-full text-[11px] text-s-muted">Issued on receipt: each delivery goes straight to cost of sales instead of sitting in stock. Stock an item already holds stays until it is used or counted.</p>
+                        <p className="basis-full text-[11px] text-s-muted">Issued on receipt: each delivery goes straight to cost of sales instead of sitting in stock. Setting it also sends the stock each item already holds to cost of sales, at the price paid.</p>
                       </>
                     )}
                     {iorNote && <p role="status" className="basis-full text-xs font-semibold text-s-text">{iorNote}</p>}
@@ -998,6 +1011,13 @@ export default function InventoryPage() {
                                     show "⚠ No company". */}
                                 <TenantChip tenant={item.tenant} tenantId={item.tenantId} tenants={tenants} />
                                 {item.issueOnReceipt && <span className="s-badge-muted" title="Each delivery goes straight to cost of sales">Issued on receipt</span>}
+                                {item.issueOnReceipt && canIor && item.tenantId && item.currentStock > 0 && (
+                                  <button type="button" disabled={issueOnHand.isPending}
+                                    onClick={async () => { if (await confirmIssue({ title: `Issue ${item.name} on hand?`, body: `Sends the ${item.currentStock} ${item.unit} on hand to cost of sales now (Dr cost of sales / Cr stock, at the price paid). This cannot be undone except by a count.`, confirmLabel: 'Issue now' })) issueOnHand.mutate(item) }}
+                                    className="text-xs px-2 py-0.5 rounded-lg border border-s-border text-primary-ink hover:border-primary transition-colors">
+                                    Issue stock on hand now
+                                  </button>
+                                )}
                                 {item.kind === 'prep' && <span className="s-badge-purple" title="Made in house by prep batches">Prep</span>}
                                 {(item.bySite ?? []).filter((b) => b.qty !== 0).length > 1 && (
                                   <span className="text-xs text-s-muted">

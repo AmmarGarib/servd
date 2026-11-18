@@ -2556,6 +2556,14 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   not found, never changed; non-food never switched off; one `inventory.issue_on_receipt` audit row per item changed,
   `bulk: true`); answers `{changed, unchanged, failed}`. Sets the flag only. Admin: Inventory → "Select items" (tick rows,
   "Select all" per category / shown). Tests: `tests/itemCategoryReclass.test.ts`.
+- **Ticking "Issued on receipt" issues what is already on hand (owner, 2026-11-18: "issued on receipt items not going to
+  COS, why?" → "Yesss, do it").** `lib/stockLedger.ts issueItemOnHandTx`: every live lot of the item (any outlet / brand,
+  not non-food) is issued now through the same movement + `postIssueOnReceiptTx` as a delivery
+  (`inventory.issue_on_receipt:<lotId>` Dr 50x0 / Cr 12x0 at the price paid; the lot's own brand, else brand usage),
+  once per lot. Runs when the tick goes ON (PATCH and the bulk route — bulk also issues items ticked before; reply
+  `issuedOnHand`) and from `POST /inventory/:id/issue-on-hand` (same people as the tick; 409 `NOT_ISSUED_ON_RECEIPT`;
+  "Issue stock on hand now" on the Inventory row). Audit `inventory.issue_on_hand`. Switching the tick off brings
+  nothing back (a count does). Tests: `tests/itemCategoryReclass.test.ts`.
 - **Suppliers belong to servd (owner, 2026-11-14: "we need to make suppliers belong to servd. just like the ingredient
   master list").** `SupplierMaster` (`supplier_masters`, deliberately NO `tenantId`): the DEFINITION — name, category,
   phone, email, WhatsApp, address, NTN, filer status, WHT exemption, default tax authority / WHT section. Each company's

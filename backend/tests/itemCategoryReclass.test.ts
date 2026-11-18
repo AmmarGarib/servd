@@ -221,6 +221,43 @@ describe('issue-on-receipt in bulk (owner, 2026-11-18)', () => {
   })
 })
 
+describe('stock already on hand goes to cost when ticked (owner, 2026-11-18)', () => {
+  const issueLines = async (itemId: string) => {
+    const lots = await prisma.stockLot.findMany({ where: { inventoryItemId: itemId }, select: { id: true } })
+    const es = await prisma.journalEntry.findMany({
+      where: { reference: { in: lots.map((l) => `inventory.issue_on_receipt:${l.id}`) } },
+      include: { lines: { include: { account: { select: { code: true } } } } },
+    })
+    return es.flatMap((e) => e.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)])).sort()
+  }
+  it('the single tick issues what is on hand (Dr 5010 / Cr 1210), once', async () => {
+    const beef = await item(A, { qty: 8, cost: 1_700 })
+    const res = await call(u.mgrA!, 'PATCH', `/inventory/${beef.id}`, { issueOnReceipt: true })
+    expect(res.statusCode, res.body).toBe(200)
+    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: beef.id } })).currentStock).toBe(0)
+    expect(await issueLines(beef.id)).toEqual([['1210', 'credit', 13_600], ['5010', 'debit', 13_600]])
+    expect(await prisma.auditLog.count({ where: { action: 'inventory.issue_on_hand', entityId: beef.id, tenantId: A.tenantId } })).toBe(1)
+    // Nothing left: the button issues nothing more.
+    const again = await call(u.mgrA!, 'POST', `/inventory/${beef.id}/issue-on-hand`)
+    expect(again.json()).toMatchObject({ lots: 0, valueCents: 0 })
+    expect(await issueLines(beef.id)).toHaveLength(2)
+  })
+  it('bulk tick issues every item\'s stock, ticked before or now; the button needs the tick; B gets 404', async () => {
+    const coke = await item(A, { qty: 30, cost: 75, category: 'beverage' })
+    const water = await item(A, { qty: 30, cost: 55, category: 'beverage' })
+    await prisma.inventoryItem.update({ where: { id: water.id }, data: { issueOnReceipt: true } })   // ticked before
+    const res = await call(u.finA!, 'POST', '/inventory/issue-on-receipt', { itemIds: [coke.id, water.id], issueOnReceipt: true })
+    expect(res.statusCode, res.body).toBe(200)
+    expect(res.json().issuedOnHand.map((x: { id: string }) => x.id).sort()).toEqual([coke.id, water.id].sort())
+    expect(await issueLines(coke.id)).toEqual([['1220', 'credit', 2_250], ['5020', 'debit', 2_250]])
+    expect(await issueLines(water.id)).toEqual([['1220', 'credit', 1_650], ['5020', 'debit', 1_650]])
+    const plain = await item(A, { qty: 2 })
+    expect((await call(u.mgrA!, 'POST', `/inventory/${plain.id}/issue-on-hand`)).json().error.code).toBe('NOT_ISSUED_ON_RECEIPT')
+    expect((await call(u.mgrB!, 'POST', `/inventory/${coke.id}/issue-on-hand`)).statusCode).toBe(404)
+    expect((await call(u.cookA!, 'POST', `/inventory/${coke.id}/issue-on-hand`)).statusCode).toBe(403)
+  })
+})
+
 describe('reading the master', () => {
   it('on-hand value for managers and finance only; the cook sees no cost; B gets 404', async () => {
     const it0 = await item(A, { qty: 3, cost: 20_000 })

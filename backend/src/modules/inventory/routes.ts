@@ -10,7 +10,7 @@ import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
 import { INVENTORY_CATEGORIES, costClassOf, isNonFoodCategory, COST_CLASSES } from '../../lib/inventoryClass.js'
 import { assertInt4Fits, sumCents, zInt4Cents, fmtPkrCents } from '../../lib/money.js'
 import { stockSiteForDocument } from '../../lib/stockSite.js'
-import { consumeFifoTx, ensureFifoReady, latestCostsMany, lockItemsTx, reclassItemLotsTx, STOCK_SOURCE, type LatestCost } from '../../lib/stockLedger.js'
+import { consumeFifoTx, ensureFifoReady, issueItemOnHandTx, latestCostsMany, lockItemsTx, reclassItemLotsTx, STOCK_SOURCE, type LatestCost } from '../../lib/stockLedger.js'
 import { postInventoryDocInSavepoint, postItemReclassTx, WASTE_SOURCE_TYPE } from '../accounting/inventoryPosting.js'
 import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
@@ -535,6 +535,8 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     const ids = [...new Set(body.itemIds)]
     const changed: Array<{ id: string; name: string }> = []
     const failed: Array<{ id: string; name: string | null; code: string; message: string }> = []
+    // Switching ON also issues what each item already holds (owner, 2026-11-18) — ticked now or ticked before.
+    const issuedOnHand: Array<{ id: string; name: string; qty: number; valueCents: number }> = []
     let unchanged = 0
     for (const id of ids) {
       try {
@@ -544,10 +546,18 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
           throw new AppError('NON_FOOD_ISSUED_ON_RECEIPT', `${item.name} is non-food — it is always expensed (issued) when received`, 422)
         }
         // Conditional on the value read, so two people ticking at once never write two audit rows for one change.
-        const done = await prisma.inventoryItem.updateMany({
-          where: { id: item.id, tenantId: item.tenantId, deletedAt: null, issueOnReceipt: !body.issueOnReceipt },
-          data: { issueOnReceipt: body.issueOnReceipt },
-        })
+        const { done, issued } = await prisma.$transaction(async (tx) => {
+          const d = await tx.inventoryItem.updateMany({
+            where: { id: item.id, tenantId: item.tenantId, deletedAt: null, issueOnReceipt: !body.issueOnReceipt },
+            data: { issueOnReceipt: body.issueOnReceipt },
+          })
+          const iss = body.issueOnReceipt ? await issueItemOnHandTx(tx, item.id, req.staffUser!.id) : null
+          return { done: d, issued: iss }
+        }, TX_OPTS)
+        if (issued && issued.lots > 0) {
+          issuedOnHand.push({ id: item.id, name: item.name, qty: issued.qty, valueCents: issued.valueCents })
+          await auditIssuedOnHand(req, item, issued)
+        }
         if (done.count === 0) { unchanged += 1; continue }
         await audit({
           category: 'identity', action: 'inventory.issue_on_receipt', entity: 'InventoryItem', entityId: item.id,
@@ -561,7 +571,30 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
         failed.push({ id, name, code: e.code, message: e.message })
       }
     }
-    return { issueOnReceipt: body.issueOnReceipt, changed, unchanged, failed }
+    return { issueOnReceipt: body.issueOnReceipt, changed, unchanged, failed, issuedOnHand }
+  })
+
+  // POST /inventory/:id/issue-on-hand — issue what an issue-on-receipt item already holds (owner, 2026-11-18): every
+  // live lot → cost of sales now (Dr 50x0 / Cr 12x0 at the price paid; stockLedger.ts issueItemOnHandTx). Same people as
+  // the tick; the item's company only (404); the item must be ticked (409 NOT_ISSUED_ON_RECEIPT). Nothing on hand → 0.
+  fastify.post<{ Params: { id: string } }>('/:id/issue-on-hand', { preHandler: requireAuth(...ITEM_PATCHERS) }, async (req) => {
+    const role = req.staffUser!.role
+    const finance = role === 'finance'
+    if (!(ITEM_MASTER_EDITORS as string[]).includes(role) && !finance) throw new ForbiddenError('Only a manager, the buying team or finance issues stock on receipt.')
+    const u = await prisma.user.findUnique({ where: { id: req.staffUser!.id }, select: { moduleAllow: true, moduleDeny: true } })
+    const modules = await effectiveModulesForUser({ role: role as UserRole, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
+    if (finance ? !modules.has('accounting') : !modules.has('inventory')) {
+      throw new ForbiddenError(`Your account does not have the ${finance ? 'accounting' : 'inventory'} module. Ask the CEO to enable it in Module Access.`)
+    }
+    const item = await assertInventoryAccess(req, req.params.id)
+    if (!item.tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', NO_COMPANY_MESSAGE, 422)
+    const issued = await prisma.$transaction(async (tx) => {
+      const cur = await tx.inventoryItem.findUniqueOrThrow({ where: { id: item.id }, select: { issueOnReceipt: true } })
+      if (!cur.issueOnReceipt) throw new AppError('NOT_ISSUED_ON_RECEIPT', `${item.name} is not set to be issued on receipt — tick it first`, 409)
+      return issueItemOnHandTx(tx, item.id, req.staffUser!.id)
+    }, TX_OPTS)
+    if (issued.lots > 0) await auditIssuedOnHand(req, item, issued)
+    return { id: item.id, name: item.name, ...issued }
   })
 
   fastify.patch<{ Params: { id: string } }>(
@@ -672,6 +705,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
       if (data.category !== undefined && item.tenantId) await ensureFifoReady(item.tenantId)
       if (holdsStock) await ensureFifoReady(tenantId!)
 
+      let issuedNow: { lots: number; qty: number; valueCents: number } | null = null
       const { updated, opening } = await prisma.$transaction(async (tx) => {
         await lockItemsTx(tx, [item.id])
         // Re-read under the item lock (stock-02): the category read before
@@ -695,6 +729,11 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
           },
           include: { tenant: { select: { id: true, name: true, slug: true } } },
         })
+        // Ticked ON: what the item already holds is issued now too (owner, 2026-11-18).
+        if (iorChanges && issueOnReceipt === true && fresh.tenantId) {
+          const iss = await issueItemOnHandTx(tx, item.id, req.staffUser!.id)
+          if (iss.lots > 0) issuedNow = iss
+        }
         if (costChanges) {
           await tx.itemPriceHistory.create({
             data: { inventoryItemId: item.id, oldCostCents: item.unitCostCents, newCostCents: data.unitCostCents!, source: 'manual_adjust' },
@@ -729,6 +768,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
           before: { issueOnReceipt: item.issueOnReceipt }, after: { issueOnReceipt },
         })
       }
+      if (issuedNow) await auditIssuedOnHand(req, item, issuedNow)
       return opening ? { ...updated, openingCount: { id: opening.count.id, ledger: opening.ledger } } : updated
     },
   )
@@ -1087,4 +1127,14 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   await fastify.register(expiringRoutes, { readers: STOCK_READERS, hideCosts: costsHiddenFor })
   // Stock item history (owner, 2026-10-27): GET /inventory/:id/movements (itemHistory.ts).
   await fastify.register(itemHistoryRoutes, { readers: ITEM_READERS, hideCosts: costsHiddenFor, itemWhere: inventoryTenantWhere })
+}
+
+/** Audit of stock already on hand issued to cost (owner, 2026-11-18). */
+async function auditIssuedOnHand(req: FastifyRequest, item: { id: string; name: string; tenantId: string | null }, issued: { lots: number; qty: number; valueCents: number }) {
+  await audit({
+    category: 'accounting', action: 'inventory.issue_on_hand', entity: 'InventoryItem', entityId: item.id,
+    userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: item.tenantId,
+    after: { name: item.name, lots: issued.lots, qty: issued.qty, valueCents: issued.valueCents },
+    metadata: { actorRole: req.staffUser!.role },
+  })
 }
