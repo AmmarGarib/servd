@@ -26,6 +26,7 @@ import { Button, CheckLabel, dangerOutlineBtn, ErrorBanner, fieldCls, FieldLabel
 import { Select } from '@/components/ui/Select'
 import { ExpenseAccountOptions, useExpenseAccounts } from './expenseAccounts'
 import { useConfirm } from '../../../components/ui/ConfirmDialog'
+import { useAuthStore } from '../../../store/auth'
 import { FileViewModal } from '../../../components/files/FileViewModal'
 
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
@@ -436,6 +437,7 @@ function PoFact({ v }: { v: CashVoucher }) {
           </table>
         </div>
       )}
+      <PoCashCheck v={v} />
     </div>
   )
 }
@@ -781,6 +783,58 @@ function NameHolder({ v, onDone }: { v: CashVoucher; onDone: () => void }) {
       </Select>
       {save.error && <ErrorBanner message={errorWords(save.error)} />}
       <Button type="submit" disabled={!who || save.isPending} onClick={() => save.mutate()}>Name the holder</Button>
+    </div>
+  )
+}
+
+/**
+ * A PO's cash vs what the buyer really bought (owner, 2026-11-18: "make sure no extra amount is lost"). Unpaid: the
+ * amount already follows the PO. Paid: the extra still in the buyer's box, with "Return the extra" for finance / the
+ * CEO (POST /:id/return-po-excess — the box hands it back to the safe or a bank).
+ */
+function PoCashCheck({ v }: { v: CashVoucher }) {
+  const qc = useQueryClient()
+  const role = useAuthStore((s) => s.user?.role ?? '')
+  const f = v.poCash
+  const [dest, setDest] = useState<'safe' | 'bank'>('safe')
+  const ret = useMutation({
+    mutationFn: () => api.post(`${CV_BASE}/${v.id}/return-po-excess`, { destination: dest }, { tenantId: v.tenantId }),
+    meta: { inlineErrors: true },
+    onSuccess: () => {
+      toast.success(`PKR ${formatPkr(f?.excessCents ?? 0)} returned from the buyer's box`)
+      void qc.invalidateQueries({ queryKey: [CV_ROOT] })
+      void qc.invalidateQueries({ queryKey: ['petty-cash-boxes'] })
+    },
+  })
+  if (!f || !f.paid || f.boughtCents == null) return null
+  const canReturn = (role === 'finance' || role === 'admin') && f.excessCents > 0 && !!f.boxId
+  return (
+    <div className="mt-3 rounded-xl p-3 space-y-2 text-xs" style={{ background: f.excessCents > 0 || f.shortCents > 0 ? 'color-mix(in srgb, var(--erp-warning) 12%, transparent)' : 'rgb(var(--erp-success-rgb) / 0.08)' }}>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div><p className="text-white/45 uppercase tracking-wider">Cash given</p><p className="font-bold text-white/90">PKR {formatPkr(f.givenCents, { decimals: true })}</p></div>
+        <div><p className="text-white/45 uppercase tracking-wider">Actually bought</p><p className="font-bold text-white/90">PKR {formatPkr(f.boughtCents, { decimals: true })}</p></div>
+        <div><p className="text-white/45 uppercase tracking-wider">Returned</p><p className="font-bold text-white/90">PKR {formatPkr(f.returnedCents, { decimals: true })}</p></div>
+        <div>
+          <p className="text-white/45 uppercase tracking-wider">{f.shortCents > 0 ? 'Buyer short' : 'Extra with buyer'}</p>
+          <p className="font-black" style={{ color: f.excessCents > 0 || f.shortCents > 0 ? 'var(--erp-warning)' : 'var(--erp-success)' }}>
+            PKR {formatPkr(f.shortCents > 0 ? f.shortCents : f.excessCents, { decimals: true })}
+          </p>
+        </div>
+      </div>
+      {f.excessCents > 0 && <p className="text-white/70">The buyer bought less than he was given. The extra is still in his petty-cash box{v.toBoxName ? ` (${v.toBoxName})` : ''} until it is returned.</p>}
+      {f.shortCents > 0 && <p className="text-white/70">The buyer spent more than he was given — top his box up from Petty cash.</p>}
+      {canReturn && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={dest} onChange={(e) => setDest(e.target.value as 'safe' | 'bank')} className={`${fieldCls} w-auto`} aria-label="Return the extra to">
+            <option value="safe">To cash on hand (safe)</option>
+            <option value="bank">To the bank</option>
+          </Select>
+          <Button type="submit" disabled={ret.isPending} onClick={() => { ret.reset(); ret.mutate() }}>
+            {ret.isPending ? 'Returning…' : `Return the extra PKR ${formatPkr(f.excessCents)}`}
+          </Button>
+        </div>
+      )}
+      {ret.error && <ErrorBanner message={errorWords(ret.error)} />}
     </div>
   )
 }

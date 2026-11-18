@@ -235,6 +235,8 @@ export interface CashVoucher {
     id: string; reference: string | null; status: string; totalCents: number; supplier: { name: string }
     lines?: Array<{ id: string; item: string; quantity: number; unit: string; rateCents: number; totalCents: number }>
   } | null
+  /** A PO's cash vs what the buyer really bought (owner, 2026-11-18; backend procurement/poCashSync.ts). */
+  poCash?: { paid: boolean; givenCents: number; boughtCents: number | null; returnedCents: number; excessCents: number; shortCents: number; boxId: string | null } | null
   /** The buyer's pay-back (owner, 2026-11-18): the supplier bill it settles, and that bill's PO. */
   reimbursesBillId?: string | null
   reimbursedBill?: { id: string; billNumber: string; status: string; supplier: { name: string }; po: { id: string; reference: string | null } | null } | null

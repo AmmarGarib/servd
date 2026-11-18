@@ -2085,6 +2085,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   with the untouched lots issued (`stockLedger.ts expenseReceiptLineLotsTx`, 409 `STOCK_ALREADY_USED`); never back to
   stock (409 `EXPENSED_STAYS_EXPENSE`). Finance's GRN check and the CEO's approval are unchanged. Migration
   `20261118100000_purchase_after_cash`. Tests: `tests/poApprovalChain.test.ts`.
+- **Old advance vouchers follow what was bought (owner, 2026-11-18: "Voucher not picking updated rates entered by
+  buyer … make sure no extra amount is lost").** `procurement/poCashSync.ts` (contract in its header). An UNPAID PO
+  voucher's amount = the PO's current total (`syncPoCashVoucherTx` in the buyer's completion and the GRN resubmit; boot
+  sweep `sweepPoCashVouchers`; audit `cash_voucher.po_amount_synced`; posts nothing). A PAID one keeps what was handed
+  over; `poCashFigures` (on the voucher detail as `poCash`) gives given / bought / returned / extra / short; the extra
+  goes back through `POST /trustops/cash-vouchers/:id/return-po-excess {destination safe|bank}` (finance or the CEO;
+  `recordPettyCashReturnTx` out of the buyer's box, Dr 1010 | bank / Cr 1011; `returnedCents`; 422 `MORE_THAN_EXTRA`,
+  409 `NOTHING_TO_RETURN` / `PO_NOT_BOUGHT_YET`), and an open flag `po_cash_excess` (high) names it until nothing is
+  left. Tests: `tests/poApprovalChain.test.ts`.
 - **A PO's cash voucher waits for finance (owner, 2026-11-10: "Finance approval getting skipped, fix it").** The CEO's
   PO approval raises it `submitted` (CEO step already signed — `directorSignedById`); finance's `POST
   /trustops/cash-vouchers/:id/finance-approve {}` moves it straight to `approved` (ready to pay) — no account, no

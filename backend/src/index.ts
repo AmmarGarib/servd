@@ -1299,6 +1299,16 @@ async function build() {
     fastify.log.warn(`[cashVoucher] finance-raised forward skipped: ${(err as Error).message}`)
   }
 
+  // A PO's cash voucher follows what the buyer really bought (owner, 2026-11-18): unpaid ones take the PO's current
+  // total; paid ones with extra cash still in the buyer's box are flagged until it is returned (poCashSync.ts).
+  try {
+    const { sweepPoCashVouchers } = await import('./modules/procurement/poCashSync.js')
+    const r = await sweepPoCashVouchers()
+    if (r.synced || r.flagged) fastify.log.info(`[poCash] ${r.synced} unpaid PO voucher(s) set to the PO total; ${r.flagged} paid with extra cash flagged`)
+  } catch (err) {
+    fastify.log.warn(`[poCash] voucher sweep skipped: ${(err as Error).message}`)
+  }
+
   // Per-employee wages sub-ledger (owner, 2026-10-23): once per company, tag the
   // payroll and full & final entries already on the books from their payslips
   // (tags only — no journal line changes). Marker Setting per company.

@@ -623,3 +623,68 @@ describe('finance raises POs (owner, 2026-11-10: "Allow finance to create POs")'
     expect(ok.statusCode, ok.body).toBe(200)
   })
 })
+
+describe('old advance vouchers follow the buyer\'s actual amounts (owner, 2026-11-18: "make sure no extra amount is lost")', () => {
+  /** A PO approved the OLD way: approved, then its advance voucher raised for the estimate (as before 2026-11-18). */
+  async function oldAdvancePo(estimate: number) {
+    const r = await call('chefA', 'POST', '/procurement/purchase-orders', { supplierId: supA, payByCash: true, lines: [{ inventoryItemId: flour, quantityOrdered: 10, unitCostCents: estimate }] })
+    const po = r.json() as { id: string; lines: Array<{ id: string }> }
+    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`, { buyerUserId: U.buyerA!.id })).statusCode).toBe(200)
+    await prisma.purchaseOrder.update({ where: { id: po.id }, data: { cashAfterPurchase: false } })
+    const { prepareCashVoucher, raisePoCashVoucherTx } = await import('../src/modules/procurement/poCash.js')
+    const plan = await prepareCashVoucher(po.id, U.buyerA!.id)
+    const v = await prisma.$transaction((tx) => raisePoCashVoucherTx(tx, plan, U.ceoA!.id))
+    await upload('buyerA', po.id)
+    return { po, voucherId: v.id }
+  }
+
+  it('an UNPAID voucher takes the PO total the buyer entered', async () => {
+    const { po, voucherId } = await oldAdvancePo(250)   // 10 × 250 = PKR 25
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })).amountCents).toBe(2_500)
+    const done = await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-SYNC1`, invoiceDate: today(), lines: [{ poLineId: po.lines[0]!.id, amountCents: 1_260 }] })
+    expect(done.statusCode, done.body).toBe(200)
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })).amountCents).toBe(1_260)
+    expect(await prisma.auditLog.count({ where: { action: 'cash_voucher.po_amount_synced', entityId: voucherId } })).toBe(1)
+  })
+
+  it('a PAID voucher shows the extra, flags it, and finance returns it from the buyer\'s box to the safe', async () => {
+    const { po, voucherId } = await oldAdvancePo(250)
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/finance-approve`, {})).statusCode).toBe(200)
+    const pay = await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, { source: 'cash_on_hand' })
+    expect(pay.statusCode, pay.body).toBe(200)
+    const box = await prisma.pettyCashBox.findFirstOrThrow({ where: { tenantId: T.A, custodianId: U.buyerA!.id } })
+    const floatBefore = box.floatCents
+    // Nothing to return before the buyer says what he bought.
+    expect(code(await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/return-po-excess`, {}))).toBe('PO_NOT_BOUGHT_YET')
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-SYNC2`, invoiceDate: today(), lines: [{ poLineId: po.lines[0]!.id, amountCents: 1_260 }] })).statusCode).toBe(200)
+    // The paid amount stays what was handed over; the detail shows the extra.
+    const d = (await call('finA', 'GET', `/trustops/cash-vouchers/${voucherId}`)).json()
+    expect(d.amountCents).toBe(2_500)
+    expect(d.poCash).toMatchObject({ paid: true, givenCents: 2_500, boughtCents: 1_260, excessCents: 1_240, boxId: box.id })
+    const flag = await prisma.exceptionFlag.findFirstOrThrow({ where: { kind: 'po_cash_excess', entityId: voucherId } })
+    expect(flag).toMatchObject({ status: 'open', tenantId: T.A })
+    expect(Number(flag.amountCents)).toBe(1_240)
+    // Who: finance or the CEO only; another company 404; never more than the extra.
+    expect((await call('buyerA', 'POST', `/trustops/cash-vouchers/${voucherId}/return-po-excess`, {})).statusCode).toBe(403)
+    expect((await call('finB', 'POST', `/trustops/cash-vouchers/${voucherId}/return-po-excess`, {})).statusCode).toBe(404)
+    expect(code(await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/return-po-excess`, { amountCents: 1_241 }))).toBe('MORE_THAN_EXTRA')
+    const cashBefore = await netDebit(T.A, '1010')
+    const r = await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/return-po-excess`, { destination: 'safe' })
+    expect(r.statusCode, r.body).toBe(200)
+    expect((await prisma.pettyCashBox.findUniqueOrThrow({ where: { id: box.id } })).floatCents).toBe(floatBefore - 1_240)
+    expect(await netDebit(T.A, '1010') - cashBefore).toBe(1_240)
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })).returnedCents).toBe(1_240)
+    expect((await prisma.exceptionFlag.findUniqueOrThrow({ where: { id: flag.id } })).status).toBe('resolved')
+    expect(code(await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/return-po-excess`, {}))).toBe('NOTHING_TO_RETURN')
+  })
+
+  it('the boot sweep fixes vouchers already out of step', async () => {
+    const { po, voucherId } = await oldAdvancePo(300)
+    await prisma.purchaseOrder.update({ where: { id: po.id }, data: { totalCents: 1_800 } })   // changed without the sync (as on live)
+    const { sweepPoCashVouchers } = await import('../src/modules/procurement/poCashSync.js')
+    const r = await sweepPoCashVouchers()
+    expect(r.synced).toBeGreaterThanOrEqual(1)
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })).amountCents).toBe(1_800)
+  })
+})

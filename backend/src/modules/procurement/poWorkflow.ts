@@ -285,9 +285,13 @@ export async function completePo(poId: string, actor: Actor, input: CompleteInpu
         details: { from: po.status, to: 'completed', invoiceNumber, invoiceDate: input.invoiceDate, taxCents, taxAuthority: input.taxAuthority ?? null, ...(changes.length ? { rateChanges: changes } : {}), ...(input.note?.trim() ? { note: input.note.trim().slice(0, 500) } : {}) } as Prisma.InputJsonValue,
       },
     })
-    return { id: poId, status: 'completed', from: po.status, invoiceNumber, rateChanges: changes, tenantId }
+    // The PO's unpaid cash voucher follows what was really bought (owner, 2026-11-18; poCashSync.ts).
+    const { syncPoCashVoucherTx } = await import('./poCashSync.js')
+    const voucherSync = await syncPoCashVoucherTx(tx, poId, actor.id)
+    return { id: poId, status: 'completed', from: po.status, invoiceNumber, rateChanges: changes, tenantId, voucherSync }
   })
   poTaskNotice('to_confirm', poId, actor.id)
+  await (await import('./poCashSync.js')).afterPoTotalChanged(poId, actor.id)
   return r
 }
 
@@ -518,8 +522,11 @@ export async function grnResubmit(grnId: string, actor: Actor, input: ResubmitIn
       ...(changes.length ? { rateChanges: changes } : {}),
       ...(input.note?.trim() ? { note: input.note.trim().slice(0, 500) } : {}),
     })
-    return { id: grnId, grnStatus: 'finance_review' as const, returnCount: g.returnCount, rateChanges: changes }
+    const { syncPoCashVoucherTx } = await import('./poCashSync.js')
+    await syncPoCashVoucherTx(tx, g.poId, actor.id)
+    return { id: grnId, grnStatus: 'finance_review' as const, returnCount: g.returnCount, rateChanges: changes, poId: g.poId }
   })
+  await (await import('./poCashSync.js')).afterPoTotalChanged(r.poId, actor.id)
   const { approvalWaiting } = await import('../approvals/notify.js')
   approvalWaiting('grn_finance', grnId, { round: `finance_review:r${r.returnCount}:${now.toISOString()}`, actorId: actor.id })
   return r

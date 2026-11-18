@@ -136,6 +136,9 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
                 </span>
               } />
             )}
+            {v.poCash?.paid && v.poCash.boughtCents != null && (
+              <FieldBox label="Cash given vs actually bought" value={`Given ${formatPkr(v.poCash.givenCents, { decimals: true })} · bought ${formatPkr(v.poCash.boughtCents, { decimals: true })} · returned ${formatPkr(v.poCash.returnedCents, { decimals: true })}${v.poCash.excessCents > 0 ? ` · EXTRA STILL WITH THE BUYER ${formatPkr(v.poCash.excessCents, { decimals: true })}` : v.poCash.shortCents > 0 ? ` · buyer short ${formatPkr(v.poCash.shortCents, { decimals: true })}` : ' · settled'}`} />
+            )}
           </>
         ) : <FieldBox label="Expense account" value={categoryLabel} />}
       </div>

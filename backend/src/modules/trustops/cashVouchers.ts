@@ -594,6 +594,8 @@ export async function detailOf(id: string, viewer: Viewer) {
     toBoxName: v.purchaseOrderId && payMovement?.boxId
       ? (await prisma.pettyCashBox.findUnique({ where: { id: payMovement.boxId }, select: { name: true } }))?.name ?? null
       : null,
+    /** A PO's cash vs what the buyer really bought (owner, 2026-11-18; procurement/poCashSync.ts). */
+    poCash: v.purchaseOrderId ? await (await import('../procurement/poCashSync.js')).poCashFigures(prisma, v.id) : null,
     /** The buyer's pay-back (owner, 2026-11-18): the bill it pays, and its PO. */
     reimbursedBill: v.reimbursesBillId
       ? await prisma.supplierBill.findFirst({
@@ -1608,6 +1610,46 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     await auditVoucher(req, 'return', v, { status: 'returned', note }, { status: v.status })
     await voucherDecided(req, queueTypeOf(v.status), v, 'return', now, note)
     return detailOf(v.id, viewer)
+  })
+
+  // POST /:id/return-po-excess — a PO's cash voucher gave the buyer more than he bought (owner, 2026-11-18: "make sure
+  // no extra amount is lost"; procurement/poCashSync.ts). Finance (or the CEO) takes the extra out of the buyer's box
+  // through the ONE return engine (recordPettyCashReturnTx: Dr 1010 | the bank / Cr 1011), never more than the extra
+  // still with him (422 MORE_THAN_EXTRA) or than the box holds (400 INSUFFICIENT_FLOAT), counted on returnedCents
+  // under a conditional claim; the 'po_cash_excess' flag resolves once nothing is left.
+  fastify.post<{ Params: { id: string } }>('/:id/return-po-excess', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const body = z.object({
+      amountCents: z.number().int().positive().optional(),
+      destination: z.enum(['safe', 'bank']).default('safe'),
+      bankAccountId: z.string().min(1).max(64).nullable().optional(),
+    }).parse(req.body ?? {})
+    const v = await loadVoucher(req, req.params.id)
+    const viewer = await viewerOf(req)
+    if (!viewer.financeApprover) throw new AppError('NOT_FINANCE', 'Only finance or the CEO returns a PO\'s extra cash', 403)
+    if (!v.purchaseOrderId) throw new AppError('NOT_A_PO_VOUCHER', `${v.number} is not a purchase order's cash`, 422)
+    const { poCashFigures, refreshPoCashExcessFlag } = await import('../procurement/poCashSync.js')
+    const f = await poCashFigures(prisma, v.id)
+    if (!f || !f.paid) throw new AppError('VOUCHER_NOT_PAID', `${v.number} has not been paid — its amount follows the PO`, 409)
+    if (f.boughtCents == null) throw new AppError('PO_NOT_BOUGHT_YET', 'The buyer has not entered what was bought yet', 409)
+    if (f.excessCents <= 0) throw new AppError('NOTHING_TO_RETURN', 'Nothing extra is left with the buyer', 409)
+    if (!f.boxId) throw new AppError('BOX_UNKNOWN', `The box ${v.number}'s cash went into is not known — return it from Petty cash`, 409)
+    const amount = body.amountCents ?? f.excessCents
+    if (amount > f.excessCents) throw new AppError('MORE_THAN_EXTRA', `Only ${f.excessCents} is extra`, 422)
+    const { recordPettyCashReturnTx } = await import('./pettyCash.js')
+    const r = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.cashVoucher.updateMany({
+        where: { id: v.id, tenantId: v.tenantId, returnedCents: f.returnedCents, status: v.status },
+        data: { returnedCents: { increment: amount } },
+      })
+      if (claimed.count === 0) throw new AppError('VOUCHER_CHANGED', `${v.number} changed meanwhile — reload and try again`, 409)
+      return recordPettyCashReturnTx(tx, {
+        boxId: f.boxId!, amountCents: amount, destination: body.destination, bankAccountId: body.destination === 'bank' ? (body.bankAccountId ?? null) : null,
+        reason: `Extra cash of ${v.number} returned (bought less than given)`.slice(0, 200), actorId: viewer.id,
+      })
+    })
+    await auditVoucher(req, 'return_po_excess', v, { amountCents: amount, destination: body.destination, movementId: r.movementId, givenCents: f.givenCents, boughtCents: f.boughtCents, returnedCents: f.returnedCents + amount })
+    await refreshPoCashExcessFlag(v.id, viewer.id)
+    return { voucher: await detailOf(v.id, viewer), movementId: r.movementId, returnedCents: amount }
   })
 
   // POST /:id/pull-back — finance takes a voucher waiting for the CEO back to edit it (owner, 2026-11-07: "give option to
