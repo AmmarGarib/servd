@@ -294,7 +294,7 @@ export async function completePo(poId: string, actor: Actor, input: CompleteInpu
 // ─── Requester ───────────────────────────────────────────────────────────────
 
 export interface ConfirmInput {
-  lines: Array<{ poLineId: string; quantityReceived: number; useBy?: string | null; notes?: string | null }>
+  lines: Array<{ poLineId: string; quantityReceived: number; useBy?: string | null; notes?: string | null; expenseAccountCode?: string | null }>
   locationId?: string | null
   notes?: string | null
 }
@@ -318,7 +318,7 @@ export async function confirmReceipt(poId: string, actor: Actor, input: ConfirmI
   }
   const result = await receiveGoods({
     actor, poId, locationId: input.locationId ?? null, notes: input.notes ?? null,
-    lines: input.lines.map((l) => ({ poLineId: l.poLineId, quantityReceived: l.quantityReceived, useBy: l.useBy ?? null, notes: l.notes ?? null })),
+    lines: input.lines.map((l) => ({ poLineId: l.poLineId, quantityReceived: l.quantityReceived, useBy: l.useBy ?? null, notes: l.notes ?? null, expenseAccountCode: l.expenseAccountCode ?? null })),
     confirmation: { invoiceNumber: po.invoiceNumber, invoiceDate: po.invoiceDate, invoiceTaxCents: po.invoiceTaxCents == null ? null : toCents(po.invoiceTaxCents), invoiceTaxAuthority: po.invoiceTaxAuthority },
   })
   const grn = await prisma.goodsReceipt.findUniqueOrThrow({ where: { id: result.receipt.id }, select: { id: true, grnNumber: true, grnStatus: true, tenantId: true } })
@@ -415,6 +415,76 @@ export async function grnPullBack(grnId: string, actor: Actor) {
   })
 }
 
+/**
+ * Stock or expense, changed by finance at its GRN check (owner, 2026-11-18: "Receiver picks, finance can change"): a
+ * line of a GRN waiting for finance (or for the CEO, by the CEO) gets another expense account, or a STOCK line is
+ * turned into an expense. The receipt was already booked when the requester confirmed it, so the change is ONE entry
+ * 'procurement.receipt_expense:<lineId>:<n>' moving the line's value:
+ *   stock → expense      Dr the expense account / Cr 12x0 (per class and brand) — the line's lots are issued at once
+ *                        (lib/stockLedger.ts expenseReceiptLineLotsTx; 409 STOCK_ALREADY_USED if any of it was used)
+ *   expense → expense    Dr the new account / Cr the old one
+ * An expensed line never goes back to stock (409 EXPENSED_STAYS_EXPENSE: nothing is left to put on the shelf — the
+ * requester confirms a new receipt instead). The route proves the right (grn_finance; the CEO at either step).
+ */
+export async function setGrnLineExpense(grnId: string, lineId: string, actor: Actor, accountCode: string | null) {
+  const { assertReceiptExpenseAccountTx } = await import('./receiving.js')
+  const { expenseReceiptLineLotsTx } = await import('../../lib/stockLedger.js')
+  const { postJournalEntry } = await import('../accounting/journal.js')
+  const { CLASS_ACCOUNTS, NON_FOOD_EXPENSE_CODE, isNonFoodClass } = await import('../../lib/inventoryClass.js')
+  return prisma.$transaction(async (tx) => {
+    const g = await lockGrnTx(tx, grnId)
+    const allowed = g.grnStatus === 'finance_review' || (isCeo(actor) && g.grnStatus === 'ceo_review')
+    if (!allowed) throw new AppError('INVALID_STATE', `This GRN is ${String(g.grnStatus).replace(/_/g, ' ')} — stock or expense is changed only at finance's check`, 409)
+    if (!g.tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'This GRN has no company', 422)
+    const line = await tx.goodsReceiptLine.findFirst({ where: { id: lineId, receiptId: grnId }, select: { id: true, description: true, expenseAccountCode: true } })
+    if (!line) throw new NotFoundError('GoodsReceiptLine', lineId)
+    const lots = await tx.stockLot.findMany({ where: { receiptLineId: line.id }, select: { id: true, conceptId: true, costClass: true } })
+    const expensedLots = lots.filter((l) => isNonFoodClass(l.costClass))
+    const was = line.expenseAccountCode ?? (lots.length > 0 && expensedLots.length === lots.length ? NON_FOOD_EXPENSE_CODE : null)
+    if (accountCode === was) return { lineId, expenseAccountCode: was, changed: false }
+    if (!accountCode) throw new AppError('EXPENSED_STAYS_EXPENSE', `${line.description} was expensed on arrival — it cannot be put back into stock`, 409)
+    const acc = await assertReceiptExpenseAccountTx(tx, g.tenantId, accountCode)
+    const memo = `${g.grnNumber}: ${line.description}`
+    const lines: Array<{ accountCode: string; type: 'debit' | 'credit'; amountCents: number; memo: string; conceptId: string | null }> = []
+    if (was == null) {
+      for (const m of await expenseReceiptLineLotsTx(tx, line.id, actor.id)) {
+        if (m.valueCents <= 0) continue
+        lines.push({ accountCode: acc.code, type: 'debit', amountCents: m.valueCents, memo: `${memo} — expensed by finance`.slice(0, 250), conceptId: m.conceptId })
+        lines.push({ accountCode: CLASS_ACCOUNTS[m.costClass].inv, type: 'credit', amountCents: m.valueCents, memo: `${memo} — out of stock`.slice(0, 250), conceptId: m.conceptId })
+      }
+    } else {
+      const ins = expensedLots.length === 0 ? [] : await tx.stockMovement.findMany({ where: { lotId: { in: expensedLots.map((l) => l.id) }, kind: 'receipt' }, select: { lotId: true, valueCents: true } })
+      const brandOf = new Map(expensedLots.map((l) => [l.id, l.conceptId]))
+      const byBrand = new Map<string, { conceptId: string | null; cents: number }>()
+      for (const m of ins) {
+        const c = (m.lotId ? brandOf.get(m.lotId) : null) ?? null
+        const b = byBrand.get(c ?? '') ?? { conceptId: c, cents: 0 }
+        b.cents += toCents(m.valueCents)
+        byBrand.set(c ?? '', b)
+      }
+      for (const b of byBrand.values()) {
+        if (b.cents <= 0) continue
+        lines.push({ accountCode: acc.code, type: 'debit', amountCents: b.cents, memo: `${memo} — expense account changed by finance`.slice(0, 250), conceptId: b.conceptId })
+        lines.push({ accountCode: was, type: 'credit', amountCents: b.cents, memo: `${memo} — moved to ${acc.code}`.slice(0, 250), conceptId: b.conceptId })
+      }
+    }
+    let entryId: string | null = null
+    if (lines.length >= 2) {
+      const n = await tx.journalEntry.count({ where: { tenantId: g.tenantId, reference: { startsWith: `procurement.receipt_expense:${line.id}:` } } })
+      const total = lines.filter((l) => l.type === 'debit').reduce((s2, l) => s2 + l.amountCents, 0)
+      const r = await postJournalEntry({
+        tenantId: g.tenantId, sourceType: 'procurement.receipt_expense', sourceId: `${line.id}:${n + 1}`,
+        description: `${g.grnNumber}: ${line.description} ${was == null ? 'expensed' : 'moved'} to ${acc.code} ${acc.name} — PKR ${(total / 100).toFixed(2)}`.slice(0, 250),
+        entryDate: new Date(), postedBy: actor.id, lines,
+      }, { tx })
+      entryId = r.entryId ?? null
+    }
+    await tx.goodsReceiptLine.update({ where: { id: line.id }, data: { expenseAccountCode: acc.code } })
+    await logGrnTx(tx, g.poId, actor.id, 'grn_line_expense', { grnId, grnNumber: g.grnNumber, lineId: line.id, item: line.description, from: was ?? 'stock', to: acc.code, journalEntryId: entryId })
+    return { lineId, expenseAccountCode: acc.code, changed: true, journalEntryId: entryId }
+  }, { timeout: 30_000 })
+}
+
 export interface ResubmitInput { invoiceNumber?: string; invoiceDate?: string; taxCents?: number | null; taxAuthority?: AuthorityKey | null; lines?: LineRate[]; note?: string | null }
 
 /** The buyer corrected the GRN's invoice: buyer_fix → finance_review. Only the PO's buyer (or the CEO). */
@@ -504,12 +574,20 @@ export async function approveGrn(grnId: string, actor: Actor) {
       throw err
     }
     await tx.goodsReceipt.update({ where: { id: grnId }, data: { supplierBillId: b.id } })
-    await logGrnTx(tx, g.poId!, actor.id, 'grn_approved', { grnId, grnNumber: g.grnNumber, from: 'ceo_review', to: 'approved', supplierBillId: b.id, billNumber: b.billNumber, totalCents: toCents(b.totalCents) })
-    return b
+    // A cash PO bought with the buyer's own money (owner, 2026-11-18: no advance): his pay-back voucher at the bill.
+    const payBack = po.payByCash && po.cashAfterPurchase
+      ? await (await import('./poCash.js')).raiseReimbursementTx(tx, { billId: b.id, poId: g.poId!, grnNumber: g.grnNumber!, approverId: actor.id, financeCheckedById: g.financeCheckedById })
+      : null
+    await logGrnTx(tx, g.poId!, actor.id, 'grn_approved', { grnId, grnNumber: g.grnNumber, from: 'ceo_review', to: 'approved', supplierBillId: b.id, billNumber: b.billNumber, totalCents: toCents(b.totalCents), ...(payBack && { payBackVoucherId: payBack.id, payBackVoucherNumber: payBack.number }) })
+    return { ...b, payBack }
   }, { timeout: 30_000 })
   await afterBillCreated(prepared, bill)
   grnPayNotice(grnId, actor.id)
-  return { id: grnId, grnStatus: 'approved' as const, supplierBillId: bill.id, billNumber: bill.billNumber, totalCents: toCents(bill.totalCents), payByCash: po.payByCash }
+  if (bill.payBack) {
+    const { voucherTaskNotice } = await import('../trustops/cashVouchers.js')
+    voucherTaskNotice('approved', bill.payBack.id, actor.id)
+  }
+  return { id: grnId, grnStatus: 'approved' as const, supplierBillId: bill.id, billNumber: bill.billNumber, totalCents: toCents(bill.totalCents), payByCash: po.payByCash, payBackVoucher: bill.payBack }
 }
 
 // ─── My tasks ────────────────────────────────────────────────────────────────
@@ -520,7 +598,7 @@ export async function myTasks(userId: string, tenantIds: string[]) {
   const supplier = { tenantId: { in: tenantIds } }
   const poInclude = {
     supplier: { select: { id: true, name: true, tenantId: true, systemKind: true } },
-    lines: { include: { inventoryItem: { select: { name: true, unit: true } } } },
+    lines: { include: { inventoryItem: { select: { name: true, unit: true, category: true } } } },
   } satisfies Prisma.PurchaseOrderInclude
   const [toBuy, toConfirm, fixGrns] = await Promise.all([
     prisma.purchaseOrder.findMany({ where: { buyerUserId: userId, grnWorkflow: true, status: { in: [...BUYER_STAGE] }, supplier }, include: poInclude, orderBy: { approvedAt: 'asc' }, take: 200 }),
@@ -588,7 +666,7 @@ function grnPayNotice(grnId: string, actorId: string): void {
     const g = await serviceClient.goodsReceipt.findUnique({ where: { id: grnId }, select: { tenantId: true, grnNumber: true, poId: true, supplierBillId: true, supplierId: true, grnStatus: true } })
     if (!g?.tenantId || g.grnStatus !== 'approved' || !g.poId) return 0
     const [po, sup] = await Promise.all([
-      serviceClient.purchaseOrder.findUnique({ where: { id: g.poId }, select: { payByCash: true, reference: true, buyerUserId: true } }),
+      serviceClient.purchaseOrder.findUnique({ where: { id: g.poId }, select: { payByCash: true, cashAfterPurchase: true, reference: true, buyerUserId: true } }),
       serviceClient.supplier.findUnique({ where: { id: g.supplierId }, select: { name: true } }),
     ])
     const users = await serviceClient.user.findMany({
@@ -600,7 +678,9 @@ function grnPayNotice(grnId: string, actorId: string): void {
       if ((await effectiveModulesForUser({ role: u.role, moduleAllow: u.moduleAllow, moduleDeny: u.moduleDeny })).has('accounting')) ids.push(u.id)
     }
     if (po?.payByCash && po.buyerUserId) ids.push(po.buyerUserId)
-    const body = po?.payByCash
+    const body = po?.payByCash && po.cashAfterPurchase
+      ? 'The buyer paid with his own money: pay him back on the cash voucher raised for this bill (Cash vouchers) — that pays the bill.'
+      : po?.payByCash
       ? "Paid by cash: pay the bill from the buyer's petty-cash box (Petty cash → spend → supplier bill)."
       : 'Pay the supplier through Supplier payments.'
     const rows: NotifyInput[] = [...new Set(ids)].map((userId) => ({

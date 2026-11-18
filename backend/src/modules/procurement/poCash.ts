@@ -1,7 +1,14 @@
-// Cash for a purchase order (owner, 2026-11-03: "asif takes cash from hasnain. asif buys" — and, asked how the cash is
-// handled: "Cash voucher tied to PO").
+// Cash for a purchase order.
 //
-// THE DESIGN (money is booked exactly once; every step reuses an existing engine):
+// SINCE 2026-11-18 (owner: "Remove cash advance option, Buyer will get cash after purchase") a cash PO raises NO voucher
+// at the CEO's approval: see "Pay the buyer back after the purchase" at the foot of this file (raiseReimbursementTx).
+// The advance design below stays ONLY for POs approved before that (cashAfterPurchase false, a voucher with
+// purchaseOrderId): their vouchers are still approved, paid into the buyer's box and spent on the bill as before.
+//
+// (owner, 2026-11-03: "asif takes cash from hasnain. asif buys" — and, asked how the cash is handled: "Cash voucher
+// tied to PO").
+//
+// THE OLD ADVANCE DESIGN (money is booked exactly once; every step reuses an existing engine):
 //
 //   1. CEO approves the PO (service.ts approvePo) → in the SAME transaction raisePoCashVoucherTx raises ONE cash
 //      voucher (CashVoucher.purchaseOrderId @unique, kind 'request', CV-00001 series of the PO's company) for the PO
@@ -148,4 +155,82 @@ export async function raisePoCashVoucherTx(tx: Tx, p: PoCashPlan, approverId: st
     },
   })
   return v
+}
+
+// ─── Pay the buyer back after the purchase (owner, 2026-11-18) ───────────────
+//
+// "Remove cash advance option, Buyer will get cash after purchase." A cash PO the CEO approved after this rule is
+// `cashAfterPurchase`: nothing is raised at the PO's approval. The buyer buys with his own money, completes the PO,
+// the requester confirms (GRN: Dr 12x0 | the chosen expense account / Cr 2015), finance checks, and the CEO's GRN
+// approval creates the supplier bill (Dr 2015 / Cr 2010) AND — in the same transaction — raiseReimbursementTx raises
+// ONE voucher in the buyer's name for what that bill still owes (CashVoucher.reimbursesBillId @unique; one per GRN, so
+// a PO received in two parts gets two). It is raised 'approved' (finance checked the GRN, the CEO approved it). Posts
+// nothing.
+//
+// Finance's pay (cashVouchers.ts payBuyerBack) gives the buyer his money back and SETTLES THE BILL — the buyer already
+// paid the supplier, so the money leaving servd is the supplier payment:
+//    cash on hand / a bank → createPaymentTx  'supplier.payment:<id>'  Dr 2010 / Cr 1010 | the bank
+//    finance's box         → createPaymentTx cash + recordPettyCashSpendTx nature 'bill'  (Dr 2010 / Cr 1010, Dr 1010 / Cr 1011)
+// The voucher goes straight to 'posted' (the supplier's invoice on the PO is the document). Booked once: the bill is
+// paid by this payment only — a second payment of it (Supplier payments, a box spend) is refused while the voucher is
+// open (assertBillNotAwaitingBuyer), and the pay refuses a bill already paid in part (409 BILL_ALREADY_PAID).
+
+/** Raise the buyer's pay-back voucher for a bill (inside the GRN approval's transaction). Idempotent per bill. */
+export async function raiseReimbursementTx(tx: Tx, a: {
+  billId: string; poId: string; grnNumber: string; approverId: string; financeCheckedById: string | null
+}): Promise<{ id: string; number: string; status: string } | null> {
+  const existing = await tx.cashVoucher.findUnique({ where: { reimbursesBillId: a.billId }, select: { id: true, number: true, status: true } })
+  if (existing) return existing
+  const po = await tx.purchaseOrder.findUniqueOrThrow({
+    where: { id: a.poId },
+    select: { reference: true, conceptId: true, createdBy: true, buyerUserId: true, supplier: { select: { name: true, tenantId: true } } },
+  })
+  const bill = await tx.supplierBill.findUniqueOrThrow({ where: { id: a.billId }, select: { totalCents: true, whtCents: true, paidCents: true, creditedCents: true, billNumber: true } })
+  const tenantId = po.supplier.tenantId
+  if (!tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company first', 422)
+  const amountCents = toCents(bill.totalCents) - toCents(bill.whtCents) - toCents(bill.paidCents) - toCents(bill.creditedCents)
+  if (!(amountCents > 0)) return null
+  if (amountCents > INT4_MAX_CENTS) throw new AppError('AMOUNT_TOO_LARGE', 'This bill is too large to be paid back in cash — pay the supplier by bank', 422)
+  const holderId = po.buyerUserId ?? po.createdBy
+  const holder = holderId ? await tx.user.findUnique({ where: { id: holderId }, select: { id: true, name: true, email: true } }) : null
+  if (!holder) throw new AppError('CASH_HOLDER_REQUIRED', 'This PO names no buyer to pay back', 422)
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}::text), hashtext('cash-voucher-seq'))`
+  const max = await tx.cashVoucher.aggregate({ where: { tenantId }, _max: { seq: true } })
+  const seq = (max._max.seq ?? 0) + 1
+  const now = new Date()
+  const ref = po.reference ?? 'PO'
+  const v = await tx.cashVoucher.create({
+    data: {
+      tenantId, seq, number: `CV-${String(seq).padStart(5, '0')}`, kind: 'request', voucherDate: now,
+      payeeName: (holder.name ?? holder.email ?? 'Buyer').slice(0, 120), payeeUserId: holder.id,
+      purpose: `Pay back ${ref} (${a.grnNumber}, bill ${bill.billNumber}) bought from ${po.supplier.name}`.slice(0, 500),
+      category: null, conceptId: po.conceptId, amountCents, discountCents: 0,
+      status: 'approved',
+      preparedById: po.createdBy ?? a.approverId, submittedById: po.createdBy ?? a.approverId, submittedAt: now,
+      financeApprovedById: a.financeCheckedById, financeApprovedAt: a.financeCheckedById ? now : null,
+      directorSignedById: a.approverId, directorSignedAt: now,
+      reimbursesBillId: a.billId,
+    },
+    select: { id: true, number: true, status: true },
+  })
+  await tx.auditLog.create({
+    data: {
+      category: 'accounting', action: 'cash_voucher.raised_to_pay_back', entity: 'CashVoucher', entityId: v.id, tenantId,
+      userId: a.approverId, after: { number: v.number, purchaseOrderId: a.poId, reference: ref, billId: a.billId, amountCents, holderUserId: holder.id },
+    },
+  })
+  return v
+}
+
+/**
+ * A bill waiting for the buyer's pay-back voucher is paid ONLY by that voucher's pay (booked once). Every other
+ * payer of a supplier bill calls this first: 409 BILL_AWAITING_BUYER_PAYBACK while the voucher is unpaid.
+ */
+export async function assertBillNotAwaitingBuyer(db: Tx | typeof prisma, billIds: string[]): Promise<void> {
+  if (billIds.length === 0) return
+  const v = await db.cashVoucher.findFirst({
+    where: { reimbursesBillId: { in: billIds }, status: { notIn: ['posted', 'cancelled', 'rejected'] } },
+    select: { number: true },
+  })
+  if (v) throw new AppError('BILL_AWAITING_BUYER_PAYBACK', `This bill is paid by paying the buyer back on ${v.number} — pay that voucher instead`, 409)
 }

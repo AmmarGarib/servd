@@ -3497,6 +3497,10 @@ model PurchaseOrder {
   // The CEO's approval raises a cash voucher for the PO (owner: "Cash voucher tied to PO") unless the CEO unticks it
   // (bought on credit). The voucher row carries purchaseOrderId.
   payByCash          Boolean   @default(true)
+  // Purchasing flow (owner, 2026-11-18: "Remove cash advance option, Buyer will get cash after purchase"): set at the
+  // CEO's approval of a cash PO. No voucher is raised then; the CEO's GRN approval raises ONE voucher in the buyer's
+  // name for the bill (procurement/poCash.ts raiseReimbursementTx). False = an older PO paid by an advance.
+  cashAfterPurchase  Boolean   @default(false)
 
   // The PO → GRN workflow (owner, 2026-11-05; procurement/poWorkflow.ts — REPLACES the buyer_check / finance_check
   // steps of 2026-11-03, whose stamps above stay as history): draft → pending_approval (the CEO) → approved (the
@@ -7123,6 +7127,9 @@ model GoodsReceiptLine {
   // Food cost wave B — lots + GRNI (H16/H17)
   lotUnitCostCents      Int? // the unit cost the receipt's lot(s) opened at (pending-bill price, else PO, else dock)
   billedQty             Float     @default(0) // quantity a bill has matched (GRNI open = receivedQty − billedQty)
+  // Stock or expense (owner, 2026-11-18): the receiver picks EXPENSE for a line → its lot is expensed on arrival
+  // (lot class non_food, issued at once) and the receipt debits THIS account instead of a 12x0. Null = stock.
+  expenseAccountCode    String?
   // GRNI write-off (supplier will never bill): finance/procurement REQUESTS, the CEO approves (approvals inbox type
   // 'grni_writeoff'); a CEO-raised request applies at once (decision 27). Posts 'procurement.grni_writeoff:<id>'.
   // The claim is a conditional update (writeOffRequestedAt IS NULL); the partial unique
@@ -9452,6 +9459,9 @@ model CashVoucher {
   plannedBankAccountId      String?
   supplierId                String?
   supplierBillId            String?         @unique
+  // Pay the buyer back (owner, 2026-11-18): the supplier bill of a cash PO's approved GRN that this voucher repays the
+  // buyer for. Finance's pay settles that bill (supplier payment Dr 2010 / Cr cash | bank) — poCash.ts.
+  reimbursesBillId          String?         @unique
   // Internal payment classification chosen when the voucher is raised (owner, 2026-10-20): finance / the CEO only;
   // prefills the pay step, where it is stamped on the payment entry (accounting/paymentsRegister.ts). A label only.
   // CHECK cash_vouchers_planned_classification_chk (SQL only, migration 20261020130000).

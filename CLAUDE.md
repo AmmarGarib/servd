@@ -2065,6 +2065,26 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   volume label the server cannot convert stays 422 `UNIT_MISMATCH` (grams never become millilitres). Where the server
   can convert the unit itself (kg, the item's buying unit) its own factor wins. The PO form's unit drop-down lists
   "Packs & pieces" and asks "1 box = __ g". Tests: `tests/poMoveCompany.test.ts`, `tests/receiving.test.ts`.
+- **Purchasing flow (owner, 2026-11-18): the route is the raiser's, no cash advance, stock or expense at receipt.**
+  The raiser picks Cash or Supplier on the PO (`payByCash` on POST / PATCH `/procurement/purchase-orders`; the CEO may
+  change it at approval). A cash PO the CEO approves is `cashAfterPurchase` and raises NO voucher: the buyer pays with
+  his own money; the CEO's GRN approval raises ONE voucher in the buyer's name for what the bill owes
+  (`poCash.ts raiseReimbursementTx`, `CashVoucher.reimbursesBillId` @unique, raised `approved` — finance checked the
+  GRN, the CEO approved it). Finance's pay (`cashVouchers.ts payBuyerBack`; cash on hand / a bank / a box that is not
+  the buyer's) IS the supplier payment of the bill (`createPaymentTx`, Dr 2010 / Cr 1010 | bank; from a box also the
+  'bill' spend), classified, voucher → `posted`; while it is unpaid nobody else pays that bill (409
+  `BILL_AWAITING_BUYER_PAYBACK`, `assertBillNotAwaitingBuyer` in createPaymentTx / apply); the voucher is never
+  edited; a bill paid meanwhile 409 `BILL_ALREADY_PAID`. POs approved before keep the advance (their PO voucher).
+  **Stock or expense per received line:** the requester picks on confirm-receipt (`expenseAccountCode` per line, a
+  live 6xxx expense account of the PO's company — not 6200–6249 / 6990–6999, not controlled; 422
+  `EXPENSE_ACCOUNT_NOT_ALLOWED`; list `GET /procurement/purchase-orders/:id/expense-accounts`): the lot opens
+  `non_food` and is issued at once (`addLotTx expenseOnReceipt`), the receipt debits that account instead of 12x0
+  (`GoodsReceiptLine.expenseAccountCode`). Finance (the CEO at either step) changes it at its GRN check — `PUT
+  /procurement/grns/:id/lines/:lineId/expense {accountCode}` (`poWorkflow.ts setGrnLineExpense`): one entry
+  `procurement.receipt_expense:<lineId>:<n>` — expense → expense Dr new / Cr old; stock → expense Dr account / Cr 12x0
+  with the untouched lots issued (`stockLedger.ts expenseReceiptLineLotsTx`, 409 `STOCK_ALREADY_USED`); never back to
+  stock (409 `EXPENSED_STAYS_EXPENSE`). Finance's GRN check and the CEO's approval are unchanged. Migration
+  `20261118100000_purchase_after_cash`. Tests: `tests/poApprovalChain.test.ts`.
 - **A PO's cash voucher waits for finance (owner, 2026-11-10: "Finance approval getting skipped, fix it").** The CEO's
   PO approval raises it `submitted` (CEO step already signed — `directorSignedById`); finance's `POST
   /trustops/cash-vouchers/:id/finance-approve {}` moves it straight to `approved` (ready to pay) — no account, no

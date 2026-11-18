@@ -110,8 +110,9 @@ describe('a PO with no supplier', () => {
     expect((await call('chefA', 'POST', `/procurement/purchase-orders/${poId}/submit`)).statusCode).toBe(200)
     const ap = await call('ceoA', 'POST', `/procurement/purchase-orders/${poId}/approve`, { payByCash: true })
     expect(ap.statusCode, ap.body).toBe(200)
-    const v = await prisma.cashVoucher.findFirstOrThrow({ where: { purchaseOrderId: poId } })
-    expect(v.tenantId).toBe(T.A)
+    // No advance any more (owner, 2026-11-18): the buyer is paid back after the GRN; the PO is marked for it.
+    expect(await prisma.cashVoucher.count({ where: { purchaseOrderId: poId } })).toBe(0)
+    expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: poId } })).cashAfterPurchase).toBe(true)
   })
 
   it('cannot be sent, completed or received until its supplier is chosen', async () => {

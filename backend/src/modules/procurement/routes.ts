@@ -207,6 +207,8 @@ const poCreateSchema = z.object({
   // The buyer, picked by whoever raises the PO from the company's buyers list (owner, 2026-11-10; buyers.ts) — the CEO
   // may change it when approving. Omitted / null = none picked (the approval's fallback).
   buyerUserId:  z.string().min(1).max(64).optional().nullable(),
+  // The route (owner, 2026-11-18): true = cash (the buyer buys, is paid back after the GRN), false = supplier.
+  payByCash:    z.boolean().optional(),
   lines:        z.array(poLineSchema).min(1),
 })
 
@@ -821,10 +823,14 @@ export async function procurementRoutes(fastify: FastifyInstance) {
         ...grns.flatMap((g) => [g.receivedById, g.financeCheckedById, g.approvedById])].filter((x): x is string => !!x)
       const people = ids.length ? await prisma.user.findMany({ where: { id: { in: [...new Set(ids)] } }, select: { id: true, name: true } }) : []
       const nameOf = (id: string | null) => (id ? people.find((u) => u.id === id)?.name ?? null : null)
+      // An older PO's advance voucher, else the buyer's pay-back voucher(s) raised at each GRN approval (owner, 2026-11-18).
+      const billIds = grns.map((g) => g.supplierBillId).filter((x): x is string => !!x)
+      const voucherSelect = { id: true, number: true, status: true, amountCents: true, payeeName: true, disbursedAt: true, reimbursesBillId: true } as const
       const voucher = await prisma.cashVoucher.findFirst({
         where: { purchaseOrderId: po.id },   // the PO was read in the caller's scope above; its voucher is its company's
-        select: { id: true, number: true, status: true, amountCents: true, payeeName: true, disbursedAt: true },
+        select: voucherSelect,
       })
+      const payBacks = billIds.length ? await prisma.cashVoucher.findMany({ where: { reimbursesBillId: { in: billIds } }, select: voucherSelect, orderBy: { createdAt: 'asc' } }) : []
       return {
         ...po,
         names: {
@@ -832,7 +838,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           financeCheckedBy: nameOf(po.financeCheckedById), approvedBy: nameOf(po.approvedById), returnedBy: nameOf(po.returnedById),
           buyer: nameOf(po.buyerUserId), completedBy: nameOf(po.completedById), receiptReturnedBy: nameOf(po.receiptReturnedById),
         },
-        cashVoucher: voucher,
+        cashVoucher: voucher ?? payBacks[0] ?? null,
+        payBackVouchers: payBacks,
         grns: grns.map((g) => ({ ...g, receivedBy: nameOf(g.receivedById), financeCheckedBy: nameOf(g.financeCheckedById), approvedBy: nameOf(g.approvedById) })),
       }
     },
@@ -977,19 +984,9 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       const result = await approvePo(req.params.id, req.staffUser!.id, grant, { payByCash: body.payByCash, cashHolderUserId: body.cashHolderUserId ?? null, buyerUserId: body.buyerUserId ?? null })
       await auditApproval(req, {
         type: PO_TYPE, id: req.params.id, tenantId: s.ownerTenantId, decision: 'approve', grant, entity: 'PurchaseOrder',
-        metadata: { final: true, buyerUserId: result.buyerUserId, buyerChosen: result.buyerChosen, ...(result.cashVoucher ? { cashVoucherId: result.cashVoucher.id, cashVoucherNumber: result.cashVoucher.number } : { payByCash: false }) },
+        metadata: { final: true, buyerUserId: result.buyerUserId, buyerChosen: result.buyerChosen, payByCash: body.payByCash ?? null },
       })
       poTaskNotice('to_buy', req.params.id, req.staffUser!.id)
-      if (result.cashVoucher) {
-        if (result.cashVoucher.status === 'submitted') {
-          // The bell: finance approves the PO's cash voucher first (owner, 2026-11-10), then pays it.
-          approvalWaiting('cash_request_finance', result.cashVoucher.id, { round: 'r0', actorId: req.staffUser!.id })
-        } else {
-          // The bell: finance has a voucher to pay (the buyer takes the cash from finance).
-          const { voucherTaskNotice } = await import('../trustops/cashVouchers.js')
-          voucherTaskNotice('approved', result.cashVoucher.id, req.staffUser!.id)
-        }
-      }
       return result
     },
   )

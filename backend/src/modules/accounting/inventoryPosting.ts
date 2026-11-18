@@ -210,11 +210,15 @@ export async function postGoodsReceiptTx(tx: Tx, receiptId: string): Promise<{ p
   if (!tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', `Assign ${supplier.name} to a company before receiving from it`, 422)
   if (supplier.tenantId && supplier.tenantId !== tenantId) throw crossCompany(`Supplier ${supplier.name}`)
 
-  const lineIds = (await tx.goodsReceiptLine.findMany({ where: { receiptId: receipt.id }, select: { id: true } })).map((l) => l.id)
+  const rLines = await tx.goodsReceiptLine.findMany({ where: { receiptId: receipt.id }, select: { id: true, expenseAccountCode: true } })
+  const lineIds = rLines.map((l) => l.id)
+  // Stock or expense (owner, 2026-11-18): a line the receiver expensed debits its own account (else 6045 for non-food).
+  const expenseCodeOfLine = new Map(rLines.map((l) => [l.id, l.expenseAccountCode]))
   const lots = lineIds.length === 0 ? [] : await tx.stockLot.findMany({
     where: { receiptLineId: { in: lineIds } },
-    select: { id: true, tenantId: true, conceptId: true },
+    select: { id: true, tenantId: true, conceptId: true, receiptLineId: true },
   })
+  const expenseCodeOfLot = new Map(lots.map((l) => [l.id, (l.receiptLineId ? expenseCodeOfLine.get(l.receiptLineId) : null) ?? NON_FOOD_EXPENSE_CODE]))
   for (const l of lots) if (l.tenantId !== tenantId) throw crossCompany(`Lot ${l.id}`)
   const brandOfLot = new Map(lots.map((l) => [l.id, l.conceptId]))
   const ins = lots.length === 0 ? [] : await tx.stockMovement.findMany({
@@ -225,13 +229,15 @@ export async function postGoodsReceiptTx(tx: Tx, receiptId: string): Promise<{ p
   const byClassBrand = new Map<string, { costClass: CostClass; conceptId: string | null; cents: number }>()
   // Non-food (owner, 2026-11-03: "Expense on receipt"): its lots debit 6045 Operating Supplies, never a 12x0 — the
   // lot is issued at once and its issue posts nothing (postIssueOnReceiptTx).
-  const nonFoodByBrand = new Map<string, { conceptId: string | null; cents: number }>()
+  const nonFoodByBrand = new Map<string, { conceptId: string | null; code: string; cents: number }>()
   for (const m of ins) {
     if (isNonFoodClass(m.costClass)) {
       const conceptId = (m.lotId ? brandOfLot.get(m.lotId) : null) ?? null
-      const b = nonFoodByBrand.get(conceptId ?? '') ?? { conceptId, cents: 0 }
+      const code = (m.lotId ? expenseCodeOfLot.get(m.lotId) : null) ?? NON_FOOD_EXPENSE_CODE
+      const key = `${code}|${conceptId ?? ''}`
+      const b = nonFoodByBrand.get(key) ?? { conceptId, code, cents: 0 }
       b.cents += toCents(m.valueCents)
-      nonFoodByBrand.set(conceptId ?? '', b)
+      nonFoodByBrand.set(key, b)
       continue
     }
     const cls = asClass(m.costClass)
@@ -252,7 +258,7 @@ export async function postGoodsReceiptTx(tx: Tx, receiptId: string): Promise<{ p
     }
   }
   for (const b of nonFoodByBrand.values()) {
-    if (b.cents > 0) lines.push({ accountCode: NON_FOOD_EXPENSE_CODE, type: 'debit', amountCents: b.cents, memo: `Non-food supplies received (expensed) — ${supplier.name}, ${ref}`.slice(0, 250), conceptId: b.conceptId })
+    if (b.cents > 0) lines.push({ accountCode: b.code, type: 'debit', amountCents: b.cents, memo: (b.code === NON_FOOD_EXPENSE_CODE ? `Non-food supplies received (expensed) — ${supplier.name}, ${ref}` : `Received and expensed — ${supplier.name}, ${ref}`).slice(0, 250), conceptId: b.conceptId })
   }
   lines.push({ accountCode: ACCT.GRNI, type: 'credit', amountCents: total, memo: `Received, not yet billed — ${supplier.name}, ${ref}`.slice(0, 250) })
   assertBalanced(lines, `procurement.receipt:${receipt.id}`)

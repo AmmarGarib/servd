@@ -143,6 +143,8 @@ export interface ReceiveGoodsInput {
     notes?: string | null
     /** Use-by day 'YYYY-MM-DD' (owner B6, 2026-10-26) — stored on the line's lots. See lib/useBy.ts. */
     useBy?: string | null
+    /** Stock or expense (owner, 2026-11-18): an expense account code → the line is expensed on arrival to it. */
+    expenseAccountCode?: string | null
   }>
   /** The dock and the PO receive (owner B6): a perishable line with no shelf life must carry a use-by (422
    *  USE_BY_REQUIRED). A cash buy (petty cash / cash request) records one only when typed or defaulted. */
@@ -304,6 +306,11 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
     return { line: exactValue != null ? { ...l, valueCents: exactValue } : l, item, qty, unitCost, poLine, useBy }
   })
 
+  // Stock or expense (owner, 2026-11-18): every expense account named must be usable in the receiving company.
+  for (const code of new Set(input.lines.map((l) => l.expenseAccountCode).filter((c): c is string => !!c))) {
+    await assertReceiptExpenseAccountTx(tx, tenantId, code)
+  }
+
   // Every item's row, locked in id order, before the first lot is written.
   await lockItemsTx(tx, itemIds)
 
@@ -351,6 +358,7 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
         variancePct:     p.line.variancePct ?? null,
         notes:           p.line.notes ?? null,
         billedQty:       settled ? p.qty : 0,
+        expenseAccountCode: p.line.expenseAccountCode ?? null,
       },
       select: { id: true },
     })
@@ -365,6 +373,7 @@ export async function receiveGoodsTx(tx: Tx, input: ReceiveGoodsInput): Promise<
         tenantId, inventoryItemId: p.item.id, kind: 'receipt' as const, lotSourceType: 'goods_receipt_line' as const,
         movementSourceType: STOCK_SOURCE.receiptLine, movementSourceId: rl.id, receiptLineId: rl.id,
         locationId: input.locationId ?? null, receivedAt, createdById: input.receivedById, useBy: p.useBy, conceptId,
+        expenseOnReceipt: !!p.line.expenseAccountCode,
       }
       // 1. Quantity a bill already charged for (oldest bill first): at the billed price.
       if (p.poLine && !settled) {
@@ -446,6 +455,8 @@ export interface ReceiveGoodsLine {
   unit?:              string | null
   /** Use-by day 'YYYY-MM-DD' — required for a perishable item with no shelf life (owner B6, 422 USE_BY_REQUIRED). */
   useBy?:             string | null
+  /** Stock or expense (owner, 2026-11-18): the expense account this line is expensed to on arrival; null = stock. */
+  expenseAccountCode?: string | null
 }
 
 export interface ReceiveGoodsRequest {
@@ -495,6 +506,7 @@ interface PreparedLine {
   notes:            string | null
   variancePct:      number | null
   useBy:            string | null
+  expenseAccountCode: string | null
 }
 
 export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveGoodsResult> {
@@ -586,6 +598,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
         discrepancyReason: l.discrepancyReason ?? null, notes: l.notes ?? null,
         variancePct: outstanding > 0 ? (l.quantityReceived - outstanding) / outstanding : null,
         useBy: l.useBy ?? null,
+        expenseAccountCode: l.expenseAccountCode ?? null,
       })
     }
   } else {
@@ -619,6 +632,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
         quantityReceived: l.quantityReceived, unitCostCents: l.unitCostCents,
         discrepancyReason: l.discrepancyReason ?? null, notes: l.notes ?? null, variancePct: null,
         useBy: l.useBy ?? null,
+        expenseAccountCode: l.expenseAccountCode ?? null,
       })
     }
   }
@@ -687,6 +701,7 @@ export async function receiveGoods(input: ReceiveGoodsRequest): Promise<ReceiveG
         variancePct:     l.variancePct,
         notes:           l.notes,
         useBy:           l.useBy,
+        expenseAccountCode: l.expenseAccountCode,
       })),
     })
 
@@ -801,4 +816,19 @@ function assertReceivable(status: string) {
   if (!(RECEIVABLE_PO_STATUSES as readonly string[]).includes(status)) {
     throw new AppError('PO_NOT_SENT', `A PO must be approved and sent before it can be received (this one is ${status})`, 400)
   }
+}
+
+/**
+ * An account a received line may be EXPENSED to (owner, 2026-11-18: the receiver picks stock or expense; finance may
+ * change it at its GRN check): a live expense account of the company with a 6xxx code — never cost of sales (5xxx: a
+ * food item kept as stock reaches it through sales), never one only its own module posts to (6200–6249 head-office
+ * charges, 6990–6999 recharges) and never a register-controlled one. 422 EXPENSE_ACCOUNT_NOT_ALLOWED otherwise.
+ */
+export async function assertReceiptExpenseAccountTx(tx: Tx, tenantId: string, code: string): Promise<{ code: string; name: string }> {
+  const acc = await tx.account.findFirst({ where: { tenantId, code }, select: { code: true, name: true, type: true, isActive: true, controlledBy: true } })
+  const n = Number(code.slice(0, 4))
+  const ok = !!acc && acc.isActive && acc.type === 'expense' && !acc.controlledBy && /^6\d{3}/.test(code)
+    && !(n >= 6200 && n <= 6249) && !(n >= 6990 && n <= 6999)
+  if (!ok) throw new AppError('EXPENSE_ACCOUNT_NOT_ALLOWED', `${code} cannot take a received item — pick a 6xxx expense account of this company`, 422)
+  return { code: acc!.code, name: acc!.name }
 }

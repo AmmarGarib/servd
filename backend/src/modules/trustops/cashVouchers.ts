@@ -320,6 +320,7 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
   const custodian = !!v.box && v.box.custodianId === me
   const remaining = remainingOf(v)
   const legacyPaid = s === 'disbursed' && !v.expenseOnVerify
+  const locked = !!v.purchaseOrderId || !!v.reimbursesBillId
   const newPaid = s === 'disbursed' && v.expenseOnVerify
   const financeStep = WAIT_FINANCE.includes(s) && viewer.financeApprover && !own
   const ceoStep = WAIT_CEO.includes(s) && viewer.isAdmin && !own
@@ -328,8 +329,9 @@ export async function capsOf(viewer: Viewer, v: VoucherRow): Promise<CashRequest
   const docsParty = viewer.financeApprover || viewer.keeper || custodian || raiser || (v.kind === 'request' && !!holder && holder === me)
   const docState = closedStateOf(v)
   return {
-    canEdit: EDITABLE.includes(s) && (raiser || viewer.keeper),
-    canEditCategory: (EDITABLE.includes(s) && (raiser || viewer.keeper)) || (viewer.keeper && (WAIT_CEO.includes(s) || s === 'approved')),
+    // A PO's cash voucher and the buyer's pay-back carry a PO / bill's figures: never edited (PATCH → PO_VOUCHER_LOCKED).
+    canEdit: !locked && EDITABLE.includes(s) && (raiser || viewer.keeper),
+    canEditCategory: !locked && ((EDITABLE.includes(s) && (raiser || viewer.keeper)) || (viewer.keeper && (WAIT_CEO.includes(s) || s === 'approved'))),
     canEditDiscount: viewer.financeApprover && (EDITABLE.includes(s) || (WAIT_CEO.includes(s) && !own)),
     canSignHod: false,
     canFinanceApprove: financeStep,
@@ -531,7 +533,9 @@ export async function detailOf(id: string, viewer: Viewer) {
       : null,
   ])
   let paidAccountCode: string | null = null
-  if (v.purchaseOrderId) {
+  if (v.reimbursesBillId) {
+    paidAccountCode = '2010'   // the buyer's pay-back settles the supplier's bill (procurement/poCash.ts)
+  } else if (v.purchaseOrderId) {
     paidAccountCode = '1011'   // a PO's cash: into the buyer's petty-cash box (procurement/poCash.ts)
   } else if (v.supplierBillId) {
     paidAccountCode = '2010'   // on credit: the supplier is owed (its bill)
@@ -589,6 +593,13 @@ export async function detailOf(id: string, viewer: Viewer) {
       : null,
     toBoxName: v.purchaseOrderId && payMovement?.boxId
       ? (await prisma.pettyCashBox.findUnique({ where: { id: payMovement.boxId }, select: { name: true } }))?.name ?? null
+      : null,
+    /** The buyer's pay-back (owner, 2026-11-18): the bill it pays, and its PO. */
+    reimbursedBill: v.reimbursesBillId
+      ? await prisma.supplierBill.findFirst({
+        where: { id: v.reimbursesBillId, supplier: { tenantId: v.tenantId } },
+        select: { id: true, billNumber: true, status: true, supplier: { select: { name: true } }, po: { select: { id: true, reference: true } } },
+      })
       : null,
     /** On credit: the supplier bill finance's pay booked (paid later through Supplier payments). */
     supplierBill: v.supplierBillId
@@ -1335,6 +1346,10 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     if (v.purchaseOrderId && sent.length > 0) {
       throw new AppError('PO_VOUCHER_LOCKED', `${v.number} is the cash for an approved purchase order — change the PO instead`, 409)
     }
+    // The buyer's pay-back carries the approved bill's amount (poCash.ts): never edited.
+    if (v.reimbursesBillId && sent.length > 0) {
+      throw new AppError('PO_VOUCHER_LOCKED', `${v.number} pays the buyer back for an approved bill — it is not edited`, 409)
+    }
     const onlyHolder = sent.length === 1 && sent[0] === 'holderUserId'
     const categoryOrBox = sent.every((k) => ['categoryKey', 'accountCode', 'boxId', 'assetClassId', 'assetLocationId'].includes(k))
     const financeFields = sent.every((k) => ['categoryKey', 'accountCode', 'boxId', 'discountCents', 'grossCents', 'conceptId', 'department', 'assetClassId', 'assetLocationId', 'payFrom', 'payFromBankAccountId', 'supplierId'].includes(k))
@@ -1894,7 +1909,9 @@ export async function cashVoucherRoutes(fastify: FastifyInstance) {
     if (v.status !== 'approved') throw wrongStatus('VOUCHER_NOT_APPROVED', v, 'only a voucher the CEO has approved can be paid')
     // A PO's cash (owner, 2026-11-03): the pay tops up the buyer's box — never an expense (procurement/poCash.ts).
     if (v.purchaseOrderId) return payPoCashVoucher(req, v, viewer, body)
-    else if (body.toBoxId) throw new AppError('TO_BOX_ONLY_FOR_PO', 'A receiving box is only picked for a purchase order\'s cash', 400)
+    // The buyer's pay-back (owner, 2026-11-18: no advance) — the pay settles the supplier's bill (procurement/poCash.ts).
+    if (v.reimbursesBillId) return payBuyerBack(req, v, viewer, body)
+    if (body.toBoxId) throw new AppError('TO_BOX_ONLY_FOR_PO', 'A receiving box is only picked for a purchase order\'s cash', 400)
     const source: 'box' | 'cash_on_hand' | 'bank' | 'credit' = body.source
       ?? (v.plannedPaySource === 'credit' ? 'credit' : v.plannedPaySource === 'bank' ? 'bank' : v.plannedPaySource === 'cash' ? 'cash_on_hand' : 'box')
     const bankAccountIdIn = body.bankAccountId ?? (source === 'bank' && v.plannedBankAccountId ? v.plannedBankAccountId : undefined)
@@ -2288,6 +2305,109 @@ async function payPoCashVoucher(
     newFloatCents: result.newFloatCents,
     journalEntryId: result.entryId,
   }
+}
+
+/**
+ * Pay the buyer back (procurement/poCash.ts "Pay the buyer back after the purchase"): the buyer paid the supplier with
+ * his own money; finance hands it back and that IS the supplier payment of the bill (Dr 2010 / Cr 1010 | the bank;
+ * from finance's box also the box spend nature 'bill'). ONE transaction: claim approved → posted, the payment applied
+ * to the bill in full (the bill must still owe exactly the voucher — 409 BILL_ALREADY_PAID / VOUCHER_CHANGED), the box
+ * spend when from a box. Never the buyer's own box (it is his money coming back). Finance only.
+ */
+async function payBuyerBack(
+  req: FastifyRequest, v: VoucherRow, viewer: Viewer,
+  body: { source?: 'box' | 'cash_on_hand' | 'bank' | 'credit'; boxId?: string; bankAccountId?: string; toBoxId?: string; supplierId?: string; billDueDate?: string },
+) {
+  const me = viewer.id
+  const source = body.source ?? 'cash_on_hand'
+  if (source === 'credit' || body.supplierId || body.billDueDate || body.toBoxId) {
+    throw new AppError('PAY_BACK_CASH_ONLY', `${v.number} pays the buyer back — pay it from cash on hand, a bank or a cash box`, 422)
+  }
+  if (source !== 'box' && body.boxId) throw new AppError('BOX_NOT_FOR_SOURCE', 'A cash box is only picked when paying from petty cash', 422)
+  if (source !== 'bank' && body.bankAccountId) throw new AppError('BANK_NOT_FOR_SOURCE', 'A bank account is only picked when paying from a bank', 422)
+  if (source !== 'box' && !viewer.financeApprover) throw new AppError('PAY_SOURCE_FINANCE_ONLY', 'Only finance or the CEO pays a voucher from cash on hand or a bank account', 403)
+  if (!v.payeeUserId) throw new AppError('HOLDER_REQUIRED', `${v.number} names nobody to pay back`, 422)
+  const holder = await prisma.user.findUnique({ where: { id: v.payeeUserId }, select: { id: true, name: true } })
+  if (!holder) throw new AppError('HOLDER_REQUIRED', `${v.number} names nobody to pay back`, 422)
+  const bill = await prisma.supplierBill.findFirst({
+    where: { id: v.reimbursesBillId!, supplier: { tenantId: v.tenantId } },
+    select: { id: true, supplierId: true, billNumber: true, status: true, totalCents: true, whtCents: true, paidCents: true, creditedCents: true, supplier: { select: { name: true } } },
+  })
+  if (!bill) throw new AppError('BILL_NOT_IN_COMPANY', `The bill ${v.number} pays back is not this company's`, 422)
+
+  let box: { id: string; name: string; tenantId: string } | null = null
+  if (source === 'box') {
+    let boxId = body.boxId ?? null
+    if (!boxId) {
+      const mine = await prisma.pettyCashBox.findMany({ where: { custodianId: me, tenantId: v.tenantId, deletedAt: null, isActive: true }, select: { id: true } })
+      if (mine.length === 1) boxId = mine[0]!.id
+      else throw new AppError('BOX_REQUIRED', 'Pick the cash box the money comes from', 422)
+    }
+    const b = await prisma.pettyCashBox.findFirst({ where: { id: boxId, deletedAt: null }, select: { id: true, name: true, tenantId: true, isActive: true, custodianId: true } })
+    if (!b || b.tenantId !== v.tenantId) throw new AppError('BOX_NOT_IN_COMPANY', 'That cash box is not one of this request\'s company\'s', 422)
+    if (!b.isActive) throw new AppError('BOX_UNAVAILABLE', `${b.name} is closed — pick another box`, 409)
+    if (b.custodianId !== me && !viewer.keeper) throw new AppError('NOT_CUSTODIAN', `Only the cashier who holds ${b.name}, finance or a manager can pay from it`, 403)
+    if (b.custodianId === holder.id) throw new AppError('OWN_BOX_NOT_A_SOURCE', `${b.name} is the buyer's own box — he is being paid back. Pay from cash on hand, a bank or another box.`, 422)
+    box = { id: b.id, name: b.name, tenantId: b.tenantId! }
+  }
+
+  const now = new Date()
+  const reasonFull = `Cash voucher ${v.number}: ${v.purpose}`
+  const reason = reasonFull.length > 200 ? `${reasonFull.slice(0, 199)}…` : reasonFull
+  const { createPaymentTx, billDueCents } = await import('../procurement/service.js')
+  // Where the money leaves (the voucher's company): cash on hand 1010, the named / only bank, or the box (1011).
+  const money = source === 'box' ? null : await moneyAccountCode(prisma, v.tenantId, { method: source === 'bank' ? 'bank_transfer' : 'cash', bankAccountId: body.bankAccountId ?? null })
+  const result = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.cashVoucher.updateMany({
+      where: { id: v.id, tenantId: v.tenantId, status: 'approved', amountCents: v.amountCents, payeeUserId: v.payeeUserId, reimbursesBillId: v.reimbursesBillId },
+      data: {
+        status: 'posted', disbursedAt: now, disbursedById: me, cashierName: holder.name, bookedAtPay: true, expenseOnVerify: true,
+        settledCents: v.amountCents, settledAt: now, postedAt: now, postedById: me, paySource: source,
+        boxId: box?.id ?? null, payAccountCode: money?.code ?? null, payBankAccountId: money?.bankAccountId ?? null,
+      },
+    })
+    if (claimed.count === 0) {
+      const cur = await tx.cashVoucher.findUniqueOrThrow({ where: { id: v.id }, select: { status: true } })
+      if (PAID_STATUSES.includes(cur.status)) throw new AppError('ALREADY_PAID', `Cash request ${v.number} has already been paid`, 409)
+      throw new AppError('VOUCHER_CHANGED', `Cash request ${v.number} was changed while it was being paid — reload and pay again`, 409)
+    }
+    await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${bill.id} FOR UPDATE`
+    const fresh = await tx.supplierBill.findUniqueOrThrow({ where: { id: bill.id }, select: { status: true, totalCents: true, whtCents: true, paidCents: true, creditedCents: true } })
+    const due = billDueCents(fresh)
+    if (fresh.status === 'void') throw new AppError('BILL_NOT_OPEN', `Bill ${bill.billNumber} is void`, 409)
+    if (due !== v.amountCents) {
+      throw new AppError('BILL_ALREADY_PAID', `Bill ${bill.billNumber} now owes ${due}, not the voucher's ${v.amountCents} — it was paid or credited meanwhile`, 409)
+    }
+    const payment = await createPaymentTx(tx, {
+      supplierId: bill.supplierId, paymentDate: now.toISOString(),
+      method: source === 'bank' ? 'bank_transfer' : 'cash',
+      bankAccountId: source === 'bank' ? (money?.bankAccountId ?? null) : null,
+      reference: `${v.number} — paid back to ${holder.name}`.slice(0, 100),
+      amountCents: v.amountCents, notes: reason,
+      applications: [{ billId: bill.id, amountAppliedCents: v.amountCents }],
+      createdBy: me,
+    })
+    let movementId: string | null = null
+    if (box) {
+      const done = await recordPettyCashSpendTx(tx, {
+        box, amountCents: v.amountCents, reason, receiptUrl: null, vendorName: holder.name,
+        approvedById: v.directorSignedById, supplierPaymentId: payment.id, createdById: me, nature: 'bill',
+        actor: { id: me, role: req.staffUser!.role },
+      })
+      movementId = done.movementId
+    }
+    await tx.cashVoucher.update({ where: { id: v.id }, data: { pettyCashMovementId: movementId } })
+    // Internal payment classification (2026-10-20): a label on the supplier payment's entry, same transaction.
+    const { classifyByReferenceTx } = await import('../accounting/paymentsRegister.js')
+    await classifyByReferenceTx(tx, { reference: `supplier.payment:${payment.id}`, tenantId: v.tenantId, input: classificationOf(req.body), setById: me })
+    return { paymentId: payment.id, movementId }
+  }, { timeout: 20_000, maxWait: 10_000 })
+
+  await auditVoucher(req, 'pay', v, {
+    status: 'posted', amountCents: v.amountCents, paySource: source, reimbursesBillId: v.reimbursesBillId, billNumber: bill.billNumber,
+    supplierPaymentId: result.paymentId, pettyCashMovementId: result.movementId, boxId: box?.id ?? null, paidBackTo: holder.id,
+  }, { status: v.status })
+  return { voucher: await detailOf(v.id, viewer), supplierPaymentId: result.paymentId, movement: result.movementId ? { id: result.movementId } : null }
 }
 
 /**

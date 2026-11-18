@@ -107,7 +107,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { prisma } from './prisma.js'
 import { AppError } from './errors.js'
-import { costClassOf, COST_CLASSES, isNonFoodCategory, lotClassOf, zeroByClass, type CostClass } from './inventoryClass.js'
+import { costClassOf, COST_CLASSES, isNonFoodCategory, NON_FOOD_CLASS, zeroByClass, type CostClass } from './inventoryClass.js'
 import { assertInt4Fits, assertMoneyFits, sumCents, toCents } from './money.js'
 import { brandSharesJson, brandUsageShares, type BrandShare } from './brandShare.js'
 import { ensureSiteCutover, rebuildStockBalancesTx, relocateStrandedLotsTx, stockHomeOf, strandedSiteIdsTx } from './stockSite.js'
@@ -1125,6 +1125,9 @@ export async function addLotTx(tx: Tx, a: {
   useBy?: Date | null
   /** The owning brand (owner B13 (a); null / omitted = shared). A brand of the item's company, else 422 BRAND_NOT_IN_COMPANY. */
   conceptId?: string | null
+  /** A receipt line the receiver chose to EXPENSE (owner, 2026-11-18; GoodsReceiptLine.expenseAccountCode): the lot
+   *  opens as 'non_food' (expensed by the receipt posting to that line's account) and is issued at once. */
+  expenseOnReceipt?: boolean
 }): Promise<{ lotId: string; movementId: string; settled?: { valueCents: number }; issued?: { valueCents: number } }> {
   if (!a.lotSourceId || !a.movementSourceType || !a.movementSourceId) {
     throw new AppError('STOCK_MISSING_SOURCE', 'A stock lot needs its source document', 500)
@@ -1172,7 +1175,8 @@ export async function addLotTx(tx: Tx, a: {
   }
 
   // A non-food item's lots carry 'non_food' (lib/inventoryClass.ts): expensed on receipt, never stock value.
-  const costClass = isNonFoodCategory(item.category) ? lotClassOf(item.category) : (a.costClass ?? costClassOf(item.category))
+  const expensed = a.kind === 'receipt' && a.expenseOnReceipt === true
+  const costClass = isNonFoodCategory(item.category) || expensed ? NON_FOOD_CLASS : (a.costClass ?? costClassOf(item.category))
   const lot = await tx.stockLot.create({
     data: {
       tenantId: item.tenantId, inventoryItemId: item.id, locationId: site, conceptId: a.conceptId ?? null,
@@ -1208,7 +1212,7 @@ export async function addLotTx(tx: Tx, a: {
     if (s > 0) settled = { valueCents: s }
     // A non-food item is ALWAYS issued on receipt (owner, 2026-11-03: "Expense on receipt") — its receipt posting
     // already debited 6045, so the issue posts nothing (postIssueOnReceiptTx); the lot ends at zero.
-    if (item.issueOnReceipt || isNonFoodCategory(item.category)) {
+    if (item.issueOnReceipt || isNonFoodCategory(item.category) || expensed) {
       const i = await issueOnReceiptTx(tx, item, lotNow, a.receivedAt, a.createdById ?? null)
       if (i > 0) issued = { valueCents: i }
     }
@@ -1371,6 +1375,41 @@ async function issueOnReceiptTx(tx: Tx, item: StockItem, lot: LotNow, receivedAt
     await postIssueOnReceiptTx(tx, { lotId: lot.id })
   }
   return value
+}
+
+/**
+ * Finance turns a received STOCK line into an EXPENSE at its GRN check (owner, 2026-11-18: "Receiver picks, finance can
+ * change"): every lot the line opened must be untouched (409 STOCK_ALREADY_USED otherwise — some of it was used,
+ * moved or counted); each is issued at once ('issue_on_receipt' movement, class non_food = expensed, never cost of
+ * sales) and marked non_food. Returns what left each stock class (12x0) per brand, for the caller's reclass entry.
+ */
+export async function expenseReceiptLineLotsTx(tx: Tx, receiptLineId: string, createdById: string | null): Promise<Array<{ costClass: CostClass; conceptId: string | null; valueCents: number }>> {
+  const lots = await tx.stockLot.findMany({
+    where: { receiptLineId },
+    select: { id: true, tenantId: true, inventoryItemId: true, locationId: true, conceptId: true, costClass: true, qtyIn: true, remainingQty: true, valueInCents: true, remainingValueCents: true, unitCostCents: true, receivedAt: true },
+  })
+  if (lots.length === 0) return []
+  await lockItemsTx(tx, [...new Set(lots.map((l) => l.inventoryItemId))])
+  const out: Array<{ costClass: CostClass; conceptId: string | null; valueCents: number }> = []
+  for (const l of lots) {
+    const cur = await tx.stockLot.findUniqueOrThrow({ where: { id: l.id }, select: { remainingQty: true, remainingValueCents: true, costClass: true } })
+    if (cur.costClass === NON_FOOD_CLASS) continue
+    const value = toCents(cur.remainingValueCents)
+    if (Math.abs(cur.remainingQty - l.qtyIn) > STOCK_EPS || value !== toCents(l.valueInCents)) {
+      throw new AppError('STOCK_ALREADY_USED', 'Some of this delivery was already used, moved or counted — it stays stock', 409)
+    }
+    await tx.stockMovement.create({
+      data: {
+        tenantId: l.tenantId, inventoryItemId: l.inventoryItemId, lotId: l.id, lotKey: l.id, kind: 'issue_on_receipt', locationId: l.locationId,
+        qty: -cur.remainingQty, valueCents: -value, unitCostCents: l.unitCostCents, costClass: NON_FOOD_CLASS,
+        sourceType: STOCK_SOURCE.issueOnReceipt, sourceId: l.id, occurredAt: new Date(), createdById,
+      },
+    })
+    await tx.stockLot.update({ where: { id: l.id }, data: { remainingQty: 0, remainingValueCents: 0, costClass: NON_FOOD_CLASS } })
+    out.push({ costClass: cur.costClass as CostClass, conceptId: l.conceptId, valueCents: value })
+  }
+  for (const itemId of new Set(lots.map((l) => l.inventoryItemId))) await syncItemTx(tx, itemId)
+  return out
 }
 
 // ─── Transfers between sites ─────────────────────────────────────────────────

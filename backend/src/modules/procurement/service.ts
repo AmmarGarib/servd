@@ -65,6 +65,9 @@ export interface CreatePoInput {
   conceptId?: string | null
   /** The buyer the raiser picked from the company's buyers list (buyers.ts; the route checks it). */
   buyerUserId?: string | null
+  /** The route the raiser picked (owner, 2026-11-18 purchasing flow): true = cash (the buyer buys and is paid back
+   *  after the CEO approves the GRN — poCash.ts), false = supplier (PO issued, finance pays the supplier's bill). */
+  payByCash?: boolean
   /** Stock units (quantityOrdered / unitCostCents), or the unit it is ordered in (orderUnit / orderQuantity /
    *  orderUnitCostCents = the rate per that unit) — procurement/poUnits.ts. */
   lines: TypedLine[]
@@ -137,6 +140,7 @@ export async function createPo(input: CreatePoInput) {
       notes:        input.notes       ?? null,
       conceptId:    input.conceptId   ?? null,
       buyerUserId:  input.buyerUserId ?? null,
+      ...(input.payByCash !== undefined && { payByCash: input.payByCash }),
       totalCents,
       createdBy:    input.createdBy,
       status:       'draft',
@@ -203,6 +207,7 @@ export async function updatePoDraft(poId: string, actorId: string, input: Update
         notes: input.notes ?? null,
         conceptId: input.conceptId ?? null,
         ...(input.buyerUserId !== undefined && { buyerUserId: input.buyerUserId ?? null }),
+        ...(input.payByCash !== undefined && { payByCash: input.payByCash }),
         totalCents,
         lines: {
           create: lines.map((l) => ({
@@ -336,10 +341,10 @@ export async function resolvePoBuyer(
 }
 
 /**
- * pending_approval → approved (the CEO). Names the buyer (resolvePoBuyer) and marks the PO `grnWorkflow`. When the
- * PO is paid by cash (the default; the CEO may untick it for a supplier who gives credit), the same transaction
- * raises the PO's cash voucher in the buyer's name (procurement/poCash.ts raisePoCashVoucherTx) — finance then pays
- * it into the buyer's petty-cash box. The claim is a conditional update on the status: a second approver racing this
+ * pending_approval → approved (the CEO). Names the buyer (resolvePoBuyer) and marks the PO `grnWorkflow`. The route
+ * (cash or supplier) is the raiser's pick (`payByCash`; the CEO may change it). A cash PO is marked
+ * `cashAfterPurchase` and raises NOTHING now (owner, 2026-11-18: no advance) — the buyer buys with his own money and
+ * the CEO's GRN approval raises his voucher at the actual bill (poCash.ts raiseReimbursementTx). The claim is a conditional update on the status: a second approver racing this
  * one gets 409.
  */
 export async function approvePo(
@@ -354,27 +359,26 @@ export async function approvePo(
   // The CEO's pick, else the raiser's (owner, 2026-11-10: "anyone who's raising PO could select buyer").
   const buyer = await resolvePoBuyer({ createdBy: po.createdBy, tenantId }, opts.buyerUserId ?? po.buyerUserId)
   const payByCash = opts.payByCash ?? po.payByCash
-  const { raisePoCashVoucherTx, prepareCashVoucher } = await import('./poCash.js')
-  const plan = payByCash ? await prepareCashVoucher(poId, opts.cashHolderUserId ?? buyer.id) : null
+  // No cash advance any more (owner, 2026-11-18: "Remove cash advance option, Buyer will get cash after purchase"):
+  // a cash PO raises nothing now — the CEO's GRN approval raises the buyer's voucher at the actual bill
+  // (poCash.ts raiseReimbursementTx). The holder named here is checked so the buyer is a login of the company.
+  const { prepareCashVoucher } = await import('./poCash.js')
+  if (payByCash) await prepareCashVoucher(poId, opts.cashHolderUserId ?? buyer.id)
   const now = new Date()
 
   return prisma.$transaction(async (tx) => {
     const claimed = await tx.purchaseOrder.updateMany({
       where: { id: poId, status: 'pending_approval' },
       data:  {
-        status: 'approved', approvedById: approverId, approvedAt: now, payByCash,
+        status: 'approved', approvedById: approverId, approvedAt: now, payByCash, cashAfterPurchase: payByCash,
         grnWorkflow: true, buyerUserId: buyer.id, buyerAssignedAt: now,
         receiptReturnNote: null, receiptReturnedById: null, receiptReturnedAt: null,
       },
     })
     if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This PO was decided meanwhile — reload it', 409)
-    const voucher = plan ? await raisePoCashVoucherTx(tx, plan, approverId) : null
-    const details = {
-      ...(decisionDetails(decision) ?? {}), payByCash, buyerUserId: buyer.id, buyerChosen: buyer.how,
-      ...(voucher ? { cashVoucherId: voucher.id, cashVoucherNumber: voucher.number } : {}),
-    }
+    const details = { ...(decisionDetails(decision) ?? {}), payByCash, cashAfterPurchase: payByCash, buyerUserId: buyer.id, buyerChosen: buyer.how }
     await tx.poActivityLog.create({ data: { purchaseOrderId: poId, userId: approverId, action: 'approved', details: details as Prisma.InputJsonValue } })
-    return { id: poId, status: 'approved', buyerUserId: buyer.id, buyerChosen: buyer.how, cashVoucher: voucher }
+    return { id: poId, status: 'approved', buyerUserId: buyer.id, buyerChosen: buyer.how, cashVoucher: null as { id: string; number: string } | null }
   })
 }
 
@@ -1244,6 +1248,8 @@ export async function createPaymentTx(tx: Prisma.TransactionClient, input: Creat
   // under their row locks, so two payments can't both take the last of a bill.
   if (allocations.length > 0) {
     const bills = await lockBills(tx, allocations.map((a) => a.billId))
+    // A cash PO's bill is paid only by paying the buyer back (owner, 2026-11-18; poCash.ts).
+    await (await import('./poCash.js')).assertBillNotAwaitingBuyer(tx, allocations.map((x) => x.billId))
     for (const a of allocations) {
       const b = bills.find((x) => x.id === a.billId)
       if (!b) throw new NotFoundError('SupplierBill', a.billId)
@@ -1314,6 +1320,7 @@ export async function allocatePayment(
     }
 
     const bills = await lockBills(tx, applications.map((a) => a.billId))
+    await (await import('./poCash.js')).assertBillNotAwaitingBuyer(tx, applications.map((x) => x.billId))
     for (const a of applications) {
       const bill = bills.find((x) => x.id === a.billId)
       if (!bill) throw new NotFoundError('SupplierBill', a.billId)

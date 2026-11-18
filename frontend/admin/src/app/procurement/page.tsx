@@ -184,6 +184,8 @@ interface PoDraft {
   notes?: string
   conceptId?: string | null
   buyerUserId?: string | null
+  /** The route (owner, 2026-11-18): cash (the buyer buys and is paid back) or supplier (finance pays the bill). */
+  payByCash?: boolean
   /** The company the PO is raised in (owner, 2026-11-17: "add a header for company the same way there is for supplier
    *  and buyer"). Empty = pick on the form. */
   tenantId?: string | null
@@ -555,6 +557,7 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
             notes: editPo.notes ?? '',
             conceptId: editPo.conceptId ?? null,
             buyerUserId: editPo.buyerUserId ?? null,
+            payByCash: editPo.payByCash !== false,
             lines: (editPo.lines ?? []).map((l) => {
               const v = poLineShown(l)
               return { inventoryItemId: l.inventoryItemId, quantityOrdered: String(v.qty), unitCostCents: String(v.rate / 100), notes: l.notes ?? '', unit: v.unit, ...(l.orderUnit && (l.orderUnitFactor ?? 0) > 0 ? { packSize: String(l.orderUnitFactor) } : {}) }
@@ -614,7 +617,7 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
                   </td>
                   <td className="px-4 py-3">
                     <PoActions po={po} onAction={(action, body) => {
-                      if (action === 'reject' || action === 'return' || action === 'approve') { setDecide({ id: po.id, kind: action, status: po.status }); return }
+                      if (action === 'reject' || action === 'return' || action === 'approve') { setDecide({ id: po.id, kind: action, status: po.status }); setPayByCash(po.payByCash !== false); return }
                       if (action === 'edit') { setShowCreate(false); setEditId(po.id); return }
                       if (action === 'cancel') { setCancelId(po.id); return }
                       if (action === 'mark-sent') { setMarkSentId(po.id); return }
@@ -698,8 +701,8 @@ function PoTab({ qc, newPo, openPo }: { qc: ReturnType<typeof useQueryClient>; n
                 <CheckLabel className="flex items-start gap-2 text-sm text-s-text cursor-pointer">
                   <input type="checkbox" className="mt-1 accent-accent" checked={payByCash} onChange={(e) => setPayByCash(e.target.checked)} />
                   <span>
-                    Pay in cash — raise a cash voucher for the PO total in the buyer&apos;s name
-                    <span className="block text-xs text-s-muted">Finance pays it into the buyer&apos;s petty-cash box; the supplier is paid from that box. Untick when the supplier gives credit.</span>
+                    Cash — the buyer buys with his own money and is paid back
+                    <span className="block text-xs text-s-muted">No cash is handed out now. Once you approve the completed purchase, a voucher for the actual amount is raised in the buyer&apos;s name and finance pays him back. Untick when the supplier gives credit (finance pays the supplier).</span>
                   </span>
                 </CheckLabel>
               )}
@@ -879,7 +882,9 @@ function PoChainPanel({ po }: { po: PurchaseOrder }) {
           {' '}— {fmtPkrWhole(v.amountCents)} to {v.payeeName} · {v.status === 'approved' ? 'waiting for finance to pay' : v.status.replace(/_/g, ' ')}
         </p>
       ) : approved && po.payByCash === false ? (
-        <p className="text-xs text-s-muted">Approved without cash — the supplier is paid against their bill.</p>
+        <p className="text-xs text-s-muted">Supplier route — finance pays the supplier against their bill.</p>
+      ) : approved && po.payByCash ? (
+        <p className="text-xs text-s-muted">Cash route — the buyer pays and is paid back once the CEO approves the completed purchase.</p>
       ) : null}
     </div>
   )
@@ -977,6 +982,8 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
   const [notes, setNotes] = useState(initial?.notes ?? '')
   // The buyer, picked from the company's buyers list (owner, 2026-11-10: "anyone who's raising PO could select buyer").
   const [buyerUserId, setBuyerUserId] = useState(initial?.buyerUserId ?? '')
+  // The route (owner, 2026-11-18 purchasing flow): '' = not picked yet (required), 'cash' | 'supplier'.
+  const [route, setRoute] = useState<'' | 'cash' | 'supplier'>(initial?.payByCash === undefined ? '' : initial.payByCash ? 'cash' : 'supplier')
   const { data: buyers = [] } = useQuery({ queryKey: ['procurement', 'buyers', 'active'], queryFn: () => api.get<PoBuyerRow[]>('/procurement/buyers?active=1') })
   const supplierTenant = poCompany ?? suppliers.find((x) => x.id === supplierId)?.tenantId ?? null
   const buyerChoices = buyers.filter((b) => !supplierTenant || b.tenantId === supplierTenant)
@@ -986,9 +993,10 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
   // Unsaved typing survives Back / refresh (owner, 2026-11-14; lib/formDraft.ts). Cleared once the PO is saved.
   const draft = useFormDraft(
     editId ? `po:${editId}` : sendToCeo ? 'po:from-cash' : initial ? 'po:reorder' : 'po:new',
-    { supplierId, expectedDate, notes, buyerUserId, lines, companyId },
+    { supplierId, expectedDate, notes, buyerUserId, lines, companyId, route },
     (d) => {
       if (!editId && d.companyId) setCompanyId(d.companyId)
+      if (d.route) setRoute(d.route)
       setSupplierId(d.supplierId ?? ''); setExpectedDate(d.expectedDate ?? ''); setNotes(d.notes ?? ''); setBuyerUserId(d.buyerUserId ?? '')
       setLines(Array.isArray(d.lines) && d.lines.length ? d.lines : [{ inventoryItemId: '', quantityOrdered: '', unitCostCents: '', notes: '' }])
     },
@@ -1021,6 +1029,7 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
       ...(supplierId ? supplierPickBody(supplierId) : { supplierId: null }), expectedDate: expectedDate || null,
       notes: notes || null,
       buyerUserId: buyerUserId && buyerChoices.some((b) => b.userId === buyerUserId) ? buyerUserId : null,
+      ...(route ? { payByCash: route === 'cash' } : {}),
       ...(editId ? { conceptId: initial?.conceptId ?? null } : {}),
       // Quantity and rate in the unit picked on the line; the server converts to stock units (poUnits.ts).
       lines: lines.map((l) => ({
@@ -1072,9 +1081,9 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
   // The supplier may be chosen later (owner, 2026-11-03: "POs should be able to go thru without supplier attached").
   const packBad = (l: typeof lines[number]) => isPackUnit(invItems.find((x) => x.id === l.inventoryItemId), l.unit) && !(Number(l.packSize) > 0)
   const companyMissing = !editId && myCompanies.length > 1 && !companyId
-  const valid = !companyMissing && lines.length > 0 && !lines.some(lineBad) && !lines.some(packBad)
+  const valid = !companyMissing && !!route && lines.length > 0 && !lines.some(lineBad) && !lines.some(packBad)
   const msg = tried && !valid
-    ? (companyMissing ? 'Pick the company this PO is for.' : lines.length === 0 ? 'Add at least one line.' : lines.some(lineBad) ? 'Every line needs an item, a quantity above 0 and a unit cost.' : 'Say how much one box / bottle / pack holds on each line ordered that way.')
+    ? (companyMissing ? 'Pick the company this PO is for.' : !route ? 'Pick how it is bought: cash or supplier.' : lines.length === 0 ? 'Add at least one line.' : lines.some(lineBad) ? 'Every line needs an item, a quantity above 0 and a unit cost.' : 'Say how much one box / bottle / pack holds on each line ordered that way.')
     : null
 
   return (
@@ -1148,6 +1157,13 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
             aria-label="Who buys it">
             <option value="">{buyerChoices.length ? 'Pick the buyer…' : 'No buyers listed yet'}</option>
             {buyerChoices.map((b) => <option key={b.id} value={b.userId}>{b.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="How it is bought" required>
+          <Select value={route} onChange={(e) => setRoute(e.target.value as '' | 'cash' | 'supplier')} className={fi} aria-label="How it is bought">
+            <option value="">Pick cash or supplier…</option>
+            <option value="cash">Cash — the buyer buys now and is paid back</option>
+            <option value="supplier">Supplier — PO sent, finance pays the bill</option>
           </Select>
         </Field>
         <Field label="Expected delivery">

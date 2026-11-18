@@ -36,6 +36,7 @@ import { AP_READERS } from './routes.js'
 import {
   setPoBuyer, completePo, confirmReceipt, rejectReceipt, grnFinancePass, grnReturn, grnPullBack, grnResubmit, approveGrn, myTasks,
   assertNote, PO_FILE_OWNER,
+  setGrnLineExpense,
 } from './poWorkflow.js'
 
 type GuardPo = (req: FastifyRequest, poId: string) => Promise<{ id: string; status: string; createdBy: string | null; supplier: { tenantId: string | null } }>
@@ -78,6 +79,20 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     return users.map((u) => ({ ...u, listed: listed.has(u.id) })).sort((a, b) => rank(b) - rank(a))
   })
 
+  // Stock or expense (owner, 2026-11-18): the expense accounts a received line of this PO may be expensed to — the
+  // PO's company's live 6xxx expense accounts (the rule of receiving.ts assertReceiptExpenseAccountTx). Anyone who sees
+  // the PO (the requester confirms, finance changes); another company's PO is 404.
+  fastify.get<{ Params: { id: string } }>('/purchase-orders/:id/expense-accounts', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const po = await guardPo(req, req.params.id)
+    const tenantId = po.supplier.tenantId
+    if (!tenantId) return []
+    const rows = await prisma.account.findMany({
+      where: { tenantId, type: 'expense', isActive: true, controlledBy: null, code: { startsWith: '6' } },
+      select: { code: true, name: true }, orderBy: { code: 'asc' },
+    })
+    return rows.filter((a) => /^6\d{3}/.test(a.code)).filter((a) => { const n = Number(a.code.slice(0, 4)); return !(n >= 6200 && n <= 6249) && !(n >= 6990 && n <= 6999) })
+  })
+
   fastify.post<{ Params: { id: string } }>('/purchase-orders/:id/complete', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const po = await guardPo(req, req.params.id)
     const body = z.object({
@@ -107,6 +122,8 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
         quantityReceived: z.number().min(0),
         useBy: zYmd.nullable().optional(),
         notes: z.string().max(200).nullable().optional(),
+        // Stock or expense (owner, 2026-11-18): an expense account code expenses the line on arrival; none = stock.
+        expenseAccountCode: z.string().trim().min(1).max(20).nullable().optional(),
       })).min(1).max(200),
       locationId: z.string().min(1).nullable().optional(),
       notes: z.string().max(500).nullable().optional(),
@@ -257,8 +274,11 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
       const rc = (a.details as { rateChanges?: Change[] } | null)?.rateChanges
       for (const c of rc ?? []) if (!firstChange.has(c.poLineId)) firstChange.set(c.poLineId, c)
     }
+    // Stock or expense per receipt line (owner, 2026-11-18): an expensed lot (class non_food) with no account = 6045.
+    const expensedLineIds = new Set((await prisma.stockLot.findMany({ where: { receiptLineId: { in: g.lines.map((l) => l.id) }, costClass: 'non_food' }, select: { receiptLineId: true } })).map((l) => l.receiptLineId))
     const lines = poFull.lines.map((pl) => {
       const rl = g.lines.filter((l) => l.poLineId === pl.id)
+      const first = rl[0] ?? null
       const here = rl.reduce((s, l) => s + l.receivedQty, 0)
       const d = lineDisplay(pl, pl.inventoryItem.unit)
       const per = pl.orderUnit && pl.orderUnitFactor > 0 ? pl.orderUnitFactor : 1
@@ -276,6 +296,8 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
           return { quantity: qty, unit, rateCents: c.fromRateCents, valueCents: qty != null ? Math.round(qty * c.fromRateCents) : null }
         })(),
         boughtValueCents: lineValueCents(pl),
+        receiptLineId: first?.id ?? null,
+        expenseAccountCode: first ? (first.expenseAccountCode ?? (expensedLineIds.has(first.id) ? '6045' : null)) : null,
       }
     })
     const files = await prisma.cashVoucherAttachment.findMany({
@@ -292,6 +314,23 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     const r = await grnFinancePass(req.params.id, actorOf(req), note ?? null)
     await auditApproval(req, { type: 'grn_finance', id: req.params.id, tenantId, decision: 'approve', grant, entity: 'GoodsReceipt', metadata: { final: false, from: 'finance_review', to: 'ceo_review', ...(note ? { note } : {}) } })
     return { id: r.id, grnStatus: r.grnStatus }
+  })
+
+  // Stock or expense, changed by finance at its check (owner, 2026-11-18) — poWorkflow.ts setGrnLineExpense.
+  fastify.put<{ Params: { id: string; lineId: string } }>('/grns/:id/lines/:lineId/expense', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
+    const { accountCode } = z.object({ accountCode: z.string().trim().min(1).max(20).nullable() }).parse(req.body ?? {})
+    const head = await guardGrn(req, req.params.id, 'read')
+    const type = head.grnStatus === 'ceo_review' ? 'grn' : 'grn_finance'
+    const { tenantId } = await grnRight(req, req.params.id, type, 'change stock or expense on a GRN')
+    const r = await setGrnLineExpense(req.params.id, req.params.lineId, actorOf(req), accountCode)
+    if (r.changed) {
+      await audit({
+        category: 'accounting', action: 'grn.line_expense', entity: 'GoodsReceiptLine', entityId: req.params.lineId,
+        userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId,
+        after: { grnId: req.params.id, expenseAccountCode: r.expenseAccountCode, journalEntryId: r.journalEntryId ?? null, actorRole: req.staffUser!.role },
+      })
+    }
+    return r
   })
 
   fastify.post<{ Params: { id: string } }>('/grns/:id/return', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {

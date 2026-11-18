@@ -27,7 +27,7 @@ import { bulkUnitOf } from '@/lib/units'
 export interface WfLine {
   id: string; inventoryItemId: string; quantityOrdered: number; quantityReceived: number; unitCostCents: number
   orderUnit?: string | null; orderUnitFactor?: number | null; orderUnitCostCents?: number | null
-  inventoryItem?: { name: string; unit: string } | null
+  inventoryItem?: { name: string; unit: string; category?: string | null } | null
 }
 export interface WfPo {
   id: string; reference?: string | null; status: string; totalCents: number; createdAt: string; approvedAt?: string | null
@@ -321,24 +321,36 @@ function BuyCard({ po }: { po: WfPo }) {
   )
 }
 
+/** The expense accounts a line of this PO may be expensed to (GET /purchase-orders/:id/expense-accounts). */
+function useExpenseAccounts(poId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['procurement', 'expense-accounts', poId],
+    queryFn: () => api.get<Array<{ code: string; name: string }>>(`/procurement/purchase-orders/${poId}/expense-accounts`),
+    enabled: !!poId, staleTime: 5 * 60_000,
+  })
+}
+
 function ConfirmCard({ po }: { po: WfPo }) {
   const qc = useQueryClient()
   const outstanding = (l: WfLine) => Math.max(0, l.quantityOrdered - l.quantityReceived)
   // Typed in each line's order unit; sent in stock units.
   const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(po.lines.map((l) => [l.id, String(round6(outstanding(l) / shown(l).factor))])))
+  // Stock or expense per line (owner, 2026-11-18): '' = stock, else the expense account code it is expensed to.
+  const [expense, setExpense] = useState<Record<string, string>>({})
   const [sendBack, setSendBack] = useState(false)
   const [note, setNote] = useState('')
   const [tried, setTried] = useState(false)
+  const accounts = useExpenseAccounts(po.id)
   // Unsaved typing survives Back / refresh (lib/formDraft.ts). Cleared once confirmed or sent back.
   const draft = useFormDraft(
     `po-confirm:${po.id}`,
-    { qty, note },
-    (d) => { if (d.qty) setQty((q) => ({ ...q, ...d.qty })); setNote(d.note ?? '') },
+    { qty, note, expense },
+    (d) => { if (d.qty) setQty((q) => ({ ...q, ...d.qty })); setNote(d.note ?? ''); if (d.expense) setExpense(d.expense) },
   )
   useEffect(() => { if (draft.restoredAt && note.trim()) setSendBack(true) }, [draft.restoredAt]) // eslint-disable-line react-hooks/exhaustive-deps
   const confirm = useMutation({
     mutationFn: () => api.post(`/procurement/purchase-orders/${po.id}/confirm-receipt`, {
-      lines: po.lines.map((l) => ({ poLineId: l.id, quantityReceived: round6((Number(qty[l.id]) || 0) * shown(l).factor) })),
+      lines: po.lines.map((l) => ({ poLineId: l.id, quantityReceived: round6((Number(qty[l.id]) || 0) * shown(l).factor), expenseAccountCode: expense[l.id] || null })),
     }),
     onSuccess: () => { draft.clear(); invalidateAll(qc, po.id) },
   })
@@ -357,7 +369,7 @@ function ConfirmCard({ po }: { po: WfPo }) {
           const s = shown(l)
           const typed = Number(qty[l.id]) || 0
           return (
-            <div key={l.id} className="grid grid-cols-1 sm:grid-cols-[1fr_9rem] gap-1 sm:gap-3 items-center">
+            <div key={l.id} className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_13rem] gap-1 sm:gap-3 items-center">
               <div className="min-w-0">
                 <p className="text-xs text-s-text break-words">{l.inventoryItem?.name ?? 'Item'}</p>
                 <p className="text-[11px] text-s-muted">Ordered {round6(l.quantityOrdered / s.factor)} {s.unit}{l.quantityReceived > 0 ? ` · ${round6(l.quantityReceived / s.factor)} already in` : ''}
@@ -368,10 +380,17 @@ function ConfirmCard({ po }: { po: WfPo }) {
                   aria-label={`Received ${s.unit} of ${l.inventoryItem?.name ?? 'item'}`} className="w-full text-right" />
                 <span className="text-xs text-s-muted shrink-0">{s.unit}</span>
               </div>
+              <Select value={expense[l.id] ?? ''} onChange={(e) => setExpense({ ...expense, [l.id]: e.target.value })}
+                className="s-input w-full" aria-label={`Stock or expense for ${l.inventoryItem?.name ?? 'item'}`}>
+                {/* A non-food item is always expensed (6045 unless another account is picked). */}
+                <option value="">{l.inventoryItem?.category === 'non_food' ? 'Expense — 6045 Operating Supplies' : 'Stock'}</option>
+                {(accounts.data ?? []).filter((a) => !(l.inventoryItem?.category === 'non_food' && a.code === '6045')).map((a) => <option key={a.code} value={a.code}>Expense — {a.code} {a.name}</option>)}
+              </Select>
             </div>
           )
         })}
       </div>
+      <p className="text-[11px] text-s-muted">Stock goes on the shelf and is costed when used. Expense is booked straight to the account you pick — finance can change it when it checks.</p>
       {confirm.error && <p role="alert" className="text-xs text-s-red">{errOf(confirm.error)}</p>}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={bad || confirm.isPending} onClick={() => confirm.mutate()}>Confirm receipt</Button>
@@ -500,9 +519,32 @@ export function GrnsTab({ initialId }: { initialId?: string | null }) {
 
 interface GrnDetailRow extends WfGrnRow {
   lines: Array<{ poLineId: string; item: string; unit: string; stockUnit: string; rateCents: number; orderedInUnit: number; receivedHereInUnit: number; receivedAllGrns: number; invoicedCents: number
-    approved?: { quantity: number | null; unit: string; rateCents: number; valueCents: number | null } | null; boughtValueCents?: number }>
+    approved?: { quantity: number | null; unit: string; rateCents: number; valueCents: number | null } | null; boughtValueCents?: number
+    receiptLineId?: string | null; expenseAccountCode?: string | null }>
   files: Array<{ id: string }>
   activity: Array<{ id: string; action: string; createdAt: string; user: { name: string | null } | null; details: { note?: string } | null }>
+}
+
+/** Finance's stock / expense change on one received line (PUT /grns/:id/lines/:lineId/expense). */
+function ExpensePick({ grnId, poId, lineId, value, item }: { grnId: string; poId: string | null; lineId: string; value: string; item: string }) {
+  const qc = useQueryClient()
+  const accounts = useExpenseAccounts(poId)
+  const set = useMutation({
+    mutationFn: (accountCode: string) => api.put(`/procurement/grns/${grnId}/lines/${lineId}/expense`, { accountCode: accountCode || null }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['procurement', 'grns', 'one', grnId] }) },
+  })
+  const list = accounts.data ?? []
+  return (
+    <div>
+      <Select value={value} disabled={set.isPending} onChange={(e) => set.mutate(e.target.value)} className="s-input w-full" aria-label={`Stock or expense for ${item}`}>
+        {/* An expensed line never goes back to stock: the server refuses it, so it is not offered. */}
+        {!value && <option value="">Stock</option>}
+        {value && !list.some((a) => a.code === value) && <option value={value}>Expense — {value}</option>}
+        {list.map((a) => <option key={a.code} value={a.code}>Expense — {a.code} {a.name}</option>)}
+      </Select>
+      {set.error && <p role="alert" className="text-[11px] text-s-red mt-0.5">{errOf(set.error)}</p>}
+    </div>
+  )
 }
 
 function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
@@ -524,6 +566,8 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const canFinance = g.grnStatus === 'finance_review' && (role === 'finance' || role === 'admin')
   const canCeo = g.grnStatus === 'ceo_review' && role === 'admin'
   const canPullBack = g.grnStatus === 'ceo_review' && role === 'finance'
+  // Stock or expense (owner, 2026-11-18): finance changes it at its check (the CEO at either step).
+  const canSetExpense = canFinance || canCeo
   return (
     <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
       <div className="flex items-start justify-between gap-3">
@@ -544,6 +588,7 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
               <th className="text-right py-1.5 text-s-muted">This GRN</th>
               <th className="text-right py-1.5 text-s-muted">Rate</th>
               <th className="text-right py-1.5 text-s-muted">Invoiced</th>
+              <th className="text-left py-1.5 pl-3 text-s-muted">Stock / expense</th>
             </tr>
           </thead>
           <tbody>
@@ -555,10 +600,15 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
                 <td className="py-1.5 text-right text-s-text whitespace-nowrap">{l.receivedHereInUnit} {l.unit}</td>
                 <td className="py-1.5 text-right text-s-muted whitespace-nowrap">{fmtRate(l.rateCents)} / {l.unit}</td>
                 <td className="py-1.5 text-right font-semibold text-s-text">{fmtPkrWhole(l.invoicedCents)}</td>
+                <td className="py-1.5 pl-3 text-s-text min-w-[11rem]">
+                  {l.receiptLineId && canSetExpense
+                    ? <ExpensePick grnId={g.id} poId={g.po?.id ?? null} lineId={l.receiptLineId} value={l.expenseAccountCode ?? ''} item={l.item} />
+                    : l.receiptLineId ? (l.expenseAccountCode ? `Expense — ${l.expenseAccountCode}` : 'Stock') : '—'}
+                </td>
               </tr>
               {l.approved && (
                 <tr className="bg-s-amber-dim/40">
-                  <td colSpan={5} className="py-1.5 px-1 text-[11px] text-s-amber break-words">
+                  <td colSpan={6} className="py-1.5 px-1 text-[11px] text-s-amber break-words">
                     Changed by the buyer — approved {l.approved.quantity != null ? `${l.approved.quantity} ${l.approved.unit} @ ` : ''}{fmtRate(l.approved.rateCents)} / {l.approved.unit}
                     {l.approved.valueCents != null ? ` (${fmtPkrWhole(l.approved.valueCents)})` : ''}
                     {' → bought '}{l.orderedInUnit} {l.unit} @ {fmtRate(l.rateCents)} / {l.unit}{l.boughtValueCents != null ? ` (${fmtPkrWhole(l.boughtValueCents)})` : ''}
@@ -570,7 +620,7 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-s-muted">Booked at receipt {fmtPkrWhole(g.valueCents)} · invoice value {fmtPkrWhole(g.invoicedCents)}{g.invoiceTaxCents ? <> + sales tax {fmtPkrWhole(g.invoiceTaxCents)}{g.invoiceTaxAuthority ? ` (${TAX_BY[g.invoiceTaxAuthority] ?? g.invoiceTaxAuthority})` : ''} = {fmtPkrWhole(g.invoicedCents + g.invoiceTaxCents)}</> : ' · no sales tax'} · paid {g.po?.payByCash ? "in cash from the buyer's box" : "on the supplier's credit"}</p>
+      <p className="text-xs text-s-muted">Booked at receipt {fmtPkrWhole(g.valueCents)} · invoice value {fmtPkrWhole(g.invoicedCents)}{g.invoiceTaxCents ? <> + sales tax {fmtPkrWhole(g.invoiceTaxCents)}{g.invoiceTaxAuthority ? ` (${TAX_BY[g.invoiceTaxAuthority] ?? g.invoiceTaxAuthority})` : ''} = {fmtPkrWhole(g.invoicedCents + g.invoiceTaxCents)}</> : ' · no sales tax'} · paid {g.po?.payByCash ? 'in cash by the buyer, paid back to him once the CEO approves' : "on the supplier's credit"}</p>
       {g.po && <RecordFiles ownerType="purchase_order" ownerId={g.po.id} canUpload={false} title="Supplier's invoice / bill" tenantId={g.tenantId ?? undefined} />}
       <ol className="flex flex-wrap gap-2" aria-label="GRN steps">
         {[
