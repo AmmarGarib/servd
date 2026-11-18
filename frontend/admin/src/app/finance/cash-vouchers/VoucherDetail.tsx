@@ -247,6 +247,8 @@ export function VoucherDetail({ id }: { id: string }) {
           {exportErr && <ErrorBanner message={exportErr} />}
         </div>
 
+        {/* Void a paid voucher (owner, 2026-11-18) — right under the actions so it is seen. */}
+        <VoidPanel v={v} isKeeper={isKeeper} onDone={refresh} />
         {v.canFinanceApprove && <FinanceApprovePanel v={v} onDone={refresh} />}
         {v.canConfirmReceived && (
           <div className="rounded-2xl p-5 space-y-2" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-primary-rgb) / 0.35)' }}>
@@ -316,8 +318,6 @@ export function VoucherDetail({ id }: { id: string }) {
             {v.cancelNote && <p className="text-sm text-white/60 mt-1">{v.cancelNote}</p>}
           </div>
         )}
-
-        <VoidPanel v={v} isKeeper={isKeeper} onDone={refresh} />
 
         {/* Facts */}
         <div className="rounded-2xl p-5" style={card}>
@@ -909,7 +909,17 @@ function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean;
     )
   }
   if (!v.canRequestVoid) {
-    if (isKeeper && v.voidBlockedReason) return <p className="text-xs text-s-muted px-1">Cannot be voided here: {v.voidBlockedReason}</p>
+    if ((v.canSeeVoid || isKeeper) && v.voidBlockedReason) {
+      return (
+        <div className="rounded-2xl p-4 space-y-1" style={card}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-black text-white/85">Void this voucher</p>
+            <Button variant="danger" size="sm" type="button" disabled>{isCeo ? 'Void voucher' : 'Request void'}</Button>
+          </div>
+          <p className="text-xs text-s-muted">Cannot be voided here: {v.voidBlockedReason}</p>
+        </div>
+      )
+    }
     return null
   }
   return (

@@ -283,6 +283,7 @@ export interface CashVoucher {
   // Void after pay (owner, 2026-11-18; backend trustops/voucherVoid.ts): finance asks, the CEO approves.
   canRequestVoid?: boolean
   voidBlockedReason?: string | null
+  canSeeVoid?: boolean
   voidRequest?: { id: string; reason: string; requestedById: string; requestedByName: string | null; createdAt: string; canWithdraw: boolean; canDecide: boolean } | null
   voidedAt?: string | null
   voidedByName?: string | null

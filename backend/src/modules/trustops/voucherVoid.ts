@@ -131,6 +131,8 @@ export async function voidStateOf(v: VoidRow & { voidedById: string | null; void
   return {
     canRequestVoid: paid && !pending && !block && viewer.financeApprover,
     voidBlockedReason: paid && block ? block.message : null,
+    /** Finance / the CEO always see the void card on a paid voucher — with the reason when it cannot be voided. */
+    canSeeVoid: paid && viewer.financeApprover,
     voidRequest: pending
       ? { id: pending.id, reason: pending.reason, requestedById: pending.requestedById, requestedByName: names.get(pending.requestedById) ?? null, createdAt: pending.createdAt,
         canWithdraw: viewer.isAdmin || pending.requestedById === viewer.id, canDecide: viewer.isAdmin }
