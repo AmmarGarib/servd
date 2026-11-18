@@ -679,6 +679,40 @@ describe('old advance vouchers follow the buyer\'s actual amounts (owner, 2026-1
     expect(code(await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/return-po-excess`, {}))).toBe('NOTHING_TO_RETURN')
   })
 
+  it('a REJECTED advance: the CEO\'s GRN approval raises the buyer\'s pay-back voucher (owner, 2026-11-18); so does the boot sweep', async () => {
+    const run = async (inv: string) => {
+      const { po, voucherId } = await oldAdvancePo(250)
+      await prisma.cashVoucher.update({ where: { id: voucherId }, data: { status: 'rejected', rejectedAt: new Date(), rejectedById: U.ceoA!.id, rejectNote: 'Buyer pays first' } })
+      expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: inv, invoiceDate: today(), lines: [{ poLineId: po.lines[0]!.id, amountCents: 1_260 }] })).statusCode).toBe(200)
+      const ok = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: [{ poLineId: po.lines[0]!.id, quantityReceived: 10 }] })
+      expect(ok.statusCode, ok.body).toBe(201)
+      const grnId = ok.json().grn.id as string
+      expect((await call('finA', 'POST', `/procurement/grns/${grnId}/finance-pass`)).statusCode).toBe(200)
+      return { po, voucherId, grnId }
+    }
+    const a = await run(`${P}-REJ1`)
+    const ap = await call('ceoA', 'POST', `/procurement/grns/${a.grnId}/approve`)
+    expect(ap.statusCode, ap.body).toBe(200)
+    const billId = ap.json().supplierBillId as string
+    const pb = await prisma.cashVoucher.findUniqueOrThrow({ where: { reimbursesBillId: billId } })
+    expect(pb).toMatchObject({ status: 'approved', payeeUserId: U.buyerA!.id, amountCents: 1_260, tenantId: T.A })
+    // The PO shows the pay-back, not the rejected advance.
+    const detail = (await call('ceoA', 'GET', `/procurement/purchase-orders/${a.po.id}`)).json()
+    expect((detail.purchaseOrder ?? detail).cashVoucher?.id).toBe(pb.id)
+
+    // Approved before this rule (no pay-back raised): the boot sweep raises it once.
+    const b = await run(`${P}-REJ2`)
+    const { paysBuyerBackTx, raiseMissedPayBacks } = await import('../src/modules/procurement/poCash.js')
+    expect(await paysBuyerBackTx(prisma, { id: b.po.id, payByCash: true, cashAfterPurchase: false })).toBe(true)
+    const ap2 = await call('ceoA', 'POST', `/procurement/grns/${b.grnId}/approve`)
+    const bill2 = ap2.json().supplierBillId as string
+    await prisma.cashVoucher.deleteMany({ where: { reimbursesBillId: bill2 } })   // as on live before this rule
+    const raised = await raiseMissedPayBacks()
+    expect(raised.length).toBeGreaterThanOrEqual(1)
+    expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { reimbursesBillId: bill2 } })).amountCents).toBe(1_260)
+    expect((await raiseMissedPayBacks()).find((v) => v.id === raised[0]!.id)).toBeUndefined()
+  })
+
   it('the boot sweep fixes vouchers already out of step', async () => {
     const { po, voucherId } = await oldAdvancePo(300)
     await prisma.purchaseOrder.update({ where: { id: po.id }, data: { totalCents: 1_800 } })   // changed without the sync (as on live)

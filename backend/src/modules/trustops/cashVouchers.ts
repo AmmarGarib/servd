@@ -129,7 +129,7 @@ export const WAIT_CEO: CashVoucherStatus[] = ['finance_approved', 'hod_signed']
 const EDITABLE: CashVoucherStatus[] = ['submitted', 'draft', 'returned']
 /** Not yet paid — a keeper may still cancel. */
 const PRE_PAY: CashVoucherStatus[] = [...EDITABLE, ...WAIT_CEO, 'approved']
-export const PAID_STATUSES: CashVoucherStatus[] = ['disbursed', 'settled', 'converted', 'posted']
+export const PAID_STATUSES: CashVoucherStatus[] = ['disbursed', 'settled', 'converted', 'posted', 'voided']
 
 /** A request paid by the old photo flow that names no holder (never a finance-raised payee voucher). */
 const isLegacyNoHolder = (v: { status: CashVoucherStatus; payeeUserId: string | null; kind: string; expenseOnVerify: boolean }) =>
@@ -139,7 +139,7 @@ const isLegacyNoHolder = (v: { status: CashVoucherStatus; payeeUserId: string | 
 export type CashRequestStage =
   | 'waiting_finance' | 'waiting_ceo' | 'returned' | 'approved'
   | 'awaiting_docs' | 'sent_back' | 'awaiting_verification' | 'posted'
-  | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted'
+  | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted' | 'voided'
 
 type ClosedInput = {
   status: CashVoucherStatus
@@ -594,6 +594,8 @@ export async function detailOf(id: string, viewer: Viewer) {
     toBoxName: v.purchaseOrderId && payMovement?.boxId
       ? (await prisma.pettyCashBox.findUnique({ where: { id: payMovement.boxId }, select: { name: true } }))?.name ?? null
       : null,
+    /** Void after pay (owner, 2026-11-18; trustops/voucherVoid.ts): the pending request, who may ask, why not. */
+    ...(await (await import('./voucherVoid.js')).voidStateOf(v, viewer)),
     /** A PO's cash vs what the buyer really bought (owner, 2026-11-18; procurement/poCashSync.ts). */
     poCash: v.purchaseOrderId ? await (await import('../procurement/poCashSync.js')).poCashFigures(prisma, v.id) : null,
     /** The buyer's pay-back (owner, 2026-11-18): the bill it pays, and its PO. */

@@ -496,6 +496,26 @@ model LoginOffboardRequest {
 // employee_delete (CEO only, never delegable; modules/hr/employeeDelete.ts). tenantId = the EMPLOYEE's company.
 // employeeId is a plain id (no FK) so the request outlives the deleted row; code + name are a snapshot. SQL-only:
 // one pending per employee, status / reason CHECKs, RLS (migration 20261105190000_employee_delete_requests).
+/// A paid cash voucher finance asked to void, waiting for the CEO (owner, 2026-11-18; trustops/voucherVoid.ts).
+/// tenantId = the voucher's company; voucherId a plain id. One pending per voucher (partial unique, SQL only).
+model CashVoucherVoidRequest {
+  id            String    @id @default(uuid())
+  tenantId      String
+  voucherId     String
+  reason        String
+  status        String    @default("pending") // pending | approved | rejected | withdrawn
+  requestedById String
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@index([voucherId])
+  @@map("cash_voucher_void_requests")
+}
+
 model EmployeeDeleteRequest {
   id            String    @id @default(uuid())
   tenantId      String
@@ -9330,6 +9350,7 @@ enum CashVoucherStatus {
   finance_approved // finance approved; waiting for the CEO's final approval (legacy hod_signed rows also wait for the CEO)
   returned // finance or the CEO sent it back for correction (with a note); the raiser edits and resubmits
   posted // paid, supporting documents verified by finance, expense booked out of 1357
+  voided // (2026-11-18) paid, then voided with the CEO's approval: the cash is back and the expense undone (voucherVoid.ts)
 }
 
 /// Who raised a cash_vouchers row (2026-10-15, owner): 'request' = any staff login asks for cash for themselves (the
@@ -9472,6 +9493,13 @@ model CashVoucher {
   // of the PO (procurement/poCash.ts), holder = the buyer. Finance's pay TOPS UP the buyer's petty-cash box (Dr 1011 /
   // Cr 1010 | the bank) — never an expense: the goods are booked at the dock and the supplier is paid from the box.
   purchaseOrderId           String?         @unique
+  // Void after pay (owner, 2026-11-18: "how to void booked cash voucher?" → finance asks, the CEO approves;
+  // trustops/voucherVoid.ts): when, by whom (the approving CEO), why, and the entry that undid the expense
+  // (a box: the 'pettycash.topup' of the cash put back; cash on hand / a bank: 'cashvoucher.pay.reversal:<id>').
+  voidedAt                  DateTime?
+  voidedById                String?
+  voidReason                String?
+  voidEntryId               String?
 
   tenant      Tenant                  @relation("TenantCashVouchers", fields: [tenantId], references: [id])
   // onDelete Restrict kept from the original required relation (a box with requests is never hard-deleted).

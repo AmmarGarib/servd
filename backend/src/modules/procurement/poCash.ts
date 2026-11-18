@@ -223,6 +223,52 @@ export async function raiseReimbursementTx(tx: Tx, a: {
 }
 
 /**
+ * No cash was advanced to the buyer for this PO (owner, 2026-11-18: "I rejected the voucher before, now on ceo's
+ * approval it should generate a new CV to pay"): an older PO (cashAfterPurchase false) whose advance voucher was
+ * rejected or cancelled — or never raised — is paid back like a no-advance PO, at the bill. An advance still waiting,
+ * approved or paid keeps the advance design.
+ */
+export async function noAdvanceGivenTx(tx: Tx | typeof prisma, poId: string): Promise<boolean> {
+  const adv = await tx.cashVoucher.findUnique({ where: { purchaseOrderId: poId }, select: { status: true } })
+  return !adv || adv.status === 'rejected' || adv.status === 'cancelled'
+}
+
+/** Does this PO's buyer get a pay-back voucher at its bill? A cash PO with no advance given. */
+export async function paysBuyerBackTx(tx: Tx | typeof prisma, po: { id: string; payByCash: boolean; cashAfterPurchase: boolean }): Promise<boolean> {
+  return po.payByCash && (po.cashAfterPurchase || await noAdvanceGivenTx(tx, po.id))
+}
+
+/**
+ * Boot, every start (idempotent): a GRN the CEO approved whose PO's buyer should be paid back (paysBuyerBackTx) but
+ * has no pay-back voucher yet — an older PO whose advance was rejected — gets it now, for what its bill still owes.
+ * A bill already paid, voided or fully credited raises nothing. Returns the vouchers raised.
+ */
+export async function raiseMissedPayBacks(): Promise<Array<{ id: string; number: string }>> {
+  const grns = await prisma.goodsReceipt.findMany({
+    where: { grnStatus: 'approved', supplierBillId: { not: null }, poId: { not: null } },
+    select: { id: true, poId: true, grnNumber: true, supplierBillId: true, approvedById: true, financeCheckedById: true },
+  })
+  const raised: Array<{ id: string; number: string }> = []
+  for (const g of grns) {
+    const po = await prisma.purchaseOrder.findUnique({ where: { id: g.poId! }, select: { id: true, payByCash: true, cashAfterPurchase: true } })
+    if (!po?.payByCash || po.cashAfterPurchase) continue
+    if (await prisma.cashVoucher.findUnique({ where: { reimbursesBillId: g.supplierBillId! }, select: { id: true } })) continue
+    const bill = await prisma.supplierBill.findUnique({ where: { id: g.supplierBillId! }, select: { status: true } })
+    if (!bill || bill.status === 'void' || bill.status === 'paid') continue
+    try {
+      const v = await prisma.$transaction(async (tx) => {
+        if (!(await noAdvanceGivenTx(tx, po.id))) return null
+        return raiseReimbursementTx(tx, { billId: g.supplierBillId!, poId: po.id, grnNumber: g.grnNumber ?? 'GRN', approverId: g.approvedById ?? 'system', financeCheckedById: g.financeCheckedById })
+      })
+      if (v) raised.push(v)
+    } catch (err) {
+      console.warn('[poCash] pay-back not raised for GRN', g.id, (err as Error).message)
+    }
+  }
+  return raised
+}
+
+/**
  * A bill waiting for the buyer's pay-back voucher is paid ONLY by that voucher's pay (booked once). Every other
  * payer of a supplier bill calls this first: 409 BILL_AWAITING_BUYER_PAYBACK while the voucher is unpaid.
  */

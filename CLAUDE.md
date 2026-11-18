@@ -1364,6 +1364,23 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   paid on/before the lock — or with no pay date — and still held, or cleared
   only by a conversion / resolving entry dated AFTER the lock; CEO-overridable
   with `acknowledge`), separate from the warn-only `vouchers_awaiting_docs`.
+- **Void a PAID cash voucher (owner, 2026-11-18: "how to void booked cash voucher?" → "finance requests it with a reason
+  and you approve it").** Contract: header of `trustops/voucherVoid.ts`. `POST /trustops/cash-vouchers/:id/void {reason ≥10}`
+  (finance with `accounting`, or the CEO — the CEO's applies at once) → 202 `{ pendingApproval, request }`, nothing moves;
+  `cash_voucher_void_requests` (tenantId = the voucher's company, RLS, merge repoint; one pending per voucher, 409
+  `VOID_PENDING`). Approval type `cash_voucher_void` (section ceo, never delegable): `/void-requests/:id/approve | reject
+  {note ≥10} | withdraw`. Only a voucher booked at pay (bookedAtPay) paid from a box / cash on hand / a bank (status
+  disbursed | posted); never credit (void its bill — 422 `VOID_USE_SUPPLIER_BILL`), equipment (`VOID_EQUIPMENT`), a PO's
+  cash or pay-back (`VOID_PO_VOUCHER`), an old 1357 hold (`VOID_OLD_FLOW`), change / conversions (`VOID_HAS_CHANGE`).
+  Void = a box: the cash goes back into the SAME box (top-up source cash_request: Dr 1011 / Cr the expense the pay
+  debited, the pay's brand); cash on hand / a bank: `cashvoucher.pay.reversal:<id>`. Status `voided` (+ voidedAt /
+  voidedById / voidReason / voidEntryId); its spend line can no longer be reclassed (409 `VOUCHER_VOIDED`). Tests:
+  `tests/cashVoucherVoid.test.ts`.
+- **A rejected PO advance → the buyer is paid back at the bill (owner, 2026-11-18: "I rejected the voucher before, now on
+  ceo's approval it should generate a new CV to pay").** `poCash.ts paysBuyerBackTx`: a cash PO with no advance given
+  (cashAfterPurchase, or its advance voucher rejected / cancelled / never raised) gets `raiseReimbursementTx` at the CEO's
+  GRN approval; boot step `raiseMissedPayBacks` raises it for GRNs approved before. The PO shows the pay-back, not the
+  rejected advance. Tests: `tests/poApprovalChain.test.ts`.
 - **Finance checks the documents of its own voucher (owner, 2026-11-15: "Finance may check its own").**
   `/:id/verify-docs` no longer refuses the raiser / holder once the expense was booked at pay (`bookedAtPay`: the check
   books nothing); `capsOf.canVerify` follows. A voucher still HELD on 1357 keeps the block (409 `SELF_APPROVE` — its

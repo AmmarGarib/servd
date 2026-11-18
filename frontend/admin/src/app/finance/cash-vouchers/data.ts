@@ -22,12 +22,12 @@ export const CV_ROOT = 'cash-vouchers'
 
 export type VoucherStatus =
   | 'draft' | 'hod_signed' | 'submitted' | 'finance_approved' | 'returned' | 'approved' | 'disbursed' | 'posted'
-  | 'rejected' | 'cancelled' | 'settled' | 'converted'
+  | 'rejected' | 'cancelled' | 'settled' | 'converted' | 'voided'
 /** The step shown. Server `stage` may add words; unknown ones render as plain text. */
 export type RequestStage =
   | 'waiting_finance' | 'waiting_ceo' | 'awaiting_docs' | 'sent_back'
   | 'submitted' | 'finance_approved' | 'returned' | 'approved' | 'missing_docs' | 'awaiting_verification' | 'posted'
-  | 'draft' | 'hod_signed' | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted'
+  | 'draft' | 'hod_signed' | 'paid' | 'receipts_in' | 'settled' | 'needs_review' | 'rejected' | 'cancelled' | 'converted' | 'voided'
 
 /** The words and the badge for each step (globals.css s-badge-*): green = good news, amber = waiting, red = bad. */
 export const STAGE_META: Record<RequestStage, { label: string; badge: string }> = {
@@ -53,6 +53,8 @@ export const STAGE_META: Record<RequestStage, { label: string; badge: string }> 
   rejected:     { label: 'Rejected',             badge: 's-badge-red' },
   cancelled:    { label: 'Cancelled',            badge: 's-badge-muted' },
   converted:    { label: 'Converted',            badge: 's-badge-muted' },
+  // Void after pay (owner, 2026-11-18): the cash is back and the expense undone, with the CEO's approval.
+  voided:       { label: 'Voided — cash returned', badge: 's-badge-red' },
 }
 
 export function stageMeta(s: string) {
@@ -278,6 +280,13 @@ export interface CashVoucher {
   canReturnChange: boolean
   canReclass: boolean
   canNameHolder: boolean
+  // Void after pay (owner, 2026-11-18; backend trustops/voucherVoid.ts): finance asks, the CEO approves.
+  canRequestVoid?: boolean
+  voidBlockedReason?: string | null
+  voidRequest?: { id: string; reason: string; requestedById: string; requestedByName: string | null; createdAt: string; canWithdraw: boolean; canDecide: boolean } | null
+  voidedAt?: string | null
+  voidedByName?: string | null
+  voidReason?: string | null
   // Detail only
   paidAccountCode?: string | null
   payMovement?: { id: string; amountCents: number; createdAt: string; journalEntryId: string | null; boxId: string } | null
@@ -460,6 +469,15 @@ export function useStaffNames() {
 
 const ERROR_WORDS: Record<string, string> = {
   VOUCHER_NOT_CLOSED: 'Only a voucher whose documents are in (closed, books pending) can be sent back.',
+  VOID_PENDING: 'A void of this voucher is already waiting for the CEO.',
+  ALREADY_VOIDED: 'This voucher is already voided.',
+  VOID_USE_SUPPLIER_BILL: 'This voucher was booked on credit as a supplier bill — void that bill instead.',
+  VOID_EQUIPMENT: 'This voucher bought equipment through CapEx — correct it there.',
+  VOID_PO_VOUCHER: 'This voucher carries a purchase order\'s money — correct it on the PO or its bill.',
+  VOID_OLD_FLOW: 'This voucher was paid under an older flow — correct it with a manual journal.',
+  VOID_HAS_CHANGE: 'This voucher already has change or a conversion recorded — correct it with a manual journal.',
+  VOUCHER_VOIDED: 'This voucher is voided — its spend can no longer be moved.',
+  REQUEST_NOT_PENDING: 'This request is no longer waiting — reload the page.',
   VOUCHER_POSTED: 'This voucher is already verified and booked — it cannot be sent back.',
   CASH_RECEIPT_NOT_CONFIRMED: 'The person who took the cash has not confirmed receiving it yet — finance verifies after that.',
   NOT_HOLDER: 'Only the person who holds this cash can confirm receiving it.',

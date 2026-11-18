@@ -157,6 +157,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   station_change: spec(() => '/kds/config'),
   staff_offboard: spec(() => '/hr/employees'),
   employee_delete: spec(() => '/hr/employees'),
+  cash_voucher_void: spec(() => '/ceo/approvals?type=cash_voucher_void'),
   // Intern Management (owner, 2026-11-06): the CEO approves enrolments; stipends go HR → finance → the CEO.
   intern_enrollment: spec((id) => `/hr/interns/${encodeURIComponent(id)}`),
   intern_payroll_finance: spec((id) => `/hr/interns/payroll/${encodeURIComponent(id)}`, {
@@ -346,6 +347,12 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       const r = await db.employeeDeleteRequest.findUnique({ where: { id }, select: { employeeCode: true, fullName: true } })
       if (!r) return null
       return { ref: `Delete employee — ${r.fullName} (${r.employeeCode})` }
+    }
+    case 'cash_voucher_void': {
+      const r = await db.cashVoucherVoidRequest.findUnique({ where: { id }, select: { voucherId: true } })
+      if (!r) return null
+      const v = await db.cashVoucher.findUnique({ where: { id: r.voucherId }, select: { number: true, payeeName: true, amountCents: true } })
+      return v && { ref: `Void cash voucher ${v.number} — ${v.payeeName}`, amountCents: v.amountCents }
     }
     case 'intern_enrollment': {
       const r = await db.intern.findUnique({ where: { id }, select: { internCode: true, fullName: true, internshipType: true, monthlyStipendCents: true } })

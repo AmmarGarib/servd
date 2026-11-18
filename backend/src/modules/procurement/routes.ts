@@ -838,7 +838,8 @@ export async function procurementRoutes(fastify: FastifyInstance) {
           financeCheckedBy: nameOf(po.financeCheckedById), approvedBy: nameOf(po.approvedById), returnedBy: nameOf(po.returnedById),
           buyer: nameOf(po.buyerUserId), completedBy: nameOf(po.completedById), receiptReturnedBy: nameOf(po.receiptReturnedById),
         },
-        cashVoucher: voucher ?? payBacks[0] ?? null,
+        // A rejected / cancelled advance gave the buyer nothing: the pay-back voucher is the PO's cash (owner, 2026-11-18).
+        cashVoucher: (voucher && voucher.status !== 'rejected' && voucher.status !== 'cancelled' ? voucher : payBacks[0] ?? voucher) ?? null,
         payBackVouchers: payBacks,
         grns: grns.map((g) => ({ ...g, receivedBy: nameOf(g.receivedById), financeCheckedBy: nameOf(g.financeCheckedById), approvedBy: nameOf(g.approvedById) })),
       }

@@ -34,6 +34,7 @@ import { auditVoucher, loadVisible, type VoucherRow } from './cashVouchers.js'
 const APPROVED_STATUSES = ['approved', 'disbursed', 'settled', 'posted', 'converted']
 function stampFor(status: string): string | null {
   if (APPROVED_STATUSES.includes(status)) return null
+  if (status === 'voided') return 'VOIDED AFTER PAYMENT - CASH RETURNED - NOT VALID'
   if (status === 'rejected' || status === 'cancelled') return `VOID - ${status.toUpperCase()} - NOT VALID FOR PAYMENT`
   return 'NOT APPROVED - FOR REFERENCE ONLY - DO NOT PAY'
 }

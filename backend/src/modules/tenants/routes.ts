@@ -811,6 +811,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.loginOffboardRequest,
     // Employee deletes waiting for the CEO (owner, 2026-11-05): follow the employee's company.
     tx.employeeDeleteRequest,
+    // Paid cash vouchers finance asked to void (owner, 2026-11-18): follow the voucher's company.
+    tx.cashVoucherVoidRequest,
     // Cost splits (owner, 2026-11-07): a split follows its source company, a share its receiving company (a company
     // with inter-company activity is refused above, MERGE_HAS_INTERCOMPANY — listed so nothing is ever stranded).
     tx.costSplit, tx.costSplitShare,

@@ -47,7 +47,7 @@ const ACT_DONE: Record<Act, string> = {
 const NOTE_ACTS = { 'send-back': 'What is wrong with the documents? (the requester sees this and attaches what is missing)', return: 'Why is it returned? (the requester sees this and corrects it)', reject: 'Why is it rejected? (the requester sees this)', cancel: 'Why is it cancelled?' } as const
 type NoteAct = keyof typeof NOTE_ACTS
 const NOTE_BTN: Record<NoteAct, string> = { 'send-back': 'Send back to the requester', return: 'Return for correction', reject: 'Reject voucher', cancel: 'Cancel voucher' }
-const APPROVED_ON = ['approved', 'disbursed', 'settled', 'posted', 'converted']
+const APPROVED_ON = ['approved', 'disbursed', 'settled', 'posted', 'converted', 'voided']
 
 export function VoucherDetail({ id }: { id: string }) {
   const confirm = useConfirm()
@@ -284,7 +284,7 @@ export function VoucherDetail({ id }: { id: string }) {
 
         {/* After payment */}
         {/* Supporting documents travel with the voucher: listed and downloadable for everyone who can open it. */}
-        {(paid || (v.status === 'approved' && v.canUpload)) && (newFlow || (v.documents?.length ?? 0) > 0 || v.canUpload) && <DocumentsPanel v={v} isKeeper={isKeeper} />}
+        {(paid || v.status === 'voided' || (v.status === 'approved' && v.canUpload)) && (newFlow || (v.documents?.length ?? 0) > 0 || v.canUpload) && <DocumentsPanel v={v} isKeeper={isKeeper} />}
         {v.status === 'disbursed' && newFlow && v.canVerify && <VerifyPanel v={v} isKeeper={isKeeper} />}
         {v.status === 'disbursed' && newFlow && !v.canVerify && v.verifyWaitsOnOther && (
           <div role="status" className="rounded-2xl border border-s-border bg-s-surface p-4">
@@ -316,6 +316,8 @@ export function VoucherDetail({ id }: { id: string }) {
             {v.cancelNote && <p className="text-sm text-white/60 mt-1">{v.cancelNote}</p>}
           </div>
         )}
+
+        <VoidPanel v={v} isKeeper={isKeeper} onDone={refresh} />
 
         {/* Facts */}
         <div className="rounded-2xl p-5" style={card}>
@@ -835,6 +837,107 @@ function PoCashCheck({ v }: { v: CashVoucher }) {
         </div>
       )}
       {ret.error && <ErrorBanner message={errorWords(ret.error)} />}
+    </div>
+  )
+}
+
+/**
+ * Void a PAID voucher (owner, 2026-11-18): finance asks with a reason, the CEO approves (the CEO's own void is at
+ * once). The cash goes back where it came from (a box: the same box; cash on hand / a bank: the pay is reversed) and
+ * the expense is undone. Shows the voided state, a pending request (withdraw / approve / reject) or the ask.
+ */
+function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean; onDone: () => void }) {
+  const confirm = useConfirm()
+  const isCeo = useAuthStore((st) => st.user?.role) === 'admin'
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState('')
+  const [rejectNote, setRejectNote] = useState('')
+  const [rejecting, setRejecting] = useState(false)
+  const pin = v.tenantId ? { tenantId: v.tenantId } : undefined
+  const m = useMutation({
+    mutationFn: ({ path, body }: { path: string; body: Record<string, unknown> }) => api.post<unknown>(`${CV_BASE}/${path}`, body, pin),
+    meta: { inlineErrors: true },
+    onSuccess: (_r, { path }) => {
+      toast.success(path.endsWith('/void')
+        ? (isCeo ? 'Voucher voided — the cash is back and the expense undone.' : 'Void request sent to the CEO.')
+        : path.endsWith('/approve') ? 'Voucher voided — the cash is back and the expense undone.'
+          : path.endsWith('/reject') ? 'Void request rejected — the voucher stays as it is.' : 'Void request withdrawn.')
+      setOpen(false); setReason(''); setRejecting(false); setRejectNote(''); onDone()
+    },
+  })
+  const where = v.paySource === 'box' ? `back into ${v.paidFrom ?? 'the petty-cash box'}` : v.paySource === 'bank' ? `back to ${v.paidFrom ?? 'the bank'}` : 'back to cash on hand'
+
+  if (v.status === 'voided') {
+    return (
+      <div className="rounded-2xl p-4 bg-s-red-dim border border-s-red/30">
+        <p className="text-sm font-black text-s-red">Voided{v.voidedByName ? ` by ${v.voidedByName}` : ''}{v.voidedAt ? ` · ${fmtDateTime(v.voidedAt)}` : ''}</p>
+        {v.voidReason && <p className="text-sm text-white/75 mt-1 whitespace-pre-wrap">{v.voidReason}</p>}
+        <p className="text-xs text-s-muted mt-1">The PKR {formatPkr(v.amountCents)} went {where} and the expense was undone. The documents stay below.</p>
+      </div>
+    )
+  }
+  const r = v.voidRequest
+  if (r) {
+    return (
+      <div className="rounded-2xl p-4 border space-y-2" style={{ background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', borderColor: 'var(--erp-warning)' }}>
+        <p className="text-sm font-black text-white/90">Void waiting for the CEO{r.requestedByName ? ` — asked by ${r.requestedByName}` : ''} · {fmtDateTime(r.createdAt)}</p>
+        <p className="text-sm text-white/80 whitespace-pre-wrap">{r.reason}</p>
+        <p className="text-xs text-s-muted">Nothing has changed yet. Once approved, the PKR {formatPkr(v.amountCents)} goes {where} and the expense is undone.</p>
+        <div className="flex flex-wrap gap-2">
+          {r.canDecide && (
+            <Button size="sm" type="submit" disabled={m.isPending}
+              onClick={async () => { if (await confirm({ title: `Void ${v.number}?`, body: `PKR ${formatPkr(v.amountCents)} goes ${where} and the expense is undone.`, confirmLabel: 'Approve void' })) m.mutate({ path: `void-requests/${r.id}/approve`, body: {} }) }}>
+              Approve void
+            </Button>
+          )}
+          {r.canDecide && <Button size="sm" variant="danger" type="submit" disabled={m.isPending} onClick={() => setRejecting((x) => !x)}>Reject</Button>}
+          {r.canWithdraw && !r.canDecide && (
+            <Button size="sm" variant="secondary" type="submit" disabled={m.isPending} onClick={() => m.mutate({ path: `void-requests/${r.id}/withdraw`, body: {} })}>Withdraw request</Button>
+          )}
+        </div>
+        {rejecting && (
+          <div className="space-y-2">
+            <Textarea value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} rows={2} maxLength={500} placeholder="Why not? (at least 10 characters)" className={fieldCls} />
+            <Button size="sm" variant="danger" type="submit" disabled={m.isPending || rejectNote.trim().length < 10}
+              onClick={() => m.mutate({ path: `void-requests/${r.id}/reject`, body: { note: rejectNote.trim() } })}>
+              {m.isPending ? 'Saving…' : 'Reject void'}
+            </Button>
+          </div>
+        )}
+        {m.error && <ErrorBanner message={errorWords(m.error)} />}
+      </div>
+    )
+  }
+  if (!v.canRequestVoid) {
+    if (isKeeper && v.voidBlockedReason) return <p className="text-xs text-s-muted px-1">Cannot be voided here: {v.voidBlockedReason}</p>
+    return null
+  }
+  return (
+    <div className="rounded-2xl p-4 space-y-2" style={card}>
+      {!open ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-s-muted">Paid by mistake, or the cash came back? Void it: the money goes {where} and the expense is undone{isCeo ? '' : ' — once the CEO approves'}.</p>
+          <Button variant="danger" size="sm" type="submit" onClick={() => setOpen(true)}>{isCeo ? 'Void voucher' : 'Request void'}</Button>
+        </div>
+      ) : (
+        <>
+          <FieldLabel>Why is this voucher voided? (at least 10 characters — kept in the history)</FieldLabel>
+          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} autoFocus className={fieldCls} />
+          <p className="text-xs text-s-muted">Make sure the PKR {formatPkr(v.amountCents)} has really come back before {isCeo ? 'voiding' : 'asking'}.</p>
+          <div className="flex gap-2">
+            <Button variant="danger" size="sm" type="submit" disabled={m.isPending || reason.trim().length < 10}
+              onClick={async () => {
+                if (!isCeo || await confirm({ title: `Void ${v.number} now?`, body: `PKR ${formatPkr(v.amountCents)} goes ${where} and the expense is undone.`, confirmLabel: 'Void it' })) {
+                  m.mutate({ path: `${v.id}/void`, body: { reason: reason.trim() } })
+                }
+              }}>
+              {m.isPending ? 'Saving…' : isCeo ? 'Void now' : 'Send to the CEO'}
+            </Button>
+            <button onClick={() => { setOpen(false); setReason('') }} className="text-xs font-bold text-white/50 px-2">Keep it</button>
+          </div>
+        </>
+      )}
+      {m.error && <ErrorBanner message={errorWords(m.error)} />}
     </div>
   )
 }

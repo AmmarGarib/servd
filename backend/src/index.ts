@@ -1308,6 +1308,14 @@ async function build() {
   } catch (err) {
     fastify.log.warn(`[poCash] voucher sweep skipped: ${(err as Error).message}`)
   }
+  // An older cash PO whose advance was rejected (owner, 2026-11-18): its approved GRN's bill gets the buyer's pay-back.
+  try {
+    const { raiseMissedPayBacks } = await import('./modules/procurement/poCash.js')
+    const r = await raiseMissedPayBacks()
+    if (r.length) fastify.log.info(`[poCash] pay-back voucher(s) raised: ${r.map((v) => v.number).join(', ')}`)
+  } catch (err) {
+    fastify.log.warn(`[poCash] pay-back sweep skipped: ${(err as Error).message}`)
+  }
 
   // Per-employee wages sub-ledger (owner, 2026-10-23): once per company, tag the
   // payroll and full & final entries already on the books from their payslips

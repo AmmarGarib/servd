@@ -1043,6 +1043,9 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
     if (acct.code === line.accountCode && acct.categoryKey === line.categoryKey) return { line, entryId: null, outcome: 'unchanged' }
     const result = await prisma.$transaction(async (tx) => {
       for (const id of voucherIds) await tx.$queryRaw`SELECT id FROM cash_vouchers WHERE id = ${id} FOR UPDATE`
+      // A voided voucher's spend stays as it was: its cash was put back against this very account (voucherVoid.ts).
+      const voided = await tx.cashVoucher.findFirst({ where: { id: { in: voucherIds }, status: 'voided' }, select: { number: true } })
+      if (voided) throw new AppError('VOUCHER_VOIDED', `Cash voucher ${voided.number} is voided — its spend can no longer be moved to another account`, 409)
       await tx.$queryRaw`SELECT id FROM petty_cash_boxes WHERE id = ${movement.boxId} FOR UPDATE`
       const updated = await tx.pettyCashSpendLine.update({ where: { id: line.id }, data: { accountCode: acct.code, categoryKey: acct.categoryKey } })
       const posted = await postPettyCashMovementTx(tx, movement.id, { postedBy: req.staffUser!.id })
@@ -1105,6 +1108,8 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   // Cr 1011) at payment. Receipts book nothing; settlements reclass out of
   // the paid account (cashRequestSettle.ts).
   await fastify.register(cashVoucherRoutes, { prefix: '/cash-vouchers' })
+  // Void a paid cash voucher — finance asks, the CEO approves (owner, 2026-11-18).
+  await fastify.register((await import('./voucherVoid.js')).voucherVoidRoutes, { prefix: '/cash-vouchers' })
 
   // ════════════════════════════════════════════════════════════════════════
   // 3. DEPOSIT DROP — cash to bank

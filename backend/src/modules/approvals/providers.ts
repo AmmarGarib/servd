@@ -29,6 +29,7 @@ import { socialConnections } from '../socialConnections/approvalProvider.js'
 import { stationChanges } from '../stations/approvalProvider.js'
 import { staffOffboards } from '../auth/offboardApprovalProvider.js'
 import { employeeDeletes } from '../hr/employeeDeleteApprovalProvider.js'
+import { cashVoucherVoids } from '../trustops/voucherVoidApprovalProvider.js'
 import { internEnrollments, internPayrollFinanceReviews, internPayrollRuns } from '../hr/internApprovalProvider.js'
 import { reservationOverbooks } from '../reservations/overbookProvider.js'
 import { marketingTasks } from '../marketingBoard/approvalProvider.js'
@@ -1592,6 +1593,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   stationChanges,
   staffOffboards,
   employeeDeletes,
+  cashVoucherVoids,
   internEnrollments,
   internPayrollFinanceReviews,
   internPayrollRuns,

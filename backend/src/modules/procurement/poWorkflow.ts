@@ -582,7 +582,8 @@ export async function approveGrn(grnId: string, actor: Actor) {
     }
     await tx.goodsReceipt.update({ where: { id: grnId }, data: { supplierBillId: b.id } })
     // A cash PO bought with the buyer's own money (owner, 2026-11-18: no advance): his pay-back voucher at the bill.
-    const payBack = po.payByCash && po.cashAfterPurchase
+    // Also an older PO whose advance was rejected / cancelled: no cash reached the buyer (owner, 2026-11-18).
+    const payBack = await (await import('./poCash.js')).paysBuyerBackTx(tx, { id: g.poId!, payByCash: po.payByCash, cashAfterPurchase: po.cashAfterPurchase })
       ? await (await import('./poCash.js')).raiseReimbursementTx(tx, { billId: b.id, poId: g.poId!, grnNumber: g.grnNumber!, approverId: actor.id, financeCheckedById: g.financeCheckedById })
       : null
     await logGrnTx(tx, g.poId!, actor.id, 'grn_approved', { grnId, grnNumber: g.grnNumber, from: 'ceo_review', to: 'approved', supplierBillId: b.id, billNumber: b.billNumber, totalCents: toCents(b.totalCents), ...(payBack && { payBackVoucherId: payBack.id, payBackVoucherNumber: payBack.number }) })
@@ -685,7 +686,8 @@ function grnPayNotice(grnId: string, actorId: string): void {
       if ((await effectiveModulesForUser({ role: u.role, moduleAllow: u.moduleAllow, moduleDeny: u.moduleDeny })).has('accounting')) ids.push(u.id)
     }
     if (po?.payByCash && po.buyerUserId) ids.push(po.buyerUserId)
-    const body = po?.payByCash && po.cashAfterPurchase
+    const payBackRaised = !!g.supplierBillId && !!(await serviceClient.cashVoucher.findUnique({ where: { reimbursesBillId: g.supplierBillId }, select: { id: true } }))
+    const body = payBackRaised
       ? 'The buyer paid with his own money: pay him back on the cash voucher raised for this bill (Cash vouchers) — that pays the bill.'
       : po?.payByCash
       ? "Paid by cash: pay the bill from the buyer's petty-cash box (Petty cash → spend → supplier bill)."

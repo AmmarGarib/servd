@@ -256,6 +256,8 @@ describe('two companies', () => {
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
       'bad_debt', 'bank_reconciliation', 'cash_request_finance', 'cash_voucher',
+      // Void a paid cash voucher (owner, 2026-11-18) reads /trustops/cash-vouchers/void-requests: listed, none waiting.
+      'cash_voucher_void',
       // HR's employee deletes (owner, 2026-11-05) read /hr/employee-delete-requests (HR routes): listed, none waiting.
       'employee_delete',
       'fixed_asset_request', 'grn', 'grn_finance', 'grni_writeoff', 'hr_request', 'intercompany_transfer',
