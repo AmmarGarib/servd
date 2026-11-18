@@ -232,6 +232,15 @@ describe('record files: every owner type, two companies', () => {
     expect((await call('hrA', 'POST', `/record-files/${t}/${id}`, { files: [docx] })).statusCode).toBe(201)
   })
 
+  it('a file up to 10 MB is taken; over 10 MB is refused (owner, 2026-11-18: "Make this storage upto 10 mbs")', async () => {
+    const id = A.ids.opex_payment!
+    const big = (mb: number) => ({ fileName: 'invoice.pdf', mime: 'application/pdf', dataBase64: Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(Math.round(mb * 1024 * 1024) - 9, 0x20)]).toString('base64') })
+    expect((await call('finA', 'POST', `/record-files/opex_payment/${id}`, { files: [big(6)] })).statusCode).toBe(201)
+    const over = await call('finA', 'POST', `/record-files/opex_payment/${id}`, { files: [big(10.5)] })
+    expect(over.statusCode, over.body).toBe(400)
+    expect(code(over)).toBe('BAD_FILE')
+  })
+
   it('an unknown owner type is 404', async () => {
     expect((await call('ceoA', 'GET', `/record-files/order/${A.ids.opex_payment}`)).statusCode).toBe(404)
     expect((await call('ceoA', 'POST', `/record-files/order/${A.ids.opex_payment}`, { files: [png()] })).statusCode).toBe(404)

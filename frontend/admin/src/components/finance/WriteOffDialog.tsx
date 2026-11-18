@@ -244,7 +244,7 @@ function EvidencePicker({ files, onChange }: { files: PickedFile[]; onChange: (n
   async function add(list: FileList | null) {
     if (!list || list.length === 0) return
     setError(null)
-    // Type and size are checked on select (the server takes photos and PDFs up to 3 MB).
+    // Type and size are checked on select (the server takes photos and PDFs up to 10 MB).
     const picked = Array.from(list)
     const refused = picked.map(checkReceiptFile).filter((m): m is string => !!m)
     const okFiles = picked.filter((f) => !checkReceiptFile(f))
@@ -282,7 +282,7 @@ function EvidencePicker({ files, onChange }: { files: PickedFile[]; onChange: (n
         <span className="text-xs font-bold text-white/50">Evidence the debt cannot be collected *</span>
         <span className="text-xs text-s-muted">{files.length} of {MAX_FILES}</span>
       </div>
-      <p className="text-xs text-s-muted mt-0.5">A letter, a collection or court note, proof the client has closed. Photos or PDFs, up to 3 MB each.</p>
+      <p className="text-xs text-s-muted mt-0.5">A letter, a collection or court note, proof the client has closed. Photos or PDFs, up to 10 MB each.</p>
       {files.length > 0 && (
         <ul className="mt-2 space-y-1.5">
           {files.map((f) => (

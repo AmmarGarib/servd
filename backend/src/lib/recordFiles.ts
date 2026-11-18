@@ -15,7 +15,7 @@
 //     always stamped with that company, never the actor's;
 //   • files decode ONLY through lib/evidenceFile.ts decodeEvidenceFile
 //     (JPEG / PNG / WebP / PDF, magic bytes; Office / CSV / text where the
-//     provider allows it), ≤ 3 MB each, ≤ 10 per record (409 TOO_MANY_FILES,
+//     provider allows it), ≤ 10 MB each, ≤ 10 per record (409 TOO_MANY_FILES,
 //     counted under an advisory lock on the record), every file of an upload
 //     checked BEFORE anything is written;
 //   • lists carry metadata only — never bytes.
@@ -42,8 +42,8 @@ export const RECORD_FILE_KIND = 'record_file'
 export const RECORD_FILES_MAX_PER_RECORD = 10
 /** Most files in one upload call. */
 export const RECORD_FILES_MAX_PER_UPLOAD = 5
-/** 5 files × 3 MB, base64 (+⅓) and JSON overhead — the bodyLimit of every route that takes record files. */
-export const RECORD_FILES_BODY_LIMIT = 22 * 1024 * 1024
+/** 5 files × 10 MB, base64 (+⅓) and JSON overhead — the bodyLimit of every route that takes record files. */
+export const RECORD_FILES_BODY_LIMIT = 70 * 1024 * 1024
 
 /** One uploaded file as the client sends it. */
 export const zRecordFile = z.object({

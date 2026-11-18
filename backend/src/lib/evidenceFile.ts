@@ -7,7 +7,7 @@
 //   - a `data:<mime>;base64,` prefix is accepted and must agree with `mime`;
 //   - the bytes must really be the declared type (magic numbers — PDF starts
 //     '%PDF-'), so a script can never be stored as an "image";
-//   - at most `maxBytes` decoded (3 MB by default; the admin compresses photos
+//   - at most `maxBytes` decoded (10 MB by default; the admin compresses photos
 //     before sending), refused before decoding when the base64 is already too
 //     long.
 // Anything else is 400 BAD_PHOTO for an images-only caller, 400 BAD_FILE when
@@ -28,8 +28,8 @@
 import type { FastifyReply } from 'fastify'
 import { AppError } from './errors.js'
 
-/** The default largest decoded upload: 3 MB. */
-export const EVIDENCE_MAX_BYTES = 3 * 1024 * 1024
+/** The default largest decoded upload: 10 MB (owner, 2026-11-18: "Make this storage upto 10 mbs"; was 3 MB). */
+export const EVIDENCE_MAX_BYTES = 10 * 1024 * 1024
 const EVIDENCE_MIN_BYTES = 32
 
 export const EVIDENCE_EXT = {

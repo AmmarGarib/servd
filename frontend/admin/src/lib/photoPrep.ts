@@ -18,7 +18,7 @@ const QUALITY = 0.8
 /** Keep the JSON body well under the API's request limit; above this, step down. */
 const TARGET_BYTES = 700 * 1024
 /** The API's largest decoded evidence file (lib/evidenceFile.ts). */
-export const EVIDENCE_MAX_BYTES = 3 * 1024 * 1024
+export const EVIDENCE_MAX_BYTES = 10 * 1024 * 1024
 
 export interface PreparedPhoto {
   /** base64 of the file, without the `data:` prefix. */
@@ -100,11 +100,11 @@ export async function preparePhoto(file: File): Promise<PreparedPhoto> {
 
 /**
  * A receipt: a photo is compressed (preparePhoto); a PDF goes up as it is,
- * when it is no larger than the API takes (3 MB).
+ * when it is no larger than the API takes (10 MB).
  */
 export async function prepareReceiptFile(file: File): Promise<PreparedPhoto> {
   if (file.type === 'application/pdf') {
-    if (file.size > EVIDENCE_MAX_BYTES) throw new Error('That PDF is larger than 3 MB — scan it at a lower resolution, or take a photo instead.')
+    if (file.size > EVIDENCE_MAX_BYTES) throw new Error('That PDF is larger than 10 MB — scan it at a lower resolution, or take a photo instead.')
     return { base64: await toBase64(file), mime: 'application/pdf', bytes: file.size, width: 0, height: 0, previewUrl: '' }
   }
   return preparePhoto(file)

@@ -16,12 +16,12 @@ import { FIcon } from './ui/icons'
 
 const MAX_PHOTO_BYTES = 30 * 1024 * 1024 // photos are compressed in the browser first
 
-/** Type and size, checked on select — the same list and limits the server takes (images, PDF ≤ 3 MB). */
+/** Type and size, checked on select — the same list and limits the server takes (images, PDF ≤ 10 MB). */
 export function checkReceiptFile(file: File): string | null {
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
   const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic)$/i.test(file.name)
   if (!isPdf && !isImage) return `${file.name || 'That file'}: only photos and PDFs are accepted here.`
-  if (isPdf && file.size > EVIDENCE_MAX_BYTES) return `${file.name}: ${kb(file.size)} is over the 3 MB limit for a PDF. Scan it at a lower resolution or take a photo.`
+  if (isPdf && file.size > EVIDENCE_MAX_BYTES) return `${file.name}: ${kb(file.size)} is over the 10 MB limit for a PDF. Scan it at a lower resolution or take a photo.`
   if (!isPdf && file.size > MAX_PHOTO_BYTES) return `${file.name}: ${kb(file.size)} is too large for a photo.`
   return null
 }

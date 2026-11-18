@@ -3063,7 +3063,7 @@ copies."
   `20261016210000_record_files`; owner CHECK in `tests/setup.ts`).
   `lib/recordFiles.ts` is the ONE writer / reader: files decode only through
   `lib/evidenceFile.ts` (images + PDF; Office / CSV / text where the provider
-  allows it), ≤ 3 MB each, ≤ 10 per record (409 `TOO_MANY_FILES`, advisory
+  allows it), ≤ 10 MB each (owner, 2026-11-18: "Make this storage upto 10 mbs"; `EVIDENCE_MAX_BYTES`, admin `RECORD_FILE_MAX_BYTES` / `photoPrep EVIDENCE_MAX_BYTES`; bodies `RECORD_FILES_BODY_LIMIT` 70 MB), ≤ 10 per record (409 `TOO_MANY_FILES`, advisory
   lock), all checked before any write, stamped with the RECORD's company.
 - **A provider per record type** (`modules/recordFiles/providers.ts`):
   `opex_payment`, `supplier_bill`, `goods_receipt`, `prep_batch`,

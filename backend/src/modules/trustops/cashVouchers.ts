@@ -100,7 +100,7 @@ import { classificationOf, classifyingTx, type ClassificationInput } from '../ac
 
 // ─── Files ───────────────────────────────────────────────────────────────────
 
-/** A receipt (or the legacy signed-voucher photo) may be at most 3 MB decoded. */
+/** A receipt (or the legacy signed-voucher photo) may be at most 10 MB decoded. */
 export const CASH_VOUCHER_PHOTO_MAX_BYTES = EVIDENCE_MAX_BYTES
 
 // ─── Shapes ──────────────────────────────────────────────────────────────────

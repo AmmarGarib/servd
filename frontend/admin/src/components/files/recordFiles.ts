@@ -16,7 +16,7 @@ export const OFFICE_OWNER_TYPES: ReadonlySet<RecordOwnerType> = new Set(['suppli
 export const RECORD_FILES_MAX = 10
 export const RECORD_FILES_PER_UPLOAD = 5
 /** The server's largest decoded file (lib/evidenceFile.ts). Photos are compressed first, so this caps PDFs / documents. */
-export const RECORD_FILE_MAX_BYTES = 3 * 1024 * 1024
+export const RECORD_FILE_MAX_BYTES = 10 * 1024 * 1024
 
 const PHOTO_PDF_ACCEPT = 'image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf'
 const OFFICE_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.csv,.txt'
@@ -70,7 +70,7 @@ export async function prepareRecordFile(file: File, ownerType: RecordOwnerType):
       : `${file.name}: pick a photo or a PDF.`)
   }
   if (file.size === 0) throw new Error(`${file.name}: the file is empty.`)
-  if (file.size > RECORD_FILE_MAX_BYTES) throw new Error(`${file.name} is larger than 3 MB.`)
+  if (file.size > RECORD_FILE_MAX_BYTES) throw new Error(`${file.name} is larger than 10 MB.`)
   return { fileName: file.name, mime, dataBase64: await fileToBase64(file), bytes: file.size }
 }
 

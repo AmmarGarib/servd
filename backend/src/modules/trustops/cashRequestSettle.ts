@@ -27,7 +27,7 @@
 // convert (no usable category, equipment, a refused posting) is 409
 // VOUCHER_STILL_HELD — finance fixes the cause or corrects it by manual
 // journal. Supporting documents (POST/DELETE /:id/documents: PDF, images,
-// Office, CSV / text through lib/evidenceFile.ts allowOffice, ≤ 5 MB, ≤ 20)
+// Office, CSV / text through lib/evidenceFile.ts allowOffice, ≤ 10 MB, ≤ 20)
 // work as for any voucher and book nothing; POST /:id/spend is retired.
 
 // ── Legacy H3 rows (expenseOnVerify false: paid before 2026-10-15) ──
@@ -81,12 +81,12 @@ import { audit } from '../../lib/audit.js'
 export const MAX_RECEIPTS_PER_REQUEST = 20
 /** Supporting documents one voucher may carry (2026-10-15 flow). */
 export const MAX_DOCUMENTS_PER_VOUCHER = 20
-/** A supporting document may be at most 5 MB decoded. */
-export const DOCUMENT_MAX_BYTES = 5 * 1024 * 1024
-/** base64 of 5 MB is ~6.7 MB; room for a data-URL prefix, the name and line breaks. */
-const DOCUMENT_BODY_LIMIT = 8 * 1024 * 1024
-/** base64 of 3 MB is 4 MB; room for a data-URL prefix and line breaks. */
-const RECEIPT_BODY_LIMIT = 6 * 1024 * 1024
+/** A supporting document may be at most 10 MB decoded. */
+export const DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
+/** base64 of 10 MB is ~13.4 MB; room for a data-URL prefix, the name and line breaks. */
+const DOCUMENT_BODY_LIMIT = 15 * 1024 * 1024
+/** base64 of 10 MB is ~13.4 MB; room for a data-URL prefix and line breaks. */
+const RECEIPT_BODY_LIMIT = 15 * 1024 * 1024
 
 /** One line of a settlement (a box spend's line shape; the description is optional on a stock line). */
 const SETTLE_LINE = z.object({
@@ -195,7 +195,7 @@ async function markDocsChecked(
 export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
   // POST /:id/receipts { photo, mime } — the holder or a keeper, while the
   // request is paid and open. JPEG / PNG / WebP / PDF (lib/evidenceFile.ts,
-  // magic bytes, ≤ 3 MB → 400 BAD_FILE); at most 20 per request (409
+  // magic bytes, ≤ 10 MB → 400 BAD_FILE); at most 20 per request (409
   // TOO_MANY_RECEIPTS). Books nothing.
   fastify.post<{ Params: { id: string } }>('/:id/receipts', { preHandler: requireAuth(...ALL_STAFF), bodyLimit: RECEIPT_BODY_LIMIT }, async (req, reply) => {
     const body = z.object({ photo: z.string().min(1), mime: z.string().min(1).max(100) }).parse(req.body ?? {})
@@ -445,7 +445,7 @@ export async function cashRequestSettleRoutes(fastify: FastifyInstance) {
   // (kind 'supporting'). The holder (kind request), finance, a keeper or the
   // paying box's custodian, from 'approved' until it is posted; after posting
   // (or on a settled / converted legacy row) keepers only. Extension, mime and
-  // magic bytes must agree (400 BAD_FILE); ≤ 5 MB; ≤ 20 per voucher (409
+  // magic bytes must agree (400 BAD_FILE); ≤ 10 MB; ≤ 20 per voucher (409
   // TOO_MANY_DOCUMENTS). Books nothing.
   fastify.post<{ Params: { id: string } }>('/:id/documents', { preHandler: requireAuth(...ALL_STAFF), bodyLimit: DOCUMENT_BODY_LIMIT }, async (req, reply) => {
     const body = z.object({

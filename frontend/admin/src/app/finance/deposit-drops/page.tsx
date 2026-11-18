@@ -44,7 +44,7 @@ const SLIP_ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf'
 const MAX_SLIPS = 5
 const slipPath = (dropId: string, fileId: string) => `/trustops/deposit-drops/${dropId}/files/${fileId}`
 
-/** Photos are compressed (JPEG, like cash-voucher receipts); PDFs go up as they are (≤ 3 MB). */
+/** Photos are compressed (JPEG, like cash-voucher receipts); PDFs go up as they are (≤ 10 MB). */
 async function pickSlips(list: FileList | null, room: number): Promise<PickedSlip[]> {
   const files = Array.from(list ?? [])
   if (files.length > room) throw new Error(room <= 0 ? `A deposit takes at most ${MAX_SLIPS} files.` : `You can add ${room} more file${room === 1 ? '' : 's'} (at most ${MAX_SLIPS} per deposit).`)

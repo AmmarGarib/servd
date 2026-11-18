@@ -183,8 +183,8 @@ async function requireCashKeeper(req: FastifyRequest): Promise<void> {
 //    evidence store (CashVoucherAttachment kind 'deposit_slip', depositDropId).
 const DEPOSIT_SLIP_KIND = 'deposit_slip'
 const DEPOSIT_SLIP_MAX_FILES = 5
-/** 5 files × 3 MB, base64 (+⅓) and JSON overhead. */
-const DEPOSIT_SLIP_BODY_LIMIT = 22 * 1024 * 1024
+/** 5 files × 10 MB, base64 (+⅓) and JSON overhead. */
+const DEPOSIT_SLIP_BODY_LIMIT = 70 * 1024 * 1024
 const DEPOSIT_NO_SLIP_TITLE = 'Deposit drop without a deposit slip'
 /** The title flags raised before 2026-10-16 carry — still resolved by an attach. */
 const DEPOSIT_NO_SLIP_LEGACY_TITLE = 'Deposit drop without bank receipt'
@@ -242,7 +242,7 @@ const zDepositSlipFile = z.object({
   mime:       z.string().min(1).max(100),
   dataBase64: z.string().min(1),
 })
-/** Decode every slip (JPEG / PNG / WebP / PDF, ≤ 3 MB, magic bytes) — throws 400 on the first bad one. */
+/** Decode every slip (JPEG / PNG / WebP / PDF, ≤ 10 MB, magic bytes) — throws 400 on the first bad one. */
 function decodeDepositSlips(files: Array<z.infer<typeof zDepositSlipFile>>) {
   return files.map((f, i) => {
     const d = decodeEvidenceFile(f.dataBase64, f.mime, { allowPdf: true })
@@ -947,10 +947,10 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
 
   // ── Receipts of direct box spends (CashVoucherAttachment kind 'receipt',
   //    boxId = the box, company = the box's). Bytes in the DB, checked by
-  //    lib/evidenceFile.ts (JPEG / PNG / WebP / PDF, magic bytes, ≤ 3 MB).
+  //    lib/evidenceFile.ts (JPEG / PNG / WebP / PDF, magic bytes, ≤ 10 MB).
 
   // POST /trustops/petty-cash/receipts — the box's custodian or a keeper.
-  fastify.post('/petty-cash/receipts', { preHandler: requireAuth(...ALL_STAFF), bodyLimit: 6 * 1024 * 1024 }, async (req, reply) => {
+  fastify.post('/petty-cash/receipts', { preHandler: requireAuth(...ALL_STAFF), bodyLimit: 15 * 1024 * 1024 }, async (req, reply) => {
     const body = z.object({
       boxId: z.string().min(1),
       photo: z.string().min(1),
@@ -1166,7 +1166,7 @@ export async function trustopsRoutes(fastify: FastifyInstance) {
   //
   // Deposit slips are FILES (owner, 2026-10-16: "it should ask for attachment
   // instead of URL for supporting docs"): `files` (0–5, JPEG / PNG / WebP /
-  // PDF, ≤ 3 MB each, lib/evidenceFile.ts) are all checked BEFORE anything is
+  // PDF, ≤ 10 MB each, lib/evidenceFile.ts) are all checked BEFORE anything is
   // written and saved with the drop in ONE transaction, in the drop's company
   // (CashVoucherAttachment kind 'deposit_slip'). `receiptUrl` is still
   // accepted from old clients; the admin no longer sends it.

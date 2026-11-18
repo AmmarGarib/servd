@@ -6,7 +6,7 @@
 //
 //   • DocumentsPanel — multiple files (PDF, photos, Excel, Word, PowerPoint,
 //     CSV, TXT). Photos are compressed like the receipts (photoPrep); every
-//     other file goes up as it is (≤ 5 MB, ≤ 20 per voucher).
+//     other file goes up as it is (≤ 10 MB, ≤ 20 per voucher).
 //   • VerifyPanel — finance marks the documents checked (no lines, no change).
 //   • ResolveByJournalPanel — a voucher still held on 1357 that cannot be booked
 //     here: finance posts a manual journal (Dr the right account / Cr 1357) and
@@ -30,7 +30,7 @@ import { Modal } from '../../../components/ui/Modal'
 const card = { background: 'var(--surface)', border: '1px solid var(--border)' }
 export const DOC_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.csv,.txt'
 const MAX_DOCS = 20
-const MAX_BYTES = 5 * 1024 * 1024
+const MAX_BYTES = 10 * 1024 * 1024
 
 const MIME_BY_EXT: Record<string, string> = {
   pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
@@ -58,16 +58,16 @@ async function prepareDocument(file: File): Promise<{ fileName: string; mime: st
     const p = await preparePhoto(file)
     return { fileName: file.name.replace(/\.[^.]+$/, '') + '.jpg', mime: p.mime, dataBase64: p.base64 }
   }
-  if (file.size > MAX_BYTES) throw new Error(`${file.name} is larger than 5 MB.`)
+  if (file.size > MAX_BYTES) throw new Error(`${file.name} is larger than 10 MB.`)
   return { fileName: file.name, mime: MIME_BY_EXT[ext]!, dataBase64: await fileToBase64(file) }
 }
 
-/** Size and type, checked on select (the same list the server takes — evidenceFile allowOffice). Photos are compressed before upload, so only other files carry the 5 MB cap. */
+/** Size and type, checked on select (the same list the server takes — evidenceFile allowOffice). Photos are compressed before upload, so only other files carry the 10 MB cap. */
 export function checkDocument(file: File): string | null {
   const ext = extOf(file.name)
   if (!MIME_BY_EXT[ext]) return `${file.name}: not accepted. Use PDF, photos, Excel, Word, PowerPoint, CSV or TXT.`
   const isPhoto = ['jpg', 'jpeg', 'png', 'webp'].includes(ext)
-  if (!isPhoto && file.size > MAX_BYTES) return `${file.name}: ${kb(file.size)} is over the 5 MB limit.`
+  if (!isPhoto && file.size > MAX_BYTES) return `${file.name}: ${kb(file.size)} is over the 10 MB limit.`
   if (file.size === 0) return `${file.name}: the file is empty.`
   return null
 }

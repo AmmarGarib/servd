@@ -5,7 +5,7 @@
 //   request   finance / management / owner / CEO (WRITE_OFF_REQUESTERS) asks
 //             to write off part or all of what an invoice still owes, with a
 //             reason (10-500 characters) and 1-5 evidence files (JPEG / PNG /
-//             WebP / PDF, ≤ 3 MB each, lib/evidenceFile.ts). One open request
+//             WebP / PDF, ≤ 10 MB each, lib/evidenceFile.ts). One open request
 //             per invoice (409 WRITE_OFF_OPEN); never more than the balance
 //             (409 WRITE_OFF_EXCEEDS_BALANCE). A credit note or a void invoice
 //             → 409. An on-account client's statement (kind 'statement') is
@@ -84,8 +84,8 @@ export const WRITE_OFF_STATUSES = ['requested', 'approved', 'rejected', 'cancell
 const BAD_DEBTS = ACCT.BAD_DEBTS     // 6160
 const RECEIVABLE = ACCT.CUSTOMER_AR  // 1110
 const MAX_FILES = 5
-/** Five files of 3 MB as base64 (≈ 4 MB each) and the rest of the body. */
-const REQUEST_BODY_LIMIT = 20 * 1024 * 1024
+/** Five files of 10 MB as base64 (≈ 13.4 MB each) and the rest of the body. */
+const REQUEST_BODY_LIMIT = 70 * 1024 * 1024
 const PKT_OFFSET_MS = 5 * 3_600_000
 
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}/)
