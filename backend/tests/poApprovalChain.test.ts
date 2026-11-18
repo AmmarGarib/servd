@@ -704,6 +704,9 @@ describe('old advance vouchers follow the buyer\'s actual amounts (owner, 2026-1
     // The PO shows the pay-back, not the rejected advance.
     const detail = (await call('ceoA', 'GET', `/procurement/purchase-orders/${a.po.id}`)).json()
     expect((detail.purchaseOrder ?? detail).cashVoucher?.id).toBe(pb.id)
+    // Finance pays it back from cash on hand (owner, 2026-11-18: "Failed to fetch").
+    const paid = await call('finA', 'POST', `/trustops/cash-vouchers/${pb.id}/pay`, { source: 'cash_on_hand', classification: 'official', taxStatus: 'not_applicable' })
+    expect(paid.statusCode, paid.body).toBe(200)
 
     // Approved before this rule (no pay-back raised): the boot sweep raises it once.
     const b = await run(`${P}-REJ2`)
