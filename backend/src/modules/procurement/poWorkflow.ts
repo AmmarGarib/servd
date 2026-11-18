@@ -601,7 +601,12 @@ export async function approveGrn(grnId: string, actor: Actor) {
 // ─── My tasks ────────────────────────────────────────────────────────────────
 
 /** The caller's own tasks in their companies (owner: "users see only pending tasks assigned to them"). */
-export async function myTasks(userId: string, tenantIds: string[]) {
+/**
+ * The caller's own purchasing tasks. `allToConfirm` (the CEO — owner, 2026-11-18: "approvals that are in that section
+ * need to hit my approval box … for example marking recvd on the grn"): every PO of these companies waiting for its
+ * receipt to be confirmed, not only the ones the caller raised — the CEO may confirm any (confirmReceipt's own rule).
+ */
+export async function myTasks(userId: string, tenantIds: string[], opts: { allToConfirm?: boolean } = {}) {
   if (tenantIds.length === 0) return { toBuy: [], toConfirm: [], toFix: [] }
   const supplier = { tenantId: { in: tenantIds } }
   const poInclude = {
@@ -610,7 +615,7 @@ export async function myTasks(userId: string, tenantIds: string[]) {
   } satisfies Prisma.PurchaseOrderInclude
   const [toBuy, toConfirm, fixGrns] = await Promise.all([
     prisma.purchaseOrder.findMany({ where: { buyerUserId: userId, grnWorkflow: true, status: { in: [...BUYER_STAGE] }, supplier }, include: poInclude, orderBy: { approvedAt: 'asc' }, take: 200 }),
-    prisma.purchaseOrder.findMany({ where: { createdBy: userId, grnWorkflow: true, status: 'completed', supplier }, include: poInclude, orderBy: { completedAt: 'asc' }, take: 200 }),
+    prisma.purchaseOrder.findMany({ where: { ...(opts.allToConfirm ? {} : { createdBy: userId }), grnWorkflow: true, status: 'completed', supplier }, include: poInclude, orderBy: { completedAt: 'asc' }, take: 200 }),
     prisma.goodsReceipt.findMany({
       where: { grnStatus: 'buyer_fix', tenantId: { in: tenantIds }, poId: { not: null } },
       include: { lines: true },
@@ -624,9 +629,13 @@ export async function myTasks(userId: string, tenantIds: string[]) {
   })
   const fileCount = new Map(files.map((f) => [f.ownerId!, f._count._all]))
   const shapePo = <T extends { id: string; totalCents: unknown }>(p: T) => ({ ...p, totalCents: toCents(p.totalCents as never), invoiceFiles: fileCount.get(p.id) ?? 0 })
+  // Who raised each PO to confirm (the CEO's list holds other people's).
+  const raiserIds = [...new Set(toConfirm.map((p) => p.createdBy).filter((x): x is string => !!x))]
+  const raisers = raiserIds.length ? await prisma.user.findMany({ where: { id: { in: raiserIds } }, select: { id: true, name: true } }) : []
+  const raiserName = new Map(raisers.map((u) => [u.id, u.name]))
   return {
     toBuy: toBuy.map(shapePo),
-    toConfirm: toConfirm.map(shapePo),
+    toConfirm: toConfirm.map((p) => ({ ...shapePo(p), raisedByName: p.createdBy ? raiserName.get(p.createdBy) ?? null : null, mine: p.createdBy === userId })),
     toFix: fixGrns.filter((g) => poById.has(g.poId!)).map((g) => ({ ...g, po: shapePo(poById.get(g.poId!)!) })),
   }
 }

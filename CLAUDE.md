@@ -468,6 +468,13 @@ module id must be placed in a workspace in the same change.
   and status NOW (only when its company is one the caller belongs to). Read only, no new store; across all the
   caller's companies whatever is in view. Admin: `components/approvals/DecidedByMe.tsx` at the foot of
   `/ceo/approvals`. Tests: `tests/approvalsDecided.test.ts`.
+- **Purchasing steps on the approvals page; the CEO sees every delivery to confirm (owner, 2026-11-18: "approvals
+  that are in that section need to hit my approval box … for example marking recvd on the grn").** `GET
+  /procurement/my-tasks` for an `admin` login lists EVERY PO of the companies in view waiting for its receipt to be
+  confirmed (`poWorkflow.ts myTasks {allToConfirm}`; rows carry `raisedByName` / `mine`); everyone else still gets only
+  their own. `/ceo/approvals` shows `MyPoTasksCard` ("Purchasing — waiting on you") above the inbox, linking to
+  Procurement → My tasks where the confirm form is. Not an approval type (it needs quantities typed), so it is not in
+  the inbox badge count. Tests: `tests/poApprovalChain.test.ts`.
 - **Module Access binds managers too (owner C2, 2026-10-26: "Make my Module Access ticks apply to managers
   too").** `opex/moduleGate.ts moduleGateForNewRoles` exempts nobody (the CEO holds every module): OpEx
   ('capital'), Positions ('staff_directory' | 'capital'), petty cash + deposit drops ('accounting'), the

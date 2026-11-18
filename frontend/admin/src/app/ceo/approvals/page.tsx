@@ -27,6 +27,7 @@ import { RecordDetail } from '../../../components/hr/RecordDetail'
 import { PENDING_LAYOUTS_KEY } from '../../../components/storefront/ApprovalsPanel'
 import { ApprovalActionDialog } from '../../../components/approvals/ApprovalActionDialog'
 import { DecidedByMe } from '../../../components/approvals/DecidedByMe'
+import { MyPoTasksCard } from '../../../components/procurement/MyPoTasksCard'
 import { JournalRequestDiff } from '../../accounting/journal/JournalRequestDiff'
 import {
   APPROVALS_INBOX_KEY, APPROVALS_ROOT, useHeadOffices,
@@ -253,6 +254,10 @@ function ApprovalsInbox() {
           </Select>
         </label>
       </div>
+      {/* Purchasing steps that wait on this login (owner, 2026-11-18: operations items "need to hit my approval box … for
+          example marking recvd on the grn"): to buy, to confirm what arrived (the CEO: every PO waiting), to fix. */}
+      <MyPoTasksCard title="Purchasing — waiting on you" />
+
       {(() => {
         // Waiting in this login's other companies: counted, not listed.
         const n = filter === 'all' ? (data?.elsewhere ?? 0) : (data?.types.find((x) => x.type === filter)?.elsewhere ?? 0)

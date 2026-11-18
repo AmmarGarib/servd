@@ -8,7 +8,8 @@
 //   POST /purchase-orders/:id/complete         {invoiceNumber, invoiceDate, lines?, note?}   the PO's buyer (or the CEO)
 //   POST /purchase-orders/:id/confirm-receipt  {lines:[{poLineId, quantityReceived}], locationId?, notes?}  the requester (or the CEO)
 //   POST /purchase-orders/:id/reject-receipt   {note ≥10}                            the requester (or the CEO)
-//   GET  /my-tasks                             → { toBuy, toConfirm, toFix } — only the caller's own
+//   GET  /my-tasks                             → { toBuy, toConfirm, toFix } — only the caller's own (the CEO: every
+//                                              PO of the companies in view waiting for its receipt to be confirmed)
 //   GET  /grns?status=&poId=&queue=finance|ceo  list (queue = the caller's approval queue, for the inbox)
 //   GET  /grns/:id                             detail: PO lines ordered vs received vs invoiced, files, bill
 //   POST /grns/:id/finance-pass {note?}        finance (accounting) — never the requester / buyer
@@ -155,7 +156,7 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     const su = req.staffUser!
     const members = new Set(su.memberTenantIds ?? [])
     const ids = (await scopeTenantIds(req, 'read')).filter((t) => members.has(t) || su.role === 'admin')
-    return myTasks(su.id, ids)
+    return myTasks(su.id, ids, { allToConfirm: su.role === 'admin' })
   })
 
   // ── GRNs ───────────────────────────────────────────────────────────────────

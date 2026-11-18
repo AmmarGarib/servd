@@ -34,6 +34,8 @@ export interface WfPo {
   invoiceNumber?: string | null; invoiceDate?: string | null; receiptReturnNote?: string | null; payByCash?: boolean
   supplier?: { id?: string; name: string; tenantId?: string | null; systemKind?: string | null } | null
   lines: WfLine[]; invoiceFiles: number
+  /** To confirm only: who raised it (the CEO's list also holds other people's POs). */
+  raisedByName?: string | null; mine?: boolean
 }
 interface WfGrnRow {
   id: string; grnNumber: string; grnStatus: string; invoiceNumber: string | null; invoiceDate: string | null; tenantId: string | null

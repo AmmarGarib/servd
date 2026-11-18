@@ -178,6 +178,11 @@ describe('the whole flow: CEO → buyer → requester → GRN → finance → CE
     // Twice: no.
     expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${poId}/complete`, body)).statusCode).toBe(409)
     expect((await call('chefA', 'GET', '/procurement/my-tasks')).json().toConfirm.map((p: { id: string }) => p.id)).toContain(poId)
+    // The CEO's list holds every PO of the company waiting for its receipt (owner, 2026-11-18); the buyer's and
+    // company B's do not.
+    const ceoList = (await call('ceoA', 'GET', '/procurement/my-tasks')).json().toConfirm as Array<{ id: string; mine: boolean; raisedByName: string | null }>
+    expect(ceoList.find((p) => p.id === poId)).toMatchObject({ mine: false })
+    expect((await call('buyerA', 'GET', '/procurement/my-tasks')).json().toConfirm.map((p: { id: string }) => p.id)).not.toContain(poId)
   })
 
   it('no bypass: the dock, the PO receive route and the buyer cannot receive it; only the requester confirms', async () => {

@@ -11,7 +11,7 @@ import { MY_TASKS_KEY, type MyTasks } from './PoWorkflow'
 
 const pkr = (cents: number) => `PKR ${Math.round(cents / 100).toLocaleString('en-PK')}`
 
-export function MyPoTasksCard() {
+export function MyPoTasksCard({ title = 'Your purchase orders' }: { title?: string } = {}) {
   const { data } = useQuery({
     queryKey: MY_TASKS_KEY,
     queryFn: () => api.get<MyTasks>('/procurement/my-tasks'),
@@ -23,14 +23,14 @@ export function MyPoTasksCard() {
   if (!data) return null
   const rows = [
     ...data.toBuy.map((po) => ({ key: `b:${po.id}`, label: 'To buy', ref: po.reference ?? po.id.slice(-8).toUpperCase(), who: po.supplier?.name ?? '—', total: po.totalCents })),
-    ...data.toConfirm.map((po) => ({ key: `c:${po.id}`, label: 'Confirm what arrived', ref: po.reference ?? po.id.slice(-8).toUpperCase(), who: po.supplier?.name ?? '—', total: po.totalCents })),
+    ...data.toConfirm.map((po) => ({ key: `c:${po.id}`, label: 'Confirm what arrived', ref: po.reference ?? po.id.slice(-8).toUpperCase(), who: `${po.supplier?.name ?? '—'}${po.mine === false && po.raisedByName ? ` · raised by ${po.raisedByName}` : ''}`, total: po.totalCents })),
     ...data.toFix.map((g) => ({ key: `f:${g.id}`, label: 'Fix the invoice', ref: g.po.reference ?? g.grnNumber, who: g.po.supplier?.name ?? '—', total: g.po.totalCents })),
   ]
   if (rows.length === 0) return null
   return (
     <section className="mt-5 rounded-2xl p-4" style={{ background: 'var(--surface)', border: '1px solid rgb(var(--erp-accent-rgb) / 0.55)' }}>
       <div className="flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-black text-white/90">Your purchase orders <span className="ml-1 s-badge-green">{rows.length}</span></h2>
+        <h2 className="text-sm font-black text-white/90">{title} <span className="ml-1 s-badge-green">{rows.length}</span></h2>
         <Link href="/procurement?tab=tasks" className="text-xs font-bold text-primary-ink hover:underline whitespace-nowrap">Open →</Link>
       </div>
       <ul className="mt-2 divide-y divide-white/[0.06]">
