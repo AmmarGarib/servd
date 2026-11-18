@@ -516,6 +516,54 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   //     same transaction (the one opening path) — its stock goes onto a lot
   //     and Dr class inventory / Cr capital, once.
   //   Finance may do only the assignment here.
+  // POST /inventory/issue-on-receipt {itemIds ≤300, issueOnReceipt} — the issue-on-receipt tick for MANY items at
+  // once (owner, 2026-11-18: "Give option to book stock as 'issued on receipt' in bulk"). The SAME rule as the tick on
+  // PATCH /:id, item by item: managers + the buying team holding `inventory`, or finance holding `accounting`; the
+  // caller's own companies (another company's item is listed as not found, never changed); a non-food item is never
+  // switched off; one audit row per item changed. One refusal never stops the rest. Sets the flag only — stock an item
+  // already holds stays until it is used or counted, exactly as with the single tick.
+  fastify.post('/issue-on-receipt', { preHandler: requireAuth(...ITEM_PATCHERS) }, async (req) => {
+    const body = z.object({ itemIds: z.array(z.string().uuid()).min(1).max(300), issueOnReceipt: z.boolean() }).parse(req.body)
+    const role = req.staffUser!.role
+    const finance = role === 'finance'
+    if (!(ITEM_MASTER_EDITORS as string[]).includes(role) && !finance) throw new ForbiddenError('Only a manager, the buying team or finance sets an ingredient to be issued on receipt.')
+    const u = await prisma.user.findUnique({ where: { id: req.staffUser!.id }, select: { moduleAllow: true, moduleDeny: true } })
+    const modules = await effectiveModulesForUser({ role: role as UserRole, moduleAllow: u?.moduleAllow ?? [], moduleDeny: u?.moduleDeny ?? [] })
+    if (finance ? !modules.has('accounting') : !modules.has('inventory')) {
+      throw new ForbiddenError(`Your account does not have the ${finance ? 'accounting' : 'inventory'} module. Ask the CEO to enable it in Module Access.`)
+    }
+    const ids = [...new Set(body.itemIds)]
+    const changed: Array<{ id: string; name: string }> = []
+    const failed: Array<{ id: string; name: string | null; code: string; message: string }> = []
+    let unchanged = 0
+    for (const id of ids) {
+      try {
+        const item = await assertInventoryAccess(req, id)
+        if (!item.tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', NO_COMPANY_MESSAGE, 422)
+        if (!body.issueOnReceipt && isNonFoodCategory(item.category)) {
+          throw new AppError('NON_FOOD_ISSUED_ON_RECEIPT', `${item.name} is non-food — it is always expensed (issued) when received`, 422)
+        }
+        // Conditional on the value read, so two people ticking at once never write two audit rows for one change.
+        const done = await prisma.inventoryItem.updateMany({
+          where: { id: item.id, tenantId: item.tenantId, deletedAt: null, issueOnReceipt: !body.issueOnReceipt },
+          data: { issueOnReceipt: body.issueOnReceipt },
+        })
+        if (done.count === 0) { unchanged += 1; continue }
+        await audit({
+          category: 'identity', action: 'inventory.issue_on_receipt', entity: 'InventoryItem', entityId: item.id,
+          userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: item.tenantId,
+          before: { issueOnReceipt: !body.issueOnReceipt }, after: { issueOnReceipt: body.issueOnReceipt, bulk: true },
+        })
+        changed.push({ id: item.id, name: item.name })
+      } catch (e) {
+        if (!(e instanceof AppError)) throw e
+        const name = (await prisma.inventoryItem.findFirst({ where: { id, tenantId: { in: req.staffUser!.memberTenantIds } }, select: { name: true } }))?.name ?? null
+        failed.push({ id, name, code: e.code, message: e.message })
+      }
+    }
+    return { issueOnReceipt: body.issueOnReceipt, changed, unchanged, failed }
+  })
+
   fastify.patch<{ Params: { id: string } }>(
     '/:id',
     { preHandler: requireAuth(...ITEM_PATCHERS) },

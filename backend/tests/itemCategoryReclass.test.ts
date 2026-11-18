@@ -195,6 +195,32 @@ describe('category and cost class', () => {
   })
 })
 
+describe('issue-on-receipt in bulk (owner, 2026-11-18)', () => {
+  it('sets many items at once by the single tick\'s rule; another company\'s item is never changed; audited per item', async () => {
+    const [a1, a2, a3] = [await item(A), await item(A), await item(A)]
+    const b1 = await item(B)
+    await prisma.inventoryItem.update({ where: { id: a3.id }, data: { issueOnReceipt: true } })
+    const res = await call(u.buyerA!, 'POST', '/inventory/issue-on-receipt', { itemIds: [a1.id, a2.id, a3.id, b1.id], issueOnReceipt: true })
+    expect(res.statusCode, res.body).toBe(200)
+    const out = res.json()
+    expect(out.changed.map((c: { id: string }) => c.id).sort()).toEqual([a1.id, a2.id].sort())
+    expect(out.unchanged).toBe(1)
+    expect(out.failed).toHaveLength(1)
+    expect(out.failed[0]).toMatchObject({ id: b1.id, name: null })   // B's item: not found, its name never leaks
+    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: b1.id } })).issueOnReceipt).toBe(false)
+    expect(await prisma.auditLog.count({ where: { action: 'inventory.issue_on_receipt', entityId: { in: [a1.id, a2.id] }, tenantId: A.tenantId } })).toBe(2)
+    expect(await prisma.auditLog.count({ where: { action: 'inventory.issue_on_receipt', entityId: a3.id } })).toBe(0)
+    // Finance (accounting) may switch them back; the kitchen floor never; company B changes nothing of A's.
+    const fin = await call(u.finA!, 'POST', '/inventory/issue-on-receipt', { itemIds: [a1.id], issueOnReceipt: false })
+    expect(fin.statusCode, fin.body).toBe(200)
+    expect(fin.json().changed).toHaveLength(1)
+    expect((await call(u.cookA!, 'POST', '/inventory/issue-on-receipt', { itemIds: [a2.id], issueOnReceipt: false })).statusCode).toBe(403)
+    const other = await call(u.mgrB!, 'POST', '/inventory/issue-on-receipt', { itemIds: [a2.id], issueOnReceipt: false })
+    expect(other.json().changed).toHaveLength(0)
+    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: a2.id } })).issueOnReceipt).toBe(true)
+  })
+})
+
 describe('reading the master', () => {
   it('on-hand value for managers and finance only; the cook sees no cost; B gets 404', async () => {
     const it0 = await item(A, { qty: 3, cost: 20_000 })

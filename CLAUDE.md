@@ -2526,6 +2526,12 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   reviewers' (and `MASTER_UNIT_IN_USE`). A new ingredient keeps the unit it was added in. Both "add ingredient" forms
   make the unit a required pick (no kg default) and take an optional price per that unit
   (`MasterIngredientPicker.tsx priceCentsFor`). Tests: `tests/ingredientMaster.test.ts`.
+- **Issue on receipt in bulk (owner, 2026-11-18: "Give option to book stock as 'issued on receipt' in bulk").** `POST
+  /inventory/issue-on-receipt {itemIds ≤300, issueOnReceipt}` — the single tick's own rule item by item (managers + the
+  buying team holding `inventory`, finance holding `accounting`; own companies — another company's item is listed as
+  not found, never changed; non-food never switched off; one `inventory.issue_on_receipt` audit row per item changed,
+  `bulk: true`); answers `{changed, unchanged, failed}`. Sets the flag only. Admin: Inventory → "Select items" (tick rows,
+  "Select all" per category / shown). Tests: `tests/itemCategoryReclass.test.ts`.
 - **Suppliers belong to servd (owner, 2026-11-14: "we need to make suppliers belong to servd. just like the ingredient
   master list").** `SupplierMaster` (`supplier_masters`, deliberately NO `tenantId`): the DEFINITION — name, category,
   phone, email, WhatsApp, address, NTN, filer status, WHT exemption, default tax authority / WHT section. Each company's

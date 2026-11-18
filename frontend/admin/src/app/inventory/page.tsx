@@ -201,6 +201,30 @@ export default function InventoryPage() {
   const managerRoles = useManagerRoles()
   // Finance edits only the issue-on-receipt tick here (owner, 2026-11-17: "Show it to finance also for time being").
   const financeOnly = me?.role === 'finance'
+  // Issue on receipt for many items at once (owner, 2026-11-18): tick rows, then set or clear it for all of them.
+  const canIor = managerRoles.has(me?.role ?? '') || me?.role === 'procurement' || financeOnly
+  const [picking, setPicking] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [iorNote, setIorNote] = useState<string | null>(null)
+  const togglePicked = (ids: string[], on: boolean) => setPicked((prev) => {
+    const next = new Set(prev)
+    for (const id of ids) { if (on) next.add(id); else next.delete(id) }
+    return next
+  })
+  const bulkIor = useMutation({
+    mutationFn: (issueOnReceipt: boolean) => api.post<{ changed: Array<{ id: string }>; unchanged: number; failed: Array<{ name: string | null; message: string }> }>(
+      '/inventory/issue-on-receipt', { itemIds: [...picked], issueOnReceipt }),
+    onSuccess: (r, issueOnReceipt) => {
+      void qc.invalidateQueries({ queryKey: ['inventory'] })
+      const parts = [`${r.changed.length} item${r.changed.length === 1 ? '' : 's'} ${issueOnReceipt ? 'set to issued on receipt' : 'back to normal stock'}`]
+      if (r.unchanged) parts.push(`${r.unchanged} already ${issueOnReceipt ? 'were' : 'normal'}`)
+      if (r.failed.length) parts.push(`${r.failed.length} not changed: ${r.failed.slice(0, 5).map((f) => f.name ? `${f.name} — ${f.message}` : f.message).join('; ')}${r.failed.length > 5 ? '…' : ''}`)
+      setIorNote(parts.join(' · '))
+      setPicked(new Set())
+      if (!r.failed.length) setPicking(false)
+    },
+    onError: (e: Error) => setIorNote(e.message),
+  })
   const { data: perms } = usePermissions()
   const canOpen = (path: string) => !!perms && canOpenPath(path, perms.role, perms.modules ?? [])
   // The uploaded photo: its public URL (sent as photoUrl) and a local preview.
@@ -886,6 +910,38 @@ export default function InventoryPage() {
                   </div>
                 )}
 
+                {canIor && !kitchenView && (
+                  <div className={`flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 ${picking ? 'sticky top-2 z-20 border-primary bg-s-surface shadow-lg' : 'border-s-border'}`}>
+                    {!picking ? (
+                      <>
+                        <button type="button" onClick={() => { setPicking(true); setIorNote(null) }}
+                          className="text-xs font-bold px-3 py-1.5 rounded-lg border border-s-border text-s-text hover:border-primary hover:text-primary-ink transition-colors">
+                          Select items
+                        </button>
+                        <span className="text-xs text-s-muted">Set several items to &ldquo;Issued on receipt&rdquo; in one go.</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-sm font-black text-s-text">{picked.size} selected</span>
+                        <button type="button" disabled={picked.size === 0 || bulkIor.isPending} onClick={() => bulkIor.mutate(true)}
+                          className="s-btn-primary px-3 py-1.5 text-xs font-bold disabled:opacity-50">
+                          {bulkIor.isPending ? 'Saving…' : 'Set issued on receipt'}
+                        </button>
+                        <button type="button" disabled={picked.size === 0 || bulkIor.isPending} onClick={() => bulkIor.mutate(false)}
+                          className="text-xs font-bold px-3 py-1.5 rounded-lg border border-s-border text-s-text hover:border-primary disabled:opacity-50">
+                          Back to normal stock
+                        </button>
+                        <button type="button" onClick={() => togglePicked(shown.filter((i) => i.tenantId).map((i) => i.id), true)}
+                          className="text-xs font-semibold text-primary-ink hover:underline">Select all shown</button>
+                        <button type="button" onClick={() => { setPicking(false); setPicked(new Set()) }}
+                          className="text-xs font-semibold text-s-muted hover:underline ml-auto">Done</button>
+                        <p className="basis-full text-[11px] text-s-muted">Issued on receipt: each delivery goes straight to cost of sales instead of sitting in stock. Stock an item already holds stays until it is used or counted.</p>
+                      </>
+                    )}
+                    {iorNote && <p role="status" className="basis-full text-xs font-semibold text-s-text">{iorNote}</p>}
+                  </div>
+                )}
+
                 {groupChoices.length > 0 && (
                   <div className="flex flex-wrap items-center gap-2">
                     <label htmlFor="inv-group" className="text-xs text-s-muted">Group</label>
@@ -905,7 +961,18 @@ export default function InventoryPage() {
                   const hasGroups = catItems.some((i) => i.group)
                   return (
                   <div key={cat}>
-                    <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2">{cat}</p>
+                    <p className="text-xs font-bold text-s-muted uppercase tracking-widest mb-2 flex flex-wrap items-center gap-3">
+                      <span>{cat}</span>
+                      {picking && (() => {
+                        const ids = catItems.filter((i) => i.tenantId).map((i) => i.id)
+                        const all = ids.length > 0 && ids.every((id) => picked.has(id))
+                        return ids.length > 0 && (
+                          <button type="button" onClick={() => togglePicked(ids, !all)} className="normal-case tracking-normal text-xs font-semibold text-primary-ink hover:underline">
+                            {all ? 'Clear these' : `Select all ${ids.length}`}
+                          </button>
+                        )
+                      })()}
+                    </p>
                     <div className="rounded-xl border border-s-border overflow-hidden">
                       {catItems.map((item, idx) => {
                         const isLow = item.currentStock <= item.parLevel
@@ -918,6 +985,10 @@ export default function InventoryPage() {
                             className={`border-b border-s-border/50 last:border-0 transition-colors ${isLow ? 'bg-red-100/5' : ''}`}>
                             <div className="flex items-center justify-between gap-2 px-4 py-3 flex-wrap">
                               <div className="flex items-center gap-3 min-w-0 flex-wrap">
+                                {picking && item.tenantId && (
+                                  <input type="checkbox" className="accent-accent h-4 w-4 shrink-0" aria-label={`Select ${item.name}`}
+                                    checked={picked.has(item.id)} onChange={(e) => togglePicked([item.id], e.target.checked)} />
+                                )}
                                 <span className={`text-sm font-semibold ${isLow ? 'text-s-red' : 'text-s-text'}`}>
                                   {item.name}
                                 </span>
