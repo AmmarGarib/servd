@@ -530,7 +530,9 @@ export interface ProfitAndLossReport {
 // Which section an account shows in is STORED on the account (lib/accountSection.ts plSectionOf) — never its code.
 
 export async function profitAndLoss(tenantIds: string[], dateFrom: Date, dateTo: Date): Promise<ProfitAndLossReport> {
-  const rows = await aggregateByAccount({ tenantIds, dateFrom, dateTo })
+  // An account whose debits and credits cancel out in the period is not listed (owner, 2026-11-18: "Do not show 0
+  // balance accounts in P&L") — the screen and every export read these rows; totals are unchanged.
+  const rows = (await aggregateByAccount({ tenantIds, dateFrom, dateTo })).filter((r) => r.balanceCents !== 0)
 
   const revenueRows = rows.filter((r) => r.type === 'revenue')
   const revenue = revenueRows

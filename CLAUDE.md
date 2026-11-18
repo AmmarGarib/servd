@@ -1645,6 +1645,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   Still by code, on purpose: which SYSTEM account a module posts to, brand sales (40xx), the cost-of-sales food /
   drinks / packaging split (5010–5030), reserved ranges, bank codes (10xx), cash-flow categories. Tests:
   `tests/setupChartGuards.test.ts`.
+- **The P&L lists no account at zero (owner, 2026-11-18: "Do not show 0 balance accounts in P&L").** `reports.ts
+  profitAndLoss` drops an account whose debits and credits cancel out in the period — the screen and every export;
+  totals unchanged. Tests: `tests/setupChartGuards.test.ts`.
 - **Trial balance presentation (owner, 2026-10-16):** ONE net balance per
   account — debits − credits in the Debit column when positive, the Credit
   column when negative, never both — and accounts at zero are not listed (a

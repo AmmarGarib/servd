@@ -315,6 +315,23 @@ describe('codes are picked by servd; where an account shows is stored on it', ()
     expect(after.totals.grossProfitCents).toBe(before.totals.grossProfitCents + 250_000)
   })
 
+  it('the P&L does not list an account at zero for the period (owner, 2026-11-18)', async () => {
+    const { profitAndLoss } = await import('../src/modules/accounting/reports.js')
+    const { postJournalEntry } = await import('../src/modules/accounting/journal.js')
+    const acc = (await call('finA', 'POST', '/setup/chart-of-accounts', { name: 'Nets to zero', type: 'expense' })).json() as { code: string }
+    const from = new Date('2026-09-01T00:00:00Z'); const to = new Date('2026-09-30T23:59:59Z')
+    const before = await profitAndLoss([tenantA], from, to)
+    await postJournalEntry({ tenantId: tenantA, entryDate: new Date('2026-09-10T08:00:00Z'), description: 'In', sourceType: 'manual', sourceId: `z1-${P}`,
+      lines: [{ accountCode: acc.code, type: 'debit', amountCents: 40_000 }, { accountCode: '1010', type: 'credit', amountCents: 40_000 }] })
+    expect((await profitAndLoss([tenantA], from, to)).opex.find((r) => r.code === acc.code)?.amountCents).toBe(40_000)
+    await postJournalEntry({ tenantId: tenantA, entryDate: new Date('2026-09-20T08:00:00Z'), description: 'Out', sourceType: 'manual', sourceId: `z2-${P}`,
+      lines: [{ accountCode: '1010', type: 'debit', amountCents: 40_000 }, { accountCode: acc.code, type: 'credit', amountCents: 40_000 }] })
+    const after = await profitAndLoss([tenantA], from, to)
+    expect(after.opex.find((r) => r.code === acc.code)).toBeUndefined()
+    expect([...after.revenue, ...after.cogs, ...after.opex, ...after.otherIncome].every((r) => r.amountCents !== 0)).toBe(true)
+    expect(after.totals.netProfitCents).toBe(before.totals.netProfitCents)
+  })
+
   it("an account servd posts to itself keeps its section (422 SECTION_FIXED)", async () => {
     for (const code of ['5010', '6030', '4200', '4001']) {
       const res = await call('ceoA', 'PATCH', `/setup/chart-of-accounts/${await accountId(tenantA, code)}`, { plSection: code.startsWith('4') ? (code === '4200' ? 'revenue' : 'other_income') : (code === '5010' ? 'operating_expense' : 'cost_of_sales') })
