@@ -1431,9 +1431,10 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
                       {b.taxCents > 0 && <p className="text-xs font-normal text-s-muted">incl. {fmtPkrWhole(b.taxCents)} {authorityShort(b.taxAuthority) || 'sales'} tax</p>}
                       {b.whtCents > 0 && <p className="text-xs font-normal text-s-muted">{fmtPkrWhole(b.whtCents)} withheld{b.whtSection && b.whtSection !== 'none' ? ` (${whtLabel(b.whtSection).split(' — ')[0]})` : ''}</p>}
                     </td>
-                    <td className={`px-4 py-3 font-semibold text-right ${billDue(b) > 0 ? 'text-s-red' : 'text-success'}`}>
-                      {fmtPkrWhole(billDue(b))}
-                      {(b.creditedCents ?? 0) > 0 && <p className="text-xs font-normal text-s-muted">{fmtPkrWhole(b.creditedCents ?? 0)} credited</p>}
+                    {/* A voided bill owes nothing (owner, 2026-11-19): a dash, never its old amount in red. */}
+                    <td className={`px-4 py-3 font-semibold text-right ${b.status === 'void' ? 'text-s-muted' : billDue(b) > 0 ? 'text-s-red' : 'text-success'}`}>
+                      {b.status === 'void' ? '—' : fmtPkrWhole(billDue(b))}
+                      {b.status !== 'void' && (b.creditedCents ?? 0) > 0 && <p className="text-xs font-normal text-s-muted">{fmtPkrWhole(b.creditedCents ?? 0)} credited</p>}
                     </td>
                     <td className="px-4 py-3"><Badge status={isOverdue ? 'overdue' : b.status} /></td>
                     <td className="px-4 py-3">
