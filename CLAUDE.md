@@ -3366,6 +3366,12 @@ approved + punch (approved wins per day); Casual / Annual / Sick Availed beside
 the balances (balances include `leave_adjustment`). Tests:
 `tests/hrPunchOvertimeAbsent.test.ts`.
 
+**Signing out never checks anyone out (owner, 2026-11-19: "Logout on shift completion should not include attendance
+sign out … every individual will check in & out manually, if someone forgets it should automatically sign out at
+12 AM").** The admin sidebar button is "Sign out" (`AppShell.tsx handleSignOut` → `POST /auth/logout` only); it no
+longer calls `/auth/clock-out`. A session ending at shift end never touched attendance either. Check in / Check out
+is the time-clock card's own button; a forgotten check-out is closed at 12:00 AM by the existing rule (rule 5 below).
+
 **Company default rota (owner, 2026-10-22: "Put all staff on the rota before
 1 Nov" — 11:00–19:00, Monday off).** HR setting `defaultRota {start, end,
 breakMinutes, weeklyOff}` (per company, default ON at those values; null =

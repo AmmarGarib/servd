@@ -534,8 +534,8 @@ export async function authRoutes(fastify: FastifyInstance) {
     },
   )
 
-  // POST /auth/clock-in and /auth/clock-out are the tablet's and the admin
-  // logout's punch calls. They hand off to the time-clock module, which is the
+  // POST /auth/clock-in and /auth/clock-out are punch calls (the admin's Sign out no longer calls clock-out —
+  // owner, 2026-11-19: signing out never signs anyone out of attendance). They hand off to the time-clock module, which is the
   // ONE punch writer: it applies the company's geofence (lib/setup-config.ts),
   // writes the ClockLog, and turns the punch into the day's HR attendance.
   fastify.post('/clock-in', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {

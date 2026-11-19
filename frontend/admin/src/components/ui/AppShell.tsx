@@ -704,15 +704,13 @@ function Shell({ children }: { children: React.ReactNode }) {
     return () => timers.forEach(clearTimeout)
   }, [pathname])
 
-  async function handleClockOut() {
+  // Signing out of servd never touches attendance (owner, 2026-11-19: "Logout on shift completion should not include
+  // attendance sign out … every individual will sign-in & out manually"). Check in / Check out is the time-clock
+  // card's own button; a forgotten check-out is closed by servd at 12:00 AM (hr/attendance.ts).
+  async function handleSignOut() {
     if (clockingOut) return
     setClockingOut(true)
-    try {
-      await fetch(`${API_URL}/api/v1/auth/clock-out`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token ?? ''}` },
-      })
-    } catch { /* ignore network errors — still sign out */ }
+    try { await api.post('/auth/logout', {}) } catch { /* sign out locally anyway */ }
     clearAuth()
     router.replace('/login')
   }
@@ -758,10 +756,10 @@ function Shell({ children }: { children: React.ReactNode }) {
               <path d="M5 6.5V4.75a2.5 2.5 0 015 0V6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
             </svg>
           </Link>
-          <button onClick={() => void handleClockOut()} disabled={clockingOut}
+          <button onClick={() => void handleSignOut()} disabled={clockingOut}
             className="w-full flex justify-center py-1.5 rounded-lg transition-colors"
             style={{ color: 'rgb(var(--fg-rgb) / 0.2)' }}
-            title="Clock out"
+            title="Sign out" aria-label="Sign out"
             onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--erp-danger)')}
             onMouseLeave={(e) => (e.currentTarget.style.color = 'rgb(var(--fg-rgb) / 0.2)')}>
             <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
@@ -782,7 +780,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               </svg>
               Change password / PIN
             </Link>
-            <button onClick={() => void handleClockOut()} disabled={clockingOut}
+            <button onClick={() => void handleSignOut()} disabled={clockingOut}
               className="w-full flex items-center justify-center gap-1.5 rounded-xl py-1.5 text-xs font-semibold transition-all disabled:opacity-50"
               style={{ background: 'rgba(255,138,128,0.12)', border: '1px solid rgba(255,138,128,0.3)', color: '#ffb4ab' }}
               onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,138,128,0.2)' }}
@@ -791,7 +789,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 <path d="M9 4L11.5 6.5m0 0L9 9M11.5 6.5H5M5 2H3.5A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5"
                   stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
-              {clockingOut ? 'Clocking out…' : 'Clock out'}
+              {clockingOut ? 'Signing out…' : 'Sign out'}
             </button>
           </div>
         )}
