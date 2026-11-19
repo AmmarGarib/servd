@@ -1648,6 +1648,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
 - **The P&L lists no account at zero (owner, 2026-11-18: "Do not show 0 balance accounts in P&L").** `reports.ts
   profitAndLoss` drops an account whose debits and credits cancel out in the period — the screen and every export;
   totals unchanged. Tests: `tests/setupChartGuards.test.ts`.
+- **The P&L opens "As at today" (owner, 2026-11-19: "P&L should show balance 'As at' current date … closing balances
+  till date").** `accounting/pl-ledger/page.tsx` default preset `asat` = everything booked up to the chosen day (from
+  `BOOKS_START`), one "As at" date; "Pick dates" and the other presets give a range; the export follows what is on
+  screen. The balance sheet was already as at today. Migration `20261119100000`: a hand-made expense account under a
+  7-code (not servd's 7010–7040) is an Operating expense, not Discounts / Refunds.
 - **Trial balance presentation (owner, 2026-10-16):** ONE net balance per
   account — debits − credits in the Debit column when positive, the Credit
   column when negative, never both — and accounts at zero are not listed (a

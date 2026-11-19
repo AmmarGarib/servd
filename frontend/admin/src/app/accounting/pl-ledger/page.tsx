@@ -53,7 +53,11 @@ type Tab = 'statement' | 'brands'
 function shiftDays(iso: string, days: number): string {
   return new Date(new Date(`${iso}T00:00:00Z`).getTime() + days * 86_400_000).toISOString().slice(0, 10)
 }
+// "As at" (owner, 2026-11-19: "P&L should show balance 'As at' current date") — everything booked up to the chosen
+// day, so an expense and a later recharge of it are always seen together. It is the page's default.
+const BOOKS_START = '2000-01-01'
 const PRESETS: Array<{ key: string; label: string; range: () => { from: string; to: string } }> = [
+  { key: 'asat',      label: 'As at today', range: () => ({ from: BOOKS_START, to: todayPktIso() }) },
   { key: 'today',     label: 'Today',      range: () => ({ from: todayPktIso(), to: todayPktIso() }) },
   { key: 'yesterday', label: 'Yesterday',  range: () => ({ from: shiftDays(todayPktIso(), -1), to: shiftDays(todayPktIso(), -1) }) },
   { key: 'week',      label: 'Last 7 days', range: () => ({ from: shiftDays(todayPktIso(), -6), to: todayPktIso() }) },
@@ -215,8 +219,9 @@ function BrandTable({ data }: { data: ByBrand }) {
 
 export default function PLLedgerPage() {
   const [tab, setTab] = useState<Tab>('statement')
-  const [preset, setPreset] = useState<string | null>('month')
-  const [from, setFrom] = useState(startOfMonthPktIso())
+  const [preset, setPreset] = useState<string | null>('asat')
+  const [from, setFrom] = useState(BOOKS_START)
+  const asAt = preset === 'asat'
   const [to,   setTo]   = useState(todayPktIso())
   const [csvError, setCsvError] = useState<string | null>(null)
 
@@ -239,7 +244,8 @@ export default function PLLedgerPage() {
   }
 
   const exportPath = `${tab === 'statement' ? '/accounting/pl-ledger' : '/accounting/pl-ledger/brands'}?dateFrom=${from}&dateTo=${to}`
-  const exportName = tab === 'statement' ? `pl-${from}-${to}` : `pl-by-brand-${from}-${to}`
+  const period = asAt ? `as-at-${to}` : `${from}-${to}`
+  const exportName = tab === 'statement' ? `pl-${period}` : `pl-by-brand-${period}`
 
   const isLoading = tab === 'statement' ? statement.isLoading : brands.isLoading
 
@@ -250,7 +256,7 @@ export default function PLLedgerPage() {
           <div>
             <Link href="/accounting" className="text-xs text-s-muted hover:text-s-text">← Accounting</Link>
             <h1 className="text-xl font-bold text-s-text">Profit &amp; Loss</h1>
-            <p className="text-xs text-s-muted">From the ledger — revenue ex-GST, after discounts and refunds.</p>
+            <p className="text-xs text-s-muted">From the ledger — revenue ex-GST, after discounts and refunds.{asAt ? ` Everything booked up to ${to}.` : ''}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {PRESETS.map((p) => (
@@ -263,11 +269,21 @@ export default function PLLedgerPage() {
                 {p.label}
               </button>
             ))}
-            <Input className="w-auto px-2 py-1 text-sm" type="date" value={from} onChange={(e) => { setPreset(null); setFrom(e.target.value) }}
-               />
-            <span className="text-s-muted text-xs">→</span>
-            <Input className="w-auto px-2 py-1 text-sm" type="date" value={to} onChange={(e) => { setPreset(null); setTo(e.target.value) }}
-               />
+            {asAt ? (
+              <>
+                <span className="text-s-muted text-xs">As at</span>
+                {/* Changing the day keeps "as at": everything up to that day. */}
+                <Input className="w-auto px-2 py-1 text-sm" type="date" aria-label="As at date" value={to} max={todayPktIso()} onChange={(e) => { if (e.target.value) setTo(e.target.value) }} />
+                <button onClick={() => { setPreset(null); setFrom(startOfMonthPktIso()) }}
+                  className="rounded-lg px-3 py-1.5 text-xs font-semibold bg-s-surface border border-s-border text-s-muted hover:text-s-text">Pick dates</button>
+              </>
+            ) : (
+              <>
+                <Input className="w-auto px-2 py-1 text-sm" type="date" aria-label="From" value={from} onChange={(e) => { setPreset(null); setFrom(e.target.value) }} />
+                <span className="text-s-muted text-xs">→</span>
+                <Input className="w-auto px-2 py-1 text-sm" type="date" aria-label="To" value={to} onChange={(e) => { setPreset(null); setTo(e.target.value) }} />
+              </>
+            )}
             <ExportMenu path={exportPath} filename={exportName} onError={(m) => setCsvError(m)} />
           </div>
         </div>
