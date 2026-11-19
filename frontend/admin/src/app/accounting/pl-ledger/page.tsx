@@ -111,7 +111,7 @@ function Statement({ data }: { data: PL }) {
       <div className="s-card p-4 mb-4">
         <div className="flex justify-between text-base font-bold">
           <span className="text-s-text">Gross Profit</span>
-          <span className="text-success">{fmtPkrWhole(data.totals.grossProfitCents)} ({data.totals.grossMarginPct}%)</span>
+          <span className={data.totals.grossProfitCents >= 0 ? 'text-success' : 'text-s-red'}>{fmtPkrWhole(data.totals.grossProfitCents)} ({data.totals.grossMarginPct}%)</span>
         </div>
       </div>
 
