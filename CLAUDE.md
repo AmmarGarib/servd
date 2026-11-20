@@ -3386,7 +3386,7 @@ happen only when someone open servd on Office wifi").** The admin checks a
 person with an HR record in at sign-in AND once a Karachi day while they stay
 signed in (AppShell → `lib/checkInOnSignIn.ts`; asked again on return to the
 tab, at most every 10 minutes; only the day's FIRST in — never re-checks in
-someone who checked out today), but ONLY when `GET /time-clock/status`
+someone who checked out today; since 2026-11-20 a fresh sign-in follows the same once-a-day rule), but ONLY when `GET /time-clock/status`
 answers `onOfficeNetwork`. A browser cannot read the Wi-Fi name, so an office
 network is the public address the API sees (`req.ip`): HR settings
 `officeNetworks` (per company, ≤20; HR → Settings → "Office networks", "Add the
