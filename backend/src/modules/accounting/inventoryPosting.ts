@@ -834,7 +834,9 @@ export async function postShortfallSettleTx(tx: Tx, a: { lotId: string; byConcep
  * by the brand shares stored on its 'issue_on_receipt' movement (brand-less
  * when none). In the lot's company, dated its receivedAt.
  */
-export async function postIssueOnReceiptTx(tx: Tx, a: { lotId: string }): Promise<void> {
+/** `cogsAccountCode` (owner, 2026-11-20: "give option to select where it should land"): the cost-of-sales account the
+ *  issue debits instead of the class's own 50x0 — the CALLER validates it (inventory routes assertIssueAccount). */
+export async function postIssueOnReceiptTx(tx: Tx, a: { lotId: string; cogsAccountCode?: string | null }): Promise<void> {
   const rows = await tx.stockMovement.findMany({
     where: { lotId: a.lotId, kind: 'issue_on_receipt' },
     select: { id: true, tenantId: true, inventoryItemId: true, valueCents: true, costClass: true, brandShares: true, occurredAt: true },
@@ -850,7 +852,7 @@ export async function postIssueOnReceiptTx(tx: Tx, a: { lotId: string }): Promis
   if (isNonFoodClass(first.costClass)) return
   const cls = asClass(first.costClass)
   const shares = await sharesFor(tx, lot.tenantId, first.inventoryItemId, first.occurredAt, rows, true)
-  const lines = brandPairs(CLASS_ACCOUNTS[cls].cogs, CLASS_ACCOUNTS[cls].inv, splitCents(value, shares), {
+  const lines = brandPairs(a.cogsAccountCode || CLASS_ACCOUNTS[cls].cogs, CLASS_ACCOUNTS[cls].inv, splitCents(value, shares), {
     dr: `Issued on receipt (${CLASS_LABEL[cls]}) — ${lot.inventoryItem.name}`, cr: `Inventory issued on receipt — ${lot.inventoryItem.name}`,
   })
   assertBalanced(lines, `inventory.issue_on_receipt:${a.lotId}`)

@@ -15,6 +15,8 @@ import { postInventoryDocInSavepoint, postItemReclassTx, WASTE_SOURCE_TYPE } fro
 import { flagPostingFailed, type PostingFailure } from '../accounting/journal.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { audit } from '../../lib/audit.js'
+import { plSectionOf } from '../../lib/accountSection.js'
+import { CLASS_ACCOUNTS } from '../../lib/inventoryClass.js'
 import { unusedCleanupRoutes } from './unusedCleanup.js'
 import { MASTER_FIELDS, ensureCompanyItemForMasterTx, findOrCreateMasterTx, itemFieldsFromMaster, liveMaster, sameUnitFamily } from '../../lib/ingredientMaster.js'
 import { siteStockRoutes } from './siteStock.js'
@@ -523,7 +525,7 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
   // switched off; one audit row per item changed. One refusal never stops the rest. Sets the flag only — stock an item
   // already holds stays until it is used or counted, exactly as with the single tick.
   fastify.post('/issue-on-receipt', { preHandler: requireAuth(...ITEM_PATCHERS) }, async (req) => {
-    const body = z.object({ itemIds: z.array(z.string().uuid()).min(1).max(300), issueOnReceipt: z.boolean() }).parse(req.body)
+    const body = z.object({ itemIds: z.array(z.string().uuid()).min(1).max(300), issueOnReceipt: z.boolean(), accountCode: z.string().trim().min(1).max(20).optional() }).parse(req.body)
     const role = req.staffUser!.role
     const finance = role === 'finance'
     if (!(ITEM_MASTER_EDITORS as string[]).includes(role) && !finance) throw new ForbiddenError('Only a manager, the buying team or finance sets an ingredient to be issued on receipt.')
@@ -551,12 +553,13 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
             where: { id: item.id, tenantId: item.tenantId, deletedAt: null, issueOnReceipt: !body.issueOnReceipt },
             data: { issueOnReceipt: body.issueOnReceipt },
           })
-          const iss = body.issueOnReceipt ? await issueItemOnHandTx(tx, item.id, req.staffUser!.id) : null
+          const acct = body.issueOnReceipt && body.accountCode ? await assertIssueAccount(tx, item.tenantId!, body.accountCode) : null
+          const iss = body.issueOnReceipt ? await issueItemOnHandTx(tx, item.id, req.staffUser!.id, { cogsAccountCode: acct }) : null
           return { done: d, issued: iss }
         }, TX_OPTS)
         if (issued && issued.lots > 0) {
           issuedOnHand.push({ id: item.id, name: item.name, qty: issued.qty, valueCents: issued.valueCents })
-          await auditIssuedOnHand(req, item, issued)
+          await auditIssuedOnHand(req, item, issued, body.accountCode ?? null)
         }
         if (done.count === 0) { unchanged += 1; continue }
         await audit({
@@ -586,15 +589,31 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
     if (finance ? !modules.has('accounting') : !modules.has('inventory')) {
       throw new ForbiddenError(`Your account does not have the ${finance ? 'accounting' : 'inventory'} module. Ask the CEO to enable it in Module Access.`)
     }
+    const body = z.object({ accountCode: z.string().trim().min(1).max(20).optional() }).parse(req.body ?? {})
     const item = await assertInventoryAccess(req, req.params.id)
     if (!item.tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', NO_COMPANY_MESSAGE, 422)
+    const tenantId = item.tenantId
     const issued = await prisma.$transaction(async (tx) => {
       const cur = await tx.inventoryItem.findUniqueOrThrow({ where: { id: item.id }, select: { issueOnReceipt: true } })
       if (!cur.issueOnReceipt) throw new AppError('NOT_ISSUED_ON_RECEIPT', `${item.name} is not set to be issued on receipt — tick it first`, 409)
-      return issueItemOnHandTx(tx, item.id, req.staffUser!.id)
+      // Where it lands (owner, 2026-11-20): the account picked, else the item's own class account (5010 / 5020 / 5030).
+      const acct = body.accountCode ? await assertIssueAccount(tx, tenantId, body.accountCode) : null
+      return issueItemOnHandTx(tx, item.id, req.staffUser!.id, { cogsAccountCode: acct })
     }, TX_OPTS)
-    if (issued.lots > 0) await auditIssuedOnHand(req, item, issued)
-    return { id: item.id, name: item.name, ...issued }
+    if (issued.lots > 0) await auditIssuedOnHand(req, item, issued, body.accountCode ?? null)
+    return { id: item.id, name: item.name, accountCode: body.accountCode ?? null, ...issued }
+  })
+
+  // GET /inventory/:id/issue-accounts — the cost-of-sales accounts of the ITEM's company that "Issue stock on hand now"
+  // may land in (owner, 2026-11-20), the item's own class account first (`isDefault`). Same people as the issue.
+  fastify.get<{ Params: { id: string } }>('/:id/issue-accounts', { preHandler: requireAuth(...ITEM_PATCHERS) }, async (req) => {
+    const item = await assertInventoryAccess(req, req.params.id)
+    if (!item.tenantId) throw new AppError('ITEM_HAS_NO_COMPANY', NO_COMPANY_MESSAGE, 422)
+    const cls = costClassOf(item.category)
+    const def = (COST_CLASSES as readonly string[]).includes(cls) ? CLASS_ACCOUNTS[cls as keyof typeof CLASS_ACCOUNTS].cogs : null
+    const rows = (await issueAccountsOf(prisma, item.tenantId)).map((a) => ({ code: a.code, name: a.name, isDefault: a.code === def }))
+    rows.sort((a, b) => Number(b.isDefault) - Number(a.isDefault) || a.code.localeCompare(b.code))
+    return { accounts: rows, defaultCode: def }
   })
 
   fastify.patch<{ Params: { id: string } }>(
@@ -1130,11 +1149,31 @@ export async function inventoryRoutes(fastify: FastifyInstance) {
 }
 
 /** Audit of stock already on hand issued to cost (owner, 2026-11-18). */
-async function auditIssuedOnHand(req: FastifyRequest, item: { id: string; name: string; tenantId: string | null }, issued: { lots: number; qty: number; valueCents: number }) {
+// Where "Issue stock on hand now" may land (owner, 2026-11-20: "Give option to select where it should land in, 5010 or
+// 5001 or any other account relevant to cost of sales"): a LIVE expense account of the item's company that shows under
+// Cost of sales (lib/accountSection.ts plSectionOf — never a code prefix), not register-controlled. Never 5040 Waste or
+// 5050 Inventory Variance: those take cost only through the CEO's stock-difference approval.
+const NOT_ISSUE_ACCOUNTS = new Set(['5040', '5050'])
+type AccountReader = Pick<Prisma.TransactionClient, 'account'>
+async function issueAccountsOf(db: AccountReader, tenantId: string): Promise<Array<{ code: string; name: string }>> {
+  const rows = await db.account.findMany({
+    where: { tenantId, type: 'expense', isActive: true, controlledBy: null },
+    select: { code: true, name: true, type: true, plSection: true }, orderBy: { code: 'asc' },
+  })
+  return rows.filter((a) => plSectionOf(a) === 'cost_of_sales' && !NOT_ISSUE_ACCOUNTS.has(a.code)).map((a) => ({ code: a.code, name: a.name }))
+}
+/** 422 unless `code` is one of the company's issue accounts. Returns the code. */
+async function assertIssueAccount(db: AccountReader, tenantId: string, code: string): Promise<string> {
+  const ok = (await issueAccountsOf(db, tenantId)).some((a) => a.code === code)
+  if (!ok) throw new AppError('NOT_A_COST_OF_SALES_ACCOUNT', `Account ${code} is not a live cost-of-sales account of this company — pick one from the list`, 422)
+  return code
+}
+
+async function auditIssuedOnHand(req: FastifyRequest, item: { id: string; name: string; tenantId: string | null }, issued: { lots: number; qty: number; valueCents: number }, accountCode: string | null = null) {
   await audit({
     category: 'accounting', action: 'inventory.issue_on_hand', entity: 'InventoryItem', entityId: item.id,
     userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: item.tenantId,
-    after: { name: item.name, lots: issued.lots, qty: issued.qty, valueCents: issued.valueCents },
+    after: { name: item.name, lots: issued.lots, qty: issued.qty, valueCents: issued.valueCents, ...(accountCode ? { accountCode } : {}) },
     metadata: { actorRole: req.staffUser!.role },
   })
 }

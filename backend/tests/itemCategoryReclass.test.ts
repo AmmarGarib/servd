@@ -258,6 +258,60 @@ describe('stock already on hand goes to cost when ticked (owner, 2026-11-18)', (
   })
 })
 
+describe('issue stock on hand into a picked cost-of-sales account (owner, 2026-11-20)', () => {
+  const acct = (t: { tenantId: string }, code: string, name: string, plSection: string | null, extra: object = {}) =>
+    prisma.account.create({ data: { tenantId: t.tenantId, code, name, type: 'expense', plSection, ...extra } })
+  it('lands in the picked account; the list is the company\'s own cost-of-sales accounts; others are refused', async () => {
+    await acct(A, '5101', 'Cost of Goods Sold', 'cost_of_sales')
+    await acct(A, '5102', 'IT Expenses', 'operating_expense')          // a 5-code that is NOT cost of sales
+    await acct(A, '5103', 'Old COGS', 'cost_of_sales', { isActive: false })
+    await acct(B, '5104', 'B Cost of Goods Sold', 'cost_of_sales')
+    const butter = await item(A, { qty: 5, cost: 1_000 })
+    await prisma.inventoryItem.update({ where: { id: butter.id }, data: { issueOnReceipt: true } })
+    const list = await call(u.finA!, 'GET', `/inventory/${butter.id}/issue-accounts`)
+    expect(list.statusCode, list.body).toBe(200)
+    const codes = list.json().accounts.map((a: { code: string }) => a.code)
+    expect(codes[0]).toBe('5010')                                      // the item's own class account first
+    expect(list.json().defaultCode).toBe('5010')
+    expect(codes).toEqual(expect.arrayContaining(['5010', '5020', '5030', '5101']))
+    for (const no of ['5040', '5050', '5102', '5103', '5104']) expect(codes).not.toContain(no)
+    expect((await call(u.mgrB!, 'GET', `/inventory/${butter.id}/issue-accounts`)).statusCode).toBe(404)
+    // Refused accounts change nothing.
+    for (const bad of ['5102', '5103', '5104', '5040', '6010', '1210']) {
+      const r = await call(u.finA!, 'POST', `/inventory/${butter.id}/issue-on-hand`, { accountCode: bad })
+      expect(r.statusCode, `${bad}: ${r.body}`).toBe(422)
+      expect(r.json().error.code).toBe('NOT_A_COST_OF_SALES_ACCOUNT')
+    }
+    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: butter.id } })).currentStock).toBe(5)
+    const ok = await call(u.finA!, 'POST', `/inventory/${butter.id}/issue-on-hand`, { accountCode: '5101' })
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json()).toMatchObject({ accountCode: '5101', valueCents: 5_000 })
+    const lots = await prisma.stockLot.findMany({ where: { inventoryItemId: butter.id }, select: { id: true } })
+    const es = await prisma.journalEntry.findMany({
+      where: { reference: { in: lots.map((l) => `inventory.issue_on_receipt:${l.id}`) } },
+      include: { lines: { include: { account: { select: { code: true } } } } },
+    })
+    expect(es.every((e) => e.tenantId === A.tenantId)).toBe(true)
+    expect(es.flatMap((e) => e.lines.map((l) => [l.account.code, l.type, Number(l.amountCents)])).sort()).toEqual([['1210', 'credit', 5_000], ['5101', 'debit', 5_000]])
+    const au = await prisma.auditLog.findFirstOrThrow({ where: { action: 'inventory.issue_on_hand', entityId: butter.id } })
+    expect((au.after as { accountCode?: string }).accountCode).toBe('5101')
+  })
+  it('bulk tick takes the same pick; an account the item\'s company does not have fails that item only', async () => {
+    await prisma.account.upsert({ where: { tenantId_code: { tenantId: A.tenantId, code: '5105' } }, update: {}, create: { tenantId: A.tenantId, code: '5105', name: 'COGS 2', type: 'expense', plSection: 'cost_of_sales' } })
+    const tea = await item(A, { qty: 10, cost: 100, category: 'beverage' })
+    const res = await call(u.finA!, 'POST', '/inventory/issue-on-receipt', { itemIds: [tea.id], issueOnReceipt: true, accountCode: '5105' })
+    expect(res.statusCode, res.body).toBe(200)
+    expect(res.json().issuedOnHand).toHaveLength(1)
+    const lot = await prisma.stockLot.findFirstOrThrow({ where: { inventoryItemId: tea.id } })
+    const e = await prisma.journalEntry.findFirstOrThrow({ where: { reference: `inventory.issue_on_receipt:${lot.id}` }, include: { lines: { include: { account: { select: { code: true } } } } } })
+    expect(e.lines.map((l) => [l.account.code, l.type]).sort()).toEqual([['1220', 'credit'], ['5105', 'debit']])
+    const milk = await item(A, { qty: 3, cost: 100, category: 'beverage' })
+    const bad = await call(u.finA!, 'POST', '/inventory/issue-on-receipt', { itemIds: [milk.id], issueOnReceipt: true, accountCode: '6010' })
+    expect(bad.json().failed[0]).toMatchObject({ id: milk.id, code: 'NOT_A_COST_OF_SALES_ACCOUNT' })
+    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: milk.id } }))).toMatchObject({ issueOnReceipt: false, currentStock: 3 })
+  })
+})
+
 describe('reading the master', () => {
   it('on-hand value for managers and finance only; the cook sees no cost; B gets 404', async () => {
     const it0 = await item(A, { qty: 3, cost: 20_000 })

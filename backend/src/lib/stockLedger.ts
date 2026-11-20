@@ -1385,8 +1385,10 @@ async function issueOnReceiptTx(tx: Tx, item: StockItem, lot: LotNow, receivedAt
  * Dr 50x0 / Cr 12x0 at the value left on the lot (FIFO price paid), split to the lot's own brand when it has one,
  * else the item's brand usage. Non-food lots (already expensed) are skipped. A lot is issued once (its value is then
  * 0, and the posting key is the lot). Inside the caller's transaction; returns what was issued.
+ * `opts.cogsAccountCode` (owner, 2026-11-20) = the cost-of-sales account to debit instead of the class's 50x0; the
+ * caller has validated it for the item's company.
  */
-export async function issueItemOnHandTx(tx: Tx, itemId: string, createdById: string | null): Promise<{ lots: number; qty: number; valueCents: number }> {
+export async function issueItemOnHandTx(tx: Tx, itemId: string, createdById: string | null, opts: { cogsAccountCode?: string | null } = {}): Promise<{ lots: number; qty: number; valueCents: number }> {
   await lockItemsTx(tx, [itemId])
   const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: itemId }, select: { id: true, tenantId: true } })
   if (!item.tenantId) return { lots: 0, qty: 0, valueCents: 0 }
@@ -1412,7 +1414,7 @@ export async function issueItemOnHandTx(tx: Tx, itemId: string, createdById: str
     await tx.stockLot.update({ where: { id: l.id }, data: { remainingQty: 0, remainingValueCents: 0 } })
     if (value > 0) {
       const { postIssueOnReceiptTx } = await import('../modules/accounting/inventoryPosting.js')
-      await postIssueOnReceiptTx(tx, { lotId: l.id })
+      await postIssueOnReceiptTx(tx, { lotId: l.id, cogsAccountCode: opts.cogsAccountCode ?? null })
     }
     qty += l.remainingQty; valueCents += value; count += 1
   }

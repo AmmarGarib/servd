@@ -1,6 +1,6 @@
 'use client'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, ApiError } from '../../lib/api'
@@ -230,11 +230,13 @@ export default function InventoryPage() {
   })
   // Issue what a ticked item already holds (owner, 2026-11-18): Dr cost of sales / Cr stock, at the price paid.
   const confirmIssue = useConfirm()
+  // The cost-of-sales account picked in the dialog (owner, 2026-11-20); '' = the item's own class account.
+  const issueAccountRef = useRef('')
   const issueOnHand = useMutation({
-    mutationFn: (it: { id: string }) => api.post<{ name: string; lots: number; qty: number; valueCents: number }>(`/inventory/${it.id}/issue-on-hand`, {}),
+    mutationFn: (it: { id: string; accountCode?: string }) => api.post<{ name: string; lots: number; qty: number; valueCents: number; accountCode: string | null }>(`/inventory/${it.id}/issue-on-hand`, it.accountCode ? { accountCode: it.accountCode } : {}),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['inventory'] })
-      setIorNote(r.lots ? `${r.name}: ${r.qty} on hand sent to cost of sales (PKR ${Math.round(r.valueCents / 100).toLocaleString('en-PK')})` : `${r.name}: nothing on hand to issue`)
+      setIorNote(r.lots ? `${r.name}: ${r.qty} on hand sent to cost of sales${r.accountCode ? ` (account ${r.accountCode})` : ''} (PKR ${Math.round(r.valueCents / 100).toLocaleString('en-PK')})` : `${r.name}: nothing on hand to issue`)
     },
     onError: (e: Error) => setIorNote(e.message),
   })
@@ -1013,7 +1015,20 @@ export default function InventoryPage() {
                                 {item.issueOnReceipt && <span className="s-badge-muted" title="Each delivery goes straight to cost of sales">Issued on receipt</span>}
                                 {item.issueOnReceipt && canIor && item.tenantId && item.currentStock > 0 && (
                                   <button type="button" disabled={issueOnHand.isPending}
-                                    onClick={async () => { if (await confirmIssue({ title: `Issue ${item.name} on hand?`, body: `Sends the ${item.currentStock} ${item.unit} on hand to cost of sales now (Dr cost of sales / Cr stock, at the price paid). This cannot be undone except by a count.`, confirmLabel: 'Issue now' })) issueOnHand.mutate(item) }}
+                                    onClick={async () => {
+                                      issueAccountRef.current = ''
+                                      const ok = await confirmIssue({
+                                        title: `Issue ${item.name} on hand?`,
+                                        body: (
+                                          <div className="space-y-3">
+                                            <p>Sends the {item.currentStock} {item.unit} on hand to cost of sales now (Dr cost of sales / Cr stock, at the price paid). This cannot be undone except by a count.</p>
+                                            <IssueAccountPick itemId={item.id} onPick={(c) => { issueAccountRef.current = c }} />
+                                          </div>
+                                        ),
+                                        confirmLabel: 'Issue now',
+                                      })
+                                      if (ok) issueOnHand.mutate({ id: item.id, accountCode: issueAccountRef.current || undefined })
+                                    }}
                                     className="text-xs px-2 py-0.5 rounded-lg border border-s-border text-primary-ink hover:border-primary transition-colors">
                                     Issue stock on hand now
                                   </button>
@@ -1272,3 +1287,25 @@ const centsOf = (pkr: string): number => Math.round((numOf(pkr) ?? 0) * 100)
 const pkrOf = (cents: number): string => (cents > 0 ? String(cents / 100) : '')
 
 const fi = 'w-full rounded-lg bg-s-bg border border-s-border px-3 py-2 text-s-text text-sm focus:border-primary focus:outline-none transition-colors'
+
+/** Where "Issue stock on hand now" lands (owner, 2026-11-20): the company's cost-of-sales accounts, the item's own
+ *  class account first. While the list loads, or if it cannot be read, the issue uses that default. */
+function IssueAccountPick({ itemId, onPick }: { itemId: string; onPick: (code: string) => void }) {
+  const { data, isLoading, isError } = useQuery<{ accounts: Array<{ code: string; name: string; isDefault: boolean }>; defaultCode: string | null }>({
+    queryKey: ['inventory-issue-accounts', itemId],
+    queryFn: () => api.get(`/inventory/${itemId}/issue-accounts`),
+  })
+  const [code, setCode] = useState('')
+  return (
+    <label className="block text-sm">
+      <span className="mb-1 block font-medium text-white">Cost of sales account it lands in</span>
+      <select className="s-input w-full" value={code} disabled={isLoading || isError}
+        onChange={(e) => { setCode(e.target.value); onPick(e.target.value) }}>
+        {!data && <option value="">{isLoading ? 'Loading accounts…' : 'The item\u2019s usual cost of sales account'}</option>}
+        {data?.accounts.map((a) => (
+          <option key={a.code} value={a.isDefault ? '' : a.code}>{a.code} {a.name}{a.isDefault ? ' (usual)' : ''}</option>
+        ))}
+      </select>
+    </label>
+  )
+}
