@@ -1,6 +1,8 @@
 // Signing in checks you in (owner, 2026-10-22), only on a registered office
 // network (HR settings; owner: "only when someone open servd on Office wifi"). Called right after a staff
-// sign-in succeeds; signing out already checks you out (AppShell).
+// sign-in succeeds. ONCE A DAY (owner, 2026-11-20: "adhere to check in once a day"): a person who already checked in
+// today — and checked out, or was signed out when the shift ended — is never checked in again by signing in or by
+// opening a page; after that the Check in button is theirs. Signing out never checks anyone out (2026-11-19).
 // Not for the CEO (admin) or directors. Only people with an HR employee record
 // are checked in (`hrLinked` on GET /time-clock/status). It never blocks or fails the sign-in: any problem becomes a small
 // toast and the person lands where sign-in normally lands.
@@ -41,7 +43,7 @@ export async function checkInOncePerDay(userId: string | undefined, role: string
   const key = `servd_checkin_day:${userId}`
   try { if (localStorage.getItem(key) === day) return null } catch { /* storage off: the server check still stops repeats */ }
   if (inFlight) return inFlight // one check at a time per tab (the server also refuses a second 'in')
-  inFlight = tryCheckIn(role, true).finally(() => { inFlight = null })
+  inFlight = tryCheckIn(role).finally(() => { inFlight = null })
   const r = await inFlight
   // Away from the office the day is not used up: the shell asks again later
   // (on return to the tab), so arriving at the office still checks them in.
@@ -54,22 +56,22 @@ export async function checkInOnSignIn(role: string | undefined): Promise<string 
   // Never hold the sign-in: after SIGN_IN_WAIT_MS the person lands as usual and the check-in carries on behind
   // (its toast still shows; the shell's once-a-day check covers a check-in that never finished).
   const r = await Promise.race([
-    tryCheckIn(role, false),
+    tryCheckIn(role),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), SIGN_IN_WAIT_MS)),
   ])
   return r === OFF_NETWORK ? null : r
 }
 
-async function tryCheckIn(role: string | undefined, firstOfDay: boolean): Promise<string | null> {
+async function tryCheckIn(role: string | undefined): Promise<string | null> {
   if (!role || SKIP_ROLES.includes(role)) return null
   try {
     const status = await api.get<{ punchedIn: boolean; hrLinked?: boolean; shift?: unknown; onOfficeNetwork?: boolean }>('/time-clock/status')
     if (status.punchedIn || status.hrLinked === false) return null // no HR record: not checked in
     // Only on the office network (owner, 2026-10-22: "only when someone open servd on Office wifi").
     if (status.onOfficeNetwork !== true) return OFF_NETWORK
-    // Already signed in (no fresh sign-in): only the day's first check-in, so a
-    // person who checked out today is never checked back in by opening a page.
-    if (firstOfDay && status.shift) return null
+    // Only the day's first check-in, on a fresh sign-in too: a person who checked out today is never checked back
+    // in by signing in again (a sign-in lasts one shift, so most people sign in more than once a day).
+    if (status.shift) return null
     const place = await findPlace()
     const r = await api.post<PunchResult>('/time-clock/punch-in', place ?? {})
     if (r.hrLinked === false || r.alreadyClockedIn) return null // no HR record: no attendance kept, say nothing
