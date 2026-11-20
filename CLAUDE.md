@@ -2602,7 +2602,8 @@ at ring-up, per-site stock and prep items as stock all stand ("Stock by site").
   should land in, 5010 or 5001 or any other account relevant to cost of sales"):** `{accountCode}` on `/:id/issue-on-hand`
   (and on the bulk route) debits that account instead of the class's 50x0 — a live, uncontrolled expense account of the
   ITEM's company whose `plSectionOf` is cost of sales, never 5040 / 5050 (422 `NOT_A_COST_OF_SALES_ACCOUNT`); none = the
-  class account. List: `GET /inventory/:id/issue-accounts`. The dialog has the picker (`IssueAccountPick`). Deliveries
+  class account. List: `GET /inventory/:id/issue-accounts`. The dialog has the picker (`IssueAccountPick`). The bulk bar has it too
+  (`BulkIssueAccountPick`: the ONE company's list of the ticked items; items of several companies keep their usual account). Deliveries
   of a ticked item, sales and waste still post to 5010 / 5020 / 5030. Switching the tick off brings
   nothing back (a count does). Tests: `tests/itemCategoryReclass.test.ts`.
 - **Suppliers belong to servd (owner, 2026-11-14: "we need to make suppliers belong to servd. just like the ingredient

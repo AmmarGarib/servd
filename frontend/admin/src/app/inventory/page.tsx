@@ -207,6 +207,8 @@ export default function InventoryPage() {
   const [picking, setPicking] = useState(false)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [iorNote, setIorNote] = useState<string | null>(null)
+  // Bulk: the cost-of-sales account the stock on hand lands in (owner, 2026-11-20); '' = each item's usual account.
+  const [bulkAccount, setBulkAccount] = useState('')
   const togglePicked = (ids: string[], on: boolean) => setPicked((prev) => {
     const next = new Set(prev)
     for (const id of ids) { if (on) next.add(id); else next.delete(id) }
@@ -214,7 +216,7 @@ export default function InventoryPage() {
   })
   const bulkIor = useMutation({
     mutationFn: (issueOnReceipt: boolean) => api.post<{ changed: Array<{ id: string }>; unchanged: number; failed: Array<{ name: string | null; message: string }>; issuedOnHand?: Array<{ id: string; valueCents: number }> }>(
-      '/inventory/issue-on-receipt', { itemIds: [...picked], issueOnReceipt }),
+      '/inventory/issue-on-receipt', { itemIds: [...picked], issueOnReceipt, ...(issueOnReceipt && bulkAccount ? { accountCode: bulkAccount } : {}) }),
     onSuccess: (r, issueOnReceipt) => {
       void qc.invalidateQueries({ queryKey: ['inventory'] })
       const parts = [`${r.changed.length} item${r.changed.length === 1 ? '' : 's'} ${issueOnReceipt ? 'set to issued on receipt' : 'back to normal stock'}`]
@@ -948,8 +950,11 @@ export default function InventoryPage() {
                         </button>
                         <button type="button" onClick={() => togglePicked(shown.filter((i) => i.tenantId).map((i) => i.id), true)}
                           className="text-xs font-semibold text-primary-ink hover:underline">Select all shown</button>
-                        <button type="button" onClick={() => { setPicking(false); setPicked(new Set()) }}
+                        <button type="button" onClick={() => { setPicking(false); setPicked(new Set()); setBulkAccount('') }}
                           className="text-xs font-semibold text-s-muted hover:underline ml-auto">Done</button>
+                        <BulkIssueAccountPick
+                          items={items.filter((i) => picked.has(i.id)).map((i) => ({ id: i.id, tenantId: i.tenantId ?? null }))}
+                          value={bulkAccount} onChange={setBulkAccount} />
                         <p className="basis-full text-[11px] text-s-muted">Issued on receipt: each delivery goes straight to cost of sales instead of sitting in stock. Setting it also sends the stock each item already holds to cost of sales, at the price paid.</p>
                       </>
                     )}
@@ -1306,6 +1311,34 @@ function IssueAccountPick({ itemId, onPick }: { itemId: string; onPick: (code: s
           <option key={a.code} value={a.isDefault ? '' : a.code}>{a.code} {a.name}{a.isDefault ? ' (usual)' : ''}</option>
         ))}
       </select>
+    </label>
+  )
+}
+
+/** The bulk bar's account pick (owner, 2026-11-20: "Add the picker to the bulk screen too"). The list is the ONE
+ *  company's the ticked items belong to; items of several companies have no common list, so each keeps its usual
+ *  account. '' = each item's usual account (food 5010, drinks 5020, packaging 5030). */
+function BulkIssueAccountPick({ items, value, onChange }: { items: Array<{ id: string; tenantId: string | null }>; value: string; onChange: (code: string) => void }) {
+  const companies = [...new Set(items.map((i) => i.tenantId).filter(Boolean))]
+  const one = companies.length === 1
+  const sample = one ? items.find((i) => i.tenantId)?.id : undefined
+  const company = one ? companies[0] : null
+  const { data, isLoading } = useQuery<{ accounts: Array<{ code: string; name: string }> }>({
+    queryKey: ['inventory-issue-accounts-company', company],
+    queryFn: () => api.get(`/inventory/${sample}/issue-accounts`),
+    enabled: !!sample,
+  })
+  // A pick belongs to one company's chart: drop it when the ticked items change company (or none is ticked).
+  useEffect(() => { if (!one && value) onChange('') }, [one, value, onChange])
+  useEffect(() => { if (data && value && !data.accounts.some((a) => a.code === value)) onChange('') }, [data, value, onChange])
+  return (
+    <label className="basis-full min-w-0 flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2 text-xs text-s-text">
+      <span className="font-semibold">Stock on hand lands in</span>
+      <select className="s-input w-full min-w-0 sm:w-auto sm:max-w-md py-1.5 text-xs" value={value} disabled={!one || isLoading} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Each item&rsquo;s usual cost of sales account</option>
+        {one && data?.accounts.map((a) => <option key={a.code} value={a.code}>{a.code} {a.name}</option>)}
+      </select>
+      {companies.length > 1 && <span className="text-s-muted">Items of several companies are ticked — each goes to its usual account.</span>}
     </label>
   )
 }
