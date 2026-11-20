@@ -1356,6 +1356,42 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     },
   )
 
+  // "Paid already — booked as an expense" (owner, 2026-11-20; ./billPaidAsExpense.ts): the bill's cash payment and the
+  // entry that takes the duplicate expense out, in one click. It posts a correction on an expense account, so it is
+  // the journal posters' — the CEO, or finance holding `accounting` (apWrite already holds finance to it); managers
+  // get 403. The bill's company only (guardBill: another company's bill is 404).
+  const mayCorrect = (req: FastifyRequest) => {
+    const role = req.staffUser!.role
+    if (role !== 'admin' && role !== 'finance') throw new ForbiddenError('Only finance or the CEO marks a bill as already paid through an expense.')
+  }
+  fastify.get<{ Params: { id: string } }>('/bills/:id/paid-as-expense/options', apWrite, async (req) => {
+    mayCorrect(req)
+    const found = await guardBill(req, req.params.id)
+    if (!found.supplier.tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'This supplier has no company yet — assign it first', 422)
+    const { plSectionOf } = await import('../../lib/accountSection.js')
+    const [accounts, brands] = await Promise.all([
+      prisma.account.findMany({ where: { tenantId: found.supplier.tenantId, type: 'expense', isActive: true, controlledBy: null }, select: { code: true, name: true, type: true, plSection: true }, orderBy: { code: 'asc' } }),
+      prisma.concept.findMany({ where: { tenantId: found.supplier.tenantId, deletedAt: null }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    ])
+    return { accounts: accounts.map((a) => ({ code: a.code, name: a.name, section: plSectionOf(a) })), brands }
+  })
+  fastify.post<{ Params: { id: string } }>('/bills/:id/paid-as-expense', apWrite, async (req) => {
+    mayCorrect(req)
+    const found = await guardBill(req, req.params.id)
+    const body = z.object({
+      amountCents: zMoneyCents('This amount', { sign: 'positive' }).optional(),
+      accountCode: z.string().trim().min(1).max(20),
+      conceptId: z.string().uuid().nullable().optional(),
+      reason: z.string().trim().min(10).max(400),
+    }).parse(req.body)
+    const { markBillPaidAsExpense } = await import('./billPaidAsExpense.js')
+    const r = await markBillPaidAsExpense({ billId: req.params.id, amountCents: body.amountCents ?? null, accountCode: body.accountCode, conceptId: body.conceptId ?? null, reason: body.reason, userId: req.staffUser!.id })
+    await auditMoney(req, 'supplier.bill.paid_as_expense', 'SupplierBill', req.params.id, found.supplier.tenantId, {
+      billNumber: r.billNumber, amountCents: r.amountCents, accountCode: r.accountCode, supplierPaymentId: r.supplierPaymentId, correctionEntryId: r.correctionEntryId, reason: body.reason, actorRole: req.staffUser!.role,
+    })
+    return r
+  })
+
   // ── Supplier credit notes / returns (finance gaps 14a, ./creditNotes.ts) ──
 
   // Record the supplier's credit note against one of its bills: lines picked

@@ -36,6 +36,7 @@ import { ExportMenu } from '@/components/ui/ExportMenu'
 import { FIcon } from '../../components/finance/ui/icons'
 import { CompactEmptyState } from '@/components/ui/CompactEmptyState'
 import { useFormDraft, hasFormDraft } from '../../lib/formDraft'
+import { PaidAsExpense } from '../../components/procurement/PaidAsExpense'
 import { MovePoCompany } from '../../components/procurement/MovePoCompany'
 import { DraftNotice } from '@/components/ui/DraftNotice'
 import { bulkUnitOf, convertUnits, unitFamily, type UnitFamilyName } from '@/lib/units'
@@ -1306,6 +1307,10 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
   // Managers and finance (with accounting) record bills — their files too.
   const canWriteAp = useCanWriteAp()
   const [creditBillId, setCreditBillId] = useState<string | null>(null)
+  // "Paid already — booked as an expense" (owner, 2026-11-20): finance and the CEO only.
+  const [paidBill, setPaidBill] = useState<Bill | null>(null)
+  const myRole = useAuthStore((st) => st.user?.role)
+  const canMarkPaid = canWriteAp && (myRole === 'admin' || myRole === 'finance')
   const [applyCn, setApplyCn] = useState<Bill | null>(null)
   const [unapplyCnId, setUnapplyCnId] = useState<string | null>(null)
 
@@ -1445,6 +1450,9 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
                           <LinkButton type="button" onClick={() => setCreditBillId(b.id)}
                             className="whitespace-nowrap">Credit note / return</LinkButton>
                         )}
+                        {canMarkPaid && (b.status === 'open' || b.status === 'partially_paid') && billDue(b) > 0 && (
+                          <LinkButton type="button" onClick={() => setPaidBill(b)} className="whitespace-nowrap">Paid already</LinkButton>
+                        )}
                         {b.status !== 'void' && (
                           <LinkButton tone="danger" type="button" onClick={() => { setVoidId(b.id); setVoidReason('') }}>Void</LinkButton>
                         )}
@@ -1542,6 +1550,7 @@ function BillsTab({ qc, prefill }: { qc: ReturnType<typeof useQueryClient>; pref
         </div>
       )}
 
+      {paidBill && <PaidAsExpense bill={{ id: paidBill.id, billNumber: paidBill.billNumber, supplierName: paidBill.supplier?.name ?? 'the supplier', dueCents: billDue(paidBill) }} onDone={refresh} onClose={() => setPaidBill(null)} />}
       {creditBillId && <CreditNoteForm billId={creditBillId} onDone={refresh} onClose={() => setCreditBillId(null)} />}
       {applyCn && <ApplyCreditModal cn={applyCn} onDone={refresh} onClose={() => setApplyCn(null)} />}
       {unapplyCnId && <UnapplyCreditModal creditNoteId={unapplyCnId} onDone={refresh} onClose={() => setUnapplyCnId(null)} />}

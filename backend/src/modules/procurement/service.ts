@@ -20,6 +20,7 @@
 
 import { storedLine, lineValueCents, lineDisplay, type TypedLine, type StoredLine } from './poUnits.js'
 import { isBelowPar } from '../../lib/recipeCost.js'
+import { reverseJournalEntry } from '../accounting/journal.js'
 import { classifyByReferenceTx, type ClassificationInput } from '../accounting/paymentsRegister.js'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
@@ -1475,6 +1476,10 @@ export async function voidPayment(paymentId: string, userId: string, reason: str
       data:  { voidedAt: new Date(), voidReason: reason },
     })
     const reversal = await postSupplierPaymentVoid(paymentId, reason, { tx, postedBy: userId })
+    // A payment made by "paid already — booked as an expense" (billPaidAsExpense.ts) carries a correction entry
+    // (Dr 1010 / Cr the expense): voiding the payment puts the expense back too, so the two always move together.
+    const corr = await tx.journalEntry.findFirst({ where: { reference: `supplier.bill_expense_correction:${paymentId}` }, select: { tenantId: true } })
+    if (corr?.tenantId) await reverseJournalEntry(corr.tenantId, 'supplier.bill_expense_correction', paymentId, reason, { tx, postedBy: userId })
     return { payment: updated, alreadyVoid: false as const, reversal }
   })
 }

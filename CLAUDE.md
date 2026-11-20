@@ -2163,6 +2163,16 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   after the CEO's GRN approval, after finance pays a PO voucher whose bill already exists, and at every boot
   (`sweepAdvanceBills`, idempotent). Never fails its caller; audit `supplier_bill.paid_from_po_advance`. Once it has
   paid, voiding that advance is refused as before (409 `VOID_PO_CASH_SPENT`). Tests: `tests/poApprovalChain.test.ts`.
+- **"Paid already" on an open supplier bill (owner, 2026-11-20: bills stayed Open because the cash was booked as an
+  expense; "Yes, add the button to do it in one click").** `procurement/billPaidAsExpense.ts` (contract in its header).
+  `POST /procurement/bills/:id/paid-as-expense {amountCents?, accountCode, conceptId?, reason ≥10}` — the CEO or finance
+  holding `accounting` only (managers 403); the bill's company (else 404). ONE transaction through the existing engines:
+  the bill's cash payment (`createPaymentTx`, Dr 2010 / Cr 1010) + `supplier.bill_expense_correction:<paymentId>`
+  Dr 1010 / Cr the expense account picked (a live, uncontrolled expense account of the bill's company — 422
+  `ACCOUNT_NOT_ALLOWED`; brand optional, 422 `BRAND_NOT_IN_COMPANY`). Net Dr 2010 / Cr the expense; no cash moves. At
+  most what the bill owes (422 `OVER_APPLIED`). Options: `GET …/paid-as-expense/options`. Undo = unapply + void the
+  payment; `voidPayment` reverses the correction with it. Audit `supplier.bill.paid_as_expense`. Admin: "Paid already"
+  on the bill row (`components/procurement/PaidAsExpense.tsx`). Tests: `tests/billPaidAsExpense.test.ts`.
 - **A PO's cash voucher waits for finance (owner, 2026-11-10: "Finance approval getting skipped, fix it").** The CEO's
   PO approval raises it `submitted` (CEO step already signed — `directorSignedById`); finance's `POST
   /trustops/cash-vouchers/:id/finance-approve {}` moves it straight to `approved` (ready to pay) — no account, no
