@@ -2154,6 +2154,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `recordPettyCashReturnTx` out of the buyer's box, Dr 1010 | bank / Cr 1011; `returnedCents`; 422 `MORE_THAN_EXTRA`,
   409 `NOTHING_TO_RETURN` / `PO_NOT_BOUGHT_YET`), and an open flag `po_cash_excess` (high) names it until nothing is
   left. Tests: `tests/poApprovalChain.test.ts`.
+- **A paid PO advance pays its bill by itself (owner, 2026-11-20: "route those cash vouchers to supplier bills and update
+  the status" → "Yes, do it").** `procurement/poAdvanceSettle.ts` (contract in its header). A bill of an old-advance PO
+  whose voucher was PAID into the buyer's box is paid from THAT box through the manual step's own engine
+  (`createPaymentTx` cash + `recordPettyCashSpendTx` nature 'bill'): the least of what the bill owes, what is left of the
+  advance (given − returned − already spent from that box on this PO's bills) and what the box holds; a short one goes
+  Partially paid. Never a pay-back voucher's bill, a voided / unpaid advance, a box switched off, another company. Runs
+  after the CEO's GRN approval, after finance pays a PO voucher whose bill already exists, and at every boot
+  (`sweepAdvanceBills`, idempotent). Never fails its caller; audit `supplier_bill.paid_from_po_advance`. Once it has
+  paid, voiding that advance is refused as before (409 `VOID_PO_CASH_SPENT`). Tests: `tests/poApprovalChain.test.ts`.
 - **A PO's cash voucher waits for finance (owner, 2026-11-10: "Finance approval getting skipped, fix it").** The CEO's
   PO approval raises it `submitted` (CEO step already signed — `directorSignedById`); finance's `POST
   /trustops/cash-vouchers/:id/finance-approve {}` moves it straight to `approved` (ready to pay) — no account, no

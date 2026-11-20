@@ -2342,6 +2342,8 @@ async function payPoCashVoucher(
     dueBy: dueBy.toISOString(), bookedAtPay: true, postsExpense: false,
   }, { status: v.status, boxId: v.boxId })
   voucherTaskNotice('paid', v.id, me)
+  // The delivery was already approved: the cash just paid in settles its bill(s) by itself (owner, 2026-11-20).
+  try { await (await import('../procurement/poAdvanceSettle.js')).settleBillsOfVoucher(v.id) } catch (err) { console.warn('[poAdvance] settle after pay skipped:', (err as Error).message) }
   return {
     voucher: await detailOf(v.id, viewer),
     movement: { id: result.movementId },

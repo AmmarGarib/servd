@@ -591,6 +591,9 @@ export async function approveGrn(grnId: string, actor: Actor) {
   }, { timeout: 30_000 })
   await afterBillCreated(prepared, bill)
   grnPayNotice(grnId, actor.id)
+  // An older PO whose cash advance was paid into the buyer's box: that cash pays this bill by itself (owner,
+  // 2026-11-20; poAdvanceSettle.ts). Never fails the approval.
+  if (!bill.payBack) await (await import('./poAdvanceSettle.js')).settleBillFromAdvanceQuietly(bill.id)
   if (bill.payBack) {
     const { voucherTaskNotice } = await import('../trustops/cashVouchers.js')
     voucherTaskNotice('approved', bill.payBack.id, actor.id)

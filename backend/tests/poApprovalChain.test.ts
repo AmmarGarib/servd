@@ -721,6 +721,91 @@ describe('old advance vouchers follow the buyer\'s actual amounts (owner, 2026-1
     expect((await raiseMissedPayBacks()).find((v) => v.id === raised[0]!.id)).toBeUndefined()
   })
 
+  /** Buy, confirm and get the GRN to the CEO; returns the GRN id. */
+  async function toCeo(po: { id: string; lines: Array<{ id: string }> }, invoice: string, amountCents: number) {
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: invoice, invoiceDate: today(), lines: [{ poLineId: po.lines[0]!.id, amountCents }] })).statusCode).toBe(200)
+    const ok = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: [{ poLineId: po.lines[0]!.id, quantityReceived: 10 }] })
+    expect(ok.statusCode, ok.body).toBe(201)
+    const grnId = ok.json().grn.id as string
+    expect((await call('finA', 'POST', `/procurement/grns/${grnId}/finance-pass`)).statusCode).toBe(200)
+    return grnId
+  }
+
+  it('a PAID advance pays its bill by itself at the CEO\'s GRN approval (owner, 2026-11-20); once, in the bill\'s company', async () => {
+    const { po, voucherId } = await oldAdvancePo(250)   // PKR 25 given
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/finance-approve`, {})).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/pay`, { source: 'cash_on_hand' })).statusCode).toBe(200)
+    const box = await prisma.pettyCashBox.findFirstOrThrow({ where: { tenantId: T.A, custodianId: U.buyerA!.id } })
+    const grnId = await toCeo(po, `${P}-AUTO1`, 1_260)
+    const floatBefore = (await prisma.pettyCashBox.findUniqueOrThrow({ where: { id: box.id } })).floatCents
+    const apBefore = await netDebit(T.A, '2010'), pettyBefore = await netDebit(T.A, '1011'), cashBefore = await netDebit(T.A, '1010')
+    const ap = await call('ceoA', 'POST', `/procurement/grns/${grnId}/approve`)
+    expect(ap.statusCode, ap.body).toBe(200)
+    const billId = ap.json().supplierBillId as string
+    const bill = await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })
+    expect(bill.status).toBe('paid')
+    expect(Number(bill.paidCents)).toBe(1_260)
+    expect((await prisma.pettyCashBox.findUniqueOrThrow({ where: { id: box.id } })).floatCents).toBe(floatBefore - 1_260)
+    // Books: the bill raised 2010 by 1,260 and the payment took it off again; the box (1011) paid; 1010 only passes through.
+    expect(await netDebit(T.A, '2010') - apBefore).toBe(0)
+    expect(await netDebit(T.A, '1011') - pettyBefore).toBe(-1_260)
+    expect(await netDebit(T.A, '1010') - cashBefore).toBe(0)
+    const app = await prisma.supplierPaymentApplication.findFirstOrThrow({ where: { billId }, include: { payment: true } })
+    expect(app.payment).toMatchObject({ method: 'cash', createdBy: U.buyerA!.id })
+    const move = await prisma.pettyCashMovement.findFirstOrThrow({ where: { supplierPaymentId: app.paymentId } })
+    expect(move).toMatchObject({ boxId: box.id, type: 'spend', amountCents: -1_260 })
+    const au = await prisma.auditLog.findFirstOrThrow({ where: { action: 'supplier_bill.paid_from_po_advance', entityId: billId } })
+    expect(au.tenantId).toBe(T.A)
+    // The sweep and a second call pay nothing more; the extra (25 − 12.60) is still flagged for return.
+    const { sweepAdvanceBills, settleBillFromAdvance } = await import('../src/modules/procurement/poAdvanceSettle.js')
+    expect((await sweepAdvanceBills()).filter((x) => x.billId === billId)).toHaveLength(0)
+    expect(await settleBillFromAdvance(billId)).toBeNull()
+    expect(await prisma.supplierPaymentApplication.count({ where: { billId } })).toBe(1)
+    expect((await call('finA', 'GET', `/trustops/cash-vouchers/${voucherId}`)).json().poCash).toMatchObject({ excessCents: 1_240 })
+    // The bills list shows it paid to company A; company B never sees it.
+    expect((await call('finB', 'GET', `/procurement/bills`)).json().some((b: { id: string }) => b.id === billId)).toBe(false)
+  })
+
+  it('never more than the advance or the box holds: the bill goes partly paid; an advance paid AFTER the approval settles then; the boot sweep catches a waiting bill', async () => {
+    // (1) Bought for more than was given: only the advance is applied.
+    const one = await oldAdvancePo(100)   // PKR 10 given
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${one.voucherId}/finance-approve`, {})).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${one.voucherId}/pay`, { source: 'cash_on_hand' })).statusCode).toBe(200)
+    const ap1 = await call('ceoA', 'POST', `/procurement/grns/${await toCeo(one.po, `${P}-AUTO2`, 1_500)}/approve`)
+    expect(ap1.statusCode, ap1.body).toBe(200)
+    const b1 = await prisma.supplierBill.findUniqueOrThrow({ where: { id: ap1.json().supplierBillId } })
+    expect(b1.status).toBe('partially_paid')
+    expect(Number(b1.paidCents)).toBe(1_000)
+
+    // (2) The delivery is approved first, the advance paid afterwards: finance's pay settles the bill.
+    const two = await oldAdvancePo(200)
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${two.voucherId}/finance-approve`, {})).statusCode).toBe(200)
+    const ap2 = await call('ceoA', 'POST', `/procurement/grns/${await toCeo(two.po, `${P}-AUTO3`, 2_000)}/approve`)
+    expect(ap2.statusCode, ap2.body).toBe(200)
+    const bill2 = ap2.json().supplierBillId as string
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: bill2 } })).status).toBe('open')
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${two.voucherId}/pay`, { source: 'cash_on_hand' })).statusCode).toBe(200)
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: bill2 } })).status).toBe('paid')
+
+    // (3) A bill left waiting (as on live before this rule): the boot sweep pays it, once.
+    const three = await oldAdvancePo(300)
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${three.voucherId}/finance-approve`, {})).statusCode).toBe(200)
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${three.voucherId}/pay`, { source: 'cash_on_hand' })).statusCode).toBe(200)
+    const box = await prisma.pettyCashBox.findFirstOrThrow({ where: { tenantId: T.A, custodianId: U.buyerA!.id } })
+    const grn3 = await toCeo(three.po, `${P}-AUTO4`, 3_000)
+    await prisma.pettyCashBox.update({ where: { id: box.id }, data: { isActive: false } })
+    const ap3 = await call('ceoA', 'POST', `/procurement/grns/${grn3}/approve`)
+    await prisma.pettyCashBox.update({ where: { id: box.id }, data: { isActive: true } })
+    const bill3 = ap3.json().supplierBillId as string
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: bill3 } })).status).toBe('open')
+    const { sweepAdvanceBills } = await import('../src/modules/procurement/poAdvanceSettle.js')
+    expect((await sweepAdvanceBills()).filter((x) => x.billId === bill3)).toMatchObject([{ paidCents: 3_000, tenantId: T.A }])
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: bill3 } })).status).toBe('paid')
+    expect((await sweepAdvanceBills()).filter((x) => x.billId === bill3)).toHaveLength(0)
+    // The partly paid bill of (1) is never topped up from another PO's cash in the same box.
+    expect(Number((await prisma.supplierBill.findUniqueOrThrow({ where: { id: b1.id } })).paidCents)).toBe(1_000)
+  })
+
   it('voiding PO vouchers (owner, 2026-11-18): the advance comes back out of the buyer\'s box, then the pay-back is undone and raised again', async () => {
     const { po, voucherId } = await oldAdvancePo(250)
     expect((await call('finA', 'POST', `/trustops/cash-vouchers/${voucherId}/finance-approve`, {})).statusCode).toBe(200)
@@ -732,9 +817,14 @@ describe('old advance vouchers follow the buyer\'s actual amounts (owner, 2026-1
     expect(ok.statusCode, ok.body).toBe(201)
     const grnId = ok.json().grn.id as string
     expect((await call('finA', 'POST', `/procurement/grns/${grnId}/finance-pass`)).statusCode).toBe(200)
+    // His box is switched off for the approval, so the advance does NOT pay the bill by itself (owner, 2026-11-20:
+    // poAdvanceSettle.ts skips a box that is off) — the cash is still with him, as this test needs.
+    await prisma.pettyCashBox.update({ where: { id: box.id }, data: { isActive: false } })
     const ap = await call('ceoA', 'POST', `/procurement/grns/${grnId}/approve`)
     expect(ap.statusCode, ap.body).toBe(200)
+    await prisma.pettyCashBox.update({ where: { id: box.id }, data: { isActive: true } })
     const billId = ap.json().supplierBillId as string
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })).status).toBe('open')
     expect(await prisma.cashVoucher.findUnique({ where: { reimbursesBillId: billId } })).toBeNull()   // the advance pays it
 
     // The void card shows on the advance; finance asks, another company 404; the CEO approves.

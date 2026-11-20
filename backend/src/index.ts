@@ -1317,6 +1317,16 @@ async function build() {
     fastify.log.warn(`[poCash] pay-back sweep skipped: ${(err as Error).message}`)
   }
 
+  // A paid PO cash advance pays its bill by itself (owner, 2026-11-20): bills already waiting are paid from the
+  // buyer's box now (poAdvanceSettle.ts — idempotent; AFTER the pay-back sweep, which takes its own bills).
+  try {
+    const { sweepAdvanceBills } = await import('./modules/procurement/poAdvanceSettle.js')
+    const r = await sweepAdvanceBills()
+    if (r.length) fastify.log.info(`[poAdvance] ${r.length} bill(s) paid from the buyer's PO cash: ${r.map((x) => x.billNumber).join(', ')}`)
+  } catch (err) {
+    fastify.log.warn(`[poAdvance] bill sweep skipped: ${(err as Error).message}`)
+  }
+
   // Per-employee wages sub-ledger (owner, 2026-10-23): once per company, tag the
   // payroll and full & final entries already on the books from their payslips
   // (tags only — no journal line changes). Marker Setting per company.
