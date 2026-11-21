@@ -772,6 +772,14 @@ the media (owner, 2026-10-12) — `showTitle` off keeps the title only as an
   and riders are unchanged. Landing after sign-in stays `/w` → the person's
   own workspace (owner 2026-10-16). Tests: `tests/shiftSessions.test.ts`.
 
+- **The sign-in page repairs itself (owner, 2026-11-20: sign-in said "Failed to fetch" on 4G and Wi-Fi while the API
+  was up; fixed only by deleting the browser's site data — "Yes, build it").** `frontend/admin/src/lib/deviceRepair.ts`:
+  a sign-in that never reaches the server (`isNetworkError`) throws away the device's saved pages (`clearSavedPages`:
+  Cache Storage + the service worker) and is sent ONCE more; still unreachable → a panel with "Reset this device"
+  (`resetDevice`: that + local settings, session storage and page-readable cookies, then `/login?reset=…`); a failure
+  after a reset shows how to clear site data in the browser. NEVER cleared: the till's unsent orders (IndexedDB) and
+  form drafts (`servd:draft:v1:`). Frontend only.
+
 - **The login rate limiter no longer fails open.** It falls back to per-process
   in-memory counters when Redis is unreachable, and `/health` reports
   `loginRateLimit: warn`. Anything on a request path that must degrade rather

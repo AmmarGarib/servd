@@ -5,6 +5,7 @@ import { useAuthStore } from '../../store/auth'
 import { STOREFRONT_URL } from '../../lib/content'
 import { PasswordInput } from '../../components/ui/PasswordInput'
 import { checkInOnSignIn } from '../../lib/checkInOnSignIn'
+import { clearSavedPages, isNetworkError, resetDevice } from '../../lib/deviceRepair'
 
 const API_URL         = process.env['NEXT_PUBLIC_API_URL']         ?? 'http://localhost:3001'
 
@@ -56,6 +57,14 @@ export default function StaffLoginPage() {
 
   const [error,   setError]   = useState('')
   const [loading, setLoading] = useState(false)
+  // The server could not be reached even after the saved pages were thrown away (lib/deviceRepair.ts): offer the
+  // "Reset this device" button. `wasReset` = this load follows that button, so a second failure gets the manual steps.
+  const [unreachable, setUnreachable] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [wasReset, setWasReset] = useState(false)
+  useEffect(() => {
+    try { setWasReset(new URLSearchParams(window.location.search).has('reset')) } catch { /* ignore */ }
+  }, [])
   // A sign-in lasts one shift (owner B1, 2026-10-26): lib/api.ts sends an ended
   // session here with ?ended=shift. Read once on load (no Suspense needed).
   const [shiftEnded, setShiftEnded] = useState(false)
@@ -82,14 +91,28 @@ export default function StaffLoginPage() {
     e.preventDefault()
     if (!pwEmail.trim()) { setError('Enter your email'); return }
     if (!pwPassword) { setError('Enter your password'); return }
-    setError(''); setLoading(true)
+    setError(''); setUnreachable(false); setLoading(true)
     try {
-      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+      const send = () => fetch(`${API_URL}/api/v1/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ email: pwEmail.trim().toLowerCase(), password: pwPassword }),
       })
+      let res: Response
+      try {
+        res = await send()
+      } catch (first) {
+        // Never reached the server: throw away this device's saved pages and try ONCE more (a sign-in is safe to
+        // send again). Still unreachable → the reset button below.
+        if (!isNetworkError(first)) throw first
+        await clearSavedPages()
+        await new Promise((r) => setTimeout(r, 800))
+        try { res = await send() } catch (second) {
+          if (isNetworkError(second)) { setUnreachable(true); return }
+          throw second
+        }
+      }
       const d = await res.json()
       if (!res.ok) throw new Error(d.error?.message ?? 'Invalid credentials')
 
@@ -306,6 +329,32 @@ export default function StaffLoginPage() {
                 wrapperClassName="mb-4" className={pwField} style={fieldStyle}
               />
               {error && <p role="alert" className="text-xs text-center mb-3" style={{ color: 'var(--erp-danger)' }}>{error}</p>}
+              {unreachable && (
+                <div role="alert" className="mb-3 rounded-xl px-4 py-3 text-xs leading-relaxed text-s-text"
+                  style={{ border: '1px solid var(--border-strong)', background: 'var(--elevated)' }}>
+                  <p className="font-bold mb-1" style={{ color: 'var(--erp-danger)' }}>Couldn&rsquo;t reach servd</p>
+                  {wasReset ? (
+                    <p>
+                      This device was reset and still can&rsquo;t reach servd. Check your internet first. If other sites
+                      open, clear this site&rsquo;s data in your browser: Settings &rarr; Site settings &rarr; admin.servd.pk
+                      &rarr; Clear data, then sign in again.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mb-2">
+                        Check your internet and try again. If other sites open, the servd data saved on this device may
+                        be the problem. Resetting keeps unsent till orders and unsaved forms.
+                      </p>
+                      <button type="button" disabled={resetting}
+                        onClick={() => { setResetting(true); void resetDevice() }}
+                        className="w-full rounded-lg py-2.5 text-xs font-bold disabled:opacity-40"
+                        style={{ border: '1px solid var(--erp-primary)', color: 'var(--erp-primary)', background: 'transparent' }}>
+                        {resetting ? 'Resetting…' : 'Reset this device'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
               <button type="submit" className={cta} style={ctaStyle}
                 disabled={loading}>
                 {loading ? 'Signing in…' : 'Sign in'}
