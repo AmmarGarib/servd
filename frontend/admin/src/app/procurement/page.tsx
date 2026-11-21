@@ -1182,9 +1182,11 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
         {lines.map((line, i) => {
           const item = invItems.find((x) => x.id === line.inventoryItemId)
           const unitOf = line.unit || item?.unit || ''
+          // Quantity x rate for this line (owner, 2026-11-21) — the same sum the PO total adds up.
+          const lineCents = (Number(line.quantityOrdered) || 0) * Math.round((Number(line.unitCostCents) || 0) * 100)
           return (
           <div key={i} className="grid grid-cols-12 gap-2 items-end">
-            <div className="col-span-12 sm:col-span-5">
+            <div className="col-span-12 sm:col-span-4">
               {/* servd's ingredient list, with "Add new ingredient" (owner, 2026-11-03: "give option to add from
                   here also. same as recipe area"); the stock item is made in the SUPPLIER's company. */}
               <MasterIngredientPicker className="w-full"
@@ -1234,7 +1236,15 @@ function CreatePoForm({ qc, onClose, initial, title, editId, sendToCeo, onSent }
                 </span>
               )}
             </div>
-            <div className="col-span-10 sm:col-span-2">
+            <div className="col-span-12 sm:col-span-2">
+              <span className="mb-1 block text-[11px] text-s-muted sm:hidden">Line total (quantity × rate)</span>
+              <output aria-label={`Line ${i + 1} total`}
+                className="s-input block w-full truncate bg-s-bg text-right font-semibold text-s-text">
+                {lineCents > 0 ? fmtPkrWhole(lineCents) : '—'}
+              </output>
+              {item && unitOf && <span className="mt-0.5 hidden text-right text-[11px] text-s-muted sm:block">Line total</span>}
+            </div>
+            <div className="col-span-10 sm:col-span-1">
               <Input placeholder="Notes" aria-label={`Line ${i + 1} notes`} enterKeyHint="next" value={line.notes}
                 onChange={(e) => updateLine(i, 'notes', e.target.value)} className={fi} />
             </div>
