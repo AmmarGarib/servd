@@ -173,7 +173,7 @@ function RateFields({ lines, rates, setRates, qtys, setQtys, amounts, setAmounts
             <div key={l.id} className="grid grid-cols-2 sm:grid-cols-[minmax(10rem,1.6fr)_1fr_8rem_9rem_8rem] gap-x-3 gap-y-1 items-center py-2 border-b border-s-border/40 last:border-0">
               <span className="col-span-2 sm:col-span-1 text-sm font-semibold text-s-text break-words">{l.inventoryItem?.name ?? 'Item'}</span>
               <span className="col-span-2 sm:col-span-1 text-[11px] text-s-muted">
-                <span className="sm:hidden">Ordered </span>{orderedOf(l)} {s.unit} · {fmtPkrWhole(estAmt)}
+                <span className="sm:hidden">{lockQty ? 'Now on the GRN: ' : 'Ordered '}</span>{orderedOf(l)} {s.unit} · {fmtPkrWhole(estAmt)}
               </span>
               {lockQty ? <span className="text-xs text-s-text whitespace-nowrap">{orderedOf(l)} {s.unit}</span> : <label className="flex items-center gap-1.5 text-[11px] text-s-muted">
                 <Input type="number" inputMode="decimal" min={0} step="any" value={qtys![l.id] ?? String(orderedOf(l))}
