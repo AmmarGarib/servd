@@ -9,7 +9,7 @@
 import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api, ApiError } from '../../lib/api'
-import { kitHref, kitSlugOf, KIT_IMAGE_KEYS, type BrandKit } from '../../lib/content'
+import { kitHref, kitSlugOf, KIT_IMAGE_KEYS, SERVD_KIT_KEY, type BrandKit } from '../../lib/content'
 import { brandCatalog, kitLook, resolveKitImage, useBrandKitCatalog } from './kitCatalog'
 import { KitSwatches } from './KitPanel'
 
@@ -30,7 +30,9 @@ export function BrandKitCard({ slug, primaryColor, logoUrl, wordmarkUrl, mascotU
   const kit = live.data?.settings?.kit
   const brandImages = { logoUrl, wordmarkUrl, mascotUrl }
   const look = kitLook(cat, kit, primaryColor, logoUrl, brandImages)
-  const images = KIT_IMAGE_KEYS.map((k) => ({ k, ...resolveKitImage(k, kit?.images?.[k], brandImages, cat) }))
+  // The servd kit (slug 'servd': servd.pk's own look) has one picture, the logo.
+  const isServd = slug === SERVD_KIT_KEY
+  const images = (isServd ? (['logo'] as const) : KIT_IMAGE_KEYS).map((k) => ({ k, ...resolveKitImage(k, kit?.images?.[k], brandImages, cat) }))
   // No catalogue default and nothing set on the kit or the brand record: one
   // line, not four empty slots (only once the catalogue and kit have answered).
   const noPictures = catalog.isSuccess && live.isSuccess && images.every((i) => !i.src)
@@ -52,7 +54,7 @@ export function BrandKitCard({ slug, primaryColor, logoUrl, wordmarkUrl, mascotU
             </p>
           : <p className="text-xs text-white/55">
               {live.isPending ? 'Reading the brand kit…'
-                : live.data?.liveVersion ? `Live kit: version ${live.data.liveVersion}.` : 'No kit published: this brand uses its built-in look.'}
+                : live.data?.liveVersion ? `Live kit: version ${live.data.liveVersion}.` : isServd ? 'No kit published: servd.pk uses its built-in look.' : 'No kit published: this brand uses its built-in look.'}
             </p>}
         <Link href={kitHref(slug)} className="s-btn-primary text-xs">Edit in Storefront → Brand kit</Link>
       </div>

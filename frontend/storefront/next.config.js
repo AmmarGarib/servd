@@ -45,9 +45,14 @@ const LEGACY_REDIRECTS = [
   { source: '/browse',            destination: '/',                    permanent: true },
   { source: '/order',             destination: '/',                    permanent: true },
   // The icon paths browsers and crawlers probe without reading the page's
-  // <link> tags; the real one is app/apple-icon.png.
-  { source: '/apple-touch-icon.png',             destination: '/apple-icon.png', permanent: true },
-  { source: '/apple-touch-icon-precomposed.png', destination: '/apple-icon.png', permanent: true },
+  // <link> tags; the real one is app/apple-icon.tsx (served at /apple-icon:
+  // the servd kit's logo, else the bundled file — 2026-11-23). The old static
+  // /icon.png and /apple-icon.png addresses (and browsers that cached the
+  // permanent redirects to them) land on the dynamic routes.
+  { source: '/apple-touch-icon.png',             destination: '/apple-icon', permanent: false },
+  { source: '/apple-touch-icon-precomposed.png', destination: '/apple-icon', permanent: false },
+  { source: '/apple-icon.png',                   destination: '/apple-icon', permanent: false },
+  { source: '/icon.png',                         destination: '/icon',       permanent: false },
 ]
 
 // The baseline security headers (see headers() below).

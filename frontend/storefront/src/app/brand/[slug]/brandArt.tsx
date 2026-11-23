@@ -19,7 +19,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ReactElement } from 'react'
 import { formatBrandName, type Concept } from '../../../lib/concept'
-import { KIT_CATALOGUE, kitImage, liveEntry, resolveKit, type ResolvedKit } from '../../../lib/brandKit'
+import { KIT_CATALOGUE, kitImage, liveEntry, resolveKit, servdKitLogo, type ResolvedKit } from '../../../lib/brandKit'
 import { getLiveKits } from '../../../lib/brandKitFetch'
 
 type Font = { name: string; data: ArrayBuffer; weight: 400 | 500 | 700 | 800 | 900; style: 'normal' }
@@ -260,4 +260,23 @@ export async function brandMark(concept: Concept, size: number, square = false):
       </div>
     ),
   }
+}
+
+/**
+ * servd's own tab / home-screen icon from the PUBLISHED servd kit's logo (Admin → Storefront → Brand kit → servd;
+ * lib/brandKit.ts servdKitLogo): the logo fitted on the tile (`square` = full-bleed on white, the home-screen icon).
+ * null when no servd kit logo is published or it can't be fetched — the caller then serves the bundled icon, as
+ * before the kit. Used by app/icon.tsx, app/apple-icon.tsx and /favicon.ico on servd's hosts.
+ */
+export async function servdKitMark(size: number, square = false): Promise<ReactElement | null> {
+  const src = servdKitLogo(await getLiveKits())
+  const art = src ? await artwork(src) : null
+  if (!art) return null
+  const pad = square ? Math.round(size * 0.12) : 0
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', ...(square && { background: '#ffffff' }) }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={art} alt="" style={{ width: size - pad * 2, height: size - pad * 2, objectFit: 'contain' }} />
+    </div>
+  )
 }

@@ -147,7 +147,8 @@ describe('slug grammar', () => {
     expect(parseSlug('brand:simmer:kit')).toEqual({ owner: 'brand', kind: 'kit', conceptSlug: 'simmer' })
     expect(parseSlug('brand:simmer:footer')?.kind).toBe('footer')
     expect(parseSlug('brand:simmer:about')?.kind).toBe('page')
-    expect(parseSlug('servd:kit')?.kind).toBe('page')
+    // servd:kit is the servd kit (tests/servdKit.test.ts), not a page.
+    expect(parseSlug('servd:kit')).toEqual({ owner: 'servd_kit', kind: 'kit' })
   })
 })
 

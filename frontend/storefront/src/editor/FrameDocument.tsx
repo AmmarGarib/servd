@@ -19,7 +19,7 @@
 import type { ReactNode } from 'react'
 import type { SiteLayoutRead } from '../lib/blocks'
 import { brandAccent, type Concept } from '../lib/concept'
-import { kitCss, resolveKit, type LiveKits } from '../lib/brandKit'
+import { kitCss, resolveKit, servdKitCss, SERVD_KIT_KEY, type LiveKits } from '../lib/brandKit'
 import { getLiveKits } from '../lib/brandKitFetch'
 import { fetchBrandLocations, isPublishableLocation } from '../lib/brandLocations'
 import { findConcept } from '../lib/liveConcepts'
@@ -136,7 +136,8 @@ function Context({ slug, children }: { slug: string; children: ReactNode }) {
  *  (`:root`, same specificity, later in the document). Preview only. */
 function DraftKitStyle({ kit, concepts }: { kit: FrameKitInput; concepts: Concept[] }) {
   const concept = findConcept(kit.brand, concepts) ?? null
-  const css = kitCss([resolveKit(kit.brand, concept, kit.entry)])
+  // The servd kit paints servd's own pages only (lib/brandKit.ts SERVD_SITE_SCOPE).
+  const css = kit.brand === SERVD_KIT_KEY ? servdKitCss(kit.entry) : kitCss([resolveKit(kit.brand, concept, kit.entry)])
   return <style data-sv-draft-kit={kit.brand} dangerouslySetInnerHTML={{ __html: css }} />
 }
 

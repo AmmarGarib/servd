@@ -535,6 +535,8 @@ export async function conceptRoutes(fastify: FastifyInstance) {
     assertBrandProvince(body.province)
     // A head office never has brands (D1 §6.7): 422 HEAD_OFFICE_HAS_NO_BRANDS.
     await assertTradingCompany(req.staffUser!.tenantId)
+    // `servd` is the servd kit's key (kits/live → kits.servd, /storefront/kit/servd): never a brand's address.
+    if (body.slug === 'servd') throw new AppError('BRAND_SLUG_RESERVED', 'The web address /servd is reserved for servd itself. Pick a different one under Advanced.', 422)
     // A slug held by a brand in the Trash → 409 IN_TRASH (restore it instead).
     const holder = await serviceClient.concept.findUnique({ where: { slug: body.slug }, select: { id: true, tenantId: true, deletedAt: true } })
     if (holder?.deletedAt) {

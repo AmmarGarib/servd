@@ -158,7 +158,8 @@ const storefrontPublish: ApprovalProvider = {
       const path = `/site-layouts/${encodeURIComponent(r.slug)}`
       // A brand kit (brand:<b>:kit) reads "Brand kit — <Brand>" (the list
       // route's `label`) and opens its kit editor.
-      const kitBrand = r.kind === 'kit' ? /^brand:([^:]+):kit$/.exec(r.slug)?.[1] : undefined
+      // The servd kit (servd:kit, servd.pk's own look) opens /storefront/kit/servd.
+      const kitBrand = r.kind === 'kit' ? (r.slug === 'servd:kit' ? 'servd' : /^brand:([^:]+):kit$/.exec(r.slug)?.[1]) : undefined
       const link = kitBrand ? `/storefront/kit/${encodeURIComponent(kitBrand)}` : '/storefront?tab=approvals'
       return {
         type: 'storefront_publish',
@@ -171,7 +172,7 @@ const storefrontPublish: ApprovalProvider = {
         subtitle: r.slug,
         facts: facts([
           ['Page', r.slug],
-          ['Kind', kitBrand ? 'Brand kit' : human(r.kind)],
+          ['Kind', r.slug === 'servd:kit' ? 'servd kit' : kitBrand ? 'Brand kit' : human(r.kind)],
           ['Submitted by', r.submittedBy?.name ?? null],
           ['Live now', r.liveVersion > 0 ? `version ${r.liveVersion}` : 'Not published yet'],
         ]),

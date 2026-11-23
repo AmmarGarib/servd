@@ -3,7 +3,7 @@
 // ordering screen, and it is nobody's landing page).
 //
 // No slug gate here, on purpose: the 404 for non-brands lives in
-// (menu)/layout.tsx, which wraps only the ordering screen. A customer with a
+// the ordering screen (page.tsx), which alone 404s an unknown slug. A customer with a
 // basket must not hit a 404 because the API didn't answer or the brand was
 // hidden mid-service.
 

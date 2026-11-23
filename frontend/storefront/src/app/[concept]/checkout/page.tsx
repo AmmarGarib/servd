@@ -142,7 +142,9 @@ export default function CheckoutPage() {
     slug === 'simmer' ? 'simmer-ordering' :
     slug === 'stackd'   ? 'stackd-ordering'   :
     slug === 'flipd'  ? 'flipd-ordering'  :
-    ''
+    // A brand with no skin keeps servd's built-in look: .servd-kit-off keeps
+    // the servd kit (lib/brandKit.ts SERVD_SITE_SCOPE) off this brand screen.
+    'servd-kit-off'
   // Cross-brand upsell ("want a side from another GS Foods kitchen?")
 
   // Guest checkout is gone — every order needs a logged-in customer. Bounce

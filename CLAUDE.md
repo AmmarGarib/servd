@@ -676,6 +676,21 @@ display rules), Library (`MediaAsset` kinds image/video/font/copy), Approvals.
   `frontend/admin/src/lib/editorProtocol.ts`. The storefront image must be
   built with `NEXT_PUBLIC_SITE_URL=https://servd.pk` (server-action origin
   check). Cloudflare must not add its own frame headers to `/editor-frame`.
+- **The servd kit (owner, 2026-11-23: "give servd brand kit also. Link it to gs foods? Cause I own servd").** servd.pk's
+  own look is ONE SiteLayout `servd:kit` (kind 'kit', `settings.kit`, blocks []; `parseSlug` owner `servd_kit`), edited in
+  the same kit editor as the brands (`/storefront/kit/servd`, first row on Storefront → Brand kit and on /ceo/brands).
+  Owned by a COMPANY, not a null-tenant row: the CEO's ACTIVE company at first save (GS Foods), never changed after
+  (`service.ts servdKitTenant`); library fonts resolve in it. CEO only — every route on the slug is 403
+  `SERVD_KIT_CEO_ONLY` for anyone else, another company's CEO gets 404; same draft → CEO approve / rollback / delete; no
+  Concept sync. Public as `kits.servd` on `GET /site-layouts/kits/live` (live version only); no brand may take the slug
+  `servd` (422 `BRAND_SLUG_RESERVED`). Storefront: `lib/brandKit.ts SERVD_KIT` (kept OUT of KIT_CATALOGUE; palette keys
+  ARE the `--servd-<key>` tokens, defaults = today's values) → `servdKitCss`, written under `SERVD_SITE_SCOPE` =
+  `:root:not(:has(.servd-brand-scope, .simmer-ordering, .stackd-ordering, .flipd-ordering, .servd-kit-off))`, so a brand
+  page, brand ordering skin or an unskinned brand's menu / checkout (`servd-kit-off`) never changes; nothing is emitted
+  while no servd kit is published. Its logo replaces the servd nav / home-hero logo when that field is the bundled
+  `/brand/servd-logo.png` or empty (`servdLogoFor`) and is servd's tab icon (`app/icon.tsx`, `app/apple-icon.tsx`,
+  `/favicon.ico` on servd hosts; `brandArt.tsx servdKitMark`), falling back to the bundled files
+  (`public/brand/servd-icon.png`, `servd-apple-icon.png`, `servd-favicon.ico`). Tests: `tests/servdKit.test.ts`.
 - **Scroll effects:** `block.motion = { preset, intensity }` (parallax, fade,
   grow, pin-reveal, sticky-stack, side-pan, text-reveal × subtle/medium/strong),
   independent of the one-shot entrance `animation`. FOUR copies stay in step:

@@ -7,8 +7,9 @@
 
 import Link from 'next/link'
 import { useQueries, useQuery } from '@tanstack/react-query'
+import { usePermissions } from '../../hooks/useCan'
 import {
-  contentApi, fmtDateTime, kitHref, kitSlugOf, STOREFRONT_BRANDS_KEY,
+  contentApi, fmtDateTime, kitHref, kitSlugOf, SERVD_KIT_KEY, SERVD_KIT_SLUG, STOREFRONT_BRANDS_KEY,
   type ConceptLite, type LayoutEdit, type LayoutSummary,
 } from '../../lib/content'
 import { brandCatalog, kitLook, useBrandKitCatalog, type KitLook } from './kitCatalog'
@@ -49,6 +50,11 @@ export function KitPanel() {
     })),
   })
   const bySlug = new Map((layouts.data ?? []).map((r) => [r.slug, r]))
+  // The servd kit (servd.pk's own look, owned by GS Foods): the CEO's alone, listed first.
+  const isCeo = usePermissions().data?.role === 'admin'
+  const servdKit = useQuery<LayoutEdit>({ queryKey: ['site-layout-edit', SERVD_KIT_SLUG], queryFn: () => contentApi.edit(SERVD_KIT_SLUG), enabled: isCeo })
+  const servdRow = bySlug.get(SERVD_KIT_SLUG)
+  const servdLook = kitLook(brandCatalog(catalog.data, SERVD_KIT_KEY), servdKit.data?.settings?.kit)
 
   return (
     <div className="space-y-4">
@@ -66,11 +72,30 @@ export function KitPanel() {
       )}
       {concepts.isLoading && <p className="text-xs text-s-muted">Loading brands...</p>}
       {concepts.isSuccess && brands.length === 0 && <p className="text-xs text-s-muted">No brands yet.</p>}
-      {brands.length > 0 && (
+      {(brands.length > 0 || isCeo) && (
         <div className="s-card overflow-x-auto">
           <table className="s-table">
             <thead><tr><th>Brand</th><th>Colours now</th><th>Live</th><th>Draft</th><th>Last edited</th><th /></tr></thead>
             <tbody>
+              {isCeo && (
+                <tr key="servd">
+                  <td>
+                    <Link href={kitHref(SERVD_KIT_KEY)} className="flex items-center gap-2 font-semibold text-s-text hover:text-primary-ink">
+                      {servdLook.logo && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={servdLook.logo} alt="" className="h-6 w-6 rounded object-contain bg-s-elevated" />
+                      )}
+                      servd
+                    </Link>
+                    <p className="text-[11px] text-s-muted">servd.pk itself · owned by GS Foods · CEO only</p>
+                  </td>
+                  <td><KitSwatches look={servdLook} /></td>
+                  <td className="text-xs">{servdRow?.liveVersion ? `v${servdRow.liveVersion}` : <span className="text-s-muted">Built-in look</span>}</td>
+                  <td>{servdRow ? <StatusBadge row={servdRow} showNote /> : <span className="s-badge-muted">No draft</span>}</td>
+                  <td className="text-xs text-s-muted">{fmtDateTime(servdRow?.draftUpdatedAt ?? servdRow?.updatedAt ?? null)}</td>
+                  <td className="text-right text-xs"><Link href={kitHref(SERVD_KIT_KEY)} className="text-primary-ink hover:underline">Edit</Link></td>
+                </tr>
+              )}
               {brands.map((c, i) => {
                 const slug = kitSlugOf(c.slug)
                 const row = bySlug.get(slug)

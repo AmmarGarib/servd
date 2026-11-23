@@ -12,13 +12,18 @@ import ScrollExpandMedia from '../../components/ui/scroll-expansion-hero'
 import { openSearch } from '../../components/SearchSheet'
 import type { SectionProps } from '../types'
 import { link, list, safeHref, safeSrc, str } from '../safe'
+import { servdLogoFor, SERVD_BUNDLED_LOGO } from '../../lib/brandKit'
 import { Chevron } from './icons'
 
 // A layout saved before the logo field existed gets the servd logo; an explicit '' = none.
-const logoSrcOf = (f: Record<string, unknown>): string =>
-  typeof f.logoSrc === 'string' ? safeSrc(f.logoSrc) : '/brand/servd-logo.png'
+// The servd logo (the default) follows the servd kit's logo once one is published.
+const logoSrcOf = (f: Record<string, unknown>, kits: SectionProps['ctx']['kits']): string => {
+  if (typeof f.logoSrc !== 'string') return servdLogoFor(SERVD_BUNDLED_LOGO, kits)
+  const own = safeSrc(f.logoSrc)
+  return own ? servdLogoFor(own, kits) : ''
+}
 
-export function ScrollHero({ fields }: SectionProps) {
+export function ScrollHero({ fields, ctx }: SectionProps) {
   const mediaType = fields.mediaType === 'image' ? 'image' : 'video'
   const mediaSrc = safeSrc(mediaType === 'video' ? fields.mediaSrc : fields.mediaImage)
   const poster = safeSrc(fields.posterSrc)
@@ -50,7 +55,7 @@ export function ScrollHero({ fields }: SectionProps) {
       {...(date && { date })}
       scrollToExpand={str(fields.scrollToExpand)}
       textBlend={fields.textBlend === true}
-      {...(fields.showLogo !== false && logoSrcOf(fields) && { logoSrc: logoSrcOf(fields), logoAlt: str(fields.logoAlt).trim() })}
+      {...(fields.showLogo !== false && logoSrcOf(fields, ctx.kits) && { logoSrc: logoSrcOf(fields, ctx.kits), logoAlt: str(fields.logoAlt).trim() })}
       scrollCue={fields.scrollCue !== false}
       revealPadded={Boolean(overview || conclusion || primary.text || secondary.text)}
     >

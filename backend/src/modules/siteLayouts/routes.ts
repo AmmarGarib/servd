@@ -10,6 +10,12 @@
 //   brand:<slug>:kit              the brand kit (kind 'kit'): the brand's company
 //                                 colours, fonts and images in
 //                                 settings.kit; blocks always []
+//   servd:kit                     the servd kit (kind 'kit'):  the company that owns
+//                                 servd.pk's own colours,      servd (GS Foods): the CEO's
+//                                 fonts and logo; CEO only     active company at first save,
+//                                 (403 SERVD_KIT_CEO_ONLY);    never changed after; another
+//                                 no Concept sync; served as   company's CEO gets 404
+//                                 kits.servd on /kits/live
 //   page:<slug>                   custom page (/pages/<slug>) tenantId null
 //   popup:<key>                   pop-up                      null, or the one company its brands belong to
 //
@@ -46,6 +52,7 @@ import {
   parseSlug, parseSlugOrThrow, resolveLayoutTenant, assertRowInScope, publishDraft, publishDueLayouts,
   publicShape, resolveFonts, namesById, assertKitFontsInCompany, kitOf, resolveKitFonts,
   kitLiveSettingsTx, syncKitToConceptTx, unapplyKitTx, stripServerSettings, assertLensLayoutAllowed,
+  SERVD_KIT_SLUG, SERVD_KIT_KEY, isServdKitSlug, assertServdKitCeo,
 } from './service.js'
 
 const PREVIEW_TOKEN_TYPE = 'site_preview'
@@ -78,10 +85,20 @@ async function assertStorefrontModule(req: FastifyRequest, _reply: FastifyReply)
   }
 }
 
-const STOREFRONT = { preHandler: [requireAuth(), assertStorefrontModule] }
+/** The servd kit (servd:kit) is the CEO's alone: every route on that slug
+ *  answers 403 SERVD_KIT_CEO_ONLY to anyone else (before any read). */
+async function assertServdKitGate(req: FastifyRequest, _reply: FastifyReply) {
+  const raw = (req.params as { slug?: unknown } | undefined)?.slug
+  if (typeof raw !== 'string') return
+  let slug = raw
+  try { slug = decodeURIComponent(raw) } catch { /* keep raw */ }
+  if (isServdKitSlug(slug)) assertServdKitCeo(req)
+}
+
+const STOREFRONT = { preHandler: [requireAuth(), assertStorefrontModule, assertServdKitGate] }
 const CEO = { preHandler: requireAuth(...ADMIN_ONLY) }
 /** Approve / reject: any signed-in staff; assertCanApprove (decisionRow) decides. */
-const DECIDE = { preHandler: requireAuth(...ALL_STAFF) }
+const DECIDE = { preHandler: [requireAuth(...ALL_STAFF), assertServdKitGate] }
 
 /** The row at `slug`, 404 unless its company is in `mode`'s scope. */
 async function loadRow(req: FastifyRequest, slug: string, mode: 'read' | 'write'): Promise<SiteLayout> {
@@ -105,7 +122,8 @@ async function decisionRow(req: FastifyRequest, slug: string, action: 'approve' 
   const s = await approvalSubject('storefront_publish', slug)
   if (!s) throw new NotFoundError('SiteLayout', slug)
   const grant = await assertCanApprove(req, approvalInputOf('storefront_publish', slug, s, {
-    ceoOnly: s.ownerTenantId === null,
+    // Shared rows and the servd kit are the CEO's, never a hand-over.
+    ceoOnly: s.ownerTenantId === null || isServdKitSlug(slug),
     entity: 'SiteLayout',
     action: `${action} a website change`,
   }))
@@ -251,11 +269,20 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
         orderBy: { slug: 'asc' },
       })
       const bySlug = new Map<string, (typeof rows)[number]>()
+      let servdRow: (typeof rows)[number] | null = null
       for (const r of rows) {
         const p = parseSlug(r.slug)
-        if (p?.owner === 'brand' && p.kind === 'kit' && r.tenantId) bySlug.set(p.conceptSlug, r)
+        // `servd` is the servd kit's key: a brand kit never takes it.
+        if (p?.owner === 'brand' && p.kind === 'kit' && r.tenantId && p.conceptSlug !== SERVD_KIT_KEY) bySlug.set(p.conceptSlug, r)
+        if (p?.owner === 'servd_kit' && r.slug === SERVD_KIT_SLUG && r.tenantId) servdRow = r
       }
       const kits: Record<string, { kit: unknown; version: number; fonts: unknown[] }> = {}
+      // The servd kit (servd.pk's own look): its LIVE version only; library
+      // fonts resolve inside its owning company (GS Foods).
+      const servdKit = servdRow ? kitOf(servdRow.settings) : null
+      if (servdRow && servdKit) {
+        kits[SERVD_KIT_KEY] = { kit: servdKit, version: servdRow.liveVersion, fonts: await resolveKitFonts(servdKit, servdRow.tenantId) }
+      }
       if (bySlug.size === 0) return { kits }
       const brands = await prisma.concept.findMany({
         where: { slug: { in: [...bySlug.keys()] }, ...listedBrandWhere() },
@@ -381,6 +408,8 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
           OR: [{ tenantId: null }, await scopeTenantWhere(req, 'read'), ...(delegated.length > 0 ? [{ tenantId: { in: delegated } }] : [])],
           ...(q.status !== 'all' ? { draftStatus: q.status } : {}),
           ...(q.kind ? { kind: q.kind } : {}),
+          // The servd kit is listed to the CEO only.
+          ...(req.staffUser?.role !== 'admin' ? { NOT: { slug: SERVD_KIT_SLUG } } : {}),
         },
         orderBy: { slug: 'asc' },
       })
@@ -401,6 +430,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
         for (const c of concepts) brandNames.set(`${c.tenantId}:${c.slug}`, c.name)
       }
       const labelOf = (r: (typeof rows)[number]) => {
+        if (isServdKitSlug(r.slug)) return 'servd kit — servd.pk'
         const b = kitBrand.get(r.slug)
         return b === undefined ? null : `Brand kit — ${brandNames.get(`${r.tenantId}:${b}`) ?? b}`
       }
@@ -465,7 +495,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     const kitSettings = isKit ? kitSettingsSchema.parse(body.settings) : null
     const pageSettings = isKit ? null : (pageSettingsSchema.nullish().parse(body.settings) ?? null)
     if (pageSettings && 'kit' in pageSettings) {
-      throw new AppError('KIT_NOT_ALLOWED', 'Only a brand kit (brand:<brand>:kit) carries a kit', 422)
+      throw new AppError('KIT_NOT_ALLOWED', 'Only a brand kit (brand:<brand>:kit) or the servd kit (servd:kit) carries a kit', 422)
     }
     const settings = kitSettings ?? pageSettings
 

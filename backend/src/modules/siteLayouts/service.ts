@@ -10,7 +10,7 @@ import type { FastifyRequest } from 'fastify'
 import { serviceClient } from '../../lib/prisma.js'
 import { AppError, NotFoundError } from '../../lib/errors.js'
 import { scopeTenantWhere, type ScopeMode } from '../../lib/tenantScope.js'
-import { assertHoMayPropose, isReachOnly } from '../../lib/headOffice.js'
+import { assertHoMayPropose, isHeadOfficeTenant, isReachOnly } from '../../lib/headOffice.js'
 import { audit } from '../../lib/audit.js'
 import { fontFamiliesUsed, brandKitSchema, kitLibraryFontIds, cleanFontFamily, type BrandKit } from './schemas.js'
 
@@ -22,6 +22,7 @@ export type ParsedSlug =
   | { owner: 'shared'; kind: LayoutKind }
   | { owner: 'brand'; kind: LayoutKind; conceptSlug: string }
   | { owner: 'popup'; kind: 'popup' }
+  | { owner: 'servd_kit'; kind: 'kit' }
 
 const PART = /^[a-z0-9][a-z0-9_-]{0,79}$/i
 
@@ -32,9 +33,34 @@ const PART = /^[a-z0-9][a-z0-9_-]{0,79}$/i
 const SERVD_WIDGETS = new Set(['feedback'])
 
 /**
+ * The servd kit (owner, 2026-11-23: "give servd brand kit also. Link it to gs
+ * foods? Cause I own servd"): servd.pk's own look — the `--servd-*` colours,
+ * two fonts and the logo — in ONE row `servd:kit` (kind 'kit', settings.kit,
+ * blocks []). Not a null-company platform row: it belongs to a company (GS
+ * Foods) — the CEO's ACTIVE company when the CEO first saves it, and that
+ * `tenantId` never changes afterwards. CEO only (role `admin`): draft, read,
+ * submit, approve, roll back and delete (403 SERVD_KIT_CEO_ONLY for anyone
+ * else; a CEO outside the owning company gets 404). No Concept is synced (servd
+ * is not a brand). Served publicly as `kits.servd` on GET /site-layouts/kits/live.
+ */
+export const SERVD_KIT_SLUG = 'servd:kit'
+/** The key the servd kit has in kits/live (a brand may never take this slug). */
+export const SERVD_KIT_KEY = 'servd'
+export const isServdKitSlug = (slug: string): boolean => slug === SERVD_KIT_SLUG
+
+/** 403 SERVD_KIT_CEO_ONLY unless the caller is the CEO (role admin). */
+export function assertServdKitCeo(req: FastifyRequest): void {
+  if (req.staffUser?.role !== 'admin') {
+    throw new AppError('SERVD_KIT_CEO_ONLY', "Only the CEO edits and approves the servd kit (servd.pk's own colours, fonts and logo).", 403)
+  }
+}
+
+/**
  * servd:<page>                 → shared (servd:header / servd:footer are the
  *                                site chrome; servd:feedback is a widget —
  *                                the floating feedback button)
+ * servd:kit                    → the servd kit (kind 'kit'): servd.pk's look,
+ *                                owned by a company (GS Foods), CEO only
  * brand:<conceptSlug>[:<page>] → the brand's company (:header / :footer are
  *                                its chrome; :kit is its brand kit — colours,
  *                                fonts, images, never a page; about, visit,
@@ -60,6 +86,7 @@ function brandPartKind(part: string): LayoutKind {
 export function parseSlug(slug: string): ParsedSlug | null {
   const [prefix, a, b, ...rest] = slug.split(':')
   if (rest.length > 0 || !a || !PART.test(a)) return null
+  if (prefix === 'servd' && a === 'kit' && b === undefined) return { owner: 'servd_kit', kind: 'kit' }
   if (prefix === 'servd' && b === undefined) {
     return { owner: 'shared', kind: SERVD_WIDGETS.has(a) ? 'widget' : chromeKind(a) }
   }
@@ -76,7 +103,7 @@ export function parseSlugOrThrow(slug: string): ParsedSlug {
   const p = parseSlug(slug)
   if (!p) {
     throw new AppError('LAYOUT_SLUG_INVALID',
-      'Slug must be servd:<page>, brand:<brand>[:<page>], page:<slug> or popup:<key>', 422)
+      'Slug must be servd:<page>, servd:kit, brand:<brand>[:<page>], page:<slug> or popup:<key>', 422)
   }
   return p
 }
@@ -121,6 +148,7 @@ export async function resolveLayoutTenant(
 ): Promise<string | null> {
   const parsed = parseSlugOrThrow(slug)
   if (parsed.owner === 'shared') return null
+  if (parsed.owner === 'servd_kit') return servdKitTenant(req, slug, mode)
   if (parsed.owner === 'brand') {
     if (mode === 'create' && !req.staffUser?.tenantId) {
       throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company before creating a brand page', 422)
@@ -145,6 +173,30 @@ export async function resolveLayoutTenant(
       'A pop-up can only target brands of one company you work in', 422)
   }
   return concepts[0]!.tenantId
+}
+
+/**
+ * The servd kit's company. Once the row exists: its own tenantId (never
+ * changes), 404 unless that company is in `mode`'s scope. Before it exists:
+ * `create` binds it to the CEO's ACTIVE company (422 NO_ACTIVE_COMPANY /
+ * SERVD_KIT_NEEDS_COMPANY for none or a head office); a read (the editor's
+ * skeleton) reports the active company. CEO only, always.
+ */
+async function servdKitTenant(req: FastifyRequest, slug: string, mode: ScopeMode): Promise<string | null> {
+  assertServdKitCeo(req)
+  const row = await db.siteLayout.findUnique({ where: { slug }, select: { tenantId: true } })
+  if (row?.tenantId) {
+    const ids = await tenantIdsFor(req, mode === 'create' ? 'write' : mode)
+    if (!ids.includes(row.tenantId)) throw new NotFoundError('SiteLayout', slug)
+    return row.tenantId
+  }
+  const active = req.staffUser?.tenantId ?? null
+  if (mode !== 'create') return active
+  if (!active) throw new AppError('NO_ACTIVE_COMPANY', 'Pick the company that owns servd (GS Foods) before saving the servd kit', 422)
+  if (await isHeadOfficeTenant(active, db)) {
+    throw new AppError('SERVD_KIT_NEEDS_COMPANY', 'The servd kit belongs to a trading company (GS Foods), not a head office — switch company first', 422)
+  }
+  return active
 }
 
 // ── Publishing ───────────────────────────────────────────────────────────────

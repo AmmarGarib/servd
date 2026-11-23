@@ -14,6 +14,9 @@
 //     the `--kit-<slug>-*` role tokens brandSurface() / brandWordmark() read,
 //     and @font-face for Library fonts. The root layout injects it once.
 //   - kitImage(): section field → kit image → Concept field → bundled default.
+//   - SERVD_KIT / servdKitCss(): the servd kit (`servd:kit`, kits.servd) —
+//     servd.pk's own --servd-* tokens, fonts and logo, scoped to servd's own
+//     pages only (never a brand page or brand ordering skin).
 //
 // Isomorphic and dependency-free (client components import lib/concept.ts,
 // which reads this). The fetch lives in ./brandKitFetch.ts (server).
@@ -351,6 +354,9 @@ function fontStack(ref: FontRef | undefined, dflt: string, files: KitFontFile[],
 /** A brand's look: the catalogue defaults ⊕ its live (or draft) kit. */
 export function resolveKit(slug: string, concept?: KitConceptFields | null, live?: LiveKitEntry | null): ResolvedKit {
   const cat = Object.prototype.hasOwnProperty.call(KIT_CATALOGUE, slug) ? KIT_CATALOGUE[slug] : undefined
+  // The servd kit (kits.servd) is servd.pk's own look, painted only by
+  // servdKitCss(); it never drives the generic `servd` role tokens here.
+  if (slug === SERVD_KIT_KEY) live = null
   const kit = live ? normalizeKit(live.kit) : { v: 1 as const }
   const files = live?.fonts ?? []
 
@@ -398,7 +404,8 @@ export function resolveKit(slug: string, concept?: KitConceptFields | null, live
 export function resolveAllKits(live: LiveKits, concepts?: Record<string, KitConceptFields>): ResolvedKit[] {
   const slugs = new Set([...Object.keys(KIT_CATALOGUE), ...Object.keys(live)])
   return [...slugs]
-    .filter((s) => KIT_BRAND_SLUG_RE.test(s))
+    // The servd kit is not a brand: servdKitCss() paints it, scoped to servd's own pages.
+    .filter((s) => KIT_BRAND_SLUG_RE.test(s) && s !== SERVD_KIT_KEY)
     .map((s) => resolveKit(s, concepts?.[s] ?? null, Object.prototype.hasOwnProperty.call(live, s) ? live[s] : null))
 }
 
@@ -458,9 +465,111 @@ export function kitCss(kits: ResolvedKit[] | Record<string, ResolvedKit>): strin
   return styleSafe(`${faces}:root{${decls.join(';')}}`)
 }
 
-/** The whole-site kit stylesheet: every brand, defaults ⊕ live kits. */
+/** The whole-site kit stylesheet: every brand, defaults ⊕ live kits, plus
+ *  the servd kit (nothing at all while none is published). */
 export function allKitsCss(live: LiveKits): string {
-  return kitCss(resolveAllKits(live))
+  return kitCss(resolveAllKits(live)) + servdKitCss(liveEntry(live, SERVD_KIT_KEY))
+}
+
+// ── The servd kit (servd.pk's own look) ─────────────────────────────────────
+// Owner, 2026-11-23: "give servd brand kit also. Link it to gs foods? Cause I
+// own servd". The SiteLayout `servd:kit` (owned by GS Foods, CEO only) arrives
+// as kits.servd on GET /site-layouts/kits/live. It is NOT a brand: it is kept
+// out of KIT_CATALOGUE (whose entries emit their tokens on :root for every
+// page) and its palette keys ARE the existing `--servd-<key>` tokens of
+// globals.css, defaults = today's values.
+//
+// ISOLATION: the tokens are written under SERVD_SITE_SCOPE, which matches the
+// document only while it holds no brand surface — no `.servd-brand-scope`
+// (every /brand/<slug> page and its editor frame), no brand ordering skin
+// (`.simmer-ordering` / `.stackd-ordering` / `.flipd-ordering`) and no
+// `.servd-kit-off` (the ordering / checkout screens of a brand with no skin).
+// So on a brand page the rule does not apply at all and every token —
+// including the ones computed on :root from them (--servd-hard-ink,
+// --brand-accent, --servd-sheet-ink…) — is exactly as before. A browser
+// without :has() simply keeps servd's built-in look. With no servd kit
+// published nothing is emitted (byte-for-byte as before).
+
+export const SERVD_KIT_KEY = 'servd'
+
+/** The document is one of servd's own pages (see the note above). */
+export const SERVD_SITE_SCOPE = ':root:not(:has(.servd-brand-scope,.simmer-ordering,.stackd-ordering,.flipd-ordering,.servd-kit-off))'
+
+/** body's font stack in globals.css (the servd body font today). */
+const SERVD_BODY_STACK = 'var(--font-inter), system-ui, -apple-system, "Segoe UI", sans-serif'
+
+export const SERVD_KIT: {
+  palette: KitPaletteEntry[]
+  fonts: { display: string; body: string }
+  images: Partial<Record<KitImageKey, string>>
+  note: string
+} = {
+  // key = the `--servd-<key>` token it sets.
+  palette: [
+    { key: 'green',      label: 'Primary green (Order buttons)',  default: '#87c540' },
+    { key: 'purple',     label: 'Purple (bands, purple buttons)', default: '#6a0dad' },
+    { key: 'black',      label: 'Deep purple',                    default: '#3b0764' },
+    { key: 'ink',        label: 'Ink (body text)',                default: '#261038' },
+    { key: 'surface',    label: 'Surface (lavender panels)',      default: '#f3eefa' },
+    { key: 'bg',         label: 'Background',                     default: '#ffffff' },
+    { key: 'green-dark', label: 'Green text (green on white)',    default: '#4f7a1c' },
+  ],
+  fonts: { display: 'bricolage', body: 'inter' },
+  images: { logo: '/brand/servd-logo.png' },
+  note: "servd.pk's own look (owned by GS Foods, CEO only). Brand pages and brand ordering screens never change. Text on green stays deep purple; the hover and soft green follow Primary green, the hairlines follow Ink.",
+}
+
+/** Defaults kept when the kit leaves the base colour alone (globals.css). */
+const SERVD_GREEN_HOVER = '#78b332'
+const SERVD_GREEN_SOFT = '#e2edc8'
+
+/** The servd kit's stylesheet, or '' when there is no servd kit. Emits the
+ *  full token set (unset keys at today's value) so a draft in the editor
+ *  frame fully replaces the live one. */
+export function servdKitCss(entry: LiveKitEntry | null | undefined): string {
+  if (!entry) return ''
+  const kit = normalizeKit(entry.kit)
+  const files = entry.fonts ?? []
+  const p: Record<string, Hex> = {}
+  for (const e of SERVD_KIT.palette) p[e.key] = kit.palette?.[e.key] ?? e.default
+  const decls = SERVD_KIT.palette.map((e) => `--servd-${e.key}:${p[e.key]}`)
+  const greenSet = !!kit.palette?.['green']
+  decls.push(
+    `--servd-green-hover:${greenSet ? `color-mix(in srgb, ${p['green']} 88%, #000000)` : SERVD_GREEN_HOVER}`,
+    `--servd-green-soft:${greenSet ? `color-mix(in srgb, ${p['green']} 22%, #ffffff)` : SERVD_GREEN_SOFT}`,
+    `--servd-line:${rgbaOf(p['ink']!, '0.12')}`,
+  )
+  const faces: LibraryFont[] = []
+  const display = fontStack(kit.fonts?.display, SERVD_KIT.fonts.display, files, faces)
+  decls.push(`--font-display:${display.stack}`)
+  // body names its family directly in globals.css (no token); the default is that exact stack.
+  const bodyRef = kit.fonts?.body
+  let bodyStack = SERVD_BODY_STACK
+  const builtinBody = bodyRef ? BUILTIN_BY_ID.get(bodyRef) : undefined
+  if (builtinBody) bodyStack = builtinBody.stack
+  else if (bodyRef?.startsWith('library:')) {
+    const file = files.find((f) => f.id === bodyRef.slice('library:'.length))
+    const family = file ? safeFontFamily(file.family) : null
+    if (file && family) { faces.push({ family, url: file.url }); bodyStack = `"${family}", ${SERVD_BODY_STACK}` }
+  }
+  return styleSafe(`${fontFaceCss(faces)}${SERVD_SITE_SCOPE}{${decls.join(';')}}${SERVD_SITE_SCOPE} body{font-family:${bodyStack}}`)
+}
+
+/** The servd logo the servd kit sets (null = none; callers keep their own). */
+export function servdKitLogo(kits: LiveKits | null | undefined): string | null {
+  const e = liveEntry(kits, SERVD_KIT_KEY)
+  return e ? normalizeKit(e.kit).images?.logo ?? null : null
+}
+
+/** The bundled servd logo (the nav / hero default and the tab icon). */
+export const SERVD_BUNDLED_LOGO = '/brand/servd-logo.png'
+
+/** A servd logo field: its own picture, except the bundled servd logo (the
+ *  default) or an empty field, which follow the servd kit's logo when one is
+ *  published (an empty field with no kit logo stays empty). */
+export function servdLogoFor(field: string, kits: LiveKits | null | undefined): string {
+  if (field && field !== SERVD_BUNDLED_LOGO) return field
+  return servdKitLogo(kits) ?? field
 }
 
 // ── The live-kit snapshot (server) ──────────────────────────────────────────
@@ -502,6 +611,17 @@ export function kitCatalogueJson() {
       images: { logo: null, wordmark: null, mascot: null, badge: null, ...cat.images },
       note: cat.note,
     }
+  }
+  // The servd kit (servd.pk itself, not a brand): its palette IS the
+  // --servd-* tokens; no role colours; one picture (the logo).
+  brands[SERVD_KIT_KEY] = {
+    palette: SERVD_KIT.palette.map(({ key, label, default: d }) => ({ key, label, default: d })),
+    roles: { accent: null, surfaceBg: null, surfaceText: null, ordering: null },
+    roleFollows: { accent: null, surfaceBg: null, surfaceText: null },
+    fonts: { ...SERVD_KIT.fonts },
+    images: { logo: SERVD_KIT.images.logo, wordmark: null, mascot: null, badge: null },
+    note: SERVD_KIT.note,
+    site: true,
   }
   return {
     fonts: BUILTIN_FONTS.map(({ id, label, stack }) => ({ id, label, stack })),

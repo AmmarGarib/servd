@@ -3,7 +3,7 @@
 // screen).
 //
 // No slug gate here, on purpose: the 404 for non-brands lives in
-// (menu)/layout.tsx, which wraps only the ordering screen. An open tracker
+// the ordering screen (page.tsx), which alone 404s an unknown slug. An open tracker
 // link must keep working when the API blinks or the owner hides the brand
 // mid-service (the order APIs don't depend on the brand being listed).
 

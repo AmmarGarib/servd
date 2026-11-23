@@ -9,7 +9,7 @@ import Link from 'next/link'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
 import { usePermissions } from '../../hooks/useCan'
-import { contentApi, isKitSlug, kitHref, STOREFRONT_BRANDS_KEY, STOREFRONT_URL, type ConceptLite } from '../../lib/content'
+import { brandOfKitSlug, contentApi, isKitSlug, kitHref, SERVD_KIT_SLUG, STOREFRONT_BRANDS_KEY, STOREFRONT_URL, type ConceptLite } from '../../lib/content'
 
 
 export interface SiteLayoutListRow {
@@ -35,7 +35,7 @@ export interface SiteLayoutListRow {
 export const PENDING_LAYOUTS_KEY = ['site-layouts', 'list', 'pending'] as const
 
 export function builderHref(slug: string): string {
-  if (isKitSlug(slug)) return kitHref(slug.split(':')[1]!)
+  if (isKitSlug(slug)) return kitHref(brandOfKitSlug(slug)!)
   if (slug.startsWith('popup:')) return `/storefront/popups/${encodeURIComponent(slug.slice('popup:'.length))}`
   return `/storefront/pages/${encodeURIComponent(slug)}`
 }
@@ -43,6 +43,7 @@ export function builderHref(slug: string): string {
 /** "Brand kit — <Brand>" for a kit row; the brand's slug until its name is known. */
 function describeSlug(slug: string, brandName?: (slug: string) => string | undefined): string {
   const [prefix, a, b] = slug.split(':')
+  if (slug === SERVD_KIT_SLUG) return 'servd kit — servd.pk'
   if (isKitSlug(slug)) return `Brand kit — ${brandName?.(a!) ?? a}`
   const part = (p: string) => (p === 'header' ? 'top bar' : p)
   if (slug === 'servd:feedback') return 'servd feedback button'

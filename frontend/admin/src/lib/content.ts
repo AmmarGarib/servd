@@ -250,11 +250,16 @@ export const BRAND_BUILTIN_PAGES = ['header', 'footer', 'about', 'visit', 'menu'
 const BRAND_RESERVED = new Set<string>([...BRAND_BUILTIN_PAGES, 'qr', 'pages', 'home', 'kit'])
 export const isReservedBrandPage = (p: string) => BRAND_RESERVED.has(p)
 
-/** The brand-kit row of a brand: `brand:<slug>:kit`. */
-export const kitSlugOf = (brandSlug: string) => `brand:${brandSlug}:kit`
-export const isKitSlug = (slug: string) => /^brand:[^:]+:kit$/.test(slug)
-/** The brand a kit slug belongs to (null when it is not a kit slug). */
-export const brandOfKitSlug = (slug: string) => (isKitSlug(slug) ? slug.split(':')[1]! : null)
+/** The servd kit (owner, 2026-11-23): servd.pk's own look, row `servd:kit`,
+ *  owned by GS Foods, CEO only. In the kit screens it goes by the key `servd`
+ *  (/storefront/kit/servd; no brand may take that slug). */
+export const SERVD_KIT_KEY = 'servd'
+export const SERVD_KIT_SLUG = 'servd:kit'
+/** The brand-kit row of a brand: `brand:<slug>:kit` (`servd` → the servd kit). */
+export const kitSlugOf = (brandSlug: string) => (brandSlug === SERVD_KIT_KEY ? SERVD_KIT_SLUG : `brand:${brandSlug}:kit`)
+export const isKitSlug = (slug: string) => slug === SERVD_KIT_SLUG || /^brand:[^:]+:kit$/.test(slug)
+/** The brand a kit slug belongs to (`servd` for the servd kit; null when it is not a kit slug). */
+export const brandOfKitSlug = (slug: string) => (slug === SERVD_KIT_SLUG ? SERVD_KIT_KEY : isKitSlug(slug) ? slug.split(':')[1]! : null)
 export const kitHref = (brandSlug: string) => `/storefront/kit/${encodeURIComponent(brandSlug)}`
 
 const SERVD_PATHS: Record<string, string> = {
@@ -264,6 +269,7 @@ const SERVD_PATHS: Record<string, string> = {
 /** Where the live page is on the storefront (null for pop-ups / templates). */
 export function storefrontPath(slug: string): string | null {
   const [prefix, a, b] = slug.split(':')
+  if (slug === SERVD_KIT_SLUG) return '/'
   if (prefix === 'servd' && a) return SERVD_PATHS[a] ?? null
   if (prefix === 'page' && a) return `/pages/${a}`
   if (prefix === 'brand' && a) {
@@ -280,6 +286,7 @@ export function storefrontPath(slug: string): string | null {
  *  brand pages) and pop-ups have none. */
 export function isBuiltInPage(slug: string): boolean {
   const [prefix, a, b] = slug.split(':')
+  if (slug === SERVD_KIT_SLUG) return false
   if (prefix === 'servd') return !!a
   if (prefix === 'brand') return !!a && (!b || (BRAND_BUILTIN_PAGES as readonly string[]).includes(b))
   return false

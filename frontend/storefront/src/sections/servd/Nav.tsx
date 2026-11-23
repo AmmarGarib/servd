@@ -11,10 +11,13 @@ import { useCustomerAuth } from '../../store/customerAuth'
 import { openSearch } from '../../components/SearchSheet'
 import type { SectionProps } from '../types'
 import { link, list, safeHref, safeSrc, str } from '../safe'
+import { servdLogoFor } from '../../lib/brandKit'
 
-export function Nav({ fields }: SectionProps) {
+export function Nav({ fields, ctx }: SectionProps) {
   const token = useCustomerAuth((s) => s.token)
-  const logo = safeSrc(fields.logo)
+  // Empty, or the bundled servd logo (the default): the servd kit's logo when
+  // one is published (Admin → Storefront → Brand kit → servd); else as before.
+  const logo = servdLogoFor(safeSrc(fields.logo), ctx.kits)
   const h = Number(fields.logoHeight)
   const logoHeight = Number.isFinite(h) && h > 0 ? Math.min(44, Math.max(16, Math.round(h))) : 28
   const alt = str(fields.logoAlt).trim() || 'servd'

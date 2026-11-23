@@ -28,21 +28,21 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MagneticButton, MagneticLink } from '@/components/ui/MagneticButton'
 import { Skeleton } from '@/components/Status'
-import { useCart } from '../../../store/cart'
-import { TestCompanyStripe, isTestConcept } from '../../../components/TestCompanyStripe'
-import { conceptHeroImage, heroCover, formatBrandName } from '../../../lib/concept'
-import { tintColor } from '../../../lib/brandKit'
-import { useBrandSlug, getServdHost } from '../../../lib/host'
-import { encodeCartToken } from '../../../lib/cartHandoff'
-import { brandCanonical, SERVD_LINK_ORIGIN } from '../../../lib/brandDomains'
+import { useCart } from '../../store/cart'
+import { TestCompanyStripe, isTestConcept } from '../../components/TestCompanyStripe'
+import { conceptHeroImage, heroCover, formatBrandName } from '../../lib/concept'
+import { tintColor } from '../../lib/brandKit'
+import { useBrandSlug, getServdHost } from '../../lib/host'
+import { encodeCartToken } from '../../lib/cartHandoff'
+import { brandCanonical, SERVD_LINK_ORIGIN } from '../../lib/brandDomains'
 // How a brand takes web orders (lib/fulfilment.ts — the list checkout uses
 // too). A brand whose only option is dine-in can't take an order from anyone
 // who isn't seated: checkout would ask for a table number and stop.
-import { takesTableOrdersOnly } from '../../../lib/fulfilment'
+import { takesTableOrdersOnly } from '../../lib/fulfilment'
 // GA4 events (no-op without GA4 / consent) — the shared contract in lib/analytics.
-import { track } from '../../../lib/analytics'
-import { useDialog } from '../../../lib/useDialog'
-import { smoothScrollTo, prefersReducedMotion } from '../../../lib/scroll'
+import { track } from '../../lib/analytics'
+import { useDialog } from '../../lib/useDialog'
+import { smoothScrollTo, prefersReducedMotion } from '../../lib/scroll'
 
 const API_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001'
 
@@ -483,7 +483,9 @@ export default function OrderingScreen({ initialConcept, initialMenu = null, ver
     slug === 'simmer' ? 'simmer-ordering' :
     slug === 'stackd'   ? 'stackd-ordering'   :
     slug === 'flipd'  ? 'flipd-ordering'  :
-    ''
+    // A brand with no skin keeps servd's built-in look: .servd-kit-off keeps
+    // the servd kit (lib/brandKit.ts SERVD_SITE_SCOPE) off this brand screen.
+    'servd-kit-off'
 
   return (
     <div key="screen" className={brandSkinClass}

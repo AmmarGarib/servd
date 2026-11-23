@@ -5,6 +5,11 @@ import Link from 'next/link'
 import { api, deleteWithUndo } from '../../../lib/api'
 import { TenantChip, useMyTenants } from '../../../components/ui/TenantPicker'
 import { BrandKitCard } from '../../../components/storefront/BrandKitCard'
+import { storefrontAsset } from '../../../components/storefront/kitCatalog'
+import { SERVD_KIT_KEY } from '../../../lib/content'
+
+/** The picker's id for servd itself (its kit), never a brand id. */
+const SERVD_ENTRY = '__servd__'
 import { Select } from '@/components/ui/Select'
 import { useAuthStore } from '../../../store/auth'
 import { NavIcon } from '../../../components/ui/NavIcon'
@@ -182,10 +187,13 @@ export default function BrandEditorPage() {
 
   useEffect(() => {
     if (concepts.length === 0) return
+    if (selectedId === SERVD_ENTRY && isCeo) return
     if (!selectedId || !concepts.some((c) => c.id === selectedId)) setSelectedId(concepts[0]!.id)
-  }, [concepts, selectedId])
+  }, [concepts, selectedId, isCeo])
 
   const selected = concepts.find((c) => c.id === selectedId) ?? null
+  // servd itself (servd.pk) — not a brand, but it has its own kit (owner, 2026-11-23), owned by GS Foods: the CEO's.
+  const servdSelected = isCeo && selectedId === SERVD_ENTRY
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: 'var(--bg)' }}>
@@ -208,6 +216,7 @@ export default function BrandEditorPage() {
             onChange={(e) => setSelectedId(e.target.value)}
             className="s-input w-full">
             {isLoading && <option value="">Loading…</option>}
+            {isCeo && <option value={SERVD_ENTRY}>servd · servd.pk (kit)</option>}
             {concepts.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}{!c.isActive ? ' (retired)' : ''} · {c.slug}
@@ -219,6 +228,24 @@ export default function BrandEditorPage() {
         {/* Brand list */}
         <aside className="hidden lg:block w-72 shrink-0 border-r border-white/[0.05] overflow-y-auto p-3 space-y-1">
           {isLoading && <p className="text-sm text-white/40">Loading…</p>}
+          {isCeo && (
+            <button
+              onClick={() => setSelectedId(SERVD_ENTRY)}
+              className="w-full text-left rounded-xl p-3 transition-colors"
+              style={{
+                background: servdSelected ? 'rgb(var(--erp-primary-rgb) / 0.08)' : 'transparent',
+                border: servdSelected ? '1px solid rgb(var(--erp-primary-rgb) / 0.35)' : '1px solid transparent',
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <img src={storefrontAsset('/brand/servd-logo.png')} alt="servd" className="h-8 w-8 rounded-lg object-contain" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-bold text-sm text-white/85 truncate">servd</p>
+                  <p className="text-[10px] text-white/35">servd.pk · kit only · GS Foods</p>
+                </div>
+              </div>
+            </button>
+          )}
           {concepts.map((c) => (
             <button
               key={c.id}
@@ -263,7 +290,20 @@ export default function BrandEditorPage() {
 
         {/* Editor */}
         <main className="flex-1 overflow-y-auto p-7">
-          {selected ? (
+          {servdSelected ? (
+            <div className="space-y-5 max-w-4xl">
+              <div>
+                <h2 className="text-xl font-black text-white/90">servd</h2>
+                <p className="text-sm text-white/45 mt-1">
+                  servd.pk itself — not a brand, so there is nothing to edit here but its kit. The servd kit belongs to GS Foods and only
+                  the CEO edits and approves it. It changes servd&apos;s own pages only: brand pages and brand ordering screens never change.
+                </p>
+              </div>
+              <Section title="servd kit" subtitle="servd.pk's colours, fonts and logo. Read-only here: set in Storefront → Brand kit → servd, live once you approve it.">
+                <BrandKitCard slug={SERVD_KIT_KEY} primaryColor={null} logoUrl={null} />
+              </Section>
+            </div>
+          ) : selected ? (
             <BrandForm key={selected.id} concept={selected} onDeleted={() => setSelectedId(null)} />
           ) : (
             <div className="text-center mt-20 text-white/40">Select a brand to edit</div>

@@ -14,6 +14,11 @@
 // rejects, rolls back or deletes. There is no second approval engine. An empty
 // field means "the brand's built-in look", so nothing here changes a brand
 // until something is set and approved.
+//
+// `brand === 'servd'` is the servd kit (owner, 2026-11-23): servd.pk's own
+// look, row `servd:kit`, owned by GS Foods and the CEO's alone. Same form, with
+// the servd catalogue (its palette IS the --servd-* tokens), no role colours,
+// one picture (the logo), previewed on servd's home page.
 
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -23,7 +28,7 @@ import { usePermissions } from '../../hooks/useCan'
 import { useSectionCatalog } from '../../lib/sections'
 import {
   cleanKit, cleanSettings, contentApi, fmtDateTime, fontFamiliesUsed, hasSavedDraft, isHex6, kitProblems, kitSlugOf, resolveLibraryFonts, seedBlocks,
-  STOREFRONT_BRANDS_KEY, STOREFRONT_URL, storefrontPath,
+  SERVD_KIT_KEY, STOREFRONT_BRANDS_KEY, STOREFRONT_URL, storefrontPath,
   type BrandKit, type ConceptLite, type KitImageKey, type KitRoleKey, type LayoutEdit, type MediaAssetLite,
 } from '../../lib/content'
 import { ApproveDialog, RejectDialog } from './Builder'
@@ -60,8 +65,9 @@ export function KitEditor({ brand }: { brand: string }) {
   const qc = useQueryClient()
   const { data: me } = usePermissions()
   const isAdmin = me?.role === 'admin'
+  const isServd = brand === SERVD_KIT_KEY
   const slug = kitSlugOf(brand)
-  const homeSlug = `brand:${brand}`
+  const homeSlug = isServd ? 'servd:home' : `brand:${brand}`
 
   const edit = useQuery<LayoutEdit>({ queryKey: ['site-layout-edit', slug], queryFn: () => contentApi.edit(slug) })
   const home = useQuery<LayoutEdit>({ queryKey: ['site-layout-edit', homeSlug], queryFn: () => contentApi.edit(homeSlug) })
@@ -72,8 +78,10 @@ export function KitEditor({ brand }: { brand: string }) {
   const library = useMemo(() => libraryFonts ?? [], [libraryFonts])
 
   const concept = concepts.data?.find((c) => c.slug === brand)
-  const brandName = concept?.name ?? brand
+  const brandName = isServd ? 'servd' : concept?.name ?? brand
+  const kitLabel = isServd ? 'servd kit' : 'Brand kit'
   const cat = brandCatalog(kitCatalog.data, brand)
+  // The servd kit's company is its row's (the CEO's active company until it is first saved).
   const layoutTenant = edit.data?.tenantId ?? concept?.tenantId ?? null
   // Fonts of THIS brand's company only (the API refuses another company's).
   const companyFonts = useMemo(
@@ -163,7 +171,7 @@ export function KitEditor({ brand }: { brand: string }) {
       if (!kit) throw new Error('Nothing to save')
       if (problems.length) throw new Error(problems[0])
       const at = seq.current
-      await contentApi.saveDraft(slug, { title: `${brandName} brand kit`, kind: 'kit', blocks: [], settings: cleanSettings({ kit }, false) })
+      await contentApi.saveDraft(slug, { title: isServd ? 'servd kit' : `${brandName} brand kit`, kind: 'kit', blocks: [], settings: cleanSettings({ kit }, false) })
       return at
     },
     onSuccess: (at) => { if (seq.current === at) setDirty(false); invalidate() },
@@ -217,7 +225,9 @@ export function KitEditor({ brand }: { brand: string }) {
     setDialog(null)
   }, 'Sent back with your note.')
   const onDelete = () => {
-    if (!confirm('Remove this brand kit entirely? The brand goes back to its built-in look and the kit history is removed.')) return
+    if (!confirm(isServd
+      ? 'Remove the servd kit entirely? servd.pk goes back to its built-in look and the kit history is removed.'
+      : 'Remove this brand kit entirely? The brand goes back to its built-in look and the kit history is removed.')) return
     void run('delete', async () => {
       await contentApi.remove(slug)
       setDirty(false)
@@ -250,7 +260,12 @@ export function KitEditor({ brand }: { brand: string }) {
   const pane = 'lg:sticky lg:top-[var(--sf-stick)] lg:h-[var(--sf-pane)]'
 
   const path = storefrontPath(homeSlug)
-  const unknownBrand = concepts.isSuccess && !concept
+  const unknownBrand = !isServd && concepts.isSuccess && !concept
+  // The servd kit is the CEO's alone (the API answers 403 SERVD_KIT_CEO_ONLY to anyone else).
+  const notCeo = isServd && !!me && !isAdmin
+  const images = isServd
+    ? IMAGES.filter((im) => im.key === 'logo').map((im) => ({ ...im, hint: "servd's logo: the nav bar (when its own logo is the default or empty), the home hero's logo and the browser tab icon on servd.pk." }))
+    : IMAGES
 
   return (
     <div ref={rootRef} className="min-h-full bg-s-bg text-s-text">
@@ -260,10 +275,10 @@ export function KitEditor({ brand }: { brand: string }) {
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0">
             <Link href="/storefront?tab=kit" className="text-xs text-s-muted hover:text-s-text">&larr; Storefront / Brand kit</Link>
-            <h1 className="text-lg font-bold truncate">Brand kit — {brandName}</h1>
+            <h1 className="text-lg font-bold truncate">{isServd ? 'servd kit — servd.pk' : `Brand kit — ${brandName}`}</h1>
             <div className="flex items-center gap-2 flex-wrap text-[11px] text-s-muted">
-              <span>{row?.liveVersion ? `Live: version ${row.liveVersion}` : 'Nothing published yet: the brand uses its built-in look'}</span>
-              {path && row?.liveVersion && (
+              <span>{row?.liveVersion ? `Live: version ${row.liveVersion}` : isServd ? 'Nothing published yet: servd.pk uses its built-in look' : 'Nothing published yet: the brand uses its built-in look'}</span>
+              {path && !!row?.liveVersion && (
                 <a href={`${STOREFRONT_URL}${path}`} target="_blank" rel="noopener noreferrer" className="text-primary-ink hover:underline">View live</a>
               )}
               {row && <StatusBadge row={row} />}
@@ -326,17 +341,20 @@ export function KitEditor({ brand }: { brand: string }) {
         </div>
       )}
       {unknownBrand && <p className="p-6 text-sm text-s-red">There is no brand called &ldquo;{brand}&rdquo; that you can edit.</p>}
-      {edit.isLoading && <p className="p-6 text-sm text-s-muted">Loading...</p>}
-      {edit.isError && <p className="p-6 text-sm text-s-red">Could not load this brand kit: {(edit.error as Error).message}</p>}
+      {notCeo && <p className="p-6 text-sm text-s-red">Only the CEO edits the servd kit.</p>}
+      {edit.isLoading && !notCeo && <p className="p-6 text-sm text-s-muted">Loading...</p>}
+      {edit.isError && !notCeo && <p className="p-6 text-sm text-s-red">Could not load the {kitLabel.toLowerCase()}: {(edit.error as Error).message}</p>}
 
-      {row && kit && !unknownBrand && (
+      {row && kit && !unknownBrand && !notCeo && (
         <div style={paneStyle} className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-[420px_minmax(0,1fr)]">
           {/* The form */}
           <aside className={`s-card flex flex-col overflow-hidden max-h-[80vh] lg:max-h-none ${pane}`}>
             <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-1">
               {cat.note && <p className="mb-3 rounded-lg bg-s-bg-soft px-3 py-2 text-[11px] text-s-muted">{cat.note}</p>}
               <p className="mb-3 text-[11px] text-s-muted">
-                Leave a field empty to keep the brand&apos;s built-in look. Nothing here reaches the site until the CEO approves it.
+                {isServd
+                  ? "Leave a field empty to keep servd.pk's built-in look. Only servd's own pages change — brand pages and brand ordering screens never do. Nothing here reaches the site until you approve it."
+                  : "Leave a field empty to keep the brand's built-in look. Nothing here reaches the site until the CEO approves it."}
               </p>
               {problems.length > 0 && (
                 <ul className="mb-3 rounded-lg border border-s-red/40 bg-s-red-dim px-3 py-2 text-[11px] text-s-red list-disc pl-6" role="alert">
@@ -358,13 +376,13 @@ export function KitEditor({ brand }: { brand: string }) {
                 ))}
               </Section>
 
-              <Section title="Website colours">
+              {!isServd && <Section title="Website colours">
                 {ROLES.map((r) => (
                   <ColourRow key={r.key} label={r.label} hint={r.hint}
                     def={r.key === 'ordering' ? cat.roles.ordering ?? (isHex6(concept?.primaryColor) ? concept?.primaryColor ?? undefined : undefined) : cat.roles[r.key]}
                     value={kit.roles?.[r.key]} onChange={(v) => setIn('roles', r.key, v)} />
                 ))}
-              </Section>
+              </Section>}
 
               <Section title="Fonts">
                 <Field label="Heading font">
@@ -379,7 +397,7 @@ export function KitEditor({ brand }: { brand: string }) {
               </Section>
 
               <Section title="Pictures">
-                {IMAGES.map((im) => {
+                {images.map((im) => {
                   const res = resolveKitImage(im.key, undefined, concept, cat)
                   const def = res.src
                   return (
