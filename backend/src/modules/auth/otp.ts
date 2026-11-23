@@ -437,14 +437,12 @@ export async function hasLiveEmailCode(emailRaw: string, purpose: EmailOtpPurpos
 // backup for delivery, not a second hoop. WhatsApp here is an unofficial
 // linked-device session, so when it drops, the email copy still gets people in.
 //
-// Stored as one row per channel with the SAME code, so each channel keeps its
-// own cooldown and attempt count, and entering the code consumes both rows —
-// a code that worked cannot be replayed from the other inbox.
+// Stored as one row per channel, each with its OWN code (security review, 2026-11-23: one code to both let an
+// attacker pair their own phone with a victim's email, read the code on their phone and have the victim's email
+// marked verified — and claim a passwordless account by it). The person types whichever code arrives; entering one
+// consumes both rows, so a code that worked cannot be replayed from the other inbox.
 //
-// What entering it proves: control of at least one of the two. When both were
-// delivered we cannot tell which one the person read, so callers that care
-// about a specific channel (referral payouts gate on the phone) should know
-// that `delivered` means "a copy arrived there", not "they read it there".
+// What entering it proves: control of THAT channel only — verifySharedCode says which one matched.
 
 export type ChannelStatus = 'sent' | 'cooldown' | 'failed' | 'skipped'
 
@@ -460,9 +458,11 @@ export async function requestSharedCode(opts: {
   if (phone && phone.length < 11) throw new AppError('INVALID_PHONE', 'Phone number looks too short', 400)
   if (email && !/^\S+@\S+\.\S+$/.test(email)) throw new AppError('INVALID_EMAIL', 'Email address looks invalid', 400)
 
-  const code = generateCode()
+  // A different code per channel (see the note above); never the same twice.
+  const phoneCode = generateCode()
+  let emailCode = generateCode()
+  while (emailCode === phoneCode) emailCode = generateCode()
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
-  const text = messageFor(opts.purpose, code)
 
   // The checks and both inserts under the per-contact lock(s) — see
   // underContactLock. The sends happen after it is released.
@@ -487,10 +487,10 @@ export async function requestSharedCode(opts: {
     if (phone) await assertPhoneUnderDailyCap(tx, phone, opts.purpose)
     if (email) await assertEmailUnderDailyCap(tx, email, opts.purpose)
     const phoneRow = phone
-      ? await tx.phoneOtp.create({ data: { phone, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt }, select: { id: true } })
+      ? await tx.phoneOtp.create({ data: { phone, code: phoneCode, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt }, select: { id: true } })
       : null
     const emailRow = email
-      ? await tx.emailOtp.create({ data: { email, code, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt }, select: { id: true } })
+      ? await tx.emailOtp.create({ data: { email, code: emailCode, purpose: opts.purpose, customerId: opts.customerId ?? null, expiresAt }, select: { id: true } })
       : null
     return { phoneRow, emailRow }
   })
@@ -513,12 +513,12 @@ export async function requestSharedCode(opts: {
   const [phoneStatus, emailStatus] = await Promise.all([
     deliver(
       rows.phoneRow,
-      () => sendText(phone!, text),
+      () => sendText(phone!, messageFor(opts.purpose, phoneCode)),
       (id) => prisma.phoneOtp.delete({ where: { id } }),
     ),
     deliver(
       rows.emailRow,
-      () => sendEmail({ to: email!, subject: `${code} is your servd code`, html: emailHtmlFor(code, text) }),
+      () => sendEmail({ to: email!, subject: `${emailCode} is your servd code`, html: emailHtmlFor(emailCode, messageFor(opts.purpose, emailCode)) }),
       (id) => prisma.emailOtp.delete({ where: { id } }),
     ),
   ])
@@ -528,16 +528,16 @@ export async function requestSharedCode(opts: {
     throw new AppError('OTP_SEND_FAILED', 'We could not send a code to your WhatsApp or your email. Try again in a moment.', 503)
   }
   if (!anySent && process.env['OTP_DEV_ECHO'] === '1') {
-    console.warn(`[otp] shared code delivery failed — dev echo: ${code}`)
+    console.warn(`[otp] shared code delivery failed — dev echo: phone ${phoneCode}, email ${emailCode}`)
   }
   // Practice copy only (never live): the code, for callers who already proved who they are — lib/sandbox.ts.
-  return { phone: phoneStatus, email: emailStatus, expiresAt, ...practiceCodeField(code) }
+  return { phone: phoneStatus, email: emailStatus, expiresAt, ...practiceCodeField(phone ? phoneCode : emailCode) }
 }
 
 /**
- * Check a shared code against every live copy. Returns which channels a copy
- * was DELIVERED to (see the note above on what that does and does not prove).
- * `consume: false` checks without burning it.
+ * Check a code against both channels' live codes. Returns which channel's code MATCHED — the only channel the person
+ * proved they hold (`deliveredTo*` keep their old names for the callers; they now mean "proved"). `consume: false`
+ * checks without burning it.
  */
 export async function verifySharedCode(opts: {
   phone?: string | null
@@ -589,5 +589,5 @@ export async function verifySharedCode(opts: {
     if (consume) await prisma.phoneOtp.updateMany({ where: { id: p.id, consumedAt: null }, data: { consumedAt: now } })
     if (pClaimed) await prisma.phoneOtp.updateMany({ where: { id: p.id, attempts: { gt: 0 } }, data: { attempts: { decrement: 1 } } })
   }
-  return { deliveredToPhone: !!p, deliveredToEmail: !!e, customerId: p?.customerId ?? e?.customerId ?? null }
+  return { deliveredToPhone: pOk, deliveredToEmail: eOk, customerId: p?.customerId ?? e?.customerId ?? null }
 }

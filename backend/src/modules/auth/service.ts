@@ -3,6 +3,9 @@ import { normalisePhone } from './otp.js'
 import { OTP_LOGIN_ROLES, usesOtpLogin } from './middleware.js'
 import type { Prisma } from '@prisma/client'
 import jwt from 'jsonwebtoken'
+
+// Every token here is signed HS256 (jsonwebtoken's default); verify accepts only that (security review, 2026-11-23).
+const HS256: jwt.VerifyOptions = { algorithms: ['HS256'] }
 import { staffSessionEndsAt, endedByDrawerClose, MAX_SESSION_MS } from './sessionEnd.js'
 import { nanoid } from 'nanoid'
 import { serviceClient as prisma } from '../../lib/prisma.js'
@@ -183,7 +186,7 @@ export function issueStaffSession(user: {
 export async function refreshStaffToken(refreshToken: string) {
   let payload: StaffTokenPayload
   try {
-    payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET) as StaffTokenPayload
+    payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET, HS256) as StaffTokenPayload
   } catch (err) {
     // The refresh token's exp IS the shift's end (owner B1): say so, so the admin shows "Your shift ended".
     if ((err as Error)?.name === 'TokenExpiredError') throw sessionEnded()
@@ -296,9 +299,10 @@ export async function customerRegister(
   // OTP; otherwise the real owner signs in with a magic link and sets a
   // password from their account page.
   if (existing && !existing.password) {
+    // Proving a phone claims only an account that ALREADY carries that phone — never a phone-less account found by
+    // its email (security review, 2026-11-23: an attacker's own verified phone used to claim the victim's account).
     const provedPhone =
-      otpVerified && !!normalisedPhone &&
-      (!existing.phone || existing.phone === normalisedPhone)
+      otpVerified && !!normalisedPhone && existing.phone === normalisedPhone
     // A verified signup email proves control of this exact account — it was
     // found BY that email — so it is as good a claim as the phone.
     const provedEmail =
@@ -378,6 +382,8 @@ export async function customerLogin(email: string, password: string) {
   const customer = await prisma.customer.findFirst({ where: { email: email.toLowerCase() } })
 
   if (!customer || !customer.password) {
+    // Same bcrypt cost as a real check, so the answer's timing never tells whether the email has an account.
+    await bcrypt.compare(password, DUMMY_PASSWORD_HASH)
     throw new UnauthorizedError('Invalid email or password')
   }
 
@@ -480,7 +486,7 @@ export async function requestMagicLink(emailOrPhone: string, name?: string): Pro
 async function verifySignupLink(token: string) {
   let p: MagicSignupPayload
   try {
-    p = jwt.verify(token, JWT_SECRET) as MagicSignupPayload
+    p = jwt.verify(token, JWT_SECRET, HS256) as MagicSignupPayload
   } catch {
     throw new AppError('INVALID_TOKEN', 'This link has expired or is not valid. Request a new one.', 401)
   }
@@ -596,7 +602,7 @@ type StaffTokenType = 'access' | 'refresh'
 export function verifyStaffToken(token: string, expected: StaffTokenType): StaffTokenPayload {
   let payload: StaffTokenPayload
   try {
-    payload = jwt.verify(token, JWT_SECRET) as StaffTokenPayload
+    payload = jwt.verify(token, JWT_SECRET, HS256) as StaffTokenPayload
   } catch {
     throw new UnauthorizedError('Invalid or expired token')
   }
@@ -625,7 +631,7 @@ export function verifyStaffToken(token: string, expected: StaffTokenType): Staff
 export function verifyCustomerToken(token: string): CustomerTokenPayload {
   let payload: CustomerTokenPayload
   try {
-    payload = jwt.verify(token, JWT_SECRET) as CustomerTokenPayload
+    payload = jwt.verify(token, JWT_SECRET, HS256) as CustomerTokenPayload
   } catch {
     throw new UnauthorizedError('Invalid or expired token')
   }

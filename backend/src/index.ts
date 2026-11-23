@@ -272,6 +272,10 @@ async function build() {
   // /reserve/<brand>), and a Disallow would leave those pages empty for it.
   fastify.addHook('onSend', (_req, reply, payload, done) => {
     reply.header('X-Robots-Tag', 'noindex')
+    // Never cached by a shared cache unless a route says so (security review, 2026-11-23): Cloudflare keys on the URL
+    // only, so an uncached-by-default `.csv` / `.pdf` export path could otherwise be stored at the edge and served to
+    // the next caller of the same URL. A route that wants caching sets its own Cache-Control.
+    if (!reply.hasHeader('cache-control')) reply.header('Cache-Control', 'private, no-store')
     done(null, payload)
   })
 

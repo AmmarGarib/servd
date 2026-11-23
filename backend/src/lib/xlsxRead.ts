@@ -8,10 +8,13 @@ import { AppError } from './errors.js'
 const bad = (msg = 'The Excel file could not be read — save it again as .xlsx (or export the statement as CSV) and upload that') =>
   new AppError('BAD_EXCEL_FILE', msg, 400)
 
+/** A character reference, or U+FFFD when out of range (a bad file is a 400, never a 500). */
+const codePoint = (n: number) => (Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : '\uFFFD')
+
 const decode = (s: string) => s
   .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
-  .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-  .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+  .replace(/&#(\d+);/g, (_, n) => codePoint(Number(n)))
+  .replace(/&#x([0-9a-f]+);/gi, (_, n) => codePoint(parseInt(n, 16)))
   .replace(/&amp;/g, '&')
 const textOf = (xml: string) => [...xml.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((m) => decode(m[1]!)).join('')
 
@@ -34,7 +37,10 @@ export function xlsxFirstSheetCsv(buf: Buffer): string {
   // The first sheet in the workbook's order (its relationship target), else sheet1.
   let sheetPath = 'xl/worksheets/sheet1.xml'
   const wb = file.get('xl/workbook.xml') ?? ''
-  const rid = /<sheet\b[^>]*\br:id="([^"]+)"/.exec(wb)?.[1]
+  // The id comes from the uploaded file and goes into a RegExp: only a plain id is used (security review,
+  // 2026-11-23 — an id like "(a+a+)+b" froze the server with catastrophic backtracking).
+  const ridRaw = /<sheet\b[^>]*\br:id="([^"]+)"/.exec(wb)?.[1]
+  const rid = ridRaw && /^[A-Za-z0-9_-]{1,64}$/.test(ridRaw) ? ridRaw : undefined
   if (rid) {
     const rels = file.get('xl/_rels/workbook.xml.rels') ?? ''
     const target = new RegExp(`<Relationship\\b[^>]*Id="${rid}"[^>]*Target="([^"]+)"`).exec(rels)?.[1]

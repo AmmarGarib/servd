@@ -700,10 +700,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       deviceFingerprint: z.string().max(120).optional(),
     }).parse(req.body)
 
-    // One code went to both channels; entering it from either proves the
-    // customer holds at least one of them. Each channel is marked verified if a
-    // copy was delivered there — a channel whose copy never arrived (WhatsApp
-    // down) stays unverified and can be finished later from /account.
+    // A code went to each channel (a different one each); the channel whose code was entered is the one marked
+    // verified. The other stays unverified and can be finished later from /account.
     const code = body.code ?? body.otpCode ?? body.emailCode
     if (!code) {
       throw new AppError('VERIFICATION_REQUIRED', 'Enter the code we sent you to create your account.', 400)
@@ -757,8 +755,8 @@ export async function authRoutes(fastify: FastifyInstance) {
       email: z.string().email(),
     }).parse(req.body)
 
-    // ONE code to both channels (otp.ts requestSharedCode). The customer types
-    // whichever copy arrives first. requestSharedCode throws OTP_SEND_FAILED
+    // A code to each channel (otp.ts requestSharedCode — a different one each). The customer types whichever arrives
+    // first. requestSharedCode throws OTP_SEND_FAILED
     // only when neither channel could be reached.
     const sent = await requestSharedCode({ phone: body.phone, email: body.email, purpose: 'signup' })
     const phone = { status: sent.phone }

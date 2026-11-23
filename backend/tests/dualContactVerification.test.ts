@@ -1,10 +1,12 @@
-// Customer signup: ONE code, sent to WhatsApp and email at the same time.
+// Customer signup: a code to WhatsApp and a code to email at the same time.
 //
 // WhatsApp here is an unofficial linked-device session. When it drops, every
-// WhatsApp code stops at once — so the same code also goes by email, and the
-// customer types whichever copy arrives first. The properties defended:
+// WhatsApp code stops at once — so a code also goes by email, and the
+// customer types whichever arrives first. The properties defended:
 //
-//   - both channels get the SAME code, and either copy works;
+//   - each channel gets its OWN code, either works, and only the channel whose code was typed is verified
+//     (security review, 2026-11-23 — one shared code let an attacker's phone verify a victim's email);
+//   - sign-up never claims someone else's passwordless account;
 //   - WhatsApp down         → the email copy carries the signup, and the phone
 //     is left unverified rather than falsely marked verified;
 //   - a used code cannot be replayed from the other inbox;
@@ -95,14 +97,14 @@ beforeEach(async () => {
   if (keys.length) await redis.del(...keys)
 })
 
-describe('one code goes out on both channels', () => {
-  it('sends the SAME code to WhatsApp and email', async () => {
+describe('a code goes out on each channel', () => {
+  it('sends a DIFFERENT code to WhatsApp and to email', async () => {
     const r = await post('/customer/request-signup-codes', { phone: PHONE, email: EMAIL })
     expect(r.statusCode).toBe(200)
     expect(r.json()).toEqual({ phone: { status: 'sent' }, email: { status: 'sent' } })
     expect(sentPhone).toHaveLength(1)
     expect(sentEmail).toHaveLength(1)
-    expect(sentPhone[0]).toBe(sentEmail[0])
+    expect(sentPhone[0]).not.toBe(sentEmail[0])
   })
 
   it('still sends email when WhatsApp is down, and leaves no dead WhatsApp copy', async () => {
@@ -113,14 +115,49 @@ describe('one code goes out on both channels', () => {
   })
 })
 
-describe('register takes the one code', () => {
-  it('works with the copy from either channel and marks both delivered channels verified', async () => {
+describe('register takes either code', () => {
+  it('the email code verifies the email only; the phone code verifies the phone only', async () => {
     await post('/customer/request-signup-codes', { phone: PHONE, email: EMAIL })
     const r = await register({ code: sentEmail[0]! })
     expect(r.statusCode).toBe(201)
     const c = await prisma.customer.findFirst({ where: { email: EMAIL } })
-    expect(c!.phoneVerifiedAt).not.toBeNull()
     expect(c!.emailVerifiedAt).not.toBeNull()
+    expect(c!.phoneVerifiedAt).toBeNull()
+    await cleanup()
+    sentPhone.length = 0; sentEmail.length = 0
+    const { redis } = await import('../src/lib/redis.js')
+    const keys = await redis.keys('*10.9.9.9*')
+    if (keys.length) await redis.del(...keys)
+    await prisma.phoneOtp.updateMany({ where: { phone: PHONE_N }, data: { createdAt: new Date(Date.now() - 60_000) } })
+    await prisma.emailOtp.updateMany({ where: { email: EMAIL }, data: { createdAt: new Date(Date.now() - 60_000) } })
+    await post('/customer/request-signup-codes', { phone: PHONE, email: EMAIL })
+    expect((await register({ code: sentPhone[0]! })).statusCode).toBe(201)
+    const d = await prisma.customer.findFirst({ where: { email: EMAIL } })
+    expect(d!.phoneVerifiedAt).not.toBeNull()
+    expect(d!.emailVerifiedAt).toBeNull()
+  })
+
+  it("an attacker's own phone cannot claim a victim's passwordless account found by email", async () => {
+    // The victim: an account with no password (a guest / old magic-link account), no phone on it.
+    const victim = await prisma.customer.create({ data: { name: 'Victim', email: EMAIL, password: null } })
+    await post('/customer/request-signup-codes', { phone: PHONE, email: EMAIL })   // PHONE = the attacker's
+    const r = await register({ code: sentPhone[0]! })                               // typed from the attacker's WhatsApp
+    expect(r.statusCode).toBe(409)
+    expect(r.json().error.code).toBe('ACCOUNT_NEEDS_VERIFICATION')
+    const after = await prisma.customer.findUniqueOrThrow({ where: { id: victim.id } })
+    expect(after.password).toBeNull()
+    expect(after.phone).toBeNull()
+    expect(after.emailVerifiedAt).toBeNull()
+  })
+
+  it("the victim's own email code still lets the real owner claim it", async () => {
+    await prisma.customer.create({ data: { name: 'Owner', email: EMAIL, password: null } })
+    await post('/customer/request-signup-codes', { phone: PHONE, email: EMAIL })
+    const r = await register({ code: sentEmail[0]! })
+    expect(r.statusCode).toBe(201)
+    const c = await prisma.customer.findFirstOrThrow({ where: { email: EMAIL } })
+    expect(c.password).not.toBeNull()
+    expect(c.emailVerifiedAt).not.toBeNull()
   })
 
   it('lets the email copy carry signup when WhatsApp is down, phone left unverified', async () => {

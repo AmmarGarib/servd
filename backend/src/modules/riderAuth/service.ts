@@ -134,7 +134,7 @@ export function issueRiderSession(rider: { id: string }) {
 export function verifyRiderToken(token: string, expected: RiderTokenType): RiderTokenPayload {
   let payload: RiderTokenPayload
   try {
-    payload = jwt.verify(token, expected === 'rider' ? JWT_SECRET : JWT_REFRESH_SECRET) as RiderTokenPayload
+    payload = jwt.verify(token, expected === 'rider' ? JWT_SECRET : JWT_REFRESH_SECRET, { algorithms: ['HS256'] }) as RiderTokenPayload
   } catch {
     throw new UnauthorizedError('Invalid or expired token')
   }

@@ -11,9 +11,9 @@ import { PhoneInput } from '../ui/PhoneInput'
 import { DEFAULT_PHONE_COUNTRY, isValidPhone, nationalDigits, toE164, type PhoneCountry } from '../../lib/phoneCountries'
 import { NETWORK_ERROR, customerErrorMessage, postAuthDest, useAuthReturnPath, withReturnPath, type ApiErrorBody } from './authFlow'
 
-// The storefront's one-code sign-up (details → code). ONE code is sent to
-// WhatsApp and email at the same time; the customer types whichever copy
-// arrives first. WhatsApp here is an unofficial channel that can drop; when it
+// The storefront's code sign-up (details → code). A code is sent to WhatsApp
+// and a different one to email at the same time; the customer types whichever
+// arrives first (only that channel is verified). WhatsApp here is an unofficial channel that can drop; when it
 // does, the email copy carries the signup and the number is verified later
 // from /account. Shared by /signup and the `signup_form` block (mode
 // 'signup'), so there is exactly one sign-up flow. Styled for a dark purple
@@ -338,7 +338,7 @@ export function SignupForm({
           <H className="font-black tracking-tight text-[color:var(--servd-ink)] mb-1" style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.9rem, 6vw, 2.3rem)', letterSpacing: '-0.03em' }}>Verify it&rsquo;s you</H>
           <p className="text-sm mb-6 text-[color:var(--servd-mute)]">
             {phoneLive && emailLive
-              ? 'We sent one code to your WhatsApp and your email. Enter it below.'
+              ? 'We sent a code to your WhatsApp and another to your email. Enter either one below.'
               : 'Enter the code we sent you.'}
           </p>
 
@@ -347,7 +347,7 @@ export function SignupForm({
           <form onSubmit={e => { void handleStep2(e) }} className="space-y-4">
             <CodeBoxes
               label="Your code"
-              sublabel={[phoneLive && 'WhatsApp', emailLive && 'email'].filter(Boolean).join(' and ') + ' — same code, use whichever arrives first'}
+              sublabel={phoneLive && emailLive ? 'From WhatsApp or email — whichever arrives first' : `From your ${phoneLive ? 'WhatsApp' : 'email'}`}
               value={codes} onChange={setCodes} refs={codeRefs}
               error={codeError} note={resendNote}
               autoFocus inpStyle={inpStyle} onFocus={onFocus} onBlur={onBlur} />

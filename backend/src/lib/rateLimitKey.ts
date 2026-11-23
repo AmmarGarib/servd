@@ -14,7 +14,7 @@ import { readCookie, ACCESS_COOKIE, REFRESH_COOKIE } from './cookies.js'
 function subOf(token: string | null | undefined, secret: string | undefined): string | null {
   if (!token || !secret) return null
   try {
-    const p = jwt.verify(token, secret, { ignoreExpiration: true }) as { sub?: unknown }
+    const p = jwt.verify(token, secret, { ignoreExpiration: true, algorithms: ['HS256'] }) as { sub?: unknown }
     return typeof p.sub === 'string' && p.sub ? p.sub : null
   } catch {
     return null

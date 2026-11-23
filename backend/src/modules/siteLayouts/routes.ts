@@ -280,7 +280,7 @@ export async function siteLayoutRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       let payload: { type?: string; slug?: string }
       try {
-        payload = jwt.verify(req.params['*'], jwtSecret()) as typeof payload
+        payload = jwt.verify(req.params['*'], jwtSecret(), { algorithms: ['HS256'] }) as typeof payload
       } catch {
         throw new UnauthorizedError('This preview link has expired. Open a new one from the editor.')
       }
