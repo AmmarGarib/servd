@@ -2152,7 +2152,9 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   /procurement/grns/:id/lines/:lineId/expense {accountCode}` (`poWorkflow.ts setGrnLineExpense`): one entry
   `procurement.receipt_expense:<lineId>:<n>` — expense → expense Dr new / Cr old; stock → expense Dr account / Cr 12x0
   with the untouched lots issued (`stockLedger.ts expenseReceiptLineLotsTx`, 409 `STOCK_ALREADY_USED`); never back to
-  stock (409 `EXPENSED_STAYS_EXPENSE`). Finance's GRN check and the CEO's approval are unchanged. Migration
+  stock (409 `EXPENSED_STAYS_EXPENSE`). **After approval too (owner, 2026-11-23: "Yes, build it"):** on an `approved` GRN
+  the same route admits the CEO or finance holding `accounting` (members of the GRN's company, else 404; others 403) —
+  the same correcting entry dated today; the supplier bill (2015 → 2010) is untouched. Finance's GRN check and the CEO's approval are unchanged. Migration
   `20261118100000_purchase_after_cash`. Tests: `tests/poApprovalChain.test.ts`.
 - **Old advance vouchers follow what was bought (owner, 2026-11-18: "Voucher not picking updated rates entered by
   buyer … make sure no extra amount is lost").** `procurement/poCashSync.ts` (contract in its header). An UNPAID PO

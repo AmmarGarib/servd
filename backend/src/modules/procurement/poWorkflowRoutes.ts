@@ -322,14 +322,25 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
   fastify.put<{ Params: { id: string; lineId: string } }>('/grns/:id/lines/:lineId/expense', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const { accountCode } = z.object({ accountCode: z.string().trim().min(1).max(20).nullable() }).parse(req.body ?? {})
     const head = await guardGrn(req, req.params.id, 'read')
-    const type = head.grnStatus === 'ceo_review' ? 'grn' : 'grn_finance'
-    const { tenantId } = await grnRight(req, req.params.id, type, 'change stock or expense on a GRN')
+    let tenantId: string | null
+    if (head.grnStatus === 'approved') {
+      // After approval there is no step to hold a right on: the CEO, or finance holding `accounting`, a member of the
+      // GRN's company (another company's GRN is 404).
+      const su = req.staffUser!
+      if (!head.tenantId || !(su.memberTenantIds ?? []).includes(head.tenantId)) throw new NotFoundError('GoodsReceipt', req.params.id)
+      if (su.role !== 'admin' && su.role !== 'finance') throw new AppError('GRN_STEP_NOT_YOURS', 'Only finance or the CEO changes stock or expense on an approved GRN', 403)
+      if (su.role === 'finance') await financeAccounting(req)
+      tenantId = head.tenantId
+    } else {
+      const type = head.grnStatus === 'ceo_review' ? 'grn' : 'grn_finance'
+      tenantId = (await grnRight(req, req.params.id, type, 'change stock or expense on a GRN')).tenantId
+    }
     const r = await setGrnLineExpense(req.params.id, req.params.lineId, actorOf(req), accountCode)
     if (r.changed) {
       await audit({
         category: 'accounting', action: 'grn.line_expense', entity: 'GoodsReceiptLine', entityId: req.params.lineId,
         userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId,
-        after: { grnId: req.params.id, expenseAccountCode: r.expenseAccountCode, journalEntryId: r.journalEntryId ?? null, actorRole: req.staffUser!.role },
+        after: { grnId: req.params.id, expenseAccountCode: r.expenseAccountCode, journalEntryId: r.journalEntryId ?? null, actorRole: req.staffUser!.role, ...(head.grnStatus === 'approved' ? { afterApproval: true } : {}) },
       })
     }
     return r

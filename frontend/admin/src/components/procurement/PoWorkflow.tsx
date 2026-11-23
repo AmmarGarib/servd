@@ -577,7 +577,8 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const canCeo = g.grnStatus === 'ceo_review' && role === 'admin'
   const canPullBack = g.grnStatus === 'ceo_review' && role === 'finance'
   // Stock or expense (owner, 2026-11-18): finance changes it at its check (the CEO at either step).
-  const canSetExpense = canFinance || canCeo
+  // …and after approval too (owner, 2026-11-23): finance or the CEO, as a correcting entry.
+  const canSetExpense = canFinance || canCeo || (g.grnStatus === 'approved' && (role === 'finance' || role === 'admin'))
   return (
     <div className="rounded-xl border border-s-border bg-s-surface p-4 space-y-3">
       <div className="flex items-start justify-between gap-3">

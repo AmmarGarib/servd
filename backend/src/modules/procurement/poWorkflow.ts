@@ -437,8 +437,11 @@ export async function setGrnLineExpense(grnId: string, lineId: string, actor: Ac
   const { CLASS_ACCOUNTS, NON_FOOD_EXPENSE_CODE, isNonFoodClass } = await import('../../lib/inventoryClass.js')
   return prisma.$transaction(async (tx) => {
     const g = await lockGrnTx(tx, grnId)
-    const allowed = g.grnStatus === 'finance_review' || (isCeo(actor) && g.grnStatus === 'ceo_review')
-    if (!allowed) throw new AppError('INVALID_STATE', `This GRN is ${String(g.grnStatus).replace(/_/g, ' ')} — stock or expense is changed only at finance's check`, 409)
+    // After the CEO's approval too (owner, 2026-11-23: "Yes, build it"): finance or the CEO, a correcting entry dated
+    // today. The supplier's bill is untouched — it only ever moved 2015 → 2010, never the stock or expense account.
+    const afterApproval = g.grnStatus === 'approved' && (isCeo(actor) || actor.role === 'finance')
+    const allowed = g.grnStatus === 'finance_review' || (isCeo(actor) && g.grnStatus === 'ceo_review') || afterApproval
+    if (!allowed) throw new AppError('INVALID_STATE', `This GRN is ${String(g.grnStatus).replace(/_/g, ' ')} — stock or expense is changed at finance's check, or after approval by finance or the CEO`, 409)
     if (!g.tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'This GRN has no company', 422)
     const line = await tx.goodsReceiptLine.findFirst({ where: { id: lineId, receiptId: grnId }, select: { id: true, description: true, expenseAccountCode: true } })
     if (!line) throw new NotFoundError('GoodsReceiptLine', lineId)
@@ -453,7 +456,7 @@ export async function setGrnLineExpense(grnId: string, lineId: string, actor: Ac
     if (was == null) {
       for (const m of await expenseReceiptLineLotsTx(tx, line.id, actor.id)) {
         if (m.valueCents <= 0) continue
-        lines.push({ accountCode: acc.code, type: 'debit', amountCents: m.valueCents, memo: `${memo} — expensed by finance`.slice(0, 250), conceptId: m.conceptId })
+        lines.push({ accountCode: acc.code, type: 'debit', amountCents: m.valueCents, memo: `${memo} — expensed ${afterApproval ? 'after approval' : 'by finance'}`.slice(0, 250), conceptId: m.conceptId })
         lines.push({ accountCode: CLASS_ACCOUNTS[m.costClass].inv, type: 'credit', amountCents: m.valueCents, memo: `${memo} — out of stock`.slice(0, 250), conceptId: m.conceptId })
       }
     } else {
@@ -468,7 +471,7 @@ export async function setGrnLineExpense(grnId: string, lineId: string, actor: Ac
       }
       for (const b of byBrand.values()) {
         if (b.cents <= 0) continue
-        lines.push({ accountCode: acc.code, type: 'debit', amountCents: b.cents, memo: `${memo} — expense account changed by finance`.slice(0, 250), conceptId: b.conceptId })
+        lines.push({ accountCode: acc.code, type: 'debit', amountCents: b.cents, memo: `${memo} — expense account changed ${afterApproval ? 'after approval' : 'by finance'}`.slice(0, 250), conceptId: b.conceptId })
         lines.push({ accountCode: was, type: 'credit', amountCents: b.cents, memo: `${memo} — moved to ${acc.code}`.slice(0, 250), conceptId: b.conceptId })
       }
     }
@@ -484,7 +487,7 @@ export async function setGrnLineExpense(grnId: string, lineId: string, actor: Ac
       entryId = r.entryId ?? null
     }
     await tx.goodsReceiptLine.update({ where: { id: line.id }, data: { expenseAccountCode: acc.code } })
-    await logGrnTx(tx, g.poId, actor.id, 'grn_line_expense', { grnId, grnNumber: g.grnNumber, lineId: line.id, item: line.description, from: was ?? 'stock', to: acc.code, journalEntryId: entryId })
+    await logGrnTx(tx, g.poId, actor.id, 'grn_line_expense', { grnId, grnNumber: g.grnNumber, lineId: line.id, item: line.description, from: was ?? 'stock', to: acc.code, journalEntryId: entryId, ...(afterApproval ? { afterApproval: true } : {}) })
     return { lineId, expenseAccountCode: acc.code, changed: true, journalEntryId: entryId }
   }, { timeout: 30_000 })
 }

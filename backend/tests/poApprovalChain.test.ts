@@ -376,6 +376,18 @@ describe('stock or expense at receipt (owner, 2026-11-18): the receiver picks, f
     expect(ap2.statusCode, ap2.body).toBe(200)
     expect(ap2.json().payBackVoucher).toBeNull()
     expect(await prisma.cashVoucher.count({ where: { reimbursesBillId: ap2.json().supplierBillId } })).toBe(0)
+    // After approval (owner, 2026-11-23): finance or the CEO still change it — a correcting entry, the bill untouched.
+    const billBefore = await prisma.supplierBill.findUniqueOrThrow({ where: { id: ap2.json().supplierBillId } })
+    expect((await call('chefA', 'PUT', `/procurement/grns/${g}/lines/${spLine.id}/expense`, { accountCode: '6120' })).statusCode).toBe(403)
+    expect((await call('finB', 'PUT', `/procurement/grns/${g}/lines/${spLine.id}/expense`, { accountCode: '6120' })).statusCode).toBe(404)
+    const late = await call('finA', 'PUT', `/procurement/grns/${g}/lines/${spLine.id}/expense`, { accountCode: '6120' })
+    expect(late.statusCode, late.body).toBe(200)
+    expect(await entryLines(`procurement.receipt_expense:${spLine.id}:2`)).toEqual([['6110', 'credit', 600], ['6120', 'debit', 600]])
+    const lateCeo = await call('ceoA', 'PUT', `/procurement/grns/${g}/lines/${spLine.id}/expense`, { accountCode: '5010' })
+    expect(lateCeo.statusCode, lateCeo.body).toBe(200)
+    expect(code(await call('ceoA', 'PUT', `/procurement/grns/${g}/lines/${spLine.id}/expense`, { accountCode: null }))).toBe('EXPENSED_STAYS_EXPENSE')
+    const billAfter = await prisma.supplierBill.findUniqueOrThrow({ where: { id: ap2.json().supplierBillId } })
+    expect({ total: Number(billAfter.totalCents), status: billAfter.status }).toEqual({ total: Number(billBefore.totalCents), status: billBefore.status })
   })
 })
 
