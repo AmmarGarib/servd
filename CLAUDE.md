@@ -2156,8 +2156,10 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   completed again or CANCELLED and raised in the right company. The GRN stays as a record (`grnStatus 'undone'`, lines
   at zero; quantities in the log and audit `grn.undone`); it is not "the last GRN" for the invoice-file rule. Never an
   approved GRN (409 `GRN_APPROVED` — void the bill / credit note) or a billed one (409 `GRN_BILLED`). The PO's cash
-  voucher is not touched. Admin: "Undo this receipt" on the GRN (`PoWorkflow.tsx GrnDetail`). Tests:
-  `tests/poApprovalChain.test.ts`.
+  voucher is not touched. Admin: "Undo this receipt" on the GRN (`PoWorkflow.tsx GrnDetail`). **Finance cancels such a PO
+  (owner, 2026-11-23: "Yes, allow finance to cancel it"):** `POST /purchase-orders/:id/cancel` admits finance on ANY PO of
+  its company that is approved | sent and carries an undone GRN (list rows carry `receiptUndone`); every other PO stays
+  `PO_FINANCE_OWN_ONLY`. Tests: `tests/poApprovalChain.test.ts`.
 - **The CEO edits a PO that is waiting for the CEO (owner, 2026-11-16: "I need to be able to edit his POs so I have
   the correct information written on them").** `PATCH /procurement/purchase-orders/:id` by an `admin` login also takes
   a `pending_approval` PO (`service.ts updatePoDraft {alsoWaiting}`): same checks as a draft edit, the PO STAYS

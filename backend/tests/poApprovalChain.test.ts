@@ -444,8 +444,12 @@ describe('undo a receipt before the GRN is approved', () => {
     // Never twice; finance can no longer pass it.
     expect((await call('finA', 'POST', `/procurement/grns/${g}/undo`, { reason: 'Raised in the wrong company again' })).statusCode).toBe(409)
     expect((await call('finA', 'POST', `/procurement/grns/${g}/finance-pass`)).statusCode).toBe(409)
-    // Now it can be cancelled (and raised in the right company).
-    const cancel = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/cancel`, { reason: 'Raised in the wrong company' })
+    // Now it can be cancelled (and raised in the right company) — by finance too, though the chef raised it
+    // (owner, 2026-11-23: "Yes, allow finance to cancel it"); never another company's finance.
+    expect((await call('finB', 'POST', `/procurement/purchase-orders/${po.id}/cancel`, { reason: 'Raised in the wrong company' })).statusCode).toBe(404)
+    const listed = (await call('finA', 'GET', '/procurement/purchase-orders')).json() as Array<{ id: string; receiptUndone?: boolean }>
+    expect(listed.find((x) => x.id === po.id)?.receiptUndone).toBe(true)
+    const cancel = await call('finA', 'POST', `/procurement/purchase-orders/${po.id}/cancel`, { reason: 'Raised in the wrong company' })
     expect(cancel.statusCode, cancel.body).toBe(200)
     expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })).status).toBe('cancelled')
   })

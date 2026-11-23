@@ -92,7 +92,7 @@ interface PurchaseOrder {
   submittedById?: string | null; buyerCheckedById?: string | null; financeCheckedById?: string | null
   returnNote?: string | null; returnCount?: number; returnedAt?: string | null
   payByCash?: boolean
-  grnWorkflow?: boolean; buyerUserId?: string | null; buyerName?: string | null; invoiceNumber?: string | null; invoiceDate?: string | null
+  grnWorkflow?: boolean; buyerUserId?: string | null; buyerName?: string | null; receiptUndone?: boolean; invoiceNumber?: string | null; invoiceDate?: string | null
   completedAt?: string | null; receiptReturnNote?: string | null
   names?: { createdBy: string | null; submittedBy: string | null; buyerCheckedBy: string | null; financeCheckedBy: string | null; approvedBy: string | null; returnedBy: string | null; buyer?: string | null; completedBy?: string | null; receiptReturnedBy?: string | null }
   grns?: Array<{ id: string; grnNumber: string; grnStatus: string; invoiceNumber: string | null; receivedAt: string; receivedBy: string | null; financeCheckedBy: string | null; approvedBy: string | null; supplierBillId: string | null }>
@@ -816,7 +816,9 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
   // Finance works only its own draft / waiting POs (the API's PO_FINANCE_OWN_ONLY).
   const financeMay = role !== 'finance' || ownPo
   if (po.status === 'draft' && !financeMay) actions.splice(actions.findIndex((a) => a.action === 'submit'), 1)
-  if ((role === 'finance' ? ['draft', ...PO_CHAIN] : ['draft', ...PO_CHAIN, 'approved']).includes(po.status) && financeMay) {
+  // …and a PO whose receipt was undone, whoever raised it (owner, 2026-11-23).
+  const financeAfterUndo = role === 'finance' && !!po.receiptUndone && ['approved', 'sent'].includes(po.status)
+  if (((role === 'finance' ? ['draft', ...PO_CHAIN] : ['draft', ...PO_CHAIN, 'approved']).includes(po.status) && financeMay) || financeAfterUndo) {
     actions.push({ label: 'Cancel', action: 'cancel', cls: 'text-s-muted hover:text-s-red' })
   }
   if (actions.length === 0) return null

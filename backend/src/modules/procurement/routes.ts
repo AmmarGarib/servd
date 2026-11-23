@@ -794,7 +794,10 @@ export async function procurementRoutes(fastify: FastifyInstance) {
       const buyerIds = [...new Set(rows.map((r) => r.buyerUserId).filter((x): x is string => !!x))]
       const buyers = buyerIds.length ? await prisma.user.findMany({ where: { id: { in: buyerIds } }, select: { id: true, name: true, email: true } }) : []
       const buyerName = new Map(buyers.map((u) => [u.id, u.name ?? u.email ?? null]))
-      return rows.map((r) => ({ ...r, buyerName: r.buyerUserId ? buyerName.get(r.buyerUserId) ?? null : null }))
+      // A PO whose receipt was undone (owner, 2026-11-23): finance may cancel it from the list.
+      const undone = rows.length ? await prisma.goodsReceipt.findMany({ where: { poId: { in: rows.map((r) => r.id) }, grnStatus: 'undone' }, select: { poId: true } }) : []
+      const undoneIds = new Set(undone.map((g) => g.poId))
+      return rows.map((r) => ({ ...r, buyerName: r.buyerUserId ? buyerName.get(r.buyerUserId) ?? null : null, receiptUndone: undoneIds.has(r.id) }))
     },
   )
 
@@ -1028,7 +1031,11 @@ export async function procurementRoutes(fastify: FastifyInstance) {
     { preHandler: requireAuth(...PO_RAISERS) },
     async (req) => {
       const po = await guardPo(req, req.params.id)
-      assertFinanceOwnPo(req, po, ['draft', 'pending_approval'])
+      // Finance cancels a PO whose receipt was undone (owner, 2026-11-23: "Yes, allow finance to cancel it") — whoever
+      // raised it: a PO back with the buyer that carries an undone GRN. Otherwise only its own draft / waiting PO.
+      const afterUndo = req.staffUser!.role === 'finance' && ['approved', 'sent'].includes(po.status)
+        && (await prisma.goodsReceipt.count({ where: { poId: po.id, grnStatus: 'undone' } })) > 0
+      if (!afterUndo) assertFinanceOwnPo(req, po, ['draft', 'pending_approval'])
       if (po.supplier.tenantId) {
         const own = po.createdBy === req.staffUser!.id && (po.status === 'draft' || isPoChainStatus(po.status))
         await assertHoMayPropose(req, po.supplier.tenantId, own, "cancelling this purchase order")
