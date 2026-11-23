@@ -77,6 +77,23 @@ export interface RecordFileProvider {
    * `mode`. Returns the RECORD's company (files are stamped with it).
    */
   resolve(req: FastifyRequest, ownerId: string, mode: RecordFileMode): Promise<{ tenantId: string }>
+  /**
+   * Optional: which of the record's files THIS caller may still take off it (a wrong file attached before anything
+   * was booked on it — owner, 2026-11-23). A provider without it never lets a file go: evidence on posted money stays.
+   */
+  removable?(req: FastifyRequest, ownerId: string, tenantId: string, files: RecordFileMeta[]): Promise<Set<string>>
+}
+
+/** Where a taken-off file is kept: the row and its bytes stay (no provider reads this owner type), nothing is erased. */
+export const removedOwnerType = (ownerType: string) => `${ownerType}__removed`
+
+/** Take one file off its record (it is kept under `removedOwnerType`). True when a row moved. */
+export async function detachRecordFileTx(tx: Db, where: { ownerType: string; ownerId: string; tenantId: string; fileId: string }): Promise<boolean> {
+  const r = await tx.cashVoucherAttachment.updateMany({
+    where: { id: where.fileId, kind: RECORD_FILE_KIND, ownerType: where.ownerType, ownerId: where.ownerId, tenantId: where.tenantId },
+    data: { ownerType: removedOwnerType(where.ownerType) },
+  })
+  return r.count === 1
 }
 
 const registry = new Map<string, RecordFileProvider>()

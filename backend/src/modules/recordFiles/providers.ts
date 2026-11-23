@@ -326,6 +326,18 @@ const purchaseOrder: RecordFileProvider = {
     await gateAs(req, '/procurement/purchase-orders', mode)
     return { tenantId }
   },
+  // A wrong invoice file may be taken off (owner, 2026-11-23) only while the PO is still being bought — before the
+  // buyer marks it completed — by whoever attached it or the CEO, and only a file attached since the PO's last GRN
+  // (an earlier GRN's invoice is that GRN's evidence and stays).
+  async removable(req, ownerId, tenantId, files) {
+    const su = req.staffUser!
+    const po = await prisma.purchaseOrder.findFirst({ where: { id: ownerId, supplier: { tenantId } }, select: { status: true } })
+    if (!po || !['draft', 'pending_approval', 'approved', 'sent', 'partial'].includes(po.status)) return new Set()
+    const lastGrn = await prisma.goodsReceipt.findFirst({ where: { poId: ownerId, grnNumber: { not: null } }, orderBy: { receivedAt: 'desc' }, select: { receivedAt: true } })
+    return new Set(files
+      .filter((f) => (su.role === 'admin' || f.uploadedById === su.id) && (!lastGrn || f.createdAt > lastGrn.receivedAt))
+      .map((f) => f.id))
+  },
 }
 
 const internDocument: RecordFileProvider = {

@@ -23,7 +23,7 @@ const OFFICE_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.xlsx,.xls,.docx,.
 export const acceptFor = (ownerType: RecordOwnerType) => (OFFICE_OWNER_TYPES.has(ownerType) ? OFFICE_ACCEPT : PHOTO_PDF_ACCEPT)
 
 /** One stored file (metadata — the bytes are fetched on View / Download). */
-export interface RecordFile { id: string; fileName: string | null; mime: string; sizeBytes: number; createdAt: string; uploadedByName: string | null }
+export interface RecordFile { id: string; fileName: string | null; mime: string; sizeBytes: number; createdAt: string; uploadedByName: string | null; /** The caller may still take this file off the record. */ removable?: boolean }
 /** A chosen file, ready to send. */
 export interface PickedFile { fileName: string; mime: string; dataBase64: string; bytes: number }
 

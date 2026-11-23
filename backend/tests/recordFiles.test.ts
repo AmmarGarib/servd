@@ -179,7 +179,7 @@ describe('record files: every owner type, two companies', () => {
       const list = await call(a, 'GET', `/record-files/${ownerType}/${idA}`)
       expect(list.statusCode, list.body).toBe(200)
       const files = (list.json() as { files: Array<Record<string, unknown>> }).files
-      for (const f of files) expect(Object.keys(f).sort()).toEqual(['createdAt', 'fileName', 'id', 'mime', 'sizeBytes', 'uploadedByName'])
+      for (const f of files) expect(Object.keys(f).sort()).toEqual(['createdAt', 'fileName', 'id', 'mime', 'removable', 'sizeBytes', 'uploadedByName'])
       expect(list.body).not.toContain(PNG.slice(0, 20))
 
       const pdfId = saved.find((f) => f.mime === 'application/pdf')!.id

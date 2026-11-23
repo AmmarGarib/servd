@@ -10,6 +10,7 @@
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../lib/api'
+import { useConfirm } from '../ui/ConfirmDialog'
 import { kb } from '../../lib/photoPrep'
 import { FileViewModal, isViewable } from './FileViewModal'
 import {
@@ -36,6 +37,7 @@ export function RecordFiles({ ownerType, ownerId, canUpload, title = 'Supporting
   lazy?: boolean
 }) {
   const qc = useQueryClient()
+  const confirm = useConfirm()
   const input = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,6 +62,14 @@ export function RecordFiles({ ownerType, ownerId, canUpload, title = 'Supporting
       }
     } catch (e) { setError((e as Error).message) }
     finally { setBusy(false); if (input.current) input.current.value = '' }
+  }
+  // A wrongly attached file (owner, 2026-11-23): shown only where the server says it may still be removed.
+  async function remove(f: RecordFile) {
+    const ok = await confirm({ title: `Remove ${nameOf(f)}?`, body: 'It comes off this record. Attach the right file afterwards.', danger: true, confirmLabel: 'Remove' })
+    if (!ok) return
+    setError(null)
+    try { await api.delete(recordFilePath(ownerType, ownerId, f.id)); await qc.invalidateQueries({ queryKey: key }) }
+    catch (e) { setError((e as Error).message) }
   }
   async function download(f: RecordFile) {
     setError(null)
@@ -95,6 +105,9 @@ export function RecordFiles({ ownerType, ownerId, canUpload, title = 'Supporting
                   <button type="button" onClick={() => setViewing(f)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>View</button>
                 )}
                 <button type="button" onClick={() => void download(f)} className="font-bold" style={{ color: 'var(--erp-primary)' }}>Download</button>
+                {f.removable && (
+                  <button type="button" onClick={() => void remove(f)} className="font-bold" style={{ color: 'var(--erp-danger)' }}>Remove</button>
+                )}
               </span>
             </li>
           ))}

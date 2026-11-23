@@ -43,7 +43,7 @@ async function mkUser(key: string, role: UserRole, tenants: string[]) {
   })
   U[key] = { id: u.id, name: u.name, email: u.email!, role: u.role }
 }
-const call = (key: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, payload?: unknown) =>
+const call = (key: string, method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', url: string, payload?: unknown) =>
   app.inject({ method, url: `/api/v1${url}`, headers: { authorization: `Bearer ${issueStaffSession(U[key]!).accessToken}` }, ...(payload !== undefined && { payload: payload as object }) })
 const code = (r: { json(): unknown }) => (r.json() as { error?: { code?: string } }).error?.code
 
@@ -401,7 +401,25 @@ describe('the requester sends it back; a partial delivery makes a second GRN', (
     const noFile = await call('storeA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-INV2`, invoiceDate: today() })
     expect(code(noFile)).toBe('INVOICE_REQUIRED')
     await upload('storeA', po.id)
+    // A wrongly attached invoice comes off again while the PO is still being bought (owner, 2026-11-23): by whoever
+    // attached it (or the CEO) — not the requester, not company B. It is kept, not erased.
+    const filesOf = async (who: string) => (await call(who, 'GET', `/record-files/purchase_order/${po.id}`)).json().files as Array<{ id: string; removable: boolean }>
+    const wrong = (await filesOf('storeA'))[0]!
+    expect(wrong.removable).toBe(true)
+    expect((await filesOf('chefA'))[0]!.removable).toBe(false)
+    expect(code(await call('chefA', 'DELETE', `/record-files/purchase_order/${po.id}/${wrong.id}`))).toBe('FILE_NOT_REMOVABLE')
+    expect((await call('finB', 'DELETE', `/record-files/purchase_order/${po.id}/${wrong.id}`)).statusCode).toBe(404)
+    expect((await call('storeA', 'DELETE', `/record-files/purchase_order/${po.id}/${wrong.id}`)).statusCode).toBe(204)
+    expect(await filesOf('storeA')).toEqual([])
+    expect((await prisma.cashVoucherAttachment.findUniqueOrThrow({ where: { id: wrong.id } })).ownerType).toBe('purchase_order__removed')
+    expect(await prisma.auditLog.count({ where: { action: 'record_file.removed', entityId: wrong.id, tenantId: T.A } })).toBe(1)
+    expect(code(await call('storeA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-INV2`, invoiceDate: today() }))).toBe('INVOICE_REQUIRED')
+    await upload('storeA', po.id)
     expect((await call('storeA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-INV2`, invoiceDate: today() })).statusCode).toBe(200)
+    // Once the PO is marked completed the invoice stays.
+    const kept = (await filesOf('storeA'))[0]!
+    expect(kept.removable).toBe(false)
+    expect(code(await call('ceoA', 'DELETE', `/record-files/purchase_order/${po.id}/${kept.id}`))).toBe('FILE_NOT_REMOVABLE')
     expect(code(await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/reject-receipt`, { note: 'short' }))).toBe('NOTE_REQUIRED')
     const back = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/reject-receipt`, { note: 'Soap never came, flour bag torn' })
     expect(back.statusCode, back.body).toBe(200)

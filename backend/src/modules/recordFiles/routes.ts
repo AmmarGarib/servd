@@ -21,11 +21,11 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
 import { requireAuth, ALL_STAFF } from '../auth/middleware.js'
-import { NotFoundError } from '../../lib/errors.js'
+import { NotFoundError, AppError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { sendEvidence } from '../../lib/evidenceFile.js'
 import {
-  recordFileProvider, decodeRecordFiles, writeRecordFilesTx, listRecordFiles, readRecordFile,
+  recordFileProvider, decodeRecordFiles, writeRecordFilesTx, listRecordFiles, readRecordFile, detachRecordFileTx,
   zRecordFiles, RECORD_FILES_BODY_LIMIT, type RecordFileMode, type RecordFileProvider,
 } from '../../lib/recordFiles.js'
 import './providers.js'
@@ -45,7 +45,27 @@ export async function recordFileRoutes(fastify: FastifyInstance) {
   fastify.get<{ Params: OwnerParams }>('/:ownerType/:ownerId', { preHandler: guard }, async (req) => {
     const { p, tenantId } = await ownerOf(req, 'read')
     const files = await listRecordFiles(prisma, { ownerType: p.ownerType, ownerId: req.params.ownerId, tenantId })
-    return { files: files.map(({ uploadedById: _u, ...f }) => f) }
+    const removable = p.removable ? await p.removable(req, req.params.ownerId, tenantId, files) : new Set<string>()
+    return { files: files.map(({ uploadedById: _u, ...f }) => ({ ...f, removable: removable.has(f.id) })) }
+  })
+
+  // Take a wrongly attached file off its record (owner, 2026-11-23). Only where the record's provider allows it
+  // (`removable`) — everywhere else a file stays for good. The file is kept (lib/recordFiles.ts removedOwnerType).
+  fastify.delete<{ Params: OwnerParams & { fileId: string } }>('/:ownerType/:ownerId/:fileId', { preHandler: guard }, async (req, reply) => {
+    const { p, tenantId } = await ownerOf(req, 'write')
+    const files = await listRecordFiles(prisma, { ownerType: p.ownerType, ownerId: req.params.ownerId, tenantId })
+    const file = files.find((f) => f.id === req.params.fileId)
+    if (!file) throw new NotFoundError('File', req.params.fileId)
+    const removable = p.removable ? await p.removable(req, req.params.ownerId, tenantId, files) : new Set<string>()
+    if (!removable.has(file.id)) throw new AppError('FILE_NOT_REMOVABLE', `This file can no longer be removed from the ${p.label} — attach the right one instead`, 409)
+    const moved = await prisma.$transaction((tx) => detachRecordFileTx(tx, { ownerType: p.ownerType, ownerId: req.params.ownerId, tenantId, fileId: file.id }))
+    if (!moved) throw new NotFoundError('File', req.params.fileId)
+    await audit({
+      category: p.auditCategory, action: 'record_file.removed', entity: 'RecordFile', entityId: file.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId,
+      after: { ownerType: p.ownerType, ownerId: req.params.ownerId, fileName: file.fileName, mime: file.mime, sizeBytes: file.sizeBytes, uploadedById: file.uploadedById, actorRole: req.staffUser!.role },
+    })
+    return reply.status(204).send()
   })
 
   fastify.post<{ Params: OwnerParams }>('/:ownerType/:ownerId', { preHandler: guard, bodyLimit: RECORD_FILES_BODY_LIMIT }, async (req, reply) => {
