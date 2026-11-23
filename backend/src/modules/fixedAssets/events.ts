@@ -1665,6 +1665,18 @@ async function applyRelatedCompanyTransfer(tx: Tx, event: FixedAssetEvent, p: Ad
     where: { tenantId: receiverTenantId, ownerType: FILES_OWNER, ownerId: event.id },
     data: { ownerId: asset.id },
   })
+  // The asset's documents go with it (owner, 2026-11-23: "along with all necessary details"): COPIES under the new
+  // asset in the receiver's company — the giver keeps its own as history. Newest first, up to the 10-a-record cap.
+  const have = await tx.cashVoucherAttachment.count({ where: { tenantId: receiverTenantId, ownerType: FILES_OWNER, ownerId: asset.id } })
+  const room = Math.max(0, 10 - have)
+  if (room > 0) {
+    await tx.$executeRaw`
+      INSERT INTO cash_voucher_attachments ("id", "tenantId", "kind", "mime", "fileName", "sizeBytes", "data", "uploadedById", "createdAt", "ownerType", "ownerId")
+      SELECT 'fa' || md5(random()::text || f."id"), ${receiverTenantId}, f."kind", f."mime", f."fileName", f."sizeBytes", f."data", f."uploadedById", f."createdAt", f."ownerType", ${asset.id}
+      FROM cash_voucher_attachments f
+      WHERE f."tenantId" = ${giverTenantId} AND f."kind" = 'record_file' AND f."ownerType" = ${FILES_OWNER} AND f."ownerId" = ${giver.id}
+      ORDER BY f."createdAt" DESC LIMIT ${room}`
+  }
   return {
     journalEntryId: acq.entryId, amountCents: nbv, assetId: asset.id,
     payload: {

@@ -18,6 +18,7 @@ import {
   FA_BASE, FaFrame, Stat, Notice, AssetStatusBadge, Modal, L, ErrorLine, card, inp, btnPrimary, btnGhost, money, fmtDay, fmtLife, fmtMonth, pct,
   errorWords, forCompany, useFaLookups, type FaAsset, type FaRequest,
 } from '../../../../components/fixedAssets/shared'
+import { MoveToCompanyModal } from '../../../../components/fixedAssets/MoveToCompany'
 import { AssetRequestModal, ASSET_REQUEST_TITLE, type AssetRequestKind, type RequestResult } from '../../../../components/fixedAssets/RequestForms'
 import { RequestCard } from '../../../../components/fixedAssets/RequestCard'
 import { ScheduleTable, type PostedMonth, type UpcomingMonth } from '../../../../components/fixedAssets/ScheduleTable'
@@ -47,6 +48,7 @@ export default function FixedAssetPage() {
   const { data: lookups } = useFaLookups()
   const [asking, setAsking] = useState<AssetRequestKind | null>(null)
   const [editing, setEditing] = useState(false)
+  const [movingCompany, setMovingCompany] = useState(false)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'wait' | 'bad'; text: string } | null>(null)
 
   const { data, isLoading, error } = useQuery<AssetDetail>({
@@ -152,7 +154,7 @@ export default function FixedAssetPage() {
             <section className="rounded-2xl p-4" style={card}>
               <p className="text-sm font-black text-white/90">What do you need to do with it?</p>
               <p className="text-xs text-s-muted mt-0.5">
-                {isCeo ? 'As CEO, what you send posts at once.' : 'Disposals, write-downs and voids go to the CEO to approve. A move takes effect at once.'}
+                {isCeo ? 'As CEO, what you send posts at once.' : 'Disposals, write-downs, voids and a move to another company go to the CEO to approve. A move to another outlet or brand takes effect at once.'}
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
                 {actions.map((x) => (
@@ -160,6 +162,11 @@ export default function FixedAssetPage() {
                     title={pendingEvents.length > 0 && x.kind !== 'transfer' ? 'A request is already waiting on this asset' : ASSET_REQUEST_TITLE[x.kind]}
                     onClick={() => { setNotice(null); setAsking(x.kind) }}>{x.label}</button>
                 ))}
+                {a.status === 'active' && (
+                  <button className={btnGhost} disabled={pendingEvents.length > 0}
+                    title={pendingEvents.length > 0 ? 'A request is already waiting on this asset' : 'Move this asset onto another servd company\'s register at its book value'}
+                    onClick={() => { setNotice(null); setMovingCompany(true) }}>Move to another company</button>
+                )}
               </div>
             </section>
           )}
@@ -291,6 +298,16 @@ export default function FixedAssetPage() {
 
       {a && asking && lookups && (
         <AssetRequestModal asset={a} kind={asking} lookups={lookups} willWait={!isCeo} prefill={askPrefill} onClose={() => { setAsking(null); setAskPrefill(null) }} onDone={done} />
+      )}
+      {a && movingCompany && (
+        <MoveToCompanyModal asset={a} onClose={() => setMovingCompany(false)}
+          onDone={(res, companyName) => {
+            setMovingCompany(false)
+            setNotice(res.applied
+              ? { tone: 'ok', text: `Moved to ${companyName} at book value. It is now on ${companyName}'s register.` }
+              : { tone: 'wait', text: `Sent to the CEO. Nothing is booked until the CEO approves the move to ${companyName}; it waits in ${companyName}'s requests.` })
+            refresh()
+          }} />
       )}
       {a && data && editing && lookups && (
         <EditDetails detail={data} lookups={lookups} onClose={() => setEditing(false)}

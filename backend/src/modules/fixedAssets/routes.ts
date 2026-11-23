@@ -597,6 +597,107 @@ export async function fixedAssetRoutes(fastify: FastifyInstance) {
     return { giverTenantId: q.giverTenantId, date: pktDay(at), assets }
   })
 
+  // ── Move an asset to another servd company (owner, 2026-11-23: "Build option to move Fixed asset to other
+  // company (Flipd) along with all necessary details") ───────────────────────────────────────────────────────
+  // The GIVER's door to the one company-to-company transfer (events.ts: add_existing from 'servd_company', at
+  // book value, no gain or loss, the pair through the inter-company engine) — never a second engine. Raised
+  // from the asset's own page; the request sits in the RECEIVING company and the CEO approves it (the CEO's
+  // own move applies at once). The caller belongs to both companies. Name, serial, class, supplier, warranty,
+  // salvage, the months of life left and the asset's documents go with it.
+  //   GET  /:id/move-company/options?date=      companies the caller may move it to, each with its outlets,
+  //                                             brands and whether it has the asset's class; the book value
+  //   POST /:id/move-company {tenantId, date?, locationId?, conceptId?, reason ≥10}
+  //   404 another company's asset · 422 COUNTERPARTY_NOT_YOURS / ASSET_NOT_ON_GIVER_REGISTER / NO_BOOK_VALUE /
+  //   ASSET_CLASS_NOT_IN_COMPANY / LOCATION_REQUIRED_FOR_SHARED / PERIOD_LOCKED · 409 MOVE_PENDING
+  const movableAsset = async (req: Parameters<typeof scopeTenantWhere>[0], id: string) => {
+    const asset = await prisma.fixedAsset.findFirst({
+      where: { id, ...(await scopeTenantWhere(req, 'write')) },
+      select: { id: true, tenantId: true, name: true, category: true, assetTag: true },
+    })
+    if (!asset) throw new NotFoundError('FixedAsset', id)
+    return asset
+  }
+  const pendingMoveOf = async (assetId: string) => serviceClient.fixedAssetEvent.findFirst({
+    where: { kind: 'add_existing', status: 'pending', payload: { path: ['giverAssetId'], equals: assetId } },
+    select: { id: true, tenantId: true },
+  })
+
+  fastify.get<{ Params: { id: string } }>('/:id/move-company/options', { preHandler: requireAuth(...FA_WRITERS) }, async (req) => {
+    const q = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).parse(req.query)
+    const asset = await movableAsset(req, req.params.id)
+    const at = parseEffectiveDate(q.date) ?? new Date()
+    const memberIds = (req.staffUser!.memberTenantIds ?? []).filter((t) => t !== asset.tenantId)
+    const tenants = memberIds.length ? await serviceClient.tenant.findMany({
+      where: { id: { in: memberIds }, deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true },
+    }) : []
+    const companies = await Promise.all(tenants.map(async (t) => {
+      const [locations, brands, cls] = await Promise.all([
+        serviceClient.location.findMany({ where: { tenantId: t.id, deletedAt: null }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+        serviceClient.concept.findMany({ where: { tenantId: t.id, deletedAt: null, isActive: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+        serviceClient.fixedAssetClass.findFirst({ where: { tenantId: t.id, key: asset.category }, select: { label: true, isActive: true, pooled: true } }),
+      ])
+      return { tenantId: t.id, name: t.name, locations, brands, hasClass: !!cls && cls.isActive && !cls.pooled, classLabel: cls?.label ?? null }
+    }))
+    let preview: Awaited<ReturnType<typeof giverPreview>> | null = null
+    let blocked: string | null = null
+    try { preview = await giverPreview(serviceClient, asset.tenantId, asset.id, at) } catch (e) { blocked = e instanceof AppError ? e.message : 'This asset cannot be moved' }
+    if (preview && preview.nbvCents <= 0) blocked = 'This asset has no book value left — there is nothing to transfer at book value'
+    const pending = await pendingMoveOf(asset.id)
+    return {
+      assetId: asset.id, date: pktDay(at), companies,
+      bookValueCents: preview?.nbvCents ?? null, costCents: preview?.costCents ?? null,
+      remainingLifeMonths: preview?.remainingLifeMonths ?? null, blocked, pending: !!pending,
+      appliesAtOnce: req.staffUser!.role === FA_APPROVER_ROLE,
+    }
+  })
+
+  fastify.post<{ Params: { id: string } }>('/:id/move-company', { preHandler: requireAuth(...FA_WRITERS) }, async (req, reply) => {
+    const body = z.object({
+      tenantId: z.string().min(1).max(64),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-01').optional(),
+      locationId: z.string().min(1).max(64).nullable().optional(),
+      conceptId: z.string().min(1).max(64).nullable().optional(),
+      reason: z.string().max(1000),
+    }).parse(req.body)
+    if (body.reason.trim().length < 10) throw new AppError('REASON_REQUIRED', 'Give a reason (at least 10 characters)', 422)
+    const asset = await movableAsset(req, req.params.id)
+    const members = req.staffUser!.memberTenantIds ?? []
+    // The receiver must be another servd company the caller belongs to (and the giver one too).
+    await assertGiverCompany(serviceClient, body.tenantId, asset.tenantId, members)
+    const target = await serviceClient.tenant.findUnique({ where: { id: body.tenantId }, select: { id: true, deletedAt: true } })
+    if (!target || target.deletedAt || !members.includes(body.tenantId)) {
+      throw new AppError('COUNTERPARTY_NOT_YOURS', 'Pick another servd company you belong to', 422)
+    }
+    if (await pendingMoveOf(asset.id)) {
+      throw new AppError('MOVE_PENDING', 'This asset already has a move to another company waiting for the CEO', 409)
+    }
+    const date = body.date ?? pktDay(new Date())
+    const giver = await giverPreview(serviceClient, asset.tenantId, asset.id, parseEffectiveDate(date)!)
+    if (giver.nbvCents <= 0) throw new AppError('NO_BOOK_VALUE', 'This asset has no book value left — there is nothing to transfer at book value', 422)
+    const cls = await serviceClient.fixedAssetClass.findFirst({ where: { tenantId: body.tenantId, key: giver.classKey } })
+    if (!cls) throw new AppError('ASSET_CLASS_NOT_IN_COMPANY', 'The receiving company does not have this asset\'s class', 422)
+    const r = await raiseRequest(req, {
+      kind: 'add_existing',
+      tenantId: body.tenantId,
+      memberTenantIds: members,
+      reason: body.reason.trim(),
+      payload: {
+        source: 'related_party', counterparty: 'servd_company', counterpartyTenantId: asset.tenantId,
+        sourceAccountCode: null, classKey: cls.key, name: giver.name, serial: giver.serialNumber ?? null,
+        conceptId: body.conceptId ?? null, locationId: body.locationId ?? null,
+        valueCents: giver.nbvCents, inServiceAt: date, remainingLifeMonths: giver.remainingLifeMonths,
+        salvageCents: Math.min(giver.salvageCents, giver.nbvCents), giverAssetId: giver.assetId,
+      },
+    })
+    // The giving company's own trail (the request's audit row is the receiver's).
+    await audit({
+      category: 'accounting', action: r.statusCode === 201 ? 'fixed_asset.move_company' : 'fixed_asset.move_company.request',
+      entity: 'FixedAsset', entityId: asset.id, userId: req.staffUser!.id, userEmail: req.staffUser!.email, tenantId: asset.tenantId,
+      metadata: { toTenantId: body.tenantId, date, bookValueCents: giver.nbvCents, actorRole: req.staffUser!.role },
+    })
+    return reply.status(r.statusCode).send(r.body)
+  })
+
   // POST /depreciate { throughPeriod? } — "charge now / catch up" for the
   // ACTIVE company through a completed month (default: the last one). The
   // automatic run does the same every night; this never charges another company.

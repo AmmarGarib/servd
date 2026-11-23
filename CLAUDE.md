@@ -2023,6 +2023,17 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   the statutory 25% when the class carries 0 (`tax.ts initialAllowanceBpOf`).
   Tax view only, never the books; smallwares and land never. Once any tax year
   from the asset's first is frozen the tick is final (409 `TAX_YEAR_FROZEN`).
+- **Move an asset to another company from its own page (owner, 2026-11-23: "Build option to move Fixed asset to other
+  company (Flipd) along with all necessary details").** The GIVER's door to the ONE company-to-company transfer above
+  (add_existing from `servd_company`: book value, no gain or loss, the inter-company pair) — never a second engine.
+  `GET /accounting/fixed-assets/:id/move-company/options?date=` (the caller's other companies with outlets, brands,
+  `hasClass`; book value, life left, `pending`) and `POST /:id/move-company {tenantId, date?, locationId?, conceptId?,
+  reason ≥10}` (FA_WRITERS; the asset in write scope, else 404; the caller in both companies — 422
+  `COUNTERPARTY_NOT_YOURS`; one waiting move per asset, 409 `MOVE_PENDING`): the request sits in the RECEIVING company,
+  the CEO approves (finance 202, the CEO's own 201). Name, serial, class, supplier, warranty, salvage and the months
+  left go with it, and on approval the asset's documents are COPIED under the new asset (the giver keeps its own; up to
+  the 10-a-record cap). Audit `fixed_asset.move_company(.request)` in the giving company. Admin: "Move to another
+  company" on the asset page (`components/fixedAssets/MoveToCompany.tsx`). Tests: `tests/fixedAssetExisting.test.ts`.
 - **Asset classes are finance's too (owner, 2026-11-10: "Give it to finance also").** `PATCH
   /accounting/fixed-assets/classes/:id` (label, default life, tax rate, initial allowance, pooled, active) admits the
   CEO and finance (`fixedAssets/routes.ts CLASS_EDITORS`; the '/accounting' gate holds finance to `accounting`);

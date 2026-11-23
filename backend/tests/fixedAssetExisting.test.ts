@@ -465,3 +465,63 @@ describe('add an existing asset — already in the chart of accounts', () => {
     expect(acc.id).toBeTruthy()
   })
 })
+
+// Owner, 2026-11-23: "Build option to move Fixed asset to other company (Flipd) along with all necessary details" —
+// the giver's door to the same transfer (POST /:id/move-company), the documents going with it.
+describe('move an asset to another servd company from its own page', () => {
+  it('finance asks (CEO approves), another company is 404, a company the caller is not in is 422, the files go with it', async () => {
+    const sealer = await giverAsset(A, 'Cans sealer')
+    const up = await call('finA', 'POST', `/record-files/fixed_asset/${sealer}`, { files: [{ fileName: 'purchase.pdf', mime: 'application/pdf', dataBase64: PDF }] })
+    expect(up.statusCode, up.body).toBe(201)
+    const body = { tenantId: D.tenantId, date: day(-1), conceptId: D.conceptId, reason: 'The sealing machine now works in the D kitchen' }
+
+    // Another company's finance never reaches A's asset; a company finA is not a member of is refused.
+    expect((await call('finB', 'POST', `${BASE}/${sealer}/move-company`, { ...body, tenantId: B.tenantId })).statusCode).toBe(404)
+    expect((await call('finB', 'GET', `${BASE}/${sealer}/move-company/options`)).statusCode).toBe(404)
+    const notMine = await call('finA', 'POST', `${BASE}/${sealer}/move-company`, { ...body, tenantId: B.tenantId, conceptId: B.conceptId })
+    expect(notMine.statusCode).toBe(422)
+    expect(notMine.json().error.code).toBe('COUNTERPARTY_NOT_YOURS')
+    expect((await call('finA', 'POST', `${BASE}/${sealer}/move-company`, { ...body, reason: 'short' })).statusCode).toBe(422)
+
+    const opts = await call('finA', 'GET', `${BASE}/${sealer}/move-company/options?date=${day(-1)}`)
+    expect(opts.statusCode, opts.body).toBe(200)
+    expect(opts.json()).toMatchObject({ bookValueCents: 70_000, pending: false, appliesAtOnce: false })
+    const names = (opts.json().companies as Array<{ tenantId: string; hasClass: boolean }>)
+    expect(names.map((c) => c.tenantId)).toContain(D.tenantId)
+    expect(names.map((c) => c.tenantId)).not.toContain(A.tenantId)
+    expect(names.map((c) => c.tenantId)).not.toContain(B.tenantId)
+
+    const beforeA = await entries(A.tenantId), beforeD = await entries(D.tenantId)
+    const r = await call('finA', 'POST', `${BASE}/${sealer}/move-company`, body)
+    expect(r.statusCode, r.body).toBe(202)
+    const ev = r.json().event as { id: string }
+    // The request is the RECEIVER's; nothing is booked yet.
+    expect((await prisma.fixedAssetEvent.findUniqueOrThrow({ where: { id: ev.id } }))).toMatchObject({ tenantId: D.tenantId, kind: 'add_existing', status: 'pending' })
+    expect(await entries(A.tenantId)).toBe(beforeA)
+    expect(await entries(D.tenantId)).toBe(beforeD)
+    const again = await call('finA', 'POST', `${BASE}/${sealer}/move-company`, body)
+    expect(again.statusCode).toBe(409)
+    expect(again.json().error.code).toBe('MOVE_PENDING')
+
+    const done = await applyEvent(ev.id, who.ceoAD!.id)
+    expect(done.status).toBe('posted')
+    const gone = await prisma.fixedAsset.findUniqueOrThrow({ where: { id: sealer } })
+    expect(gone).toMatchObject({ tenantId: A.tenantId, status: 'disposed', disposalKind: 'transferred_out' })
+    const got = await prisma.fixedAsset.findUniqueOrThrow({ where: { id: done.assetId! } })
+    expect(got).toMatchObject({ tenantId: D.tenantId, status: 'active', name: 'Cans sealer', serialNumber: 'SN-Cans sealer', conceptId: D.conceptId, usefulLifeMonths: 7 })
+    expect(Number(got.costCents)).toBe(70_000)
+    // The document is copied under the new asset in D; A keeps its own.
+    const files = await prisma.cashVoucherAttachment.findMany({ where: { ownerType: 'fixed_asset', ownerId: { in: [sealer, got.id] } }, select: { tenantId: true, ownerId: true, fileName: true, sizeBytes: true } })
+    expect(files.map((f) => [f.tenantId, f.ownerId, f.fileName]).sort()).toEqual([[A.tenantId, sealer, 'purchase.pdf'], [D.tenantId, got.id, 'purchase.pdf']].sort())
+    expect(await trialBalance(A.tenantId)).toBe(0)
+    expect(await trialBalance(D.tenantId)).toBe(0)
+  })
+
+  it('the CEO\'s own move applies at once', async () => {
+    const mixer = await giverAsset(A, 'Planetary mixer')
+    const r = await call('ceoAD', 'POST', `${BASE}/${mixer}/move-company`, { tenantId: D.tenantId, date: day(-1), conceptId: D.conceptId, reason: 'Moved to the D kitchen for good' })
+    expect(r.statusCode, r.body).toBe(201)
+    expect((await prisma.fixedAsset.findUniqueOrThrow({ where: { id: mixer } })).status).toBe('disposed')
+    expect(await prisma.fixedAsset.count({ where: { tenantId: D.tenantId, name: 'Planetary mixer', status: 'active' } })).toBe(1)
+  })
+})
