@@ -916,3 +916,39 @@ describe('old advance vouchers follow the buyer\'s actual amounts (owner, 2026-1
     expect((await prisma.cashVoucher.findUniqueOrThrow({ where: { id: voucherId } })).amountCents).toBe(1_800)
   })
 })
+
+describe('the Ingredients sheet takes what the buyer really paid (owner, 2026-11-23)', () => {
+  it('a stock line and an expensed line both show the bought rate as the latest price, per kg', async () => {
+    const { masterPricesMany } = await import('../src/lib/ingredientPrices.js')
+    const mk = (name: string) => prisma.ingredientMaster.create({ data: { name: `${P} ${name}`, normalizedName: `${P} ${name}`.toLowerCase(), stockUnit: 'g', category: 'produce' } })
+    const mApple = await mk('Apples'), mButter = await mk('Butter')
+    const apple = (await prisma.inventoryItem.create({ data: { name: `${P} Apples`, unit: 'kg', tenantId: T.A, category: 'produce', currentStock: 0, unitCostCents: 40_000, masterIngredientId: mApple.id } })).id
+    const butter = (await prisma.inventoryItem.create({ data: { name: `${P} Butter`, unit: 'g', tenantId: T.A, category: 'dairy', currentStock: 0, unitCostCents: 340, masterIngredientId: mButter.id } })).id
+    const r = await call('chefA', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, payByCash: false,
+      lines: [{ inventoryItemId: apple, quantityOrdered: 1, unitCostCents: 40_000 }, { inventoryItemId: butter, quantityOrdered: 400, unitCostCents: 340 }],
+    })
+    expect(r.statusCode, r.body).toBe(201)
+    const po = r.json() as { id: string; lines: Array<{ id: string; inventoryItemId: string }> }
+    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`)).statusCode).toBe(200)
+    await upload('buyerA', po.id)
+    const al = po.lines.find((l) => l.inventoryItemId === apple)!.id
+    const bl = po.lines.find((l) => l.inventoryItemId === butter)!.id
+    // Bought: apples Rs 780 (was 400), butter 400 g for Rs 1,483 (Rs 3,707.50 / kg — a fraction of a paisa a gram).
+    const done = await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, {
+      invoiceNumber: `${P}-ING1`, invoiceDate: today(), lines: [{ poLineId: al, amountCents: 78_000 }, { poLineId: bl, amountCents: 148_300 }],
+    })
+    expect(done.statusCode, done.body).toBe(200)
+    const ok = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, {
+      locationId: locA, lines: [{ poLineId: al, quantityReceived: 1, expenseAccountCode: '6120' }, { poLineId: bl, quantityReceived: 400 }],
+    })
+    expect(ok.statusCode, ok.body).toBe(201)
+    const prices = await masterPricesMany([mApple.id, mButter.id])
+    // Held per gram; shown per kg = × 1000.
+    expect(prices.get(mApple.id)).toMatchObject({ latestSource: 'delivery' })
+    expect(prices.get(mApple.id)!.latestPerBase! * 1000).toBeCloseTo(78_000)
+    expect(prices.get(mButter.id)).toMatchObject({ latestSource: 'delivery' })
+    expect(prices.get(mButter.id)!.latestPerBase! * 1000).toBeCloseTo(370_750)
+  })
+})

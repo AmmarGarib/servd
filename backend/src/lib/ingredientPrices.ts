@@ -73,6 +73,11 @@ async function supplierOfLines(db: Db, lineIds: string[]): Promise<Map<string, s
   return new Map(lines.map((l) => [l.id, recSup.get(l.receiptId) ?? null]))
 }
 
+/** What one item unit of a delivery cost: the lot's exact value ÷ its quantity — never the rounded whole-paisa unit cost
+ *  (Rs 155 / kg on a gram item is 15.5 paisa a gram; the rounded 16 would show Rs 160 / kg). */
+const lotUnitCost = (l: { unitCostCents: number; valueInCents: number | bigint; qtyIn: number }) =>
+  l.qtyIn > 0 ? Number(l.valueInCents) / l.qtyIn : Number(l.unitCostCents)
+
 const perBaseOf = (cents: number, itemUnit: string) => {
   const per = unitFamily(itemUnit).perUnit
   return per > 0 ? cents / per : cents
@@ -104,7 +109,7 @@ export async function masterPricesMany(masterIds: string[], db: Db = serviceClie
   const since = new Date(Date.now() - AVERAGE_DAYS * 86_400_000)
   const lots = await db.stockLot.findMany({
     where: { inventoryItemId: { in: itemIds }, sourceType: 'goods_receipt_line' },
-    select: { inventoryItemId: true, unitCostCents: true, qtyIn: true, receivedAt: true, tenantId: true, receiptLineId: true },
+    select: { inventoryItemId: true, unitCostCents: true, valueInCents: true, qtyIn: true, receivedAt: true, tenantId: true, receiptLineId: true },
     orderBy: [{ receivedAt: 'desc' }, { createdAt: 'desc' }],
   })
   // The newest delivery per ingredient, and the 90-day weighted sums.
@@ -118,7 +123,7 @@ export async function masterPricesMany(masterIds: string[], db: Db = serviceClie
     if (l.receivedAt >= since && l.qtyIn > 0) {
       const per = unitFamily(item.unit).perUnit || 1
       const s = sums.get(m) ?? { value: 0, qty: 0, n: 0 }
-      s.value += Number(l.unitCostCents) * l.qtyIn
+      s.value += Number(l.valueInCents)
       s.qty += l.qtyIn * per
       s.n += 1
       sums.set(m, s)
@@ -133,7 +138,7 @@ export async function masterPricesMany(masterIds: string[], db: Db = serviceClie
   for (const [m, l] of newest) {
     const item = itemById.get(l.inventoryItemId)!
     const p = out.get(m)!
-    p.latestPerBase = perBaseOf(Number(l.unitCostCents), item.unit)
+    p.latestPerBase = perBaseOf(lotUnitCost(l), item.unit)
     p.latestAt = l.receivedAt
     p.latestSource = 'delivery'
     p.latestSupplier = l.receiptLineId ? (supplierOfLine.get(l.receiptLineId) ?? null) : null
@@ -199,7 +204,7 @@ export async function masterPriceHistory(masterId: string, stockUnit: string, li
   const toDisplay = (cents: number, unit: string) => perBaseOf(cents, unit) * disp.baseUnits
   const lots = await db.stockLot.findMany({
     where: { inventoryItemId: { in: items.map((i) => i.id) }, sourceType: 'goods_receipt_line' },
-    select: { inventoryItemId: true, unitCostCents: true, qtyIn: true, receivedAt: true, tenantId: true, receiptLineId: true },
+    select: { inventoryItemId: true, unitCostCents: true, valueInCents: true, qtyIn: true, receivedAt: true, tenantId: true, receiptLineId: true },
     orderBy: { receivedAt: 'desc' }, take: limit,
   })
   const hist = await db.itemPriceHistory.findMany({
@@ -216,7 +221,7 @@ export async function masterPriceHistory(masterId: string, stockUnit: string, li
     ...lots.map((l) => {
       const item = itemById.get(l.inventoryItemId)!
       return {
-        at: l.receivedAt, source: 'delivery' as const, priceCents: toDisplay(Number(l.unitCostCents), item.unit), displayUnit: disp.unit,
+        at: l.receivedAt, source: 'delivery' as const, priceCents: toDisplay(lotUnitCost(l), item.unit), displayUnit: disp.unit,
         qty: (l.qtyIn * (unitFamily(item.unit).perUnit || 1)) / disp.baseUnits,
         supplier: l.receiptLineId ? (supplierOfLine.get(l.receiptLineId) ?? null) : null, company: companyName.get(l.tenantId) ?? null,
       }
