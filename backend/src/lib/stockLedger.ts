@@ -1457,6 +1457,48 @@ export async function expenseReceiptLineLotsTx(tx: Tx, receiptLineId: string, cr
   return out
 }
 
+/**
+ * Undo a goods-receipt line (owner, 2026-11-23: "build the undo receipt" — a delivery confirmed in the wrong company;
+ * procurement/poWorkflow.ts undoGrn). Every lot the line opened leaves again, exactly as it came:
+ *   · a lot still whole (nothing sold, wasted, counted, moved, re-priced or settled against it) → ONE
+ *     'supplier_return' movement for all of it, the lot ends at zero;
+ *   · a lot issued on receipt (an expensed line, a non-food or issue-on-receipt item) → its issue is taken back
+ *     (a positive 'issue_on_receipt' row, so the issue nets to nothing) and then the same 'supplier_return'.
+ * Anything else ever written on a lot → 409 STOCK_ALREADY_USED and nothing changes. Posts nothing: the caller
+ * reverses the receipt's entries. Returns the lots undone (for those entries).
+ */
+export async function undoReceiptLineLotsTx(tx: Tx, receiptLineId: string, createdById: string | null, at: Date): Promise<Array<{ lotId: string; qty: number; valueCents: number }>> {
+  const lots = await tx.stockLot.findMany({
+    where: { receiptLineId },
+    select: { id: true, tenantId: true, inventoryItemId: true, locationId: true, costClass: true, qtyIn: true, valueInCents: true, unitCostCents: true },
+  })
+  if (lots.length === 0) return []
+  await lockItemsTx(tx, [...new Set(lots.map((l) => l.inventoryItemId))])
+  const used = () => new AppError('STOCK_ALREADY_USED', 'Some of this delivery was already used, sold, moved, counted or re-priced — it cannot be undone. Return it to the supplier with a credit note instead.', 409)
+  const out: Array<{ lotId: string; qty: number; valueCents: number }> = []
+  for (const l of lots) {
+    const cur = await tx.stockLot.findUniqueOrThrow({ where: { id: l.id }, select: { remainingQty: true, remainingValueCents: true, costClass: true } })
+    const rows = await tx.stockMovement.findMany({ where: { lotId: l.id }, select: { kind: true, qty: true, valueCents: true } })
+    if (rows.some((r) => r.kind !== 'receipt' && r.kind !== 'issue_on_receipt')) throw used()
+    const valueIn = toCents(l.valueInCents)
+    const issuedQty = -rows.filter((r) => r.kind === 'issue_on_receipt').reduce((t, r) => t + r.qty, 0)
+    const issuedValue = -rows.filter((r) => r.kind === 'issue_on_receipt').reduce((t, r) => t + toCents(r.valueCents), 0)
+    const left = cur.remainingQty, leftValue = toCents(cur.remainingValueCents)
+    // Whole on the shelf, or wholly issued on receipt — nothing in between.
+    if (Math.abs(left + issuedQty - l.qtyIn) > STOCK_EPS || leftValue + issuedValue !== valueIn) throw used()
+    const base = { tenantId: l.tenantId, inventoryItemId: l.inventoryItemId, lotId: l.id, lotKey: l.id, locationId: l.locationId, unitCostCents: l.unitCostCents, costClass: cur.costClass, occurredAt: at, createdById }
+    if (issuedQty > STOCK_EPS || issuedValue !== 0) {
+      // lotKey ':undo' — the issue's own row holds the plain key (one movement per source, kind and lot key).
+      await tx.stockMovement.create({ data: { ...base, lotKey: `${l.id}:undo`, kind: 'issue_on_receipt', qty: issuedQty, valueCents: issuedValue, sourceType: STOCK_SOURCE.issueOnReceipt, sourceId: l.id } })
+    }
+    await tx.stockMovement.create({ data: { ...base, kind: 'supplier_return', qty: -l.qtyIn, valueCents: -valueIn, sourceType: 'goods_receipt_line.undo', sourceId: receiptLineId } })
+    await tx.stockLot.update({ where: { id: l.id }, data: { remainingQty: 0, remainingValueCents: 0 } })
+    out.push({ lotId: l.id, qty: l.qtyIn, valueCents: valueIn })
+  }
+  for (const itemId of new Set(lots.map((l) => l.inventoryItemId))) await syncItemTx(tx, itemId)
+  return out
+}
+
 // ─── Transfers between sites ─────────────────────────────────────────────────
 
 /**

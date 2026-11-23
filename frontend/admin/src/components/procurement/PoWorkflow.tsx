@@ -69,6 +69,7 @@ const GRN_STATUS: Record<string, { label: string; cls: string }> = {
   buyer_fix: { label: 'Back with the buyer', cls: 'text-s-red bg-s-red/10' },
   ceo_review: { label: 'With the CEO', cls: 'text-s-amber bg-s-amber-dim/60' },
   approved: { label: 'Approved — billed', cls: 'text-success bg-accent-dim' },
+  undone: { label: 'Receipt undone', cls: 'text-s-muted bg-s-elevated' },
 }
 function GrnBadge({ status }: { status: string }) {
   const s = GRN_STATUS[status] ?? { label: status.replace(/_/g, ' '), cls: 'text-s-muted bg-s-elevated' }
@@ -467,7 +468,7 @@ function FixCard({ g }: { g: WfFix }) {
 
 const GRN_FILTERS: Array<{ id: string; label: string }> = [
   { id: '', label: 'All' }, { id: 'finance_review', label: 'With finance' }, { id: 'buyer_fix', label: 'Back with the buyer' },
-  { id: 'ceo_review', label: 'With the CEO' }, { id: 'approved', label: 'Approved' },
+  { id: 'ceo_review', label: 'With the CEO' }, { id: 'approved', label: 'Approved' }, { id: 'undone', label: 'Undone' },
 ]
 
 export function GrnsTab({ initialId }: { initialId?: string | null }) {
@@ -563,12 +564,14 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const { data: g, isError, error } = useQuery({ queryKey: ['procurement', 'grns', 'one', id], queryFn: () => api.get<GrnDetailRow>(`/procurement/grns/${id}`) })
   const [returning, setReturning] = useState(false)
   const [note, setNote] = useState('')
+  const [undoing, setUndoing] = useState(false)
+  const [undoReason, setUndoReason] = useState('')
   // The return note survives Back / refresh (lib/formDraft.ts); the dialog reopens with it. Cleared once returned.
   const draft = useFormDraft(`grn-return:${id}`, { note }, (d) => setNote(d.note ?? ''), { isEmpty: (d) => !d.note.trim() })
   useEffect(() => { if (draft.restoredAt) setReturning(true) }, [draft.restoredAt])
   const act = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) => api.post(`/procurement/grns/${id}/${path}`, body ?? {}),
-    onSuccess: (_r, vars) => { if (vars.path === 'return') draft.clear(); setReturning(false); setNote(''); invalidateAll(qc, g?.po?.id); void qc.invalidateQueries({ queryKey: ['procurement', 'grns', 'one', id] }) },
+    onSuccess: (_r, vars) => { if (vars.path === 'return') draft.clear(); setReturning(false); setNote(''); setUndoing(false); setUndoReason(''); invalidateAll(qc, g?.po?.id); void qc.invalidateQueries({ queryKey: ['procurement', 'grns', 'one', id] }) },
   })
   if (isError) return <p role="alert" className="text-sm text-s-red">{errOf(error)}</p>
   if (!g) return <p className="text-s-muted text-sm">Loading…</p>
@@ -576,6 +579,8 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const canFinance = g.grnStatus === 'finance_review' && (role === 'finance' || role === 'admin')
   const canCeo = g.grnStatus === 'ceo_review' && role === 'admin'
   const canPullBack = g.grnStatus === 'ceo_review' && role === 'finance'
+  // Undo the receipt (owner, 2026-11-23): finance or the CEO, any time before the CEO approves the GRN.
+  const canUndo = ['finance_review', 'ceo_review', 'buyer_fix'].includes(g.grnStatus) && (role === 'finance' || role === 'admin')
   // Stock or expense (owner, 2026-11-18): finance changes it at its check (the CEO at either step).
   // …and after approval too (owner, 2026-11-23): finance or the CEO, as a correcting entry.
   const canSetExpense = canFinance || canCeo || (g.grnStatus === 'approved' && (role === 'finance' || role === 'admin'))
@@ -590,6 +595,7 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
       </div>
       <GrnBadge status={g.grnStatus} />
       {g.returnNote && g.grnStatus === 'buyer_fix' && <p className="text-xs text-s-red">Returned: {g.returnNote}</p>}
+      {g.grnStatus === 'undone' && <p className="text-xs text-s-muted break-words">This receipt was undone{g.returnNote ? `: ${g.returnNote}` : ''}. Nothing from it is in stock or in the books; the purchase order went back to the buyer.</p>}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
@@ -665,6 +671,33 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
           {canCeo && <Button size="sm" disabled={act.isPending} onClick={() => act.mutate({ path: 'approve' })}>Approve &amp; book the bill</Button>}
           <Button size="sm" variant="secondary" onClick={() => setReturning(true)}>Return to the buyer</Button>
         </div>
+      )}
+      {canUndo && (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" disabled={act.isPending} onClick={() => setUndoing(true)}>Undo this receipt</Button>
+        </div>
+      )}
+      {undoing && (
+        <Modal title={`Undo receipt ${g.grnNumber}`} onClose={() => setUndoing(false)}>
+          <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (undoReason.trim().length < 10 || act.isPending) return; act.mutate({ path: 'undo', body: { reason: undoReason.trim() } }) }}>
+            <p className="text-sm text-s-text">
+              The goods of this receipt come back out of stock and its entries are reversed, as if the delivery had never been confirmed
+              ({fmtPkrWhole(g.valueCents)} booked). The purchase order goes back to the buyer, where it can be completed again or cancelled
+              and raised in the right company.
+            </p>
+            <p className="text-xs text-s-muted">
+              It is refused if any of the goods were already used, sold, counted or moved. The cash voucher of the purchase order is not changed.
+            </p>
+            <Field label="Why it is being undone" required error={undoReason && undoReason.trim().length < 10 ? 'At least 10 characters.' : null}>
+              <Input value={undoReason} onChange={(e) => setUndoReason(e.target.value)} className="w-full" autoFocus placeholder="e.g. Raised in the wrong company" />
+            </Field>
+            {act.error && <p role="alert" className="text-xs text-s-red">{errOf(act.error)}</p>}
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={act.isPending || undoReason.trim().length < 10}>{act.isPending ? 'Undoing…' : 'Undo the receipt'}</Button>
+              <Button variant="secondary" onClick={() => setUndoing(false)}>Back</Button>
+            </div>
+          </form>
+        </Modal>
       )}
       {returning && (
         <Modal title={`Return ${g.grnNumber} to the buyer`} onClose={() => setReturning(false)}>

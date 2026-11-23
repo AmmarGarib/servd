@@ -2145,6 +2145,19 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   writes `PoActivityLog` (GRN steps carry `grnId`). `GET /procurement/my-tasks` = the caller's own to buy / to confirm
   / to fix; finance and the CEO work the approvals inbox. Migration `20261105140000_po_grn_workflow` (moved
   buyer_check / finance_check POs to the CEO). Tests: `tests/poApprovalChain.test.ts`.
+- **Undo a receipt before the GRN is approved (owner, 2026-11-23: a Flipd PO received in GS Foods — "Yes, build the undo
+  receipt").** `POST /procurement/grns/:id/undo {reason ≥10}` (`poWorkflow.ts undoGrn`; finance holding `accounting` or
+  the CEO, a member of the GRN's company — else 404): a GRN at finance_review | ceo_review | buyer_fix (no bill yet) is
+  taken back in ONE transaction — every lot its lines opened leaves (`stockLedger.ts undoReceiptLineLotsTx`: a
+  'supplier_return' for a whole lot; an issue-on-receipt / expensed lot has its issue netted first; 409
+  `STOCK_ALREADY_USED` once any of it was sold, used, counted, moved or re-priced), the receipt's entries are reversed
+  (`procurement.receipt:<id>`, each lot's `inventory.issue_on_receipt:<lotId>`, each `procurement.receipt_expense:…`),
+  the PO's lines lose what it received and the PO goes back to the buyer (partial | sent | approved) — where it can be
+  completed again or CANCELLED and raised in the right company. The GRN stays as a record (`grnStatus 'undone'`, lines
+  at zero; quantities in the log and audit `grn.undone`); it is not "the last GRN" for the invoice-file rule. Never an
+  approved GRN (409 `GRN_APPROVED` — void the bill / credit note) or a billed one (409 `GRN_BILLED`). The PO's cash
+  voucher is not touched. Admin: "Undo this receipt" on the GRN (`PoWorkflow.tsx GrnDetail`). Tests:
+  `tests/poApprovalChain.test.ts`.
 - **The CEO edits a PO that is waiting for the CEO (owner, 2026-11-16: "I need to be able to edit his POs so I have
   the correct information written on them").** `PATCH /procurement/purchase-orders/:id` by an `admin` login also takes
   a `pending_approval` PO (`service.ts updatePoDraft {alsoWaiting}`): same checks as a draft edit, the PO STAYS

@@ -839,7 +839,9 @@ function PoActions({ po, onAction }: { po: PurchaseOrder; onAction: (action: str
  */
 function PoChainPanel({ po }: { po: PurchaseOrder }) {
   const n = po.names
-  const grn = po.grns && po.grns.length > 0 ? po.grns[po.grns.length - 1]! : null
+  // An undone receipt (owner, 2026-11-23) is history: the steps follow the last receipt that still stands.
+  const liveGrns = (po.grns ?? []).filter((g) => g.grnStatus !== 'undone')
+  const grn = liveGrns.length > 0 ? liveGrns[liveGrns.length - 1]! : null
   const approved = !!po.approvedAt && !['draft', ...PO_CHAIN].includes(po.status)
   const buying = ['approved', 'sent', 'partial'].includes(po.status)
   const steps: Array<{ label: string; who: string | null; done: boolean; current: boolean }> = [

@@ -333,7 +333,7 @@ const purchaseOrder: RecordFileProvider = {
     const su = req.staffUser!
     const po = await prisma.purchaseOrder.findFirst({ where: { id: ownerId, supplier: { tenantId } }, select: { status: true } })
     if (!po || !['draft', 'pending_approval', 'approved', 'sent', 'partial'].includes(po.status)) return new Set()
-    const lastGrn = await prisma.goodsReceipt.findFirst({ where: { poId: ownerId, grnNumber: { not: null } }, orderBy: { receivedAt: 'desc' }, select: { receivedAt: true } })
+    const lastGrn = await prisma.goodsReceipt.findFirst({ where: { poId: ownerId, grnNumber: { not: null }, NOT: { grnStatus: 'undone' } }, orderBy: { receivedAt: 'desc' }, select: { receivedAt: true } })
     return new Set(files
       .filter((f) => (su.role === 'admin' || f.uploadedById === su.id) && (!lastGrn || f.createdAt > lastGrn.receivedAt))
       .map((f) => f.id))

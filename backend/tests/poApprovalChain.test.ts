@@ -391,6 +391,95 @@ describe('stock or expense at receipt (owner, 2026-11-18): the receiver picks, f
   })
 })
 
+// Owner, 2026-11-23: a Flipd PO raised and received in GS Foods — "Yes, build the undo receipt".
+describe('undo a receipt before the GRN is approved', () => {
+  it('stock and expense lines leave again, every entry is reversed, the PO goes back to the buyer and can be cancelled', async () => {
+    const r = await call('chefA', 'POST', '/procurement/purchase-orders', {
+      supplierId: supA, payByCash: false,
+      lines: [{ inventoryItemId: flour, quantityOrdered: 4, unitCostCents: 250 }, { inventoryItemId: soap, quantityOrdered: 2, unitCostCents: 300 }],
+    })
+    const po = r.json() as { id: string; lines: Array<{ id: string; inventoryItemId: string }> }
+    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`)).statusCode).toBe(200)
+    await upload('buyerA', po.id)
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-UNDO1`, invoiceDate: today() })).statusCode).toBe(200)
+    const fl = po.lines.find((l) => l.inventoryItemId === flour)!.id
+    const sp = po.lines.find((l) => l.inventoryItemId === soap)!.id
+    const stockBefore = (await prisma.inventoryItem.findUniqueOrThrow({ where: { id: flour } })).currentStock
+    const before = { s1210: await netDebit(T.A, '1210'), s2015: await netDebit(T.A, '2015'), s6120: await netDebit(T.A, '6120'), s6110: await netDebit(T.A, '6110') }
+    const ok = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: [{ poLineId: fl, quantityReceived: 4 }, { poLineId: sp, quantityReceived: 2, expenseAccountCode: '6120' }] })
+    expect(ok.statusCode, ok.body).toBe(201)
+    const g = ok.json().grn.id as string
+    const spLine = (await prisma.goodsReceiptLine.findFirstOrThrow({ where: { receiptId: g, poLineId: sp } })).id
+    // Finance moved the expensed line once — that correction is undone too.
+    expect((await call('finA', 'PUT', `/procurement/grns/${g}/lines/${spLine}/expense`, { accountCode: '6110' })).statusCode).toBe(200)
+    expect(await netDebit(T.A, '2015')).toBe(before.s2015 - 1_600)
+
+    // Who: finance or the CEO of the GRN's company, with a reason.
+    expect((await call('chefA', 'POST', `/procurement/grns/${g}/undo`, { reason: 'Raised in the wrong company' })).statusCode).toBe(403)
+    expect((await call('finB', 'POST', `/procurement/grns/${g}/undo`, { reason: 'Raised in the wrong company' })).statusCode).toBe(404)
+    expect(code(await call('finA', 'POST', `/procurement/grns/${g}/undo`, { reason: 'short' }))).toBe('NOTE_REQUIRED')
+
+    const un = await call('finA', 'POST', `/procurement/grns/${g}/undo`, { reason: 'Raised in the wrong company — belongs to the other kitchen' })
+    expect(un.statusCode, un.body).toBe(200)
+    expect(un.json()).toMatchObject({ grnStatus: 'undone', poStatus: 'approved' })
+    // The books are back where they were.
+    expect({ s1210: await netDebit(T.A, '1210'), s2015: await netDebit(T.A, '2015'), s6120: await netDebit(T.A, '6120'), s6110: await netDebit(T.A, '6110') }).toEqual(before)
+    // Stock is back, every lot at zero, movements net to nothing.
+    expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: flour } })).currentStock).toBeCloseTo(stockBefore)
+    const lots = await prisma.stockLot.findMany({ where: { receiptLine: { receiptId: g } }, select: { id: true, remainingQty: true, remainingValueCents: true } })
+    expect(lots.length).toBe(2)
+    for (const l of lots) {
+      expect(l.remainingQty).toBe(0)
+      expect(Number(l.remainingValueCents)).toBe(0)
+      const mv = await prisma.stockMovement.findMany({ where: { lotId: l.id }, select: { qty: true, valueCents: true } })
+      expect(mv.reduce((t, m) => t + m.qty, 0)).toBeCloseTo(0)
+      expect(mv.reduce((t, m) => t + Number(m.valueCents), 0)).toBe(0)
+    }
+    // The PO: nothing received, back with the buyer; the GRN is out of every queue.
+    const after = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id }, include: { lines: true } })
+    expect(after.status).toBe('approved')
+    expect(after.lines.every((l) => l.quantityReceived === 0)).toBe(true)
+    expect((await prisma.goodsReceipt.findUniqueOrThrow({ where: { id: g } })).grnStatus).toBe('undone')
+    // Never twice; finance can no longer pass it.
+    expect((await call('finA', 'POST', `/procurement/grns/${g}/undo`, { reason: 'Raised in the wrong company again' })).statusCode).toBe(409)
+    expect((await call('finA', 'POST', `/procurement/grns/${g}/finance-pass`)).statusCode).toBe(409)
+    // Now it can be cancelled (and raised in the right company).
+    const cancel = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/cancel`, { reason: 'Raised in the wrong company' })
+    expect(cancel.statusCode, cancel.body).toBe(200)
+    expect((await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: po.id } })).status).toBe('cancelled')
+  })
+
+  it('an approved GRN is never undone (its bill exists); stock already used refuses', async () => {
+    const mk = async (inv: string) => {
+      const r = await call('chefA', 'POST', '/procurement/purchase-orders', { supplierId: supA, payByCash: false, lines: [{ inventoryItemId: flour, quantityOrdered: 3, unitCostCents: 200 }] })
+      const po = r.json() as { id: string; lines: Array<{ id: string }> }
+      await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+      await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`)
+      await upload('buyerA', po.id)
+      await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: inv, invoiceDate: today() })
+      const ok = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: [{ poLineId: po.lines[0]!.id, quantityReceived: 3 }] })
+      expect(ok.statusCode, ok.body).toBe(201)
+      return ok.json().grn.id as string
+    }
+    const used = await mk(`${P}-UNDO2`)
+    // Part of the delivery is counted away: the lot is no longer as it came.
+    const lot = await prisma.stockLot.findFirstOrThrow({ where: { receiptLine: { receiptId: used } } })
+    await prisma.stockMovement.create({ data: { tenantId: T.A, inventoryItemId: flour, lotId: lot.id, lotKey: lot.id, kind: 'waste', qty: -1, valueCents: -200, unitCostCents: 200, costClass: lot.costClass, locationId: lot.locationId, sourceType: 'test', sourceId: lot.id, occurredAt: new Date() } })
+    await prisma.stockLot.update({ where: { id: lot.id }, data: { remainingQty: 2, remainingValueCents: 400 } })
+    expect(code(await call('ceoA', 'POST', `/procurement/grns/${used}/undo`, { reason: 'Raised in the wrong company' }))).toBe('STOCK_ALREADY_USED')
+    expect((await prisma.goodsReceipt.findUniqueOrThrow({ where: { id: used } })).grnStatus).toBe('finance_review')
+    // Put the lot back as it came (the tampering above is the test's, not the ledger's).
+    await prisma.stockMovement.deleteMany({ where: { lotId: lot.id, sourceType: 'test' } })
+    await prisma.stockLot.update({ where: { id: lot.id }, data: { remainingQty: 3, remainingValueCents: 600 } })
+
+    const done = await mk(`${P}-UNDO3`)
+    expect((await call('finA', 'POST', `/procurement/grns/${done}/finance-pass`)).statusCode).toBe(200)
+    expect((await call('ceoA', 'POST', `/procurement/grns/${done}/approve`)).statusCode).toBe(200)
+    expect(code(await call('ceoA', 'POST', `/procurement/grns/${done}/undo`, { reason: 'Raised in the wrong company' }))).toBe('GRN_APPROVED')
+  })
+})
+
 describe('the requester sends it back; a partial delivery makes a second GRN', () => {
   it('"Not received" needs a note and goes back to the buyer', async () => {
     const po = await chefPo()

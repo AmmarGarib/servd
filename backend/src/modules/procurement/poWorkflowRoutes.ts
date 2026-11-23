@@ -38,7 +38,7 @@ import { AP_READERS } from './routes.js'
 import {
   setPoBuyer, completePo, confirmReceipt, rejectReceipt, grnFinancePass, grnReturn, grnPullBack, grnResubmit, approveGrn, myTasks,
   assertNote, PO_FILE_OWNER,
-  setGrnLineExpense,
+  setGrnLineExpense, undoGrn,
 } from './poWorkflow.js'
 
 type GuardPo = (req: FastifyRequest, poId: string) => Promise<{ id: string; status: string; createdBy: string | null; supplier: { tenantId: string | null } }>
@@ -366,6 +366,23 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
     if (head.grnStatus !== 'ceo_review') throw new AppError('INVALID_STATE', `This GRN is ${String(head.grnStatus).replace(/_/g, ' ')} — only one waiting for the CEO can be pulled back`, 409)
     const r = await grnPullBack(req.params.id, actorOf(req))
     return { id: r.id, grnStatus: r.grnStatus }
+  })
+
+  // Undo a receipt (owner, 2026-11-23) — poWorkflow.ts undoGrn: finance holding `accounting`, or the CEO; a member of
+  // the GRN's company (another company's GRN is 404); a reason ≥10; never an approved GRN.
+  fastify.post<{ Params: { id: string } }>('/grns/:id/undo', { preHandler: requireAuth('finance', 'admin') }, async (req) => {
+    const head = await guardGrn(req, req.params.id, 'write')
+    if (!head.tenantId || !(req.staffUser!.memberTenantIds ?? []).includes(head.tenantId)) throw new NotFoundError('GoodsReceipt', req.params.id)
+    if (req.staffUser!.role === 'finance') await financeAccounting(req)
+    const { reason } = z.object({ reason: z.string().max(500) }).parse(req.body ?? {})
+    const r = await undoGrn(req.params.id, actorOf(req), reason)
+    await audit({
+      category: 'accounting', action: 'grn.undone', entity: 'GoodsReceipt', entityId: r.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: r.tenantId,
+      before: { grnStatus: r.from }, after: { grnStatus: 'undone', poId: r.poId, poStatus: r.poStatus },
+      metadata: { reason: assertNote(reason), grnNumber: r.grnNumber, quantities: r.quantities, reversedEntryIds: r.reversedEntryIds, actorRole: req.staffUser!.role },
+    })
+    return { id: r.id, grnStatus: r.grnStatus, poId: r.poId, poStatus: r.poStatus }
   })
 
   fastify.post<{ Params: { id: string } }>('/grns/:id/resubmit', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {

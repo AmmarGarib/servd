@@ -264,7 +264,7 @@ export async function completePo(poId: string, actor: Actor, input: CompleteInpu
   }
   if (head.supplier.systemKind === CASH_PURCHASE_SUPPLIER_KIND) throw supplierNotChosenError('completed')
   const tenantId = head.supplier.tenantId!
-  const lastGrn = await prisma.goodsReceipt.findFirst({ where: { poId, grnNumber: { not: null } }, orderBy: { receivedAt: 'desc' }, select: { receivedAt: true } })
+  const lastGrn = await prisma.goodsReceipt.findFirst({ where: { poId, grnNumber: { not: null }, NOT: { grnStatus: 'undone' } }, orderBy: { receivedAt: 'desc' }, select: { receivedAt: true } })
   if ((await invoiceFilesSince(poId, tenantId, lastGrn?.receivedAt ?? null)) === 0) {
     throw new AppError('INVOICE_REQUIRED', "Attach the supplier's invoice / bill to the PO first", 422)
   }
@@ -417,6 +417,82 @@ export async function grnPullBack(grnId: string, actor: Actor) {
     await logGrnTx(tx, g.poId, actor.id, 'grn_pulled_back', { grnId, grnNumber: g.grnNumber, from: 'ceo_review', to: 'finance_review' })
     return { id: grnId, grnStatus: 'finance_review' as const }
   })
+}
+
+/**
+ * Undo a receipt (owner, 2026-11-23: a Flipd PO raised and received in GS Foods — "Yes, build the undo receipt"). A
+ * GRN that is NOT yet approved (finance_review | ceo_review | buyer_fix — no supplier bill exists) is taken back as if
+ * the delivery had never been confirmed, in ONE transaction through the existing engines:
+ *   · every lot its lines opened leaves again (lib/stockLedger.ts undoReceiptLineLotsTx — 409 STOCK_ALREADY_USED when
+ *     any of it was sold, used, counted, moved or re-priced);
+ *   · the receipt's entries are reversed: 'procurement.receipt:<receiptId>' (Dr 12x0 | expense / Cr 2015), each lot's
+ *     'inventory.issue_on_receipt:<lotId>' and each 'procurement.receipt_expense:<lineId>:<n>' correction;
+ *   · the PO's lines lose what this GRN received and the PO goes back to the buyer (partial when another receipt
+ *     stands, else sent / approved) — from there it may be completed again or CANCELLED and raised in the right company;
+ *   · the GRN stays as a record: grnStatus 'undone', its lines at zero received (the quantities are in the log).
+ * Never an approved GRN (409 GRN_APPROVED — its bill exists: void the bill / raise a credit note), never one a bill
+ * already touches (409 GRN_BILLED). The PO's cash voucher is not touched (void it on its own page). The route proves
+ * who (finance holding `accounting`, or the CEO; a member of the GRN's company) and takes a reason ≥10.
+ */
+export const GRN_UNDOABLE = ['finance_review', 'ceo_review', 'buyer_fix'] as const
+export async function undoGrn(grnId: string, actor: Actor, reasonIn: string) {
+  const reason = assertNote(reasonIn, 'Say why this receipt is being undone')
+  const { undoReceiptLineLotsTx } = await import('../../lib/stockLedger.js')
+  const { reverseJournalEntry } = await import('../accounting/journal.js')
+  const now = new Date()
+  const r = await prisma.$transaction(async (tx) => {
+    const head = await tx.goodsReceipt.findUnique({ where: { id: grnId }, select: { poId: true } })
+    if (!head?.poId) throw new NotFoundError('GoodsReceipt', grnId)
+    // PO first, then the GRN — the order every other step locks in.
+    const po = await lockPoTx(tx, head.poId)
+    const g = await lockGrnTx(tx, grnId)
+    if (g.grnStatus === 'approved') throw new AppError('GRN_APPROVED', 'This GRN is approved and its supplier bill exists — void the bill or raise a credit note instead', 409)
+    if (!(GRN_UNDOABLE as readonly string[]).includes(String(g.grnStatus))) throw new AppError('INVALID_STATE', `This GRN is ${String(g.grnStatus).replace(/_/g, ' ')} — nothing to undo`, 409)
+    const tenantId = g.tenantId
+    if (!tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'This receipt has no company', 422)
+    const lines = await tx.goodsReceiptLine.findMany({ where: { receiptId: grnId }, select: { id: true, poLineId: true, receivedQty: true, billedQty: true, inventoryItemId: true, description: true } })
+    const lineIds = lines.map((l) => l.id)
+    if (lines.some((l) => (l.billedQty ?? 0) > 0) || (lineIds.length && await tx.grniMatch.count({ where: { receiptLineId: { in: lineIds }, status: { not: 'void' } } }))) {
+      throw new AppError('GRN_BILLED', 'A supplier bill already covers this delivery — void the bill first', 409)
+    }
+    // Stock out.
+    const lotIds: string[] = []
+    for (const l of lines) for (const lot of await undoReceiptLineLotsTx(tx, l.id, actor.id, now)) lotIds.push(lot.lotId)
+    // The books: every entry the receipt made, reversed.
+    const refs = [`procurement.receipt:${grnId}`, ...lotIds.map((id) => `inventory.issue_on_receipt:${id}`)]
+    const fixes = lineIds.length ? await tx.journalEntry.findMany({
+      where: { tenantId, OR: lineIds.map((id) => ({ reference: { startsWith: `procurement.receipt_expense:${id}:` } })) }, select: { reference: true },
+    }) : []
+    for (const f of fixes) if (f.reference) refs.push(f.reference)
+    const posted = await tx.journalEntry.findMany({ where: { tenantId, reference: { in: refs } }, select: { reference: true } })
+    const reversed: string[] = []
+    for (const e of posted) {
+      const ref = e.reference!
+      const cut = ref.indexOf(':')
+      const rev = await reverseJournalEntry(tenantId, ref.slice(0, cut), ref.slice(cut + 1), `GRN ${g.grnNumber} undone: ${reason}`.slice(0, 480), { tx, postedBy: actor.id })
+      if (rev.entryId) reversed.push(rev.entryId)
+    }
+    // The PO: what this GRN received comes off its lines; back to the buyer.
+    const quantities = lines.map((l) => ({ receiptLineId: l.id, poLineId: l.poLineId, item: l.description, receivedQty: l.receivedQty }))
+    for (const l of lines) {
+      if (!l.poLineId || !(l.receivedQty > 0)) continue
+      const pl = po.lines.find((x) => x.id === l.poLineId)
+      if (!pl) continue
+      await tx.purchaseOrderLine.update({ where: { id: pl.id }, data: { quantityReceived: Math.max(0, pl.quantityReceived - l.receivedQty) } })
+      pl.quantityReceived = Math.max(0, pl.quantityReceived - l.receivedQty)
+    }
+    await tx.goodsReceiptLine.updateMany({ where: { receiptId: grnId }, data: { receivedQty: 0 } })
+    const back = po.lines.some((l) => l.quantityReceived > 1e-9) ? 'partial' : po.sentAt ? 'sent' : 'approved'
+    await tx.purchaseOrder.update({ where: { id: po.id }, data: { status: back } })
+    await tx.goodsReceipt.update({
+      where: { id: grnId },
+      data: { grnStatus: 'undone', status: 'disputed', returnNote: reason, returnedById: actor.id, returnedAt: now, financeCheckedById: null, financeCheckedAt: null },
+    })
+    await logGrnTx(tx, po.id, actor.id, 'grn_undone', { grnId, grnNumber: g.grnNumber, from: g.grnStatus, to: 'undone', poFrom: po.status, poTo: back, note: reason, quantities, reversedEntries: reversed.length })
+    return { id: grnId, grnNumber: g.grnNumber, grnStatus: 'undone' as const, from: String(g.grnStatus), poId: po.id, poStatus: back, tenantId, reversedEntryIds: reversed, quantities }
+  }, { timeout: 60_000, maxWait: 15_000 })
+  poTaskNotice('to_buy', r.poId, actor.id, `Receipt ${r.grnNumber} was undone: ${reason}`)
+  return r
 }
 
 /**
