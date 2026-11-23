@@ -203,35 +203,60 @@ function monogram(concept: Concept): { letter: string; family: string; weight: F
     : { letter: first, family: 'Bricolage Grotesque', weight: 800, scale: 0.56, lift: 0 }
 }
 
+/** The logo a brand's tab / home-screen icon shows (owner, 2026-11-23: "link those to the logos we use per brand"):
+ *  an uploaded logo first, else the logo its storefront shows — Flipd's badge, Stackd's wordmark (the plain one: the
+ *  tagline is unreadable at icon size). `wide` = a wordmark, fitted across the tile rather than filling it. */
+const ICON_WORDMARK: Record<string, string> = { stackd: '/brand/stackd-wordmark.png' }
+
+async function iconArt(concept: Concept, kit: ResolvedKit): Promise<{ src: string; wide: boolean } | null> {
+  const logo = await artwork(kitImage(kit, 'logo'))
+  if (logo) return { src: logo, wide: false }
+  const badge = await artwork(kitImage(kit, 'badge'))
+  if (badge) return { src: badge, wide: false }
+  const uploadedWordmark = concept.wordmarkUrl ? await artwork(concept.wordmarkUrl) : null
+  const wordmark = uploadedWordmark ?? await artwork(ICON_WORDMARK[concept.slug] ?? kitImage(kit, 'wordmark'))
+  return wordmark ? { src: wordmark, wide: true } : null
+}
+
 /**
- * The brand's icon at `size` px: the header's disc — the accent colour with
- * the brand's logo in it, else its monogram (the display name's first letter;
- * Simmer's is a lowercase Amarante `s`) in whichever of the brand's surface
- * colours reads on the accent. `square` fills the whole tile (the home-screen
- * icon, which iOS masks itself).
+ * The brand's icon at `size` px: its storefront logo (iconArt) on the brand's surface colour, else its monogram.
+ * Simmer has no logo image (its wordmark is type, SKILL.md): a lowercase Amarante `s` in bone on the tiber field
+ * with the full stop as the one orange signal — never an orange field, never white. `square` fills the whole tile
+ * (the home-screen icon, which iOS masks itself); otherwise a disc.
  */
 export async function brandMark(concept: Concept, size: number, square = false): Promise<{ element: ReactElement; fonts: Font[] }> {
   const kit = await kitFor(concept)
   const { surface, accent } = kit
+  const art = await iconArt(concept, kit)
+  const simmer = !art && concept.slug === 'simmer'
   const mono = monogram(concept)
-  const logo = await artwork(kitImage(kit, 'logo'))
-  const font = logo ? null : await googleFont(mono.family, mono.weight, mono.letter)
+  const field = art || simmer ? surface.bg : accent
+  const text = simmer ? mono.letter + '.' : mono.letter
+  const font = art ? null : await googleFont(mono.family, mono.weight, text)
+  const tile = {
+    width: square ? '100%' : size, height: square ? '100%' : size,
+    borderRadius: square ? 0 : '50%', overflow: 'hidden' as const, background: field,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  }
+  const inner = art
+    // eslint-disable-next-line @next/next/no-img-element
+    ? <img src={art.src} alt="" style={art.wide
+        ? { width: Math.round(size * 0.86), height: Math.round(size * 0.5), objectFit: 'contain' }
+        : { width: Math.round(size * 0.9), height: Math.round(size * 0.9), objectFit: 'contain' }} />
+    : (
+      <span style={{
+        display: 'flex', fontFamily: mono.family, fontWeight: mono.weight, fontSize: Math.round(size * mono.scale), lineHeight: 1,
+        color: simmer ? surface.text : inkOn(accent, surface.bg, surface.text),
+        ...(mono.lift && { marginTop: -Math.round(size * mono.lift) }),
+      }}>
+        {mono.letter}{simmer && <span style={{ color: accent }}>.</span>}
+      </span>
+    )
   return {
     fonts: font ? [font] : [],
     element: (
-      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', ...(square && { background: accent }) }}>
-        <div style={{
-          width: square ? '100%' : size, height: square ? '100%' : size,
-          borderRadius: square ? 0 : '50%', overflow: 'hidden', background: accent,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: mono.family, fontWeight: mono.weight, fontSize: Math.round(size * mono.scale), lineHeight: 1,
-          color: inkOn(accent, surface.bg, surface.text),
-        }}>
-          {logo
-            // eslint-disable-next-line @next/next/no-img-element
-            ? <img src={logo} alt="" width={size} height={size} style={{ objectFit: 'cover' }} />
-            : <span style={{ display: 'flex', ...(mono.lift && { marginTop: -Math.round(size * mono.lift) }) }}>{mono.letter}</span>}
-        </div>
+      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', ...(square && { background: field }) }}>
+        <div style={tile}>{inner}</div>
       </div>
     ),
   }
