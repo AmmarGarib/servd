@@ -3186,8 +3186,8 @@ copies."
   attachment otherwise). **A wrong file comes off only where its provider says so (owner, 2026-11-23: "No option to
   detach supporting docs"):** `DELETE /:fileId` → 204, else 409 `FILE_NOT_REMOVABLE`; a provider opts in with
   `removable()` — today only `purchase_order` (before the buyer marks the PO completed, a file attached since the last
-  GRN, by its uploader or the CEO). The row and bytes are KEPT under owner type `<type>__removed` (no provider reads
-  it); audit `record_file.removed`; list rows carry `removable`. Everywhere else **no delete**: evidence on posted money is never
+  GRN, by its uploader or the CEO). The file is ERASED (owner, 2026-11-23: "delete the detached docs from backend too"; migration
+  `20261123100000` erased the ones kept before); audit `record_file.removed` (name, size, who); list rows carry `removable`. Everywhere else **no delete**: evidence on posted money is never
   removed (upload the right file instead); the Trash purge of an owner (HR
   document) erases its files (`purgeRecordFilesTx`). The dock receive takes
   `photos` inline and they satisfy the photo threshold.

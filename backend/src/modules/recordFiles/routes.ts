@@ -50,7 +50,7 @@ export async function recordFileRoutes(fastify: FastifyInstance) {
   })
 
   // Take a wrongly attached file off its record (owner, 2026-11-23). Only where the record's provider allows it
-  // (`removable`) — everywhere else a file stays for good. The file is kept (lib/recordFiles.ts removedOwnerType).
+  // (`removable`) — everywhere else a file stays for good. The file is erased; the audit row records it.
   fastify.delete<{ Params: OwnerParams & { fileId: string } }>('/:ownerType/:ownerId/:fileId', { preHandler: guard }, async (req, reply) => {
     const { p, tenantId } = await ownerOf(req, 'write')
     const files = await listRecordFiles(prisma, { ownerType: p.ownerType, ownerId: req.params.ownerId, tenantId })

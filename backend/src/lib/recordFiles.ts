@@ -79,19 +79,16 @@ export interface RecordFileProvider {
   resolve(req: FastifyRequest, ownerId: string, mode: RecordFileMode): Promise<{ tenantId: string }>
   /**
    * Optional: which of the record's files THIS caller may still take off it (a wrong file attached before anything
-   * was booked on it — owner, 2026-11-23). A provider without it never lets a file go: evidence on posted money stays.
+   * was booked on it — owner, 2026-11-23); the file is erased. A provider without it never lets a file go: evidence on posted money stays.
    */
   removable?(req: FastifyRequest, ownerId: string, tenantId: string, files: RecordFileMeta[]): Promise<Set<string>>
 }
 
-/** Where a taken-off file is kept: the row and its bytes stay (no provider reads this owner type), nothing is erased. */
-export const removedOwnerType = (ownerType: string) => `${ownerType}__removed`
-
-/** Take one file off its record (it is kept under `removedOwnerType`). True when a row moved. */
+/** Take one file off its record and ERASE it (owner, 2026-11-23: "delete the detached docs from backend too") — the
+ *  row and its bytes go; the audit row (name, size, who) is what remains. True when a row was deleted. */
 export async function detachRecordFileTx(tx: Db, where: { ownerType: string; ownerId: string; tenantId: string; fileId: string }): Promise<boolean> {
-  const r = await tx.cashVoucherAttachment.updateMany({
+  const r = await tx.cashVoucherAttachment.deleteMany({
     where: { id: where.fileId, kind: RECORD_FILE_KIND, ownerType: where.ownerType, ownerId: where.ownerId, tenantId: where.tenantId },
-    data: { ownerType: removedOwnerType(where.ownerType) },
   })
   return r.count === 1
 }
