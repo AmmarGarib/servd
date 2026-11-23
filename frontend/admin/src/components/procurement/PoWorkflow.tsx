@@ -131,12 +131,14 @@ function Card({ title, sub, children }: { title: React.ReactNode; sub?: React.Re
 /** Actual price paid per line (owner, 2026-11-10: "Buyer should have option to put the actual price of items
  *  purchased because rates of items can fluctuate") — rupees per the line's order unit, prefilled with the estimate
  *  the PO was raised with; only changed ones are sent. */
-function RateFields({ lines, rates, setRates, qtys, setQtys, amounts, setAmounts }: {
+function RateFields({ lines, rates, setRates, qtys, setQtys, amounts, setAmounts, lockQty }: {
   lines: WfLine[]; rates: Record<string, number>; setRates: (r: Record<string, number>) => void
   /** Completing a PO (owner, 2026-11-11): the quantity bought and the WHOLE amount paid per line — the rate is worked
    *  out from them ("put amount as whole not per gram, it should calculate per gram amount on auto"). */
   qtys?: Record<string, string>; setQtys?: (q: Record<string, string>) => void
   amounts?: Record<string, number>; setAmounts?: (a: Record<string, number>) => void
+  /** Correcting a returned GRN (owner, 2026-11-23): the goods are already received, so only the amount is typed. */
+  lockQty?: boolean
 }) {
   const orderedOf = (l: WfLine) => round6(l.quantityOrdered / shown(l).factor)
   const qtyOf = (l: WfLine) => qtyTyped(l, qtys)
@@ -146,15 +148,17 @@ function RateFields({ lines, rates, setRates, qtys, setQtys, amounts, setAmounts
   const actual = lines.reduce((t, l) => t + (editWhole ? amountOf(l) : Math.round(qtyOf(l) * (rates[l.id] ?? shown(l).rate))), 0)
   return (
     <div className="space-y-2">
-      <p className="text-sm font-bold text-s-text">{editWhole ? 'What you bought — quantity and amount paid' : 'Actual price paid'}</p>
+      <p className="text-sm font-bold text-s-text">{lockQty ? 'Amount paid per line' : editWhole ? 'What you bought — quantity and amount paid' : 'Actual price paid'}</p>
       <p className="text-[11px] text-s-muted">
-        {editWhole
+        {lockQty
+          ? "Type the WHOLE amount paid for each line, as on the supplier's invoice — not the price per gram or per kg. The rate is worked out for you."
+          : editWhole
           ? "Each line starts at what the PO was raised with. Change the quantity if you bought more or less, and type the WHOLE amount you paid for the line, as on the supplier's invoice — the rate is worked out for you."
           : "Each line starts at the estimated rate the PO was raised with. Type the price you really paid per unit, as on the supplier's invoice."}
       </p>
       {editWhole && (
         <div className="hidden sm:grid sm:grid-cols-[minmax(10rem,1.6fr)_1fr_8rem_9rem_8rem] gap-x-3 border-b border-s-border pb-1 text-[11px] font-semibold uppercase tracking-wide text-s-muted">
-          <span>Item</span><span>Ordered · estimate</span><span>Qty bought</span><span>Amount paid (PKR)</span><span className="text-right">Rate</span>
+          <span>Item</span><span>{lockQty ? 'Now on the GRN' : 'Ordered · estimate'}</span><span>{lockQty ? 'Quantity' : 'Qty bought'}</span><span>Amount paid (PKR)</span><span className="text-right">Rate</span>
         </div>
       )}
       {lines.map((l) => {
@@ -171,12 +175,12 @@ function RateFields({ lines, rates, setRates, qtys, setQtys, amounts, setAmounts
               <span className="col-span-2 sm:col-span-1 text-[11px] text-s-muted">
                 <span className="sm:hidden">Ordered </span>{orderedOf(l)} {s.unit} · {fmtPkrWhole(estAmt)}
               </span>
-              <label className="flex items-center gap-1.5 text-[11px] text-s-muted">
+              {lockQty ? <span className="text-xs text-s-text whitespace-nowrap">{orderedOf(l)} {s.unit}</span> : <label className="flex items-center gap-1.5 text-[11px] text-s-muted">
                 <Input type="number" inputMode="decimal" min={0} step="any" value={qtys![l.id] ?? String(orderedOf(l))}
                   onChange={(e) => setQtys!({ ...qtys!, [l.id]: e.target.value })} aria-label={`Quantity bought of ${l.inventoryItem?.name ?? 'item'} in ${s.unit}`}
                   className={`w-full ${qtyChanged ? 'ring-1 ring-s-amber' : ''}`} />
                 <span className="whitespace-nowrap">{s.unit}</span>
-              </label>
+              </label>}
               <MoneyInput value={amt} onChange={(c) => setAmounts!({ ...amounts!, [l.id]: c })} ariaLabel={`Amount paid for ${l.inventoryItem?.name ?? 'item'} in rupees`} className="s-input w-full" />
               <span className="col-span-2 sm:col-span-1 text-xs text-s-text sm:text-right whitespace-nowrap">{per ?? '—'}</span>
             </div>
@@ -195,7 +199,7 @@ function RateFields({ lines, rates, setRates, qtys, setQtys, amounts, setAmounts
       })}
       {editWhole && <p className="text-[11px] text-s-muted">Gram and ml lines are kept per kg / litre, so the line adds up to exactly what you typed.</p>}
       <p className="text-xs text-s-muted">
-        Estimated total {fmtPkrWhole(estimate)} · <span className="font-bold text-s-text">Actual total {fmtPkrWhole(actual)}</span>
+        {lockQty ? 'Total now on the GRN' : 'Estimated total'} {fmtPkrWhole(estimate)} · <span className="font-bold text-s-text">{lockQty ? 'Corrected total' : 'Actual total'} {fmtPkrWhole(actual)}</span>
         {actual !== estimate && <span className={actual > estimate ? ' text-s-red' : ' text-success'}> ({actual > estimate ? '+' : '−'}{fmtPkrWhole(Math.abs(actual - estimate))})</span>}
       </p>
     </div>
@@ -421,6 +425,10 @@ function FixCard({ g }: { g: WfFix }) {
   const [invoiceNumber, setInvoiceNumber] = useState(g.invoiceNumber ?? '')
   const [invoiceDate, setInvoiceDate] = useState(g.invoiceDate ? g.invoiceDate.slice(0, 10) : todayPktIso())
   const [rates, setRates] = useState<Record<string, number>>({})
+  // The WHOLE amount per line, like completing a PO (owner, 2026-11-23: a buyer typed the line's amount into the old
+  // per-gram rate box — 400 g of butter became PKR 544,000 — twice). The server works the rate out (amountCents).
+  const [amounts, setAmounts] = useState<Record<string, number>>({})
+  const [noQtys, setNoQtys] = useState<Record<string, string>>({})
   const [taxCents, setTaxCents] = useState(g.invoiceTaxCents ?? 0)
   const [taxBy, setTaxBy] = useState(g.invoiceTaxAuthority ?? '')
   const onGrn = new Set(g.lines.map((l) => l.poLineId))
@@ -428,14 +436,14 @@ function FixCard({ g }: { g: WfFix }) {
   // Unsaved typing survives Back / refresh (lib/formDraft.ts). Cleared once resubmitted.
   const draft = useFormDraft(
     `grn-fix:${g.id}`,
-    { invoiceNumber, invoiceDate, rates, taxCents, taxBy },
+    { invoiceNumber, invoiceDate, amounts, taxCents, taxBy },
     (d) => {
       setInvoiceNumber(d.invoiceNumber ?? ''); setInvoiceDate(d.invoiceDate || todayPktIso())
-      setRates(d.rates ?? {}); setTaxCents(d.taxCents ?? 0); setTaxBy(d.taxBy ?? '')
+      setAmounts(d.amounts ?? {}); setTaxCents(d.taxCents ?? 0); setTaxBy(d.taxBy ?? '')
     },
   )
   const re = useMutation({
-    mutationFn: () => api.post(`/procurement/grns/${g.id}/resubmit`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedRates(lines, rates) }),
+    mutationFn: () => api.post(`/procurement/grns/${g.id}/resubmit`, { invoiceNumber: invoiceNumber.trim(), invoiceDate, taxCents, taxAuthority: taxBy || null, lines: changedLines(lines, {}, amounts) }),
     onSuccess: () => { draft.clear(); invalidateAll(qc, g.po.id) },
   })
   return (
@@ -447,7 +455,7 @@ function FixCard({ g }: { g: WfFix }) {
         <Field label="Invoice / bill number" required><Input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} maxLength={100} className="w-full" /></Field>
         <Field label="Invoice date" required><Input type="date" value={invoiceDate} max={todayPktIso()} onChange={(e) => setInvoiceDate(e.target.value)} className="w-full" /></Field>
       </div>
-      <RateFields lines={lines} rates={rates} setRates={setRates} />
+      <RateFields lines={lines} rates={rates} setRates={setRates} qtys={noQtys} setQtys={setNoQtys} amounts={amounts} setAmounts={setAmounts} lockQty />
       <TaxFields cents={taxCents} setCents={setTaxCents} authority={taxBy} setAuthority={setTaxBy} />
       {re.error && <p role="alert" className="text-xs text-s-red">{errOf(re.error)}</p>}
       <Button size="sm" disabled={!invoiceNumber.trim() || re.isPending} onClick={() => re.mutate()}>Resubmit to finance</Button>
