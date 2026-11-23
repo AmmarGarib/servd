@@ -168,7 +168,8 @@ describe('PPL-R2-01 Module Access closes the HR record back office', () => {
     expect(hod.json().status).toBe('submitted')
     // The HR step needs the module.
     expect((await call('mehwish', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })).statusCode).toBe(403)
-    expect((await call('sana', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
+    expect((await call('sana', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
+    expect((await call('ceo', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })).json().status).toBe('approved') // the CEO's final approval (owner, 2026-11-23)
   })
 })
 
@@ -191,7 +192,8 @@ describe('PPL-R2-02 approved leave takes the day off the rota and labour cost', 
     const lv = await call('ali', 'POST', '/hr/me/records/leave', { data: { leaveType: lt.json().id, from: '2026-10-20', to: '2026-10-21', reason: 'Family' } })
     expect(lv.statusCode).toBe(201)
     expect((await call('omar', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
-    const final = await call('sana', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })
+    await call('sana', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })
+    const final = await call('ceo', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })
     expect(final.json().status).toBe('approved')
     // The removed exception is listed on the leave, and audited.
     const removed = (final.json().data as Record<string, unknown>)['_shiftsRemoved'] as Array<{ id: string; date: string; startTime: string }>
@@ -241,7 +243,8 @@ describe('PPL-R2-02 approved leave takes the day off the rota and labour cost', 
     const lv = await call('rabia', 'POST', '/hr/me/records/leave', { data: { leaveType: lt.id, from: '2026-11-10', to: '2026-11-10', reason: 'Sick' } })
     expect(lv.statusCode).toBe(201)
     expect((await call('omar', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
-    const final = await call('hina', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })
+    await call('hina', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })
+    const final = await call('ceo', 'POST', `/hr/records/leave/${lv.json().id}/decide`, { decision: 'approved' })
     expect(final.json().status).toBe('approved')
     const affected = (final.json().data as Record<string, unknown>)['_swapsAffected'] as Array<Record<string, unknown>>
     expect(affected).toHaveLength(1)
@@ -263,7 +266,8 @@ describe('PPL-R2-02 approved leave takes the day off the rota and labour cost', 
     })
     const lv2 = await call('ali', 'POST', '/hr/me/records/leave', { data: { leaveType: lt.id, from: '2026-11-12', to: '2026-11-12', reason: 'Family' } })
     await call('omar', 'POST', `/hr/records/leave/${lv2.json().id}/decide`, { decision: 'approved' })
-    const final2 = await call('sana', 'POST', `/hr/records/leave/${lv2.json().id}/decide`, { decision: 'approved' })
+    await call('sana', 'POST', `/hr/records/leave/${lv2.json().id}/decide`, { decision: 'approved' })
+    const final2 = await call('ceo', 'POST', `/hr/records/leave/${lv2.json().id}/decide`, { decision: 'approved' })
     expect(final2.json().status).toBe('approved')
     expect((final2.json().data as Record<string, unknown>)['_swapsAffected']).toEqual([
       expect.objectContaining({ swapId: swap2.id, side: 'requester', colleagueId: emps['Rabia'], shiftId: dinner.json().id }),

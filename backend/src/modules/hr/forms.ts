@@ -417,7 +417,7 @@ export const HR_SECTIONS: HrSection[] = [
     ] },
 
   { key: 'leave', specNo: 12, title: 'Leave applications', group: 'Time', kind: 'record',
-    workflow: [HOD, HR], requires: ['employeeId', 'startDate', 'endDate', 'refId'],
+    workflow: [HOD, HR, CEO_STEP], requires: ['employeeId', 'startDate', 'endDate', 'refId'],
     effect: 'Approved leave comes off the balance. Unpaid leave is deducted in payroll.',
     fields: [
       emp(),

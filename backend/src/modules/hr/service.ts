@@ -71,7 +71,7 @@ export function defaultFormat(sec: HrSection): ActiveFormat {
 function enforcedWorkflow(section: string, wf: WorkflowStep[]): WorkflowStep[] {
   if (section === 'attendance') return [CEO_STEP]
   if (section === 'salary_revision') return withCeoLast(wf)
-  if (section === 'resignation') return resignationWorkflow(wf)
+  if (section === 'resignation' || section === 'leave') return resignationWorkflow(wf)
   if (section === 'final_settlement') return FINAL_SETTLEMENT_WORKFLOW
   return wf
 }
@@ -768,7 +768,8 @@ export function workflowOf(rec: { section: string; data: unknown; amountCents?: 
   // HR's own record change with no manager login to sign it: the CEO, once (owner, 2026-11-04).
   if (rec.section === 'profile_update' && ((rec.data ?? {}) as Record<string, unknown>)['_ceoOnly'] === true) return [CEO_STEP]
   // A wage change ends with the CEO (owner, 2026-10-27).
-  if (rec.section === 'resignation') return resignationWorkflow(fmt.workflow)
+  // A leave application: HOD, HR, then the CEO's final approval (owner, 2026-11-23) — the resignation's rule.
+  if (rec.section === 'resignation' || rec.section === 'leave') return resignationWorkflow(fmt.workflow)
   if (rec.section === 'final_settlement') return FINAL_SETTLEMENT_WORKFLOW
   return isWageChange(rec) ? withCeoLast(fmt.workflow) : fmt.workflow
 }

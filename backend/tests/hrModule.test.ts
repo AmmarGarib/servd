@@ -676,7 +676,8 @@ describe('HR through the API', () => {
     const inbox = (await call('boss', 'GET', '/approvals')).json()
     expect(inbox.map((r: { id: string }) => r.id)).toContain(leave.id)
     expect((await call('boss', 'POST', `/records/leave/${leave.id}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
-    expect((await call('hr', 'POST', `/records/leave/${leave.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
+    expect((await call('hr', 'POST', `/records/leave/${leave.id}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
+    expect((await call('ceo', 'POST', `/records/leave/${leave.id}/decide`, { decision: 'approved' })).json().status).toBe('approved') // the CEO's final approval (owner, 2026-11-23)
     const me = (await call('cook', 'GET', '/me')).json()
     expect(me.leaveBalances.find((b: { leaveTypeId: string }) => b.leaveTypeId === annual).balance).toBe(9)
   })
@@ -1051,7 +1052,8 @@ describe('HR through the API', () => {
     const flat = (await call('hr', 'POST', '/records/leave_type', { data: { name: 'Flat', entitlementDays: 10, pay: 'paid' } })).json().id
     const leave = (await call('cook', 'POST', '/me/records/leave', { data: { leaveType: earned, from: '2026-12-07', to: '2026-12-09' } })).json()
     await call('boss', 'POST', `/records/leave/${leave.id}/decide`, { decision: 'approved' })
-    expect((await call('hr', 'POST', `/records/leave/${leave.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
+    expect((await call('hr', 'POST', `/records/leave/${leave.id}/decide`, { decision: 'approved' })).json().status).toBe('submitted')
+    expect((await call('ceo', 'POST', `/records/leave/${leave.id}/decide`, { decision: 'approved' })).json().status).toBe('approved') // the CEO's final approval (owner, 2026-11-23)
     const next = await leaveBalancesFor(tenantId, cookEmp, new Date('2027-03-01'))
     // 7 unused in 2026, capped at 4.
     expect(next.find((b) => b.leaveTypeId === earned)).toMatchObject({ entitlement: 10, carriedForward: 4, balance: 14 })
@@ -1084,7 +1086,10 @@ describe('HR through the API', () => {
     const approve = async (data: Record<string, unknown>) => {
       const l = (await call('ceo', 'POST', '/records/leave', { data: { employee: w, ...data } })).json()
       await call('hr', 'POST', `/records/leave/${l.id}/decide`, { decision: 'approved' })
-      expect((await call('mgmt', 'POST', `/records/leave/${l.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
+      await call('mgmt', 'POST', `/records/leave/${l.id}/decide`, { decision: 'approved' })
+      // Whatever a saved format says, a leave ends with the CEO (owner, 2026-11-23). The CEO raised these, so it may already be approved.
+      const done = await prisma.hrRecord.findUniqueOrThrow({ where: { id: l.id } })
+      if (done.status !== 'approved') expect((await call('ceo', 'POST', `/records/leave/${l.id}/decide`, { decision: 'approved' })).json().status).toBe('approved')
       return l
     }
     const half = await approve({ leaveType: unpaidType, from: '2027-02-15', to: '2027-02-15', days: 0.5 })

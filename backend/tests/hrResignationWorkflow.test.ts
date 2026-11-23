@@ -91,3 +91,32 @@ describe('a resignation an employee raises', () => {
     expect(c.json().approvals.map((a: { role: string }) => a.role)).toEqual(['hod', 'hr', 'ceo'])
   })
 })
+
+// Leave applications: line manager → HR → the CEO's final approval (owner, 2026-11-23: "Leave application should go
+// to CEO for Final approval after HR approves").
+describe('a leave application an employee raises', () => {
+  let recId = ''
+  const decide = (who: string, payload: unknown = { decision: 'approved' }) => call(who, 'POST', `/records/leave/${recId}/decide`, payload)
+
+  it('line manager → HR → the CEO; only the CEO\'s approval approves it', async () => {
+    const lt = await call('hrA', 'POST', '/records/leave_type', { data: { name: `Casual ${P}`, entitlementDays: 10, pay: 'paid' } })
+    expect(lt.statusCode, lt.body).toBe(201)
+    const r = await call('staff', 'POST', '/me/records/leave', { data: { leaveType: lt.json().id, from: '2026-12-01', to: '2026-12-02', reason: 'Family' } })
+    expect(r.statusCode, r.body).toBe(201)
+    recId = r.json().id
+    expect(r.json()).toMatchObject({ status: 'submitted', currentStep: 0, tenantId: T.A })
+    // Another company's HR never sees it.
+    expect((await decide('hrB')).statusCode).toBe(404)
+    const m = await decide('hod')
+    expect(m.json()).toMatchObject({ status: 'submitted', currentStep: 1 })
+    const h = await decide('hrA')
+    expect(h.statusCode, h.body).toBe(200)
+    // HR's approval no longer approves the leave: it waits for the CEO.
+    expect(h.json()).toMatchObject({ status: 'submitted', currentStep: 2 })
+    expect((await decide('hrA')).statusCode).toBe(403)
+    const c = await decide('ceo')
+    expect(c.statusCode, c.body).toBe(200)
+    expect(c.json()).toMatchObject({ status: 'approved' })
+    expect(c.json().approvals.map((a: { role: string }) => a.role)).toEqual(['hod', 'hr', 'ceo'])
+  })
+})

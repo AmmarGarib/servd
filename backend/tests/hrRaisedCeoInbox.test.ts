@@ -120,7 +120,7 @@ describe('HR-raised leave reaches the CEO', () => {
     expect(await inboxIds('ceo')).toContain(rec.id)
     const s1 = await hr('ceo', 'POST', `/records/leave/${rec.id}/decide`, { decision: 'approved' })
     expect(s1.statusCode, s1.body).toBe(200)
-    expect(s1.json()).toMatchObject({ status: 'submitted', currentStep: 1 })
+    expect(s1.json()).toMatchObject({ status: 'submitted', currentStep: 2 }) // HOD, HR (signed by raising), then the CEO
     // The final step: the CEO's (raised by HR), even though the CEO signed step 1.
     expect(await hrQueueIds('ceo')).toContain(rec.id)
     expect(await inboxIds('ceo')).toContain(rec.id)
@@ -145,7 +145,7 @@ describe('HR-raised leave reaches the CEO', () => {
     expect(await hrQueueIds('hr')).not.toContain(rec.id)
     expect(await hrQueueIds('ceo')).toContain(rec.id)
     expect(await inboxIds('ceo')).toContain(rec.id)
-    expect((await hr('ceo', 'POST', `/records/leave/${rec.id}/decide`, { decision: 'approved' })).json()).toMatchObject({ status: 'submitted', currentStep: 1 })
+    expect((await hr('ceo', 'POST', `/records/leave/${rec.id}/decide`, { decision: 'approved' })).json()).toMatchObject({ status: 'submitted', currentStep: 2 })
     expect(await inboxIds('ceo')).toContain(rec.id)
     const ok = await hr('ceo', 'POST', `/records/leave/${rec.id}/decide`, { decision: 'approved' })
     expect(ok.json().status).toBe('approved')

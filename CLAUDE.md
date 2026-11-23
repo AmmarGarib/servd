@@ -278,6 +278,11 @@ module id must be placed in a workspace in the same change.
   before the CEO and the CEO last on any saved format and on records raised before (read through `workflowOf` and
   `enforcedWorkflow`). HR's approval never applies a resignation; the CEO's does. A resignation HR raises still has its HR step
   signed by raising (`signHrStepRaisedByHr`). Tests: `tests/hrResignationWorkflow.test.ts`.
+- **Leave applications: line manager → HR → the CEO (owner, 2026-11-23: "Leave application should go to CEO for Final
+  approval after HR approves").** The leave workflow is HOD, HR, CEO (`forms.ts`); `service.ts` reads it through
+  `resignationWorkflow` in `workflowOf` / `enforcedWorkflow`, so a saved format and a leave raised before (one waiting on
+  HR included) also end with the CEO. HR's approval never approves a leave (balance, rota, payroll read approved only);
+  a leave HR raises has its HR step signed by raising. Tests: `tests/hrResignationWorkflow.test.ts`.
 - **Full & final: HR raises → finance checks → the CEO approves → finance pays (owner, 2026-11-12: "CEO's approval will
   be after finance approval").** The final_settlement workflow is HR, FINANCE_STEP (`forms.ts`, role `finance`), CEO
   (`service.ts FINAL_SETTLEMENT_WORKFLOW`, enforced through `workflowOf` / `enforcedWorkflow` on saved formats and older
