@@ -11,7 +11,7 @@ import { NotFoundError, AppError } from '../../lib/errors.js'
 import { reserveItem, settleCart, getAvailability, getBatchAvailability } from '../../lib/reservation.js'
 import { priceOrder, tenderOf, deliveryFeeFor } from '../../lib/pricing.js'
 import { haversineKm } from '../../lib/geo.js'
-import { redis } from '../../lib/redis.js'
+import { redisFast } from '../../lib/redis.js'
 import { scopeTenantWhere, conceptWhere } from '../../lib/tenantScope.js'
 import { formatBrandName } from '../../lib/brandName.js'
 import { assertPaymentMethodAvailable, availablePaymentMethods } from './paymentMethods.js'
@@ -740,7 +740,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
           .update({ where: { id: claim.promoId }, data: { usedCount: { decrement: 1 } } })
           .catch(() => {})
       }
-      if (claim.lockKey) await redis.del(claim.lockKey).catch(() => {})
+      if (claim.lockKey) await redisFast.del(claim.lockKey).catch(() => {})
     },
   }, async (req, reply) => {
     const body = createDirectOrderSchema.parse(req.body)
@@ -859,13 +859,20 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       // simultaneous checkouts both pass. Hold a short lock on
       // (promo, customer) across that window — a second concurrent attempt is
       // refused rather than silently granted a second discount.
+      //
+      // The lock FAILS CLOSED (security review, 2026-11-23): it used to treat a Redis error as "got the lock", so with
+      // Redis down two simultaneous checkouts could both take a once-per-customer code. It is on `redisFast` (offline
+      // queue off), so an outage answers at once instead of hanging the checkout the way the shared client does.
       const promoLockKey = `promo:lock:${promo.id}:${customerId}`
-      const gotLock = await redis.set(promoLockKey, '1', 'EX', 60, 'NX').catch(() => 'OK')
+      const gotLock: string | null | 'UNAVAILABLE' = await redisFast.set(promoLockKey, '1', 'EX', 60, 'NX').catch(() => 'UNAVAILABLE' as const)
       if (gotLock !== 'OK') {
         if (promo.maxUsageCount != null) {
           await prisma.promoCode.update({ where: { id: promo.id }, data: { usedCount: { decrement: 1 } } }).catch(() => {})
         }
         ;(req as { promoClaim?: unknown }).promoClaim = undefined
+        if (gotLock === 'UNAVAILABLE') {
+          throw new AppError('PROMO_UNAVAILABLE', 'Promo codes cannot be applied right now. Try again in a moment, or order without the code.', 503)
+        }
         throw new AppError('PROMO_LIMIT_REACHED', 'This promo code is already being applied to another order', 400)
       }
       promoLock = promoLockKey
@@ -881,7 +888,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
         if (promo.maxUsageCount != null) {
           await prisma.promoCode.update({ where: { id: promo.id }, data: { usedCount: { decrement: 1 } } }).catch(() => {})
         }
-        await redis.del(promoLockKey).catch(() => {})
+        await redisFast.del(promoLockKey).catch(() => {})
         promoLock = null
         // Already compensated by hand above — drop the claim so the onError
         // hook doesn't decrement the same count a second time.
@@ -1123,7 +1130,7 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     }
     // Usage is now on record, so a concurrent attempt would see the real count.
     if (promoLock) {
-      await redis.del(promoLock).catch(() => {})
+      await redisFast.del(promoLock).catch(() => {})
       promoLock = null
     }
     if (walletAmountCents > 0 && !walletTakenUpFront) {
@@ -1736,8 +1743,8 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
     const body = z.object({
       cartId: z.string().min(1),
       conceptSlug: z.string(),
-      items: z.array(z.object({ menuItemId: z.string(), name: z.string(), quantity: z.number().int(), priceCents: z.number().int() })),
-      subtotalCents: z.number().int(),
+      items: z.array(z.object({ menuItemId: z.string().max(64), name: z.string().max(200), quantity: z.number().int().min(1).max(999), priceCents: z.number().int().min(0).max(100_000_000) })).max(100),
+      subtotalCents: z.number().int().min(0).max(1_000_000_000),
       // Accepted so older clients don't fail validation, but DELIBERATELY
       // IGNORED — see the note below. Contact details are read from the
       // session. Do not wire these back in.
@@ -1782,6 +1789,10 @@ export async function storefrontRoutes(fastify: FastifyInstance) {
       }
     }
 
+    // A cart already on record is updated only by whoever it belongs to (the same signed-in customer, or anonymous
+    // for an anonymous cart) — a guessed cartId can't rewrite a signed-in customer's cart (security review, 2026-11-23).
+    const existing = await prisma.abandonedCart.findUnique({ where: { cartId: body.cartId }, select: { customerId: true } })
+    if (existing && existing.customerId !== null && existing.customerId !== cartCustomerId) return reply.status(204).send()
     await prisma.abandonedCart.upsert({
       where: { cartId: body.cartId },
       create: {

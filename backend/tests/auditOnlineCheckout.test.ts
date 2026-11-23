@@ -161,6 +161,33 @@ describe('ONL-01: a fixed promo is paisa end to end', () => {
     expect(await pendingSum(o.json().id)).toBe(215_000)
   })
 
+  it('Redis down: the promo is refused (never taken twice), the code\'s use count is untouched (security review 2026-11-23)', async () => {
+    const { redisFast } = await import('../src/lib/redis.js')
+    const created = await asStaff('mgrA', 'POST', '/promos', {
+      code: `ONCE${RUN}`, discountType: 'fixed', discountValue: 10000, perCustomerLimit: 1, maxUsageCount: 50, ...window(),
+    })
+    expect(created.statusCode, created.body).toBe(201)
+    const c = await mkCustomer()
+    const realSet = redisFast.set.bind(redisFast)
+    ;(redisFast as unknown as { set: unknown }).set = () => Promise.reject(new Error('Stream isn\'t writeable'))
+    try {
+      const o = await asCustomer(c.id, 'POST', '/storefront/orders', {
+        conceptSlug: slugA, type: 'pickup', paymentGateway: 'cash', promoCode: `ONCE${RUN}`, items: basket(clubA, 2),
+      })
+      expect(o.statusCode, o.body).toBe(503)
+      expect(o.json().error?.code ?? o.json().code).toBe('PROMO_UNAVAILABLE')
+    } finally {
+      ;(redisFast as unknown as { set: unknown }).set = realSet
+    }
+    expect((await prisma.promoCode.findUniqueOrThrow({ where: { id: created.json().id } })).usedCount).toBe(0)
+    // Back up: the same checkout takes the code once.
+    const ok = await asCustomer(c.id, 'POST', '/storefront/orders', {
+      conceptSlug: slugA, type: 'pickup', paymentGateway: 'cash', promoCode: `ONCE${RUN}`, items: basket(clubA, 2),
+    })
+    expect(ok.statusCode, ok.body).toBe(201)
+    expect(ok.json().promoDiscountCents).toBe(10_000)
+  })
+
   it('promoDiscountCents reads a fixed value as paisa, capped at the food subtotal', () => {
     expect(promoDiscountCents({ discountType: 'fixed', discountValue: 15_000, maxDiscountCents: null }, 230_000)).toBe(15_000)
     expect(promoDiscountCents({ discountType: 'fixed', discountValue: 500, maxDiscountCents: null }, 30_000)).toBe(500)
