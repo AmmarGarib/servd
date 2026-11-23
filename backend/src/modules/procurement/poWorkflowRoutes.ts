@@ -234,7 +234,7 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
   fastify.get<{ Querystring: { status?: string; poId?: string; queue?: string } }>('/grns', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
     const su = req.staffUser!
     const q = z.object({
-      status: z.enum(['finance_review', 'buyer_fix', 'ceo_review', 'approved']).optional(),
+      status: z.enum(['finance_review', 'buyer_fix', 'ceo_review', 'approved', 'undone']).optional(),
       poId: z.string().uuid().optional(),
       queue: z.enum(['finance', 'ceo']).optional(),
     }).parse(req.query ?? {})
