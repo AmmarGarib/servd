@@ -53,7 +53,7 @@ import { randomUUID } from 'node:crypto'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
 import { AppError, ForbiddenError, NotFoundError } from '../../lib/errors.js'
-import { isOperatingExpense } from '../../lib/accountSection.js'
+import { isOperatingExpense, plSectionOf } from '../../lib/accountSection.js'
 import { flagException, type ExceptionKind } from '../../lib/exceptions.js'
 import { assertNotSelfApproval } from '../../lib/separation-of-duties.js'
 import { getOperationsConfig } from '../../lib/setup-config.js'
@@ -829,11 +829,15 @@ function assertReceivable(status: string) {
  *  (lib/accountSection.ts — never its code), live, not controlled, not a module's own 6200–6249 / 6990–6999. */
 export function receiptExpenseAccountOk(a: { code: string; type: string; isActive: boolean; controlledBy: string | null; plSection: string | null }): boolean {
   const n = Number(a.code.slice(0, 4))
-  return a.isActive && !a.controlledBy && isOperatingExpense(a) && !(n >= 6200 && n <= 6249) && !(n >= 6990 && n <= 6999)
+  // Cost-of-sales accounts too (owner, 2026-11-23: "Not showing all expense accounts" — food cost is kept on the
+  // company's own Cost of Goods Sold account), except 5040 / 5050: waste and count differences reach those only
+  // through the CEO's stock-difference approval.
+  const costOfSales = a.type === 'expense' && plSectionOf(a) === 'cost_of_sales' && a.code !== '5040' && a.code !== '5050'
+  return a.isActive && !a.controlledBy && (isOperatingExpense(a) || costOfSales) && !(n >= 6200 && n <= 6249) && !(n >= 6990 && n <= 6999)
 }
 
 export async function assertReceiptExpenseAccountTx(tx: Tx, tenantId: string, code: string): Promise<{ code: string; name: string }> {
   const acc = await tx.account.findFirst({ where: { tenantId, code }, select: { code: true, name: true, type: true, isActive: true, controlledBy: true, plSection: true } })
-  if (!acc || !receiptExpenseAccountOk(acc)) throw new AppError('EXPENSE_ACCOUNT_NOT_ALLOWED', `${code} cannot take a received item — pick an operating-expense account of this company`, 422)
+  if (!acc || !receiptExpenseAccountOk(acc)) throw new AppError('EXPENSE_ACCOUNT_NOT_ALLOWED', `${code} cannot take a received item — pick an expense or cost-of-sales account of this company`, 422)
   return { code: acc!.code, name: acc!.name }
 }

@@ -2144,7 +2144,8 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `BILL_AWAITING_BUYER_PAYBACK`, `assertBillNotAwaitingBuyer` in createPaymentTx / apply); the voucher is never
   edited; a bill paid meanwhile 409 `BILL_ALREADY_PAID`. POs approved before keep the advance (their PO voucher).
   **Stock or expense per received line:** the requester picks on confirm-receipt (`expenseAccountCode` per line, a
-  live 6xxx expense account of the PO's company — not 6200–6249 / 6990–6999, not controlled; 422
+  live operating-expense OR cost-of-sales account of the PO's company (owner, 2026-11-23: "Not showing all expense
+  accounts" — never 5040 / 5050, 6200–6249 / 6990–6999 or a controlled one; `receiving.ts receiptExpenseAccountOk`); 422
   `EXPENSE_ACCOUNT_NOT_ALLOWED`; list `GET /procurement/purchase-orders/:id/expense-accounts`): the lot opens
   `non_food` and is issued at once (`addLotTx expenseOnReceipt`), the receipt debits that account instead of 12x0
   (`GoodsReceiptLine.expenseAccountCode`). Finance (the CEO at either step) changes it at its GRN check — `PUT

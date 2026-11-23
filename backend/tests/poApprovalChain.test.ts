@@ -335,8 +335,12 @@ describe('stock or expense at receipt (owner, 2026-11-18): the receiver picks, f
     const fl = po.lines.find((l) => l.inventoryItemId === flour)!.id
     const sp = po.lines.find((l) => l.inventoryItemId === soap)!.id
     const stockBefore = (await prisma.inventoryItem.findUniqueOrThrow({ where: { id: flour } })).currentStock
-    // Never cost of sales or a code only its own module posts to; B's account cannot be named either.
-    for (const bad of ['5010', '6200', '1210']) {
+    // Never the stock-difference accounts, a code only its own module posts to, or a balance-sheet account. A
+    // cost-of-sales account IS allowed (owner, 2026-11-23) — it is in the PO's list.
+    const listed = (await call('chefA', 'GET', `/procurement/purchase-orders/${po.id}/expense-accounts`)).json().map((a: { code: string }) => a.code)
+    expect(listed).toEqual(expect.arrayContaining(['5010', '6120']))
+    expect(listed).not.toEqual(expect.arrayContaining(['5040']))
+    for (const bad of ['5040', '6200', '1210']) {
       const x = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: [{ poLineId: fl, quantityReceived: 4, expenseAccountCode: bad }, { poLineId: sp, quantityReceived: 2 }] })
       expect(code(x), bad).toBe('EXPENSE_ACCOUNT_NOT_ALLOWED')
     }
