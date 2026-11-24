@@ -611,6 +611,106 @@ export async function grnResubmit(grnId: string, actor: Actor, input: ResubmitIn
   return r
 }
 
+/** A GRN's received lines as bill lines, at the PO line's current rate (the ONE builder: approval and re-bill). */
+function grnBillLines(
+  grnLines: Array<{ id: string; receivedQty: number; poLineId: string | null; inventoryItemId: string | null; description: string | null }>,
+  poLines: Array<{ id: string; unitCostCents: number; orderUnitFactor: number | null; orderUnitCostCents: number | null }>,
+) {
+  const lines = grnLines.filter((l) => l.receivedQty > 0 && l.poLineId).map((l) => {
+    const pl = poLines.find((x) => x.id === l.poLineId)!
+    return {
+      inventoryItemId: l.inventoryItemId, poLineId: pl.id, receiptLineId: l.id,
+      description: l.description ?? 'Item',
+      quantity: l.receivedQty, unitCostCents: pl.unitCostCents,
+      lineTotalCents: lineValueCents({ quantityOrdered: l.receivedQty, unitCostCents: pl.unitCostCents, orderUnitFactor: pl.orderUnitFactor, orderUnitCostCents: pl.orderUnitCostCents }),
+    }
+  })
+  if (lines.length === 0) throw new AppError('NO_LINES', 'Nothing was received on this GRN', 422)
+  return lines
+}
+
+/**
+ * Book an approved GRN's bill AGAIN after that bill was voided (owner, 2026-11-24: "Voided this voucher, also voided
+ * the bill, want to change tax amount, who can do it?"). The GRN stays approved — the goods, their rates and the
+ * approvals stand; only the invoice's sales tax (and its authority) may be given again. ONE transaction through the
+ * bill engine: a new bill `<invoice no.>-R<n>` (the voided one keeps its number), the GRN re-pointed to it, any
+ * UNPAID pay-back voucher still on the voided bill cancelled, and — on a cash PO with no advance — a fresh pay-back
+ * voucher for what the new bill owes. Refused unless the GRN is approved and its bill is void (409 BILL_NOT_VOID).
+ * Who: the CEO; finance holding `accounting` only when the tax is not raised above the voided bill's (the route).
+ */
+export async function rebillGrn(grnId: string, actor: Actor, input: { taxCents: number; taxAuthority?: AuthorityKey | null; reason: string }) {
+  const reason = assertNote(input.reason)
+  const g = await prisma.goodsReceipt.findUnique({ where: { id: grnId }, include: { lines: true } })
+  if (!g || !g.grnNumber || !g.poId) throw new NotFoundError('GoodsReceipt', grnId)
+  if (g.grnStatus !== 'approved' || !g.supplierBillId) throw new AppError('INVALID_STATE', `This GRN is ${String(g.grnStatus).replace(/_/g, ' ')} — only an approved GRN whose bill was voided is billed again`, 409)
+  if (!g.invoiceNumber || !g.invoiceDate) throw new AppError('INVOICE_REQUIRED', 'This GRN has no invoice number / date', 422)
+  const old = await prisma.supplierBill.findUniqueOrThrow({ where: { id: g.supplierBillId }, select: { id: true, status: true, billNumber: true, taxCents: true, taxAuthority: true } })
+  if (old.status !== 'void') throw new AppError('BILL_NOT_VOID', `Bill ${old.billNumber} of this GRN is still live — void it first, then book it again`, 409)
+  if (!isCeo(actor) && input.taxCents > toCents(old.taxCents)) throw new ForbiddenError('Only the CEO books it again with MORE sales tax than before')
+  const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: g.poId }, include: { lines: true } })
+  const lines = grnBillLines(g.lines, po.lines)
+  const authority = input.taxAuthority !== undefined ? input.taxAuthority : (isAuthorityKey(g.invoiceTaxAuthority) ? g.invoiceTaxAuthority : null)
+  const base = g.invoiceNumber.replace(/-R\d+$/, '')
+  const used = await prisma.supplierBill.count({ where: { supplierId: g.supplierId, billNumber: { startsWith: `${base}-R` } } })
+  const billNumber = `${base}-R${used + 1}`.slice(0, 100)
+  const prepared = await prepareBill({
+    supplierId: g.supplierId, poId: g.poId, billNumber, billDate: g.invoiceDate.toISOString().slice(0, 10),
+    notes: `${g.grnNumber} of ${po.reference ?? 'PO'} — booked again after ${old.billNumber} was voided: ${reason}`.slice(0, 500),
+    lines, createdBy: actor.id, actorRole: actor.role, viaGrn: true, taxCents: input.taxCents, taxAuthority: authority,
+  })
+  await ensureFifoReady(prepared.tenantId)
+  const bill = await prisma.$transaction(async (tx) => {
+    // The claim: still approved and still on the voided bill (two clicks never book two bills).
+    const claimed = await tx.goodsReceipt.updateMany({
+      where: { id: grnId, grnStatus: 'approved', supplierBillId: old.id },
+      data: { invoiceTaxCents: input.taxCents, invoiceTaxAuthority: authority },
+    })
+    if (claimed.count === 0) throw new AppError('INVALID_STATE', 'This GRN changed meanwhile — reload it', 409)
+    const stillVoid = await tx.supplierBill.findUniqueOrThrow({ where: { id: old.id }, select: { status: true } })
+    if (stillVoid.status !== 'void') throw new AppError('BILL_NOT_VOID', `Bill ${old.billNumber} is live again — reload`, 409)
+    let b
+    try {
+      b = await insertBillTx(tx, prepared)
+    } catch (err) {
+      if (err instanceof AppError && err.code === 'DUPLICATE_BILL') throw new AppError('BILL_NUMBER_TAKEN', err.message, 409)
+      throw err
+    }
+    await tx.goodsReceipt.update({ where: { id: grnId }, data: { supplierBillId: b.id } })
+    // A pay-back voucher still waiting on the voided bill can never be paid: cancel it (a paid one is never touched).
+    const stale = await tx.cashVoucher.findMany({
+      where: { reimbursesBillId: old.id, status: { in: ['submitted', 'finance_approved', 'approved', 'returned'] } }, select: { id: true, number: true },
+    })
+    for (const v of stale) {
+      await tx.cashVoucher.update({
+        where: { id: v.id },
+        data: { status: 'cancelled', cancelledById: actor.id, cancelledAt: new Date(), cancelNote: `Bill ${old.billNumber} was voided and booked again as ${b.billNumber}`.slice(0, 500), reimbursesBillId: null, voidedBillId: old.id },
+      })
+    }
+    const { paysBuyerBackTx, raiseReimbursementTx } = await import('./poCash.js')
+    const payBack = await paysBuyerBackTx(tx, { id: g.poId!, payByCash: po.payByCash, cashAfterPurchase: po.cashAfterPurchase })
+      ? await raiseReimbursementTx(tx, { billId: b.id, poId: g.poId!, grnNumber: g.grnNumber!, approverId: g.approvedById ?? actor.id, financeCheckedById: g.financeCheckedById })
+      : null
+    await logGrnTx(tx, g.poId!, actor.id, 'grn_rebilled', {
+      grnId, grnNumber: g.grnNumber, voidedBillId: old.id, voidedBillNumber: old.billNumber, supplierBillId: b.id, billNumber: b.billNumber,
+      taxCents: { from: toCents(old.taxCents), to: input.taxCents }, totalCents: toCents(b.totalCents), reason,
+      cancelledVouchers: stale.map((v) => v.number), ...(payBack && { payBackVoucherId: payBack.id, payBackVoucherNumber: payBack.number }),
+    })
+    return { ...b, payBack, cancelled: stale }
+  }, { timeout: 30_000 })
+  await afterBillCreated(prepared, bill)
+  grnPayNotice(grnId, actor.id)
+  if (!bill.payBack) await (await import('./poAdvanceSettle.js')).settleBillFromAdvanceQuietly(bill.id)
+  if (bill.payBack) {
+    const { voucherTaskNotice } = await import('../trustops/cashVouchers.js')
+    voucherTaskNotice('approved', bill.payBack.id, actor.id)
+  }
+  return {
+    id: grnId, tenantId: prepared.tenantId, grnNumber: g.grnNumber, supplierBillId: bill.id, billNumber: bill.billNumber, totalCents: toCents(bill.totalCents),
+    voidedBillId: old.id, voidedBillNumber: old.billNumber, taxFromCents: toCents(old.taxCents), taxCents: input.taxCents,
+    payBackVoucher: bill.payBack, cancelledVouchers: bill.cancelled,
+  }
+}
+
 /**
  * The CEO's final approval (the route proved the right): ceo_review → approved, and the supplier bill is created in
  * the SAME transaction through the bill engine (header). 409 BILL_NUMBER_TAKEN when the supplier already has a bill
@@ -627,16 +727,7 @@ export async function approveGrn(grnId: string, actor: Actor) {
   const po = await prisma.purchaseOrder.findUniqueOrThrow({ where: { id: g.poId }, include: { lines: true } })
   const taken = await prisma.supplierBill.findFirst({ where: { supplierId: g.supplierId, billNumber: g.invoiceNumber }, select: { id: true } })
   if (taken) throw new AppError('BILL_NUMBER_TAKEN', `${g.invoiceNumber} is already a bill of this supplier — the buyer must correct the invoice number (return the GRN)`, 409)
-  const lines = g.lines.filter((l) => l.receivedQty > 0 && l.poLineId).map((l) => {
-    const pl = po.lines.find((x) => x.id === l.poLineId)!
-    return {
-      inventoryItemId: l.inventoryItemId, poLineId: pl.id, receiptLineId: l.id,
-      description: l.description ?? 'Item',
-      quantity: l.receivedQty, unitCostCents: pl.unitCostCents,
-      lineTotalCents: lineValueCents({ quantityOrdered: l.receivedQty, unitCostCents: pl.unitCostCents, orderUnitFactor: pl.orderUnitFactor, orderUnitCostCents: pl.orderUnitCostCents }),
-    }
-  })
-  if (lines.length === 0) throw new AppError('NO_LINES', 'Nothing was received on this GRN', 422)
+  const lines = grnBillLines(g.lines, po.lines)
   const prepared = await prepareBill({
     supplierId: g.supplierId, poId: g.poId, billNumber: g.invoiceNumber, billDate: g.invoiceDate.toISOString().slice(0, 10),
     notes: `${g.grnNumber} of ${po.reference ?? 'PO'}`, lines, createdBy: actor.id, actorRole: actor.role, viaGrn: true,

@@ -2227,6 +2227,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   for items + the correct tax. Finance pays the new one; net, the buyer hands the extra back. **A returned GRN's
   sales-tax box starts EMPTY** (`PoWorkflow.tsx FixCard`; a note names the old figure) and shows items + tax = the total
   to be billed before resubmitting. Tests: `tests/poApprovalChain.test.ts`.
+- **An approved GRN whose bill was voided is booked again (owner, 2026-11-24: "Voided this voucher, also voided the
+  bill, want to change tax amount, who can do it?").** `POST /procurement/grns/:id/rebill {taxCents, taxAuthority?,
+  reason ≥10}` (`poWorkflow.ts rebillGrn`; the CEO, or finance holding `accounting` — never with MORE tax than the
+  voided bill, 403; a member of the GRN's company, else 404). Only an `approved` GRN whose bill is `void` (409
+  `BILL_NOT_VOID`). ONE transaction through the bill engine (`grnBillLines` — the one builder approval uses too): a new
+  bill `<invoice no.>-R<n>`, the GRN re-pointed to it (`invoiceTaxCents` updated), an UNPAID pay-back voucher on the
+  voided bill cancelled (`voidedBillId`), and on a cash PO with no advance a fresh pay-back for what the new bill owes.
+  Goods, rates and approvals stand. Log `grn_rebilled`, audit `grn.rebilled`. Admin: "Book the bill again" on the GRN
+  (`PoWorkflow.tsx GrnDetail`). Tests: `tests/poApprovalChain.test.ts`.
 - **A paid PO advance pays its bill by itself (owner, 2026-11-20: "route those cash vouchers to supplier bills and update
   the status" → "Yes, do it").** `procurement/poAdvanceSettle.ts` (contract in its header). A bill of an old-advance PO
   whose voucher was PAID into the buyer's box is paid from THAT box through the manual step's own engine

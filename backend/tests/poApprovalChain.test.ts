@@ -660,6 +660,50 @@ describe('a pay-back paid with a wrong sales tax is corrected (owner, 2026-11-24
   })
 })
 
+describe('an approved GRN whose bill was voided is booked again with the right tax (owner, 2026-11-24)', () => {
+  it('refused while the bill is live; then a new bill, the stale pay-back cancelled, a fresh one for the right amount', async () => {
+    const po = await chefPo()
+    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`, { payByCash: true })).statusCode).toBe(200)
+    await upload('buyerA', po.id)
+    expect((await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-RB`, invoiceDate: today(), taxCents: 12_300, taxAuthority: 'srb' })).statusCode).toBe(200)
+    const cf = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: po.lines.map((l) => ({ poLineId: l.id, quantityReceived: l.quantityOrdered })) })
+    const grn = cf.json().grn.id as string
+    expect((await call('finA', 'POST', `/procurement/grns/${grn}/finance-pass`)).statusCode).toBe(200)
+    const ap = await call('ceoA', 'POST', `/procurement/grns/${grn}/approve`)
+    expect(ap.statusCode, ap.body).toBe(200)
+    const billId = ap.json().supplierBillId as string
+    const items = Number((await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })).subtotalCents)
+    const stale = await prisma.cashVoucher.findUniqueOrThrow({ where: { reimbursesBillId: billId } })
+    expect(stale.amountCents).toBe(items + 12_300)
+
+    expect(code(await call('ceoA', 'POST', `/procurement/grns/${grn}/rebill`, { taxCents: 0, reason: 'The invoice carries no sales tax' }))).toBe('BILL_NOT_VOID')
+    const vd = await call('ceoA', 'POST', `/procurement/bills/${billId}/void`, { reason: 'Wrong sales tax on the bill' })
+    expect(vd.statusCode, vd.body).toBeLessThan(300)
+    const ap2010 = await netDebit(T.A, '2010'); const tax = await netDebit(T.A, '1322')
+    // Another company 404; a short reason refused; finance never raises the tax; the buyer may not.
+    expect((await call('finB', 'POST', `/procurement/grns/${grn}/rebill`, { taxCents: 0, reason: 'The invoice carries no sales tax' })).statusCode).toBe(404)
+    expect((await call('buyerA', 'POST', `/procurement/grns/${grn}/rebill`, { taxCents: 0, reason: 'The invoice carries no sales tax' })).statusCode).toBe(403)
+    expect((await call('finA', 'POST', `/procurement/grns/${grn}/rebill`, { taxCents: 20_000, reason: 'The invoice carries more sales tax' })).statusCode).toBe(403)
+    const rb = await call('finA', 'POST', `/procurement/grns/${grn}/rebill`, { taxCents: 0, reason: 'The invoice carries no sales tax' })
+    expect(rb.statusCode, rb.body).toBe(200)
+    expect(rb.json().billNumber).toBe(`${P}-RB-R1`)
+    const nb = await prisma.supplierBill.findUniqueOrThrow({ where: { id: rb.json().supplierBillId } })
+    expect([Number(nb.subtotalCents), Number(nb.taxCents), Number(nb.totalCents), nb.status]).toEqual([items, 0, items, 'open'])
+    expect(await netDebit(T.A, '2010') - ap2010).toBe(-items)
+    expect(await netDebit(T.A, '1322') - tax).toBe(0)
+    expect(await prisma.goodsReceipt.findUniqueOrThrow({ where: { id: grn } })).toMatchObject({ grnStatus: 'approved', supplierBillId: nb.id, invoiceTaxCents: 0 })
+    expect(await prisma.cashVoucher.findUniqueOrThrow({ where: { id: stale.id } })).toMatchObject({ status: 'cancelled', reimbursesBillId: null, voidedBillId: billId })
+    const fresh = await prisma.cashVoucher.findUniqueOrThrow({ where: { reimbursesBillId: nb.id } })
+    expect(fresh).toMatchObject({ status: 'approved', amountCents: items })
+    // Once only: the bill is live again.
+    expect(code(await call('ceoA', 'POST', `/procurement/grns/${grn}/rebill`, { taxCents: 0, reason: 'The invoice carries no sales tax' }))).toBe('BILL_NOT_VOID')
+    const pay = await call('finA', 'POST', `/trustops/cash-vouchers/${fresh.id}/pay`, { source: 'cash_on_hand', classification: 'official', taxStatus: 'not_applicable' })
+    expect(pay.statusCode, pay.body).toBe(200)
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: nb.id } })).status).toBe('paid')
+  })
+})
+
 describe("the CEO's return / reject at approval, and editing a draft", () => {
   it('return needs a note (→ draft, editable, resubmitted); reject needs a reason (→ cancelled)', async () => {
     const po = await chefPo()

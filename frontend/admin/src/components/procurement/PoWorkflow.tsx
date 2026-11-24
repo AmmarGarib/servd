@@ -589,12 +589,17 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const [note, setNote] = useState('')
   const [undoing, setUndoing] = useState(false)
   const [undoReason, setUndoReason] = useState('')
+  // Book the bill again after it was voided (owner, 2026-11-24): the sales tax is typed afresh.
+  const [rebilling, setRebilling] = useState(false)
+  const [rebillTax, setRebillTax] = useState(0)
+  const [rebillBy, setRebillBy] = useState('')
+  const [rebillReason, setRebillReason] = useState('')
   // The return note survives Back / refresh (lib/formDraft.ts); the dialog reopens with it. Cleared once returned.
   const draft = useFormDraft(`grn-return:${id}`, { note }, (d) => setNote(d.note ?? ''), { isEmpty: (d) => !d.note.trim() })
   useEffect(() => { if (draft.restoredAt) setReturning(true) }, [draft.restoredAt])
   const act = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) => api.post(`/procurement/grns/${id}/${path}`, body ?? {}),
-    onSuccess: (_r, vars) => { if (vars.path === 'return') draft.clear(); setReturning(false); setNote(''); setUndoing(false); setUndoReason(''); invalidateAll(qc, g?.po?.id); void qc.invalidateQueries({ queryKey: ['procurement', 'grns', 'one', id] }) },
+    onSuccess: (_r, vars) => { if (vars.path === 'return') draft.clear(); setReturning(false); setNote(''); setUndoing(false); setUndoReason(''); setRebilling(false); setRebillReason(''); setRebillTax(0); invalidateAll(qc, g?.po?.id); void qc.invalidateQueries({ queryKey: ['procurement', 'grns', 'one', id] }) },
   })
   if (isError) return <p role="alert" className="text-sm text-s-red">{errOf(error)}</p>
   if (!g) return <p className="text-s-muted text-sm">Loading…</p>
@@ -604,6 +609,8 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const canPullBack = g.grnStatus === 'ceo_review' && role === 'finance'
   // Undo the receipt (owner, 2026-11-23): finance or the CEO, any time before the CEO approves the GRN.
   const canUndo = ['finance_review', 'ceo_review', 'buyer_fix'].includes(g.grnStatus) && (role === 'finance' || role === 'admin')
+  // The bill of an approved GRN was voided: finance or the CEO books it again, with the right sales tax.
+  const canRebill = g.grnStatus === 'approved' && g.bill?.status === 'void' && (role === 'finance' || role === 'admin')
   // Stock or expense (owner, 2026-11-18): finance changes it at its check (the CEO at either step).
   // …and after approval too (owner, 2026-11-23): finance or the CEO, as a correcting entry.
   const canSetExpense = canFinance || canCeo || (g.grnStatus === 'approved' && (role === 'finance' || role === 'admin'))
@@ -699,6 +706,41 @@ function GrnDetail({ id, onClose }: { id: string; onClose: () => void }) {
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="secondary" disabled={act.isPending} onClick={() => setUndoing(true)}>Undo this receipt</Button>
         </div>
+      )}
+      {canRebill && (
+        <div className="rounded-xl border border-s-border p-3 space-y-2">
+          <p className="text-sm font-bold text-s-text">Bill {g.bill?.billNumber} was voided</p>
+          <p className="text-xs text-s-muted">Nothing is owed for this receipt until the bill is booked again. The goods and their rates stay as approved — you only give the sales tax again.</p>
+          <Button size="sm" disabled={act.isPending} onClick={() => { setRebillBy(g.invoiceTaxAuthority ?? ''); setRebilling(true) }}>Book the bill again</Button>
+        </div>
+      )}
+      {rebilling && (
+        <Modal title={`Book the bill of ${g.grnNumber} again`} onClose={() => setRebilling(false)}>
+          <form noValidate className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (rebillReason.trim().length < 10 || act.isPending) return; act.mutate({ path: 'rebill', body: { taxCents: rebillTax, taxAuthority: rebillBy || null, reason: rebillReason.trim() } }) }}>
+            <p className="text-sm text-s-text">
+              A new bill is booked for the goods of this receipt ({fmtPkrWhole(g.invoicedCents)}) plus the sales tax you enter here.
+              {g.invoiceTaxCents ? <> The voided bill carried sales tax of {fmtPkrWhole(g.invoiceTaxCents)}.</> : null}
+            </p>
+            <TaxFields cents={rebillTax} setCents={setRebillTax} authority={rebillBy} setAuthority={setRebillBy} />
+            <div className="rounded-xl border border-s-border p-3 text-sm space-y-1" aria-live="polite">
+              <div className="flex justify-between gap-3"><span className="text-s-muted">Items received</span><span className="font-semibold text-s-text">{fmtPkrWhole(g.invoicedCents)}</span></div>
+              <div className="flex justify-between gap-3"><span className="text-s-muted">Sales tax on the invoice</span><span className="font-semibold text-s-text">{fmtPkrWhole(rebillTax)}</span></div>
+              <div className="flex justify-between gap-3 border-t border-s-border pt-1"><span className="font-bold text-s-text">New bill total{g.po?.payByCash ? ' — paid back to the buyer' : ''}</span><span className="font-black text-s-text">{fmtPkrWhole(g.invoicedCents + rebillTax)}</span></div>
+            </div>
+            <p className="text-xs text-s-muted">
+              {g.po?.payByCash ? 'A pay-back voucher still waiting on the voided bill is cancelled and a new one is raised for the new total. ' : ''}
+              {role === 'finance' ? 'Only the CEO can book it with more sales tax than before.' : ''}
+            </p>
+            <Field label="Why the bill is booked again" required error={rebillReason && rebillReason.trim().length < 10 ? 'At least 10 characters.' : null}>
+              <Input value={rebillReason} onChange={(e) => setRebillReason(e.target.value)} className="w-full" placeholder="e.g. The invoice carries no sales tax" />
+            </Field>
+            {act.error && <p role="alert" className="text-xs text-s-red">{errOf(act.error)}</p>}
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={act.isPending || rebillReason.trim().length < 10}>{act.isPending ? 'Booking…' : 'Book the bill'}</Button>
+              <Button variant="secondary" onClick={() => setRebilling(false)}>Back</Button>
+            </div>
+          </form>
+        </Modal>
       )}
       {undoing && (
         <Modal title={`Undo receipt ${g.grnNumber}`} onClose={() => setUndoing(false)}>

@@ -38,7 +38,7 @@ import { AP_READERS } from './routes.js'
 import {
   setPoBuyer, completePo, confirmReceipt, rejectReceipt, grnFinancePass, grnReturn, grnPullBack, grnResubmit, approveGrn, myTasks,
   assertNote, PO_FILE_OWNER,
-  setGrnLineExpense, undoGrn,
+  setGrnLineExpense, undoGrn, rebillGrn,
 } from './poWorkflow.js'
 
 type GuardPo = (req: FastifyRequest, poId: string) => Promise<{ id: string; status: string; createdBy: string | null; supplier: { tenantId: string | null } }>
@@ -383,6 +383,28 @@ export async function registerPoWorkflowRoutes(fastify: FastifyInstance, deps: {
       metadata: { reason: assertNote(reason), grnNumber: r.grnNumber, quantities: r.quantities, reversedEntryIds: r.reversedEntryIds, actorRole: req.staffUser!.role },
     })
     return { id: r.id, grnStatus: r.grnStatus, poId: r.poId, poStatus: r.poStatus }
+  })
+
+  // Book an approved GRN's bill again after the bill was voided (owner, 2026-11-24) — poWorkflow.ts rebillGrn: the CEO,
+  // or finance holding `accounting` (never with more tax than before); a member of the GRN's company (else 404).
+  fastify.post<{ Params: { id: string } }>('/grns/:id/rebill', { preHandler: requireAuth('finance', 'admin') }, async (req) => {
+    const head = await guardGrn(req, req.params.id, 'write')
+    if (!head.tenantId || !(req.staffUser!.memberTenantIds ?? []).includes(head.tenantId)) throw new NotFoundError('GoodsReceipt', req.params.id)
+    if (req.staffUser!.role === 'finance') await financeAccounting(req)
+    const body = z.object({
+      taxCents: zMoneyCents('The sales tax'),
+      taxAuthority: z.enum(TAX_AUTHORITY_KEYS).nullable().optional(),
+      reason: z.string().max(500),
+    }).parse(req.body ?? {})
+    const r = await rebillGrn(req.params.id, actorOf(req), body)
+    await audit({
+      category: 'accounting', action: 'grn.rebilled', entity: 'GoodsReceipt', entityId: r.id,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, tenantId: r.tenantId,
+      before: { supplierBillId: r.voidedBillId, billNumber: r.voidedBillNumber, taxCents: r.taxFromCents },
+      after: { supplierBillId: r.supplierBillId, billNumber: r.billNumber, taxCents: r.taxCents, totalCents: r.totalCents },
+      metadata: { reason: assertNote(body.reason), grnNumber: r.grnNumber, payBackVoucher: r.payBackVoucher?.number ?? null, cancelledVouchers: r.cancelledVouchers.map((v) => v.number), actorRole: req.staffUser!.role },
+    })
+    return { id: r.id, supplierBillId: r.supplierBillId, billNumber: r.billNumber, totalCents: r.totalCents, payBackVoucher: r.payBackVoucher, cancelledVouchers: r.cancelledVouchers }
   })
 
   fastify.post<{ Params: { id: string } }>('/grns/:id/resubmit', { preHandler: requireAuth(...ALL_STAFF) }, async (req) => {
