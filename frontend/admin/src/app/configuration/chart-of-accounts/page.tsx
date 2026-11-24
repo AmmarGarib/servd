@@ -6,6 +6,7 @@ import { api } from '../../../lib/api'
 import { Select } from '@/components/ui/Select'
 import { NavIcon } from '../../../components/ui/NavIcon'
 import { SubAccounts } from './SubAccounts'
+import { MergeDialog, MergeRequests } from './MergeAccounts'
 import { useMyTenants } from '../../../components/ui/TenantPicker'
 
 type AccountType = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
@@ -60,6 +61,7 @@ export default function ChartOfAccountsPage() {
   const [editing, setEditing] = useState<Account | null>(null)
   const [adding, setAdding] = useState(false)
   const [openSubs, setOpenSubs] = useState<string | null>(null)
+  const [merging, setMerging] = useState<Account | null>(null)
   const [q, setQ] = useState('')
   const { data: all = [] } = useQuery<Account[]>({ queryKey: ['chart-of-accounts'], queryFn: () => api.get('/setup/chart-of-accounts') })
 
@@ -88,10 +90,11 @@ export default function ChartOfAccountsPage() {
                     {!a.isActive && <span className="text-[10px] text-white/30">PAUSED</span>}
                     {a.subAccountsEnabled && <span className="s-badge-green text-[10px]">Sub-accounts on</span>}
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 shrink-0 max-w-[45%] sm:max-w-none">
                     <button onClick={() => setOpenSubs(openSubs === a.id ? null : a.id)} aria-expanded={openSubs === a.id}
                       className="text-xs text-white/55 hover:text-white">Sub-accounts {openSubs === a.id ? '▴' : '▾'}</button>
                     <Link href={`/accounting/journal?tab=accounts&accountId=${a.id}`} className="text-xs text-white/55 hover:text-white">Entries</Link>
+                    <button onClick={() => setMerging(a)} className="text-xs text-white/55 hover:text-white">Merge</button>
                     <button onClick={() => setEditing(a)} className="text-xs text-white/55 hover:text-white">Edit</button>
                   </div>
                 </div>
@@ -115,6 +118,7 @@ export default function ChartOfAccountsPage() {
       </header>
 
       <div className="px-4 sm:px-7 py-6 max-w-4xl mx-auto space-y-6">
+        <MergeRequests />
         <div className="flex flex-wrap items-center gap-3">
           <input type="search" value={q} onChange={(e) => setQ(e.target.value)} autoComplete="off"
             placeholder="Search by code or name, e.g. 6030 or wages" aria-label="Search accounts"
@@ -149,6 +153,7 @@ export default function ChartOfAccountsPage() {
         ))}
       </div>
 
+      {merging && <MergeDialog account={merging} accounts={all} onClose={() => setMerging(null)} />}
       {(adding || editing) && (
         <Modal account={editing} onClose={() => { setAdding(false); setEditing(null) }}
           onSaved={() => { setAdding(false); setEditing(null); void qc.invalidateQueries({ queryKey: ['chart-of-accounts'] }) }} />

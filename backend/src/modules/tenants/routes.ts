@@ -815,6 +815,8 @@ async function mergeMoneyAndHrTables(tx: MergeTx, src: string, dst: string, srcS
     tx.cashVoucherVoidRequest,
     // Requests to reopen a closed period (owner, 2026-11-24): follow the company whose books they are about.
     tx.periodReopenRequest,
+    // Ledger-account merges and their moved-line records, and a company's shareholders (owner, 2026-11-24).
+    tx.accountMerge, tx.accountMergeLine, tx.shareholder,
     // Cost splits (owner, 2026-11-07): a split follows its source company, a share its receiving company (a company
     // with inter-company activity is refused above, MERGE_HAS_INTERCOMPANY — listed so nothing is ever stranded).
     tx.costSplit, tx.costSplitShare,

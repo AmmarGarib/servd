@@ -237,6 +237,7 @@ beforeAll(async () => {
     await api.register(customerAccountRoutes, { prefix: '/accounting/customer-accounts' })
     await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })
     await api.register((await import('../src/modules/accounting/periodReopen.js')).periodReopenRoutes, { prefix: '/accounting/period-close' })
+    await api.register((await import('../src/modules/accounting/accountMerge.js')).accountMergeRoutes, { prefix: '/accounting/account-merges' })
     await api.register(reconciliationRoutes, { prefix: '/reconciliation' })
     await api.register(grniRoutes, { prefix: '/procurement/grni' })
     // No /accounting/stock-differences here: the type answers 404 → not listed.
@@ -256,6 +257,8 @@ describe('two companies', () => {
     const body = a.json() as Inbox
     // The CEO approves every type except HR steps that are not theirs.
     expect(body.types.map((t) => t.type).sort()).toEqual([
+      // Merge two ledger accounts (owner, 2026-11-24) reads /accounting/account-merges: listed, none waiting.
+      'account_merge',
       'bad_debt', 'bank_reconciliation', 'cash_request_finance', 'cash_voucher',
       // Void a paid cash voucher (owner, 2026-11-18) reads /trustops/cash-vouchers/void-requests: listed, none waiting.
       'cash_voucher_void',

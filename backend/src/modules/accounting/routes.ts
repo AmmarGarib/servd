@@ -1165,6 +1165,10 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     return { reopened: { lockedThrough: r.reopenedThrough }, lockedThrough: r.lockedThrough }
   })
 
+  // One-click merge of two ledger accounts, and the shareholder funding page (owner, 2026-11-24).
+  await fastify.register((await import('./accountMerge.js')).accountMergeRoutes, { prefix: '/account-merges' })
+  await fastify.register((await import('./shareholders.js')).shareholderRoutes, { prefix: '/shareholders' })
+
   // Finance asks the CEO to reopen the latest close (owner, 2026-11-24) — periodReopen.ts.
   await fastify.register((await import('./periodReopen.js')).periodReopenRoutes, { prefix: '/period-close' })
 

@@ -174,6 +174,7 @@ export const MODULE_PAGES: Partial<Record<ModuleId, ModulePage[]>> = {
     { label: 'Shift corrections', href: '/finance/shift-corrections', sub: true, hint: 'Fix a mistake on a closed shift (void a bill, cancel an open ticket): finance lists the fixes, the CEO approves, then it applies on the sale\'s own day' },
     { label: 'Period close', href: '/accounting/period-close', sub: true },
     { label: 'Chart of accounts', href: '/configuration/chart-of-accounts', sub: true },
+    { label: 'Shareholder funding', href: '/accounting/shareholders', sub: true, hint: 'What each shareholder has put in against the agreed split, and the variance' },
     { label: 'Allocations', href: '/allocations', sub: true },
     // Food cost moved to Reports → Food cost variance (module food_cost);
     // /accounting/food-cost forwards there (next.config.js).

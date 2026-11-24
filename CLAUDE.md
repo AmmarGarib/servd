@@ -3896,6 +3896,33 @@ removed and a lock through the day before is kept, so earlier days stay closed; 
 ("Ask the CEO to reopen", the waiting card with Approve / Reject / Withdraw) and the Journals date notes. Tests:
 `tests/periodReopenRequest.test.ts`.
 
+### One-click ledger merge and shareholder funding (owner, 2026-11-24)
+
+- **Merge two ledger accounts ("I want same entries with same narration to be moved to other ledger" → "Move the
+  entries themselves" → "Build one click merger").** Contract: header of `accounting/accountMerge.ts`. Every journal
+  line of the old account is RE-POINTED to the kept account (same entry, date, narration, voucher number, amount) —
+  the one deliberate exception to "posted lines never change"; nothing is posted and the books' totals never move. The
+  old account ends empty and is switched off. `POST /accounting/account-merges {fromAccountId, intoAccountId, reason
+  ≥10}`: the CEO at once (201), finance holding `accounting` 202 → approval type `account_merge` (section ceo, never
+  delegable; `/:id/approve | reject {note ≥10} | withdraw`); `GET /preview`, `GET /`; `POST /:id/undo {reason}` (CEO —
+  exactly the recorded lines go back; 409 `UNDO_NOT_POSSIBLE` when a sub-account was folded into its twin). Rules, at
+  the ask and inside the merge's transaction: one company (else 404), same type and P&L heading (422
+  `MERGE_TYPE_MISMATCH` / `MERGE_SECTION_MISMATCH`), BOTH opened by hand — never a template / module / controlled
+  account, a brand's sales account, a bank's ledger account, a fixed-asset class or head-office account (422
+  `MERGE_NOT_HAND_MADE`), no entry of the old account in closed books (409 `ENTRIES_IN_CLOSED_BOOKS` — reopen from that
+  date first), one waiting merge per account (409 `MERGE_PENDING`). Sub-accounts follow; other companies' account links
+  follow to the kept code. Tables `account_merges` / `account_merge_lines` (tenantId, RLS, merge repoint; migration
+  `20261124180000`). Admin: "Merge" on a row of Chart of accounts (`chart-of-accounts/MergeAccounts.tsx`).
+- **Shareholder funding ("a page … that shows how much variance there is so we are always aware of any shareholding
+  disparity"; 60 Yousuf / 40 GS at Flipd, Flipd only).** Contract: header of `accounting/shareholders.ts`. Per company:
+  `Shareholder` (`shareholders`, tenantId, RLS, merge repoint) = name, agreed share (bps, a company's add up to 100%),
+  the liability / equity account codes holding what they put in. A company with none set shows nothing — that is how
+  it is one company's only. `GET /accounting/shareholders?asOf=` (CEO, co-owner, management, finance; the ACTIVE
+  company): funded = credits − debits of their accounts, expected = total × share, variance, and `topUpCents` (what
+  each must add for the agreed split with nobody taking money out). `PUT` = the CEO only (422 `SHARES_NOT_100` /
+  `ACCOUNT_NOT_ALLOWED` / `ACCOUNT_LISTED_TWICE`). Read-only over the ledger; no posting or report reads it. Admin:
+  Accounting → Shareholder funding (`/accounting/shareholders`). Tests for both: `tests/accountMerge.test.ts`.
+
 ### Parked (owner, 2026-10-13)
 
 Delivery and customers, and corporate clients on account, were PARKED on

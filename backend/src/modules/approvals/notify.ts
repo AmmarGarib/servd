@@ -159,6 +159,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   employee_delete: spec(() => '/hr/employees'),
   cash_voucher_void: spec(() => '/ceo/approvals?type=cash_voucher_void'),
   period_reopen: spec(() => '/accounting/period-close'),
+  account_merge: spec(() => '/configuration/chart-of-accounts'),
   // Intern Management (owner, 2026-11-06): the CEO approves enrolments; stipends go HR → finance → the CEO.
   intern_enrollment: spec((id) => `/hr/interns/${encodeURIComponent(id)}`),
   intern_payroll_finance: spec((id) => `/hr/interns/payroll/${encodeURIComponent(id)}`, {
@@ -354,6 +355,10 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       if (!r) return null
       const v = await db.cashVoucher.findUnique({ where: { id: r.voucherId }, select: { number: true, payeeName: true, amountCents: true } })
       return v && { ref: `Void cash voucher ${v.number} — ${v.payeeName}`, amountCents: v.amountCents }
+    }
+    case 'account_merge': {
+      const r = await db.accountMerge.findUnique({ where: { id }, select: { fromCode: true, fromName: true, intoCode: true, intoName: true } })
+      return r && { ref: `Merge ${r.fromCode} ${r.fromName} into ${r.intoCode} ${r.intoName}` }
     }
     case 'period_reopen': {
       const r = await db.periodReopenRequest.findUnique({ where: { id }, select: { lockedThrough: true, reopenFrom: true } })

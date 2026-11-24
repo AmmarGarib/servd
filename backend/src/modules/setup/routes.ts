@@ -33,7 +33,7 @@ import { REQUIRED_ACCOUNT_CODES, CHART_OF_ACCOUNTS } from '../../lib/chartOfAcco
 import { PL_SECTIONS, plSectionOf, assertSectionFitsType, codeBandOf, nextAccountCodeTx } from '../../lib/accountSection.js'
 
 /** Codes the chart template creates — servd's modules post to them by code. */
-const SYSTEM_ACCOUNT_CODES: ReadonlySet<string> = new Set(CHART_OF_ACCOUNTS.map((a) => a.code))
+export const SYSTEM_ACCOUNT_CODES: ReadonlySet<string> = new Set(CHART_OF_ACCOUNTS.map((a) => a.code))
 import { ACCT, revenueCodeForConcept } from '../accounting/journal.js'
 import { AUTHORITY_LIST } from '../accounting/taxAuthorities.js'
 import { moveToTrash, trashReasonOf } from '../../lib/trash.js'
@@ -158,7 +158,7 @@ async function assertAccountMayBeSwitchedOff(acc: { id: string; tenantId: string
  * brand's sales post to 2032). Kept apart from REQUIRED_ACCOUNT_CODES so
  * /health's list is unchanged.
  */
-const SYSTEM_POSTED_CODES: ReadonlySet<string> = new Set([
+export const SYSTEM_POSTED_CODES: ReadonlySet<string> = new Set([
   ...REQUIRED_ACCOUNT_CODES,
   ...Object.values(ACCT),
   ...AUTHORITY_LIST.flatMap((a) => [a.outputCode, a.inputCode]),

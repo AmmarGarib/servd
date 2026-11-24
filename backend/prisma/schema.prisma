@@ -518,6 +518,72 @@ model CashVoucherVoidRequest {
   @@map("cash_voucher_void_requests")
 }
 
+/// One-click merge of two ledger accounts (owner, 2026-11-24: "I want same entries with same narration to be moved to
+/// other ledger" → "Build one click merger"; accounting/accountMerge.ts). Every journal line of `fromAccountId` is
+/// re-pointed to `intoAccountId` (same company, same type, both opened by hand); each moved line is recorded in
+/// account_merge_lines, so the move can be undone. tenantId = the accounts' company.
+model AccountMerge {
+  id            String    @id @default(uuid())
+  tenantId      String
+  fromAccountId String
+  intoAccountId String
+  fromCode      String
+  fromName      String
+  intoCode      String
+  intoName      String
+  reason        String
+  status        String    @default("pending") // pending | done | rejected | withdrawn | undone
+  requestedById String
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  lineCount     Int       @default(0)
+  debitCents    BigInt    @default(0)
+  creditCents   BigInt    @default(0)
+  /// Sub-accounts that moved with it: [{id, name, foldedIntoId | null}] (folded = the kept account had its twin).
+  subAccounts   Json?
+  appliedAt     DateTime?
+  undoneAt      DateTime?
+  undoneById    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@map("account_merges")
+}
+
+/// One journal line an account merge moved (the record behind its undo).
+model AccountMergeLine {
+  id            String @id @default(uuid())
+  tenantId      String
+  mergeId       String
+  journalLineId String
+
+  @@index([mergeId])
+  @@index([tenantId])
+  @@map("account_merge_lines")
+}
+
+/// Shareholders of a company and the ledger accounts that hold what each has put in (owner, 2026-11-24: "add a page
+/// … that shows how much variance there is so we are always aware of any shareholding disparity", 60 / 40 at Flipd;
+/// accounting/shareholders.ts). Per company; a company with none set has no figures. Posts nothing.
+model Shareholder {
+  id           String   @id @default(uuid())
+  tenantId     String
+  name         String
+  /// The agreed share in basis points (6000 = 60%). A company's shares add up to 10000.
+  shareBps     Int
+  /// Chart codes of THIS company (liability / equity) whose balances are this shareholder's funding.
+  accountCodes String[]
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("shareholders")
+}
+
 /// Finance asks the CEO to reopen the latest closed period (owner, 2026-11-24; accounting/periodReopen.ts).
 /// tenantId = the company whose books are closed. One pending per company (kept in code under an advisory lock).
 model PeriodReopenRequest {
