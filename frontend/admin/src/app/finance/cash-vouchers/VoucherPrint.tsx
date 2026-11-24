@@ -140,6 +140,22 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
               <FieldBox label="Cash given vs actually bought" value={`Given ${formatPkr(v.poCash.givenCents, { decimals: true })} · bought ${formatPkr(v.poCash.boughtCents, { decimals: true })} · returned ${formatPkr(v.poCash.returnedCents, { decimals: true })}${v.poCash.excessCents > 0 ? ` · EXTRA STILL WITH THE BUYER ${formatPkr(v.poCash.excessCents, { decimals: true })}` : v.poCash.shortCents > 0 ? ` · buyer short ${formatPkr(v.poCash.shortCents, { decimals: true })}` : ' · settled'}`} />
             )}
           </>
+        ) : v.reimbursedBill ? (
+          <>
+            <FieldBox label="Pays back for" value={`${v.reimbursedBill.po?.reference ?? 'Purchase order'} — bill ${v.reimbursedBill.billNumber} of ${v.reimbursedBill.supplier.name} (the buyer paid the supplier; this settles the bill)`} />
+            {(v.reimbursedBill.lines?.length ?? 0) > 0 && (
+              <FieldBox label="Items bought" size={(v.reimbursedBill.lines!.length > 6 ? '8pt' : '9pt')} value={
+                <span style={{ display: 'block' }}>
+                  {v.reimbursedBill.lines!.map((l) => (
+                    <span key={l.id} style={{ display: 'flex', justifyContent: 'space-between', gap: '4mm' }}>
+                      <span>{l.item} — {l.quantity.toLocaleString('en-PK', { maximumFractionDigits: 3 })} {l.unit} @ {formatPkr(l.rateCents, { decimals: true })}/{l.unit}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{formatPkr(l.totalCents, { decimals: true })}</span>
+                    </span>
+                  ))}
+                </span>
+              } />
+            )}
+          </>
         ) : <FieldBox label="Expense account" value={categoryLabel} />}
       </div>
 

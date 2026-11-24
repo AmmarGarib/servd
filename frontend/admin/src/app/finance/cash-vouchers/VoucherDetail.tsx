@@ -336,7 +336,15 @@ export function VoucherDetail({ id }: { id: string }) {
             <Fact label="In words" value={v.amountInWords || amountInWords(v.amountCents)} wide />
             <Fact label="Particulars" value={v.purpose} wide />
             {v.reimbursedBill
-              ? <Fact label="Pays back for" value={`${v.reimbursedBill.po?.reference ?? 'PO'} — bill ${v.reimbursedBill.billNumber} of ${v.reimbursedBill.supplier.name}`} wide />
+              ? (
+                <div className="sm:col-span-2">
+                  <dt className="text-xs uppercase tracking-wider text-white/40">Pays back for</dt>
+                  <dd className="text-white/85 font-semibold break-words">{`${v.reimbursedBill.po?.reference ?? 'PO'} — bill ${v.reimbursedBill.billNumber} of ${v.reimbursedBill.supplier.name}`}</dd>
+                  {(v.reimbursedBill.lines?.length ?? 0) > 0 && (
+                    <ItemsTable lines={v.reimbursedBill.lines!} totalLabel="Bill items total" totalCents={v.reimbursedBill.lines!.reduce((x, l) => x + l.totalCents, 0)} />
+                  )}
+                </div>
+              )
               : v.purchaseOrderId
               ? <PoFact v={v} />
               : <Fact label={v.assetClassId ? 'Booked to' : 'Expense account'} value={categoryLabel} />}
@@ -393,23 +401,9 @@ export function VoucherDetail({ id }: { id: string }) {
   )
 }
 
-/** A PO's cash: a link straight to the PO and the items it buys (owner, 2026-11-06). */
-function PoFact({ v }: { v: CashVoucher }) {
-  const po = v.purchaseOrder
-  const lines = po?.lines ?? []
+/** The items a PO voucher or a pay-back voucher is for. */
+function ItemsTable({ lines, totalLabel, totalCents }: { lines: Array<{ id: string; item: string; quantity: number; unit: string; rateCents: number; totalCents: number }>; totalLabel: string; totalCents: number }) {
   return (
-    <div className="sm:col-span-2">
-      <dt className="text-xs uppercase tracking-wider text-white/40">For purchase order</dt>
-      <dd className="text-white/85 font-semibold break-words">
-        <Link href={`/procurement?po=${v.purchaseOrderId}`} className="underline underline-offset-2" style={{ color: 'var(--erp-primary)' }}>
-          {po?.reference ?? 'Open the purchase order'}
-        </Link>
-        {po ? ` — ${po.supplier.name}` : ''}
-        <span className="block text-xs font-normal text-white/55 mt-0.5">
-          Paid into the buyer&rsquo;s petty-cash box{v.toBoxName ? ` (${v.toBoxName})` : ''}, not an expense — the goods are booked when the PO is received.
-        </span>
-      </dd>
-      {lines.length > 0 && (
         <div className="mt-2 overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -432,13 +426,32 @@ function PoFact({ v }: { v: CashVoucher }) {
             </tbody>
             <tfoot>
               <tr className="border-t border-white/10">
-                <td colSpan={3} className="py-1.5 text-right text-white/55 font-semibold">PO total</td>
-                <td className="py-1.5 text-right text-white/90 font-black whitespace-nowrap">PKR {formatPkr(po?.totalCents ?? lines.reduce((a, l) => a + l.totalCents, 0), { decimals: true })}</td>
+                <td colSpan={3} className="py-1.5 text-right text-white/55 font-semibold">{totalLabel}</td>
+                <td className="py-1.5 text-right text-white/90 font-black whitespace-nowrap">PKR {formatPkr(totalCents, { decimals: true })}</td>
               </tr>
             </tfoot>
           </table>
         </div>
-      )}
+  )
+}
+
+/** A PO's cash: a link straight to the PO and the items it buys (owner, 2026-11-06). */
+function PoFact({ v }: { v: CashVoucher }) {
+  const po = v.purchaseOrder
+  const lines = po?.lines ?? []
+  return (
+    <div className="sm:col-span-2">
+      <dt className="text-xs uppercase tracking-wider text-white/40">For purchase order</dt>
+      <dd className="text-white/85 font-semibold break-words">
+        <Link href={`/procurement?po=${v.purchaseOrderId}`} className="underline underline-offset-2" style={{ color: 'var(--erp-primary)' }}>
+          {po?.reference ?? 'Open the purchase order'}
+        </Link>
+        {po ? ` — ${po.supplier.name}` : ''}
+        <span className="block text-xs font-normal text-white/55 mt-0.5">
+          Paid into the buyer&rsquo;s petty-cash box{v.toBoxName ? ` (${v.toBoxName})` : ''}, not an expense — the goods are booked when the PO is received.
+        </span>
+      </dd>
+      {lines.length > 0 && <ItemsTable lines={lines} totalLabel="PO total" totalCents={po?.totalCents ?? lines.reduce((x, l) => x + l.totalCents, 0)} />}
       <PoCashCheck v={v} />
     </div>
   )

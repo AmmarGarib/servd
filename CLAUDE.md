@@ -2211,6 +2211,11 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `recordPettyCashReturnTx` out of the buyer's box, Dr 1010 | bank / Cr 1011; `returnedCents`; 422 `MORE_THAN_EXTRA`,
   409 `NOTHING_TO_RETURN` / `PO_NOT_BOUGHT_YET`), and an open flag `po_cash_excess` (high) names it until nothing is
   left. Tests: `tests/poApprovalChain.test.ts`.
+- **A pay-back voucher lists what was bought (owner, 2026-11-24: "Not showing PO items in voucher").**
+  `trustops/payBackItems.ts payBackBillOf` (the bill's lines, read inside the VOUCHER's company; quantity in the PO
+  line's order unit where there is one) feeds `reimbursedBill.lines` on the voucher detail, the on-screen items table,
+  the print ("Pays back for" + "Items bought") and the PDF / Excel export. A voided pay-back reads `voidedBillId`.
+  Tests: `tests/poApprovalChain.test.ts`.
 - **A paid PO advance pays its bill by itself (owner, 2026-11-20: "route those cash vouchers to supplier bills and update
   the status" → "Yes, do it").** `procurement/poAdvanceSettle.ts` (contract in its header). A bill of an old-advance PO
   whose voucher was PAID into the buyer's box is paid from THAT box through the manual step's own engine

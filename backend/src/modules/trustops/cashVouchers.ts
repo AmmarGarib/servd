@@ -599,11 +599,8 @@ export async function detailOf(id: string, viewer: Viewer) {
     /** A PO's cash vs what the buyer really bought (owner, 2026-11-18; procurement/poCashSync.ts). */
     poCash: v.purchaseOrderId ? await (await import('../procurement/poCashSync.js')).poCashFigures(prisma, v.id) : null,
     /** The buyer's pay-back (owner, 2026-11-18): the bill it pays, and its PO. */
-    reimbursedBill: v.reimbursesBillId
-      ? await prisma.supplierBill.findFirst({
-        where: { id: v.reimbursesBillId, supplier: { tenantId: v.tenantId } },
-        select: { id: true, billNumber: true, status: true, supplier: { select: { name: true } }, po: { select: { id: true, reference: true } } },
-      })
+    reimbursedBill: (v.reimbursesBillId ?? v.voidedBillId)
+      ? await (await import('./payBackItems.js')).payBackBillOf(prisma, (v.reimbursesBillId ?? v.voidedBillId)!, v.tenantId)
       : null,
     /** On credit: the supplier bill finance's pay booked (paid later through Supplier payments). */
     supplierBill: v.supplierBillId

@@ -281,6 +281,15 @@ describe('the whole flow: CEO → buyer → requester → GRN → finance → CE
     const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { reimbursesBillId: billId } })
     voucherId = v.id
     expect(v).toMatchObject({ tenantId: T.A, status: 'approved', amountCents: 3_600, payeeUserId: U.buyerA!.id, directorSignedById: U.ceoA!.id, financeApprovedById: U.finA!.id, purchaseOrderId: null })
+    // The voucher lists what was bought (owner, 2026-11-24: "Not showing PO items in voucher"): the bill's items.
+    const shown = (await call('finA', 'GET', `/trustops/cash-vouchers/${v.id}`)).json()
+    expect(shown.reimbursedBill.id).toBe(billId)
+    expect(shown.reimbursedBill.lines.length).toBeGreaterThan(0)
+    expect(shown.reimbursedBill.lines.reduce((a: number, l: { totalCents: number }) => a + l.totalCents, 0)).toBe(3_600)
+    expect(shown.reimbursedBill.lines[0]).toMatchObject({ item: expect.any(String), quantity: expect.any(Number), unit: expect.any(String) })
+    expect((await call('finB', 'GET', `/trustops/cash-vouchers/${v.id}`)).statusCode).toBe(404)
+    const pdf = await call('finA', 'GET', `/trustops/cash-vouchers/${v.id}/export.pdf`)
+    expect(pdf.statusCode).toBe(200)
     await flushNotifications()
     expect(await prisma.staffNotification.count({ where: { userId: U.finA!.id, entityId: v.id } })).toBeGreaterThan(0)
     // Locked: never edited; another company's finance 404; Supplier payments may not pay the bill around it.

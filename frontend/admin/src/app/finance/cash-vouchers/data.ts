@@ -242,7 +242,7 @@ export interface CashVoucher {
   /** The buyer's pay-back (owner, 2026-11-18): the supplier bill it settles, and that bill's PO. */
   reimbursesBillId?: string | null
   voidedBillId?: string | null
-  reimbursedBill?: { id: string; billNumber: string; status: string; supplier: { name: string }; po: { id: string; reference: string | null } | null } | null
+  reimbursedBill?: { id: string; billNumber: string; status: string; supplier: { name: string }; po: { id: string; reference: string | null } | null; lines?: Array<{ id: string; item: string; quantity: number; unit: string; rateCents: number; totalCents: number }> } | null
   /** A PO voucher once paid: the buyer's box the cash went into. */
   toBoxName?: string | null
   payAccountCode?: string | null

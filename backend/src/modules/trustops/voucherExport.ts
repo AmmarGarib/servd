@@ -137,6 +137,20 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
     })
   }
 
+  // The buyer's pay-back (owner, 2026-11-24: "Not showing PO items in voucher"): the items of the bill it pays.
+  const payBackBillId = v.reimbursesBillId ?? v.voidedBillId
+  if (!v.purchaseOrderId && payBackBillId) {
+    const bill = await (await import('./payBackItems.js')).payBackBillOf(prisma, payBackBillId, tenantId)
+    if (bill) {
+      accountLabel = 'Pays back for'
+      account = `${bill.po?.reference ?? 'Purchase order'} - bill ${bill.billNumber} of ${bill.supplier.name} (the buyer paid the supplier; this settles the bill)`
+      poItems = bill.lines.map((l) => {
+        const qty = l.quantity.toLocaleString('en-PK', { maximumFractionDigits: 3 })
+        return `${l.item}: ${qty} ${l.unit} @ PKR ${formatPkr(l.rateCents, { decimals: true })}/${l.unit} = PKR ${formatPkr(l.totalCents, { decimals: true })}`
+      })
+    }
+  }
+
   const discountCents = v.discountCents ?? 0
   const totalCents = v.amountCents
   const grossCents = v.grossCents ?? totalCents + discountCents
@@ -305,7 +319,7 @@ async function renderPdf(d: VoucherDoc, files: Map<string, Uint8Array> = new Map
   row('Payee', d.payee)
   row('Particulars', d.particulars)
   row(d.accountLabel, d.account)
-  d.poItems.forEach((it, i) => row(i === 0 ? 'PO items' : '', it))
+  d.poItems.forEach((it, i) => row(i === 0 ? 'Items' : '', it))
   y -= 16
 
   // Amount table: Amount | Discount | Total
@@ -425,7 +439,7 @@ function renderXlsx(d: VoucherDoc): Buffer {
     [{ v: 'Payee', s: 'bold' }, d.payee],
     [{ v: 'Particulars', s: 'bold' }, { v: d.particulars, s: 'wrap' }],
     [{ v: d.accountLabel, s: 'bold' }, d.account],
-    ...d.poItems.map((it, i): XlsxCell[] => [{ v: i === 0 ? 'PO items' : '', s: 'bold' }, { v: it, s: 'wrap' }]),
+    ...d.poItems.map((it, i): XlsxCell[] => [{ v: i === 0 ? 'Items' : '', s: 'bold' }, { v: it, s: 'wrap' }]),
     [],
     [{ v: 'Amount', s: 'header' }, { v: 'Discount', s: 'header' }, { v: 'Total', s: 'header' }],
     [{ v: rupees(d.grossCents), s: 'currency' }, { v: rupees(d.discountCents), s: 'currency' }, { v: rupees(d.totalCents), s: 'boldCurrency' }],
