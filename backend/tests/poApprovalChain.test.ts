@@ -607,6 +607,59 @@ describe('the requester sends it back; a partial delivery makes a second GRN', (
   })
 })
 
+describe('a pay-back paid with a wrong sales tax is corrected (owner, 2026-11-24)', () => {
+  it('finance asks with the correct tax → the CEO approves → pay undone, tax credited, a fresh voucher for the right amount', async () => {
+    const po = await chefPo()
+    await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/submit`)
+    expect((await call('ceoA', 'POST', `/procurement/purchase-orders/${po.id}/approve`, { payByCash: true })).statusCode).toBe(200)
+    await upload('buyerA', po.id)
+    const c = await call('buyerA', 'POST', `/procurement/purchase-orders/${po.id}/complete`, { invoiceNumber: `${P}-WTX`, invoiceDate: today(), taxCents: 12_300, taxAuthority: 'srb' })
+    expect(c.statusCode, c.body).toBe(200)
+    const cf = await call('chefA', 'POST', `/procurement/purchase-orders/${po.id}/confirm-receipt`, { locationId: locA, lines: po.lines.map((l) => ({ poLineId: l.id, quantityReceived: l.quantityOrdered })) })
+    expect(cf.statusCode, cf.body).toBe(201)
+    const grn = cf.json().grn.id as string
+    expect((await call('finA', 'POST', `/procurement/grns/${grn}/finance-pass`)).statusCode).toBe(200)
+    const ap = await call('ceoA', 'POST', `/procurement/grns/${grn}/approve`)
+    expect(ap.statusCode, ap.body).toBe(200)
+    const billId = ap.json().supplierBillId as string
+    const bill0 = await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })
+    const items = Number(bill0.subtotalCents)
+    const pb = await prisma.cashVoucher.findUniqueOrThrow({ where: { reimbursesBillId: billId } })
+    expect(pb.amountCents).toBe(items + 12_300)
+    // The voucher shows the tax, so items + tax = the amount.
+    const shown = (await call('finA', 'GET', `/trustops/cash-vouchers/${pb.id}`)).json()
+    expect(shown.reimbursedBill).toMatchObject({ itemsCents: items, taxCents: 12_300, totalCents: items + 12_300 })
+    expect((await call('finA', 'POST', `/trustops/cash-vouchers/${pb.id}/pay`, { source: 'cash_on_hand', classification: 'official', taxStatus: 'not_applicable' })).statusCode).toBe(200)
+
+    // Refused: not less than the bill's tax; another company 404. Finance asks — nothing moves.
+    expect(code(await call('finA', 'POST', `/trustops/cash-vouchers/${pb.id}/void`, { reason: 'Invoice carried no sales tax', correctTaxCents: 12_300 }))).toBe('NOTHING_TO_CORRECT')
+    expect((await call('finB', 'POST', `/trustops/cash-vouchers/${pb.id}/void`, { reason: 'Invoice carried no sales tax', correctTaxCents: 0 })).statusCode).toBe(404)
+    const ask = await call('finA', 'POST', `/trustops/cash-vouchers/${pb.id}/void`, { reason: 'Invoice carried no sales tax', correctTaxCents: 0 })
+    expect(ask.statusCode, ask.body).toBe(202)
+    expect(Number((await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })).paidCents)).toBe(items + 12_300)
+    const cash = await netDebit(T.A, '1010'); const ap2010 = await netDebit(T.A, '2010'); const tax = await netDebit(T.A, '1322')
+    const yes = await call('ceoA', 'POST', `/trustops/cash-vouchers/void-requests/${ask.json().request.id}/approve`, {})
+    expect(yes.statusCode, yes.body).toBe(200)
+    // Cash back in full, input tax taken off, the bill owes the items only, a fresh voucher for exactly that.
+    expect(await netDebit(T.A, '1010') - cash).toBe(items + 12_300)
+    expect(await netDebit(T.A, '1322') - tax).toBe(-12_300)
+    expect(await netDebit(T.A, '2010') - ap2010).toBe(-items)
+    const bill = await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })
+    expect([Number(bill.paidCents), Number(bill.creditedCents), bill.status]).toEqual([0, 12_300, 'partially_paid'])
+    const cn = await prisma.supplierBill.findFirstOrThrow({ where: { originalBillId: billId, kind: 'credit_note' } })
+    expect([Number(cn.subtotalCents), Number(cn.taxCents), cn.status]).toEqual([0, 12_300, 'applied'])
+    const fresh = await prisma.cashVoucher.findUniqueOrThrow({ where: { reimbursesBillId: billId } })
+    expect(fresh.id).not.toBe(pb.id)
+    expect(fresh).toMatchObject({ status: 'approved', amountCents: items })
+    const repay = await call('finA', 'POST', `/trustops/cash-vouchers/${fresh.id}/pay`, { source: 'cash_on_hand', classification: 'official', taxStatus: 'not_applicable' })
+    expect(repay.statusCode, repay.body).toBe(200)
+    expect((await prisma.supplierBill.findUniqueOrThrow({ where: { id: billId } })).status).toBe('paid')
+    expect(await netDebit(T.A, '1010') - cash).toBe(12_300)   // net: the buyer handed the extra back
+    // A plain cash voucher never takes a tax correction.
+    expect(code(await call('ceoA', 'POST', `/trustops/cash-vouchers/${fresh.id}/void`, { reason: 'Trying it on the fresh one', correctTaxCents: 0 }))).toBe('NOTHING_TO_CORRECT')
+  })
+})
+
 describe("the CEO's return / reject at approval, and editing a draft", () => {
   it('return needs a note (→ draft, editable, resubmitted); reject needs a reason (→ cancelled)', async () => {
     const po = await chefPo()

@@ -15,6 +15,7 @@ interface Row {
   tenantId: string
   voucherId: string
   reason: string
+  correctTaxCents?: number | null
   requestedById: string
   createdAt: string
   voucherNumber: string | null
@@ -56,6 +57,7 @@ export const cashVoucherVoids: ApprovalProvider = {
       facts: [
         { label: 'Paid from', value: fromLabel(r) },
         { label: 'What happens', value: undoLabel(r) },
+        ...(r.correctTaxCents != null ? [{ label: 'Sales tax corrected to', value: `PKR ${(r.correctTaxCents / 100).toLocaleString('en-PK')} — the extra is credited on the bill and a new pay-back voucher is raised for the right amount` }] : []),
         { label: 'Company', value: r.companyName ?? '—' },
         { label: 'Reason', value: r.reason },
         { label: 'Asked by', value: r.requestedByName ?? '—' },

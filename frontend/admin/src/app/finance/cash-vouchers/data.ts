@@ -286,7 +286,7 @@ export interface CashVoucher {
   voidBlockedReason?: string | null
   canSeeVoid?: boolean
   voidEffect?: string | null
-  voidRequest?: { id: string; reason: string; requestedById: string; requestedByName: string | null; createdAt: string; canWithdraw: boolean; canDecide: boolean } | null
+  voidRequest?: { id: string; reason: string; correctTaxCents?: number | null; requestedById: string; requestedByName: string | null; createdAt: string; canWithdraw: boolean; canDecide: boolean } | null
   voidedAt?: string | null
   voidedByName?: string | null
   voidReason?: string | null

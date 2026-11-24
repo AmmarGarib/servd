@@ -210,7 +210,7 @@ async function voidPoAdvanceTx(tx: Prisma.TransactionClient, v: VoidRow, actorId
 }
 
 /** Void a buyer's pay-back inside `tx`: the supplier payment undone, the bill owes again, a fresh pay-back raised. */
-async function voidPayBackTx(tx: Prisma.TransactionClient, v: VoidRow, actorId: string, reason: string): Promise<{ entryId: string | null; boxId: string | null; raised: Array<{ id: string; number: string }> }> {
+async function voidPayBackTx(tx: Prisma.TransactionClient, v: VoidRow, actorId: string, reason: string, correctTaxCents: number | null = null): Promise<{ entryId: string | null; boxId: string | null; raised: Array<{ id: string; number: string }> }> {
   const { voidPayBackPaymentTx } = await import('../procurement/service.js')
   const p = (await payBackPaymentOf(tx, v))!
   const { entryId } = await voidPayBackPaymentTx(tx, p.id, actorId, `${v.number} voided: ${reason}`.slice(0, 200))
@@ -224,6 +224,14 @@ async function voidPayBackTx(tx: Prisma.TransactionClient, v: VoidRow, actorId: 
   }
   const billId = v.reimbursesBillId!
   await tx.cashVoucher.update({ where: { id: v.id }, data: { reimbursesBillId: null, voidedBillId: billId } })
+  // The bill's sales tax was wrong (owner, 2026-11-24): the excess is credited on the bill (a tax-only credit note,
+  // Dr 2010 / Cr input tax) BEFORE the fresh pay-back is raised, so the new voucher is for the right amount.
+  if (correctTaxCents != null) {
+    const { billTaxLeftCents, createTaxCreditTx } = await import('../procurement/creditNotes.js')
+    const excess = (await billTaxLeftCents(tx, billId)) - correctTaxCents
+    if (!(excess > 0)) throw new AppError('NOTHING_TO_CORRECT', 'The bill does not carry more sales tax than that', 422)
+    await createTaxCreditTx(tx, { billId, taxCents: excess, note: `${v.number}: ${reason}`, createdBy: actorId })
+  }
   const raised: Array<{ id: string; number: string }> = []
   const g = await tx.goodsReceipt.findFirst({
     where: { supplierBillId: billId, poId: { not: null } },
@@ -238,16 +246,17 @@ async function voidPayBackTx(tx: Prisma.TransactionClient, v: VoidRow, actorId: 
 }
 
 /** Void `voucherId` inside `tx` (the CEO's authority): put the cash back / reverse the pay, mark it voided. */
-export async function voidVoucherTx(tx: Prisma.TransactionClient, voucherId: string, actorId: string, reason: string): Promise<{ entryId: string | null; boxId: string | null; raised: Array<{ id: string; number: string }> }> {
+export async function voidVoucherTx(tx: Prisma.TransactionClient, voucherId: string, actorId: string, reason: string, opts: { correctTaxCents?: number | null } = {}): Promise<{ entryId: string | null; boxId: string | null; raised: Array<{ id: string; number: string }> }> {
   await tx.$queryRaw`SELECT id FROM cash_vouchers WHERE id = ${voucherId} FOR UPDATE`
   const v = await tx.cashVoucher.findUniqueOrThrow({ where: { id: voucherId }, select: VOID_SELECT })
   const block = await voidBlockOf(tx, v)
   if (block) throw block
+  if (opts.correctTaxCents != null && !v.reimbursesBillId) throw new AppError('TAX_CORRECTION_ONLY_PAYBACK', 'Only a buyer\'s pay-back voucher carries a bill\'s sales tax', 422)
   let entryId: string | null
   let boxId: string | null = null
   let raised: Array<{ id: string; number: string }> = []
   if (v.purchaseOrderId || v.reimbursesBillId) {
-    const r = v.purchaseOrderId ? await voidPoAdvanceTx(tx, v, actorId, reason) : await voidPayBackTx(tx, v, actorId, reason)
+    const r = v.purchaseOrderId ? await voidPoAdvanceTx(tx, v, actorId, reason) : await voidPayBackTx(tx, v, actorId, reason, opts.correctTaxCents ?? null)
     entryId = r.entryId; boxId = r.boxId; raised = r.raised
   } else if (v.paySource === 'box') {
     const m = await tx.pettyCashMovement.findUniqueOrThrow({ where: { id: v.pettyCashMovementId! }, select: { boxId: true } })
@@ -295,7 +304,7 @@ export async function voidStateOf(v: VoidRow & { voidedById: string | null; void
     canSeeVoid: paid && viewer.financeApprover,
     voidEffect: paid ? voidEffectOf(v) : null,
     voidRequest: pending
-      ? { id: pending.id, reason: pending.reason, requestedById: pending.requestedById, requestedByName: names.get(pending.requestedById) ?? null, createdAt: pending.createdAt,
+      ? { id: pending.id, reason: pending.reason, correctTaxCents: pending.correctTaxCents, requestedById: pending.requestedById, requestedByName: names.get(pending.requestedById) ?? null, createdAt: pending.createdAt,
         canWithdraw: viewer.isAdmin || pending.requestedById === viewer.id, canDecide: viewer.isAdmin }
       : null,
     voidedByName: v.voidedById ? names.get(v.voidedById) ?? null : null,
@@ -317,17 +326,23 @@ export async function voucherVoidRoutes(fastify: FastifyInstance) {
 
   // POST /:id/void {reason} — finance asks (202); the CEO voids at once (200).
   fastify.post<{ Params: { id: string } }>('/:id/void', { preHandler: requireAuth(...ALL_STAFF) }, async (req, reply) => {
-    const { reason } = z.object({ reason: REASON }).parse(req.body ?? {})
+    const { reason, correctTaxCents = null } = z.object({ reason: REASON, correctTaxCents: z.number().int().min(0).max(2_000_000_000).nullable().optional() }).parse(req.body ?? {})
     const loaded = await loadVoucher(req, req.params.id)
     const viewer = await viewerOf(req)
     if (!viewer.financeApprover) throw new ForbiddenError('Only finance (or the CEO) can void a paid cash voucher')
     const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: loaded.id }, select: VOID_SELECT })
     const block = await voidBlockOf(prisma, v)
     if (block) throw block
+    // "The sales tax was wrong": only a pay-back voucher, and only less tax than the bill still carries.
+    if (correctTaxCents != null) {
+      if (!v.reimbursesBillId) throw new AppError('TAX_CORRECTION_ONLY_PAYBACK', 'Only a buyer\'s pay-back voucher carries a bill\'s sales tax', 422)
+      const left = await (await import('../procurement/creditNotes.js')).billTaxLeftCents(prisma, v.reimbursesBillId)
+      if (!(left > correctTaxCents)) throw new AppError('NOTHING_TO_CORRECT', `The bill carries ${fmtPkrCents(left)} of sales tax — enter a smaller figure to correct it`, 422)
+    }
 
     if (viewer.isAdmin) {
       const out = await prisma.$transaction(async (tx) => {
-        const r = await voidVoucherTx(tx, v.id, viewer.id, reason)
+        const r = await voidVoucherTx(tx, v.id, viewer.id, reason, { correctTaxCents })
         await tx.cashVoucherVoidRequest.updateMany({
           where: { voucherId: v.id, status: 'pending' },
           data: { status: 'approved', decidedById: viewer.id, decidedAt: new Date(), decisionNote: 'Voided by the CEO directly' },
@@ -335,18 +350,18 @@ export async function voucherVoidRoutes(fastify: FastifyInstance) {
         return r
       })
       if (v.purchaseOrderId) await (await import('../procurement/poCashSync.js')).refreshPoCashExcessFlag(v.id, viewer.id).catch(() => undefined)
-      await auditVoid(req, 'cash_voucher.void', v.tenantId, 'CashVoucher', v.id, { number: v.number, amountCents: v.amountCents, reason, entryId: out.entryId, boxId: out.boxId, payBacksRaised: out.raised, direct: true })
+      await auditVoid(req, 'cash_voucher.void', v.tenantId, 'CashVoucher', v.id, { number: v.number, amountCents: v.amountCents, reason, entryId: out.entryId, boxId: out.boxId, payBacksRaised: out.raised, direct: true, ...(correctTaxCents != null && { correctTaxCents }) })
       return reply.status(200).send(await detailOf(v.id, viewer))
     }
 
     let row
     try {
-      row = await prisma.cashVoucherVoidRequest.create({ data: { tenantId: v.tenantId, voucherId: v.id, reason, requestedById: viewer.id } })
+      row = await prisma.cashVoucherVoidRequest.create({ data: { tenantId: v.tenantId, voucherId: v.id, reason, requestedById: viewer.id, correctTaxCents } })
     } catch (err) {
       if ((err as { code?: string }).code === 'P2002') throw new AppError('VOID_PENDING', `A void of ${v.number} is already waiting for the CEO.`, 409)
       throw err
     }
-    await auditVoid(req, 'cash_voucher.void_request', v.tenantId, 'CashVoucherVoidRequest', row.id, { voucherId: v.id, number: v.number, amountCents: v.amountCents, reason })
+    await auditVoid(req, 'cash_voucher.void_request', v.tenantId, 'CashVoucherVoidRequest', row.id, { voucherId: v.id, number: v.number, amountCents: v.amountCents, reason, ...(correctTaxCents != null && { correctTaxCents }) })
     approvalWaiting('cash_voucher_void', row.id, { round: row.createdAt.toISOString(), actorId: viewer.id })
     return reply.status(202).send({ pendingApproval: true, request: row })
   })
@@ -416,12 +431,12 @@ export async function voucherVoidRoutes(fastify: FastifyInstance) {
         data: { status: 'approved', decidedById: req.staffUser!.id, decidedAt, decisionNote: body.note ?? null },
       })
       if (claimed.count === 0) throw notPending()
-      return voidVoucherTx(tx, r.voucherId, req.staffUser!.id, r.reason)
+      return voidVoucherTx(tx, r.voucherId, req.staffUser!.id, r.reason, { correctTaxCents: r.correctTaxCents })
     })
     const v = await prisma.cashVoucher.findUniqueOrThrow({ where: { id: r.voucherId }, select: { number: true, amountCents: true, purchaseOrderId: true } })
     if (v.purchaseOrderId) await (await import('../procurement/poCashSync.js')).refreshPoCashExcessFlag(r.voucherId, req.staffUser!.id).catch(() => undefined)
     await auditVoid(req, 'cash_voucher.void', r.tenantId, 'CashVoucher', r.voucherId, {
-      number: v.number, amountCents: v.amountCents, reason: r.reason, entryId: out.entryId, boxId: out.boxId, payBacksRaised: out.raised, requestId: r.id, requestedBy: r.requestedById,
+      number: v.number, amountCents: v.amountCents, reason: r.reason, entryId: out.entryId, boxId: out.boxId, payBacksRaised: out.raised, requestId: r.id, requestedBy: r.requestedById, ...(r.correctTaxCents != null && { correctTaxCents: r.correctTaxCents }),
     })
     await auditApproval(req, {
       type: 'cash_voucher_void', id: r.id, tenantId: r.tenantId, decision: 'approve', grant, entity: 'CashVoucherVoidRequest',

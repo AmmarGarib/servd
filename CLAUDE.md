@@ -2216,6 +2216,17 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   line's order unit where there is one) feeds `reimbursedBill.lines` on the voucher detail, the on-screen items table,
   the print ("Pays back for" + "Items bought") and the PDF / Excel export. A voided pay-back reads `voidedBillId`.
   Tests: `tests/poApprovalChain.test.ts`.
+- **A wrong sales tax on a pay-back is corrected through its void (owner, 2026-11-24: a pay-back was paid PKR 123 over the
+  items — "this is a serious financial threat"; "Yes, build it").** The pay-back pays the BILL: items + the invoice's
+  sales tax (shown on the voucher: `reimbursedBill.itemsCents / taxCents / totalCents`). `POST
+  /trustops/cash-vouchers/:id/void {reason, correctTaxCents}` (a pay-back voucher only — 422
+  `TAX_CORRECTION_ONLY_PAYBACK`; less than the bill's uncredited tax — 422 `NOTHING_TO_CORRECT`; finance 202 → the CEO
+  approves, stored on the request as `correctTaxCents`, migration `20261124100000`; the CEO's own at once): the void as
+  before, then `procurement/creditNotes.ts createTaxCreditTx` — a tax-only credit note `<bill>-TAX-n` (Dr 2010 / Cr the
+  input-tax account the bill debited), applied to the bill — BEFORE the fresh pay-back voucher is raised, so it is
+  for items + the correct tax. Finance pays the new one; net, the buyer hands the extra back. **A returned GRN's
+  sales-tax box starts EMPTY** (`PoWorkflow.tsx FixCard`; a note names the old figure) and shows items + tax = the total
+  to be billed before resubmitting. Tests: `tests/poApprovalChain.test.ts`.
 - **A paid PO advance pays its bill by itself (owner, 2026-11-20: "route those cash vouchers to supplier bills and update
   the status" → "Yes, do it").** `procurement/poAdvanceSettle.ts` (contract in its header). A bill of an old-advance PO
   whose voucher was PAID into the buyer's box is paid from THAT box through the manual step's own engine

@@ -504,6 +504,8 @@ model CashVoucherVoidRequest {
   voucherId     String
   reason        String
   status        String    @default("pending") // pending | approved | rejected | withdrawn
+  /// A pay-back voucher only: the bill's CORRECT sales tax — the excess is credited before the fresh voucher is raised.
+  correctTaxCents Int?
   requestedById String
   decidedById   String?
   decidedAt     DateTime?

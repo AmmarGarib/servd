@@ -430,7 +430,9 @@ function FixCard({ g }: { g: WfFix }) {
   // per-gram rate box — 400 g of butter became PKR 544,000 — twice). The server works the rate out (amountCents).
   const [amounts, setAmounts] = useState<Record<string, number>>({})
   const [noQtys, setNoQtys] = useState<Record<string, string>>({})
-  const [taxCents, setTaxCents] = useState(g.invoiceTaxCents ?? 0)
+  // The sales tax starts EMPTY on a correction (owner, 2026-11-24: a figure typed the first time rode through a
+  // re-priced GRN and the buyer was paid back PKR 123 too much) — typed again only if the invoice really carries it.
+  const [taxCents, setTaxCents] = useState(0)
   const [taxBy, setTaxBy] = useState(g.invoiceTaxAuthority ?? '')
   const onGrn = new Set(g.lines.map((l) => l.poLineId))
   const lines = g.po.lines.filter((l) => onGrn.has(l.id))
@@ -458,6 +460,27 @@ function FixCard({ g }: { g: WfFix }) {
       </div>
       <RateFields lines={lines} rates={rates} setRates={setRates} qtys={noQtys} setQtys={setNoQtys} amounts={amounts} setAmounts={setAmounts} lockQty />
       <TaxFields cents={taxCents} setCents={setTaxCents} authority={taxBy} setAuthority={setTaxBy} />
+      {!!g.invoiceTaxCents && taxCents === 0 && (
+        <p className="text-xs text-s-muted">Last time sales tax of {fmtPkrWhole(g.invoiceTaxCents)} was entered. It has been cleared — type it again only if the supplier&rsquo;s invoice really shows it.</p>
+      )}
+      {(() => {
+        // What this GRN will be billed for — and, on a cash PO, what the buyer is paid back.
+        const items = lines.reduce((t, l) => {
+          const ordered = round6(l.quantityOrdered / shown(l).factor)
+          const whole = amounts[l.id] ?? Math.round(ordered * shown(l).rate)
+          const got = g.lines.find((x) => x.poLineId === l.id)?.receivedQty
+          const share = got != null && l.quantityOrdered > 0 ? Math.min(1, got / l.quantityOrdered) : 1
+          return t + Math.round(whole * share)
+        }, 0)
+        return (
+          <div className="rounded-xl border border-s-border p-3 text-sm space-y-1" aria-live="polite">
+            <div className="flex justify-between gap-3"><span className="text-s-muted">Items received</span><span className="font-semibold text-s-text">{fmtPkrWhole(items)}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-s-muted">Sales tax on the invoice</span><span className="font-semibold text-s-text">{fmtPkrWhole(taxCents)}</span></div>
+            <div className="flex justify-between gap-3 border-t border-s-border pt-1"><span className="font-bold text-s-text">Total to be billed{g.po.payByCash ? ' and paid back' : ''}</span><span className="font-black text-s-text">{fmtPkrWhole(items + taxCents)}</span></div>
+            <p className="text-[11px] text-s-muted">Check this against the supplier&rsquo;s invoice before you send it.</p>
+          </div>
+        )
+      })()}
       {re.error && <p role="alert" className="text-xs text-s-red">{errOf(re.error)}</p>}
       <Button size="sm" disabled={!invoiceNumber.trim() || re.isPending} onClick={() => re.mutate()}>Resubmit to finance</Button>
     </Card>

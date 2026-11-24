@@ -877,6 +877,11 @@ function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean;
   const [reason, setReason] = useState('')
   const [rejectNote, setRejectNote] = useState('')
   const [rejecting, setRejecting] = useState(false)
+  // A pay-back paid with a wrong sales tax (owner, 2026-11-24): the void carries the CORRECT tax, the extra is credited
+  // on the bill and the new pay-back voucher is raised for the right amount.
+  const billTax = v.reimbursesBillId ? (v.reimbursedBill?.taxCents ?? 0) : 0
+  const [fixTax, setFixTax] = useState(false)
+  const [rightTax, setRightTax] = useState(0)
   const pin = v.tenantId ? { tenantId: v.tenantId } : undefined
   const m = useMutation({
     mutationFn: ({ path, body }: { path: string; body: Record<string, unknown> }) => api.post<unknown>(`${CV_BASE}/${path}`, body, pin),
@@ -886,7 +891,7 @@ function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean;
         ? (isCeo ? 'Voucher voided — the cash is back and the expense undone.' : 'Void request sent to the CEO.')
         : path.endsWith('/approve') ? 'Voucher voided — the cash is back and the expense undone.'
           : path.endsWith('/reject') ? 'Void request rejected — the voucher stays as it is.' : 'Void request withdrawn.')
-      setOpen(false); setReason(''); setRejecting(false); setRejectNote(''); onDone()
+      setOpen(false); setReason(''); setRejecting(false); setRejectNote(''); setFixTax(false); setRightTax(0); onDone()
     },
   })
   const where = v.paySource === 'box' ? `back into ${v.paidFrom ?? 'the petty-cash box'}` : v.paySource === 'bank' ? `back to ${v.paidFrom ?? 'the bank'}` : 'back to cash on hand'
@@ -912,6 +917,9 @@ function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean;
       <div className="rounded-2xl p-4 border space-y-2" style={{ background: 'color-mix(in srgb, var(--erp-warning) 12%, transparent)', borderColor: 'var(--erp-warning)' }}>
         <p className="text-sm font-black text-white/90">Void waiting for the CEO{r.requestedByName ? ` — asked by ${r.requestedByName}` : ''} · {fmtDateTime(r.createdAt)}</p>
         <p className="text-sm text-white/80 whitespace-pre-wrap">{r.reason}</p>
+        {r.correctTaxCents != null && (
+          <p className="text-sm font-semibold text-white/85">Sales tax corrected to PKR {formatPkr(r.correctTaxCents, { decimals: true })} — the extra is credited on the bill and the new pay-back voucher is raised for the right amount.</p>
+        )}
         <p className="text-xs text-s-muted">Nothing has changed yet. Once approved, {effect}.</p>
         <div className="flex flex-wrap gap-2">
           {r.canDecide && (
@@ -963,17 +971,34 @@ function VoidPanel({ v, isKeeper, onDone }: { v: CashVoucher; isKeeper: boolean;
         <>
           <FieldLabel>Why is this voucher voided? (at least 10 characters — kept in the history)</FieldLabel>
           <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} maxLength={500} autoFocus className={fieldCls} />
+          {billTax > 0 && (
+            <div className="rounded-xl p-3 space-y-2" style={{ border: '1px solid var(--border)' }}>
+              <label className="flex items-start gap-2 text-sm text-white/85 cursor-pointer">
+                <input type="checkbox" className="mt-1" checked={fixTax} onChange={(e) => setFixTax(e.target.checked)} />
+                <span>The sales tax on this bill is wrong (it carries PKR {formatPkr(billTax, { decimals: true })})</span>
+              </label>
+              {fixTax && (
+                <>
+                  <FieldLabel>Correct sales tax on the invoice (PKR — 0 if it carries none)</FieldLabel>
+                  <MoneyInput value={rightTax} onChange={setRightTax} className={fieldCls} ariaLabel="Correct sales tax in rupees" />
+                  {rightTax >= billTax
+                    ? <p className="text-xs text-s-red">Enter less than PKR {formatPkr(billTax, { decimals: true })} — the bill already carries that.</p>
+                    : <p className="text-xs text-s-muted">PKR {formatPkr(billTax - rightTax, { decimals: true })} is taken off the bill, and the new pay-back voucher is raised for PKR {formatPkr(v.amountCents - (billTax - rightTax), { decimals: true })}. Pay that one; the buyer hands back the difference.</p>}
+                </>
+              )}
+            </div>
+          )}
           <p className="text-xs text-s-muted">Make sure the PKR {formatPkr(v.amountCents)} has really come back before {isCeo ? 'voiding' : 'asking'}.</p>
           <div className="flex gap-2">
-            <Button variant="danger" size="sm" type="submit" disabled={m.isPending || reason.trim().length < 10}
+            <Button variant="danger" size="sm" type="submit" disabled={m.isPending || reason.trim().length < 10 || (fixTax && rightTax >= billTax)}
               onClick={async () => {
                 if (!isCeo || await confirm({ title: `Void ${v.number} now?`, body: `${effect[0]!.toUpperCase()}${effect.slice(1)}.`, confirmLabel: 'Void it' })) {
-                  m.mutate({ path: `${v.id}/void`, body: { reason: reason.trim() } })
+                  m.mutate({ path: `${v.id}/void`, body: { reason: reason.trim(), ...(fixTax && billTax > 0 ? { correctTaxCents: rightTax } : {}) } })
                 }
               }}>
               {m.isPending ? 'Saving…' : isCeo ? 'Void now' : 'Send to the CEO'}
             </Button>
-            <button onClick={() => { setOpen(false); setReason('') }} className="text-xs font-bold text-white/50 px-2">Keep it</button>
+            <button onClick={() => { setOpen(false); setReason(''); setFixTax(false) }} className="text-xs font-bold text-white/50 px-2">Keep it</button>
           </div>
         </>
       )}

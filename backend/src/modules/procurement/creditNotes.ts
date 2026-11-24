@@ -375,6 +375,47 @@ export async function createCreditNote(input: CreateCreditNoteInput) {
   }
 }
 
+// ─── Tax-only credit (a wrong sales-tax figure on a bill) ─────────────────────
+
+/**
+ * Credit part of a bill's SALES TAX only, inside the caller's transaction (owner, 2026-11-24: a buyer's pay-back was
+ * paid with a sales-tax figure the invoice never carried). A credit note with no lines: Dr 2010 / Cr the input-tax
+ * account the bill debited (postSupplierCreditNote), applied to the bill up to what it still owes. Never more than the
+ * bill's tax still uncredited (422 CREDIT_TAX_EXCEEDS_BILL). The caller holds the authority (trustops/voucherVoid.ts).
+ */
+export async function createTaxCreditTx(tx: Tx, a: { billId: string; taxCents: number; note: string; createdBy: string }) {
+  if (!Number.isInteger(a.taxCents) || a.taxCents <= 0) throw new AppError('INVALID_AMOUNT', 'The tax to credit must be more than zero', 400)
+  await tx.$queryRaw`SELECT id FROM supplier_bills WHERE id = ${a.billId} FOR UPDATE`
+  const bill = await tx.supplierBill.findUnique({ where: { id: a.billId }, include: { supplier: { select: { tenantId: true } } } })
+  if (!bill) throw new NotFoundError('SupplierBill', a.billId)
+  if (bill.kind !== 'bill' || bill.status === 'void' || bill.status === 'draft') throw new AppError('BILL_NOT_OPEN', `Bill ${bill.billNumber} cannot be credited`, 422)
+  if (!bill.supplier.tenantId) throw new AppError('SUPPLIER_HAS_NO_COMPANY', 'Assign this supplier to a company first', 422)
+  const prior = await creditsAgainst(tx, bill.id)
+  const taxLeft = Math.max(0, toCents(bill.taxCents) - prior.tax)
+  if (a.taxCents > taxLeft) throw new AppError('CREDIT_TAX_EXCEEDS_BILL', `Only ${fmtPkrCents(taxLeft)} of the bill's tax is left to credit`, 422)
+  const now = new Date()
+  const cn = await tx.supplierBill.create({
+    data: {
+      supplierId: bill.supplierId, kind: 'credit_note', originalBillId: bill.id,
+      billNumber: `${bill.billNumber}-TAX-${prior.creditNotes.length + 1}`.slice(0, 100), billDate: now, dueDate: now, status: 'open',
+      subtotalCents: 0, taxCents: a.taxCents, totalCents: a.taxCents, whtCents: 0,
+      notes: `Sales tax corrected — ${a.note}`.slice(0, 500), createdBy: a.createdBy,
+    },
+  })
+  const posting = await postSupplierCreditNote(cn.id, { tx, postedBy: a.createdBy, reason: 'price' })
+  if (!posting.entryId) throw new AppError('CREDIT_NOT_BOOKED', 'The tax correction could not be booked', 409)
+  const applied = Math.min(a.taxCents, billDueCents(bill))
+  if (applied > 0) await applyCreditTx(tx, cn.id, [{ billId: bill.id, amountCents: applied }], a.createdBy)
+  return { creditNoteId: cn.id, number: cn.billNumber, taxCents: a.taxCents, appliedCents: applied, entryId: posting.entryId, tenantId: bill.supplier.tenantId }
+}
+
+/** How much of a bill's sales tax is still uncredited. */
+export async function billTaxLeftCents(db: Db, billId: string): Promise<number> {
+  const bill = await db.supplierBill.findUnique({ where: { id: billId }, select: { taxCents: true } })
+  if (!bill) return 0
+  return Math.max(0, toCents(bill.taxCents) - (await creditsAgainst(db, billId)).tax)
+}
+
 // ─── Apply / unapply ─────────────────────────────────────────────────────────
 
 /** Apply a credit note to bills of its supplier, inside the caller's transaction. */
