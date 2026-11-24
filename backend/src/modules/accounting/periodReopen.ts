@@ -18,6 +18,9 @@
 //       POST …/reopen-requests/:id/withdraw  the requester or the CEO.
 //       GET  …/reopen-requests?status=       finance and the CEO, companies in view.
 //     Another company's request is 404.
+//   • WHICH PERIOD (owner, 2026-11-24): both doors take `from` (YYYY-MM-DD, the first day to open; 422
+//     FROM_NOT_CLOSED when it is after the latest close). Every close covering that day or later is removed and the
+//     days before it stay closed. None = the latest close only. A request stores it as `reopenFrom`.
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../lib/prisma.js'
@@ -31,7 +34,20 @@ import { requireModule } from '../notifications/requireModule.js'
 import { approvalInputOf, approvalSubject, assertCanApprove, auditApproval } from '../../lib/approvalRights.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { allowFinanceInReopened, rememberReopened } from './closedBooks.js'
-import { fmtPktDate } from './dates.js'
+import { fmtPktDate, parsePktStartOfDay } from './dates.js'
+
+// "Reopen from" (owner, 2026-11-24: "Not giving option to select period required to reopen"): the first day to open,
+// YYYY-MM-DD. Every close covering that day or later is removed; the days BEFORE it stay closed (a lock through the
+// day before is kept — written when no earlier close ends exactly there). None = the latest close only.
+const FROM = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Pick a date').optional()
+function fromDate(input: string | undefined): Date | undefined {
+  if (!input) return undefined
+  const d = parsePktStartOfDay(input)
+  if (Number.isNaN(d.getTime())) throw new AppError('INVALID_DATE', 'That is not a date', 422)
+  return d
+}
+const notClosed = (from: Date, latest: Date) =>
+  new AppError('FROM_NOT_CLOSED', `${fmtPktDate(from)} is not in closed books — they are closed through ${fmtPktDate(latest)}.`, 422)
 
 const REASON = z.string().trim().min(10, 'Give a reason of at least 10 characters').max(500)
 const STATUSES = ['pending', 'approved', 'rejected', 'withdrawn'] as const
@@ -44,7 +60,7 @@ const notPending = () => new AppError('REQUEST_NOT_PENDING', 'This request was a
  */
 export async function reopenLatestClose(
   req: FastifyRequest, tenantId: string, reason: string,
-  opts: { expect?: Date; forFinanceRequestId?: string; claim?: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<void> } = {},
+  opts: { expect?: Date; from?: Date | null; forFinanceRequestId?: string; claim?: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<void> } = {},
 ) {
   const latest = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}::text), hashtext('period-reopen'))`
@@ -54,15 +70,35 @@ export async function reopenLatestClose(
     if (opts.expect && l.lockedThrough.getTime() !== opts.expect.getTime()) {
       throw new AppError('CLOSE_CHANGED', `The books are now closed through ${fmtPktDate(l.lockedThrough)}, not ${fmtPktDate(opts.expect)} as when this was asked — reject it and ask again.`, 409)
     }
-    // F4: the close record (overrides, acknowledgement reasons) is kept for ever in the Trash (type 'period_lock',
-    // the CEO's — never restored: close the month again through the checklist; never erased).
-    await moveToTrash(tx, req, {
-      type: 'period_lock', entityId: l.id, tenantId,
-      title: `Books closed through ${fmtPktDate(l.lockedThrough)}`,
-      subtitle: l.note ?? null, reason,
-      snapshot: takeSnapshot('PeriodLock', l),
-    })
-    await tx.periodLock.delete({ where: { id: l.id } })
+    if (opts.from && opts.from > l.lockedThrough) throw notClosed(opts.from, l.lockedThrough)
+    // Every close that covers the first day to open, newest first (none named: the latest only).
+    const removed = opts.from
+      ? await tx.periodLock.findMany({ where: { tenantId, lockedThrough: { gte: opts.from } }, orderBy: { lockedThrough: 'desc' } })
+      : [l]
+    for (const lock of removed) {
+      // F4: the close record (overrides, acknowledgement reasons) is kept for ever in the Trash (type 'period_lock',
+      // the CEO's — never restored: close the month again through the checklist; never erased).
+      await moveToTrash(tx, req, {
+        type: 'period_lock', entityId: lock.id, tenantId,
+        title: `Books closed through ${fmtPktDate(lock.lockedThrough)}`,
+        subtitle: lock.note ?? null, reason,
+        snapshot: takeSnapshot('PeriodLock', lock),
+      })
+      await tx.periodLock.delete({ where: { id: lock.id } })
+    }
+    if (opts.from) {
+      // The days before the first day to open were closed by the removed close(s): they stay closed.
+      const keep = new Date(opts.from.getTime() - 1)
+      const earlier = await tx.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
+      if (!earlier || earlier.lockedThrough.getTime() < keep.getTime()) {
+        await tx.periodLock.create({
+          data: {
+            tenantId, lockedThrough: keep, lockedBy: req.staffUser!.id,
+            note: `Kept closed when the books were reopened from ${fmtPktDate(opts.from)} (part of the close through ${fmtPktDate(l.lockedThrough)})`,
+          },
+        })
+      }
+    }
     await rememberReopened(tx, tenantId, l.lockedThrough)
     if (opts.forFinanceRequestId) await allowFinanceInReopened(tx, tenantId, opts.forFinanceRequestId)
     return l
@@ -72,7 +108,7 @@ export async function reopenLatestClose(
     category: 'accounting', action: 'period.reopen', entity: 'PeriodLock', entityId: latest.id,
     userId: req.staffUser!.id, tenantId, userEmail: req.staffUser!.email,
     before: latest, after: { lockedThrough: now?.lockedThrough ?? null },
-    metadata: { reason, ip: req.ip, ...(opts.forFinanceRequestId && { requestId: opts.forFinanceRequestId, openToFinance: true }) },
+    metadata: { reason, ip: req.ip, ...(opts.from && { reopenedFrom: opts.from }), ...(opts.forFinanceRequestId && { requestId: opts.forFinanceRequestId, openToFinance: true }) },
   })
   const { flagException } = await import('../../lib/exceptions.js')
   await flagException({
@@ -85,12 +121,19 @@ export async function reopenLatestClose(
   return { reopenedThrough: latest.lockedThrough, lockedThrough: now?.lockedThrough ?? null, lockId: latest.id }
 }
 
+/** What a request asks to open, in words. */
+export function periodLabelOf(r: { lockedThrough: Date; reopenFrom: Date | null }): string {
+  return r.reopenFrom ? `${fmtPktDate(r.reopenFrom)} to ${fmtPktDate(r.lockedThrough)}` : `the latest close (through ${fmtPktDate(r.lockedThrough)})`
+}
+export { fromDate as reopenFromDate }
+
 export async function periodReopenRoutes(fastify: FastifyInstance) {
   const financeGate = [requireAuth('finance', 'admin'), requireModule('accounting')]
 
   // POST /reopen-requests {reason} — finance asks for the ACTIVE company's latest close to be reopened.
   fastify.post('/reopen-requests', { preHandler: financeGate }, async (req, reply) => {
-    const { reason } = z.object({ reason: REASON }).parse(req.body ?? {})
+    const { reason, from: fromInput } = z.object({ reason: REASON, from: FROM }).parse(req.body ?? {})
+    const from = fromDate(fromInput)
     const su = req.staffUser!
     const tenantId = su.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company — books are closed per company', 422)
@@ -101,11 +144,12 @@ export async function periodReopenRoutes(fastify: FastifyInstance) {
       if (!latest) throw new AppError('NOTHING_TO_REOPEN', 'This company has no closed period', 422)
       const open = await tx.periodReopenRequest.findFirst({ where: { tenantId, status: 'pending' }, select: { id: true } })
       if (open) throw new AppError('REOPEN_PENDING', 'A request to reopen this company\'s books is already waiting for the CEO.', 409)
-      return tx.periodReopenRequest.create({ data: { tenantId, lockedThrough: latest.lockedThrough, reason, requestedById: su.id } })
+      if (from && from > latest.lockedThrough) throw notClosed(from, latest.lockedThrough)
+      return tx.periodReopenRequest.create({ data: { tenantId, lockedThrough: latest.lockedThrough, reopenFrom: from ?? null, reason, requestedById: su.id } })
     })
     await audit({
       category: 'accounting', action: 'period.reopen_request', entity: 'PeriodReopenRequest', entityId: row.id, tenantId,
-      userId: su.id, userEmail: su.email ?? null, metadata: { lockedThrough: row.lockedThrough, reason, actorRole: su.role },
+      userId: su.id, userEmail: su.email ?? null, metadata: { lockedThrough: row.lockedThrough, reopenFrom: row.reopenFrom, reason, actorRole: su.role },
     })
     approvalWaiting('period_reopen', row.id, { round: row.createdAt.toISOString(), actorId: su.id })
     return reply.status(202).send({ pendingApproval: true, request: row })
@@ -133,6 +177,8 @@ export async function periodReopenRoutes(fastify: FastifyInstance) {
         const changed = r.status === 'pending' && (!latest || latest.getTime() !== r.lockedThrough.getTime())
         return {
           ...r, lockedThroughLabel: fmtPktDate(r.lockedThrough),
+          reopenFromLabel: r.reopenFrom ? fmtPktDate(r.reopenFrom) : null,
+          periodLabel: periodLabelOf(r),
           companyName: t.get(r.tenantId) ?? null,
           requestedByName: u.get(r.requestedById) ?? null,
           decidedByName: r.decidedById ? u.get(r.decidedById) ?? null : null,
@@ -162,7 +208,7 @@ export async function periodReopenRoutes(fastify: FastifyInstance) {
     if (r.status !== 'pending') throw notPending()
     const decidedAt = new Date()
     const out = await reopenLatestClose(req, r.tenantId, r.reason, {
-      expect: r.lockedThrough, forFinanceRequestId: r.id,
+      expect: r.lockedThrough, from: r.reopenFrom, forFinanceRequestId: r.id,
       claim: async (tx) => {
         const claimed = await tx.periodReopenRequest.updateMany({
           where: { id: r.id, status: 'pending' },

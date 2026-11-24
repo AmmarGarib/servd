@@ -3889,7 +3889,10 @@ transaction; 409 `CLOSE_CHANGED` when the latest close is no longer the one aske
 holding `accounting` posts, edits and cancels entries dated in the REOPENED window; months still closed stay refused
 for everyone, and a window the CEO reopened DIRECTLY stays the CEO's. Every non-CEO closed-books check reads
 `closedBooksThroughFor` (journal posting / reversal, text edits, amend, sub-account tags, journal requests, the
-Journals list, Backfill unposted). `GET /accounting/period-close` returns `reopenedForFinance`. Admin: Period close
+Journals list, Backfill unposted). `GET /accounting/period-close` returns `reopenedForFinance`. **Which period (owner, 2026-11-24: "Not giving option to select
+period required to reopen"):** both doors take `from` (YYYY-MM-DD, the first day to open; a request stores `reopenFrom`,
+migration `20261124160000`; after the latest close 422 `FROM_NOT_CLOSED`) — every close covering that day or later is
+removed and a lock through the day before is kept, so earlier days stay closed; none = the latest close only. Admin: Period close
 ("Ask the CEO to reopen", the waiting card with Approve / Reject / Withdraw) and the Journals date notes. Tests:
 `tests/periodReopenRequest.test.ts`.
 

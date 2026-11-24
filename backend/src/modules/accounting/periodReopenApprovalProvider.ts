@@ -11,7 +11,7 @@ const LINK = '/accounting/period-close'
 
 interface Row {
   id: string; tenantId: string; reason: string; requestedById: string; createdAt: string
-  lockedThroughLabel: string; companyName: string | null; requestedByName: string | null; blockedBy: string | null
+  lockedThroughLabel: string; reopenFromLabel: string | null; companyName: string | null; requestedByName: string | null; blockedBy: string | null
 }
 
 export const periodReopens: ApprovalProvider = {
@@ -30,11 +30,12 @@ export const periodReopens: ApprovalProvider = {
       tenantId: r.tenantId,
       section: RIGHTS.section,
       submittedByIds: [r.requestedById],
-      title: `Reopen the books closed through ${r.lockedThroughLabel}`,
+      title: r.reopenFromLabel ? `Reopen the books from ${r.reopenFromLabel} to ${r.lockedThroughLabel}` : `Reopen the books closed through ${r.lockedThroughLabel}`,
       subtitle: r.reason,
       facts: [
         { label: 'Company', value: r.companyName ?? '—' },
-        { label: 'What happens', value: 'That close is removed. You and finance may post, edit and cancel entries dated in it until the books are closed again.' },
+        { label: 'Period to open', value: r.reopenFromLabel ? `${r.reopenFromLabel} to ${r.lockedThroughLabel} — earlier days stay closed` : `The latest close only (through ${r.lockedThroughLabel})` },
+        { label: 'What happens', value: 'You and finance may post, edit and cancel entries dated in that period until the books are closed again.' },
         { label: 'Asked by', value: r.requestedByName ?? '—' },
         ...(r.blockedBy ? [{ label: 'Blocked by', value: r.blockedBy }] : []),
       ],
@@ -42,7 +43,7 @@ export const periodReopens: ApprovalProvider = {
       link: LINK,
       actions: [
         { kind: 'approve', label: 'Reopen the period', method: 'POST', path: `/accounting/period-close/reopen-requests/${r.id}/approve`, body: {},
-          confirm: `Reopen the books closed through ${r.lockedThroughLabel}? Finance will be able to post into that period until it is closed again.`,
+          confirm: `Reopen the books ${r.reopenFromLabel ? `from ${r.reopenFromLabel} to ${r.lockedThroughLabel}` : `closed through ${r.lockedThroughLabel}`}? Finance will be able to post into that period until it is closed again.`,
           ...(r.blockedBy ? { disabledReason: `Cannot be reopened as asked: ${r.blockedBy}. Reject it instead.` } : {}) },
         { kind: 'reject', label: 'Reject', method: 'POST', path: `/accounting/period-close/reopen-requests/${r.id}/reject`, body: {},
           input: { field: 'note', label: 'Reason (at least 10 characters)', required: true } },

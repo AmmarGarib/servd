@@ -1157,11 +1157,11 @@ export async function accountingRoutes(fastify: FastifyInstance) {
   })
 
   fastify.post('/period-close/reopen', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
-    const body = z.object({ reason: z.string().trim().min(5).max(500) }).parse(req.body)
+    const body = z.object({ reason: z.string().trim().min(5).max(500), from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).parse(req.body)
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company — books are closed per company', 422)
-    const { reopenLatestClose } = await import('./periodReopen.js')
-    const r = await reopenLatestClose(req, tenantId, body.reason)
+    const { reopenLatestClose, reopenFromDate } = await import('./periodReopen.js')
+    const r = await reopenLatestClose(req, tenantId, body.reason, { from: reopenFromDate(body.from) })
     return { reopened: { lockedThrough: r.reopenedThrough }, lockedThrough: r.lockedThrough }
   })
 

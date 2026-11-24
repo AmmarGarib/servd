@@ -154,4 +154,32 @@ describe('finance asks the CEO to reopen a closed period', () => {
     await expect(post(T.B, 'b-sept-fin', sept, U['finB']!.id)).rejects.toMatchObject({ code: 'CEO_ONLY_CLOSED_BOOKS' })
     expect((await post(T.B, 'b-sept-ceo', sept, U['ceoB']!.id)).posted).toBe(true)
   })
+
+  it('which period: "from" removes every close covering that day or later and keeps the earlier days closed', async () => {
+    await prisma.periodLock.deleteMany({ where: { tenantId: T.B } })
+    await prisma.periodLock.create({ data: { tenantId: T.B, lockedThrough: AUG_END, lockedBy: U['ceoB']!.id } })
+    await prisma.periodLock.create({ data: { tenantId: T.B, lockedThrough: SEPT_END, lockedBy: U['ceoB']!.id } })
+    expect(code(await call('finB', 'POST', R, { reason: 'October is not closed at all', from: '2026-10-05' }))).toBe('FROM_NOT_CLOSED')
+    const ask = await call('finB', 'POST', R, { reason: 'Split expenses from mid August', from: '2026-08-10' })
+    expect(ask.statusCode, ask.body).toBe(202)
+    const row = (await call('finB', 'GET', `${R}?status=pending`)).json().items[0]
+    expect(row.reopenFromLabel).toBeTruthy()
+    // Nothing changed yet.
+    expect(await prisma.periodLock.count({ where: { tenantId: T.B } })).toBe(2)
+    const ok = await call('ceoB', 'POST', `${R}/${ask.json().request.id}/approve`, {})
+    expect(ok.statusCode, ok.body).toBe(200)
+    // Both closes are gone; the days before 10 August stay closed.
+    const locks = await prisma.periodLock.findMany({ where: { tenantId: T.B } })
+    expect(locks.map((l) => l.lockedThrough.toISOString())).toEqual(['2026-08-09T18:59:59.999Z'])
+    expect(await reopenedOpenToFinance(prisma, T.B)).toBe(true)
+    expect((await post(T.B, 'b-aug-fin', aug, U['finB']!.id)).posted).toBe(true)
+    expect((await post(T.B, 'b-sept-fin2', sept, U['finB']!.id)).posted).toBe(true)
+    await expect(post(T.B, 'b-early-aug', new Date('2026-08-05T07:00:00Z'), U['ceoB']!.id)).rejects.toBeTruthy()
+
+    // The CEO's direct reopen takes the same date; a date on the day after an earlier close writes no extra lock.
+    await prisma.periodLock.create({ data: { tenantId: T.B, lockedThrough: SEPT_END, lockedBy: U['ceoB']!.id } })
+    const direct = await call('ceoB', 'POST', '/accounting/period-close/reopen', { reason: 'Open from 10 August again', from: '2026-08-10' })
+    expect(direct.statusCode, direct.body).toBe(200)
+    expect((await prisma.periodLock.findMany({ where: { tenantId: T.B } })).map((l) => l.lockedThrough.toISOString())).toEqual(['2026-08-09T18:59:59.999Z'])
+  })
 })

@@ -66,7 +66,7 @@ const fixRolesOf = (path: string): readonly string[] => FIX_ROLES[path.split('?'
 interface Override { key: string; title?: string; count?: number; cents?: number; via?: string }
 
 interface ReopenRequest {
-  id: string; tenantId: string; status: string; reason: string; lockedThroughLabel: string; createdAt: string
+  id: string; tenantId: string; status: string; reason: string; lockedThroughLabel: string; reopenFromLabel: string | null; createdAt: string
   requestedByName: string | null; decidedByName: string | null; decisionNote: string | null; blockedBy: string | null; canWithdraw: boolean
 }
 interface CloseState {
@@ -194,10 +194,10 @@ export default function PeriodClosePage() {
   })
 
   const reopen = useMutation({
-    mutationFn: (reason: string) => api.post<{ lockedThrough: string | null }>('/accounting/period-close/reopen', { reason }),
+    mutationFn: (reason: string) => api.post<{ lockedThrough: string | null }>('/accounting/period-close/reopen', { reason, ...(reopenFrom ? { from: reopenFrom } : {}) }),
     onSuccess: () => {
-      setFeedback({ ok: true, msg: 'Latest close reopened — the reopening is on the audit trail and in the Exceptions inbox.' })
-      setReopenReason('')
+      setFeedback({ ok: true, msg: 'Period reopened — the reopening is on the audit trail and in the Exceptions inbox.' })
+      setReopenReason(''); setReopenFrom('')
       refresh()
     },
     onError: (err: Error) => setFeedback({ ok: false, msg: err.message || 'Failed to reopen' }),
@@ -206,6 +206,9 @@ export default function PeriodClosePage() {
   // Finance asks the CEO to reopen the latest close (owner, 2026-11-24) — the CEO approves in the approvals inbox.
   const isFinance = myRole === 'finance'
   const [askReason, setAskReason] = useState('')
+  // Which period (owner, 2026-11-24): the first day to open; empty = the latest close only.
+  const [askFrom, setAskFrom] = useState('')
+  const [reopenFrom, setReopenFrom] = useState('')
   const { data: reopenRequests } = useQuery({
     queryKey: ['period-close', 'reopen-requests'],
     queryFn: () => api.get<{ items: ReopenRequest[] }>('/accounting/period-close/reopen-requests'),
@@ -214,8 +217,8 @@ export default function PeriodClosePage() {
   const pendingReopen = (reopenRequests?.items ?? []).find((r) => r.status === 'pending' && (!state?.tenantId || r.tenantId === state.tenantId)) ?? null
   const lastDecided = (reopenRequests?.items ?? []).find((r) => r.status !== 'pending' && r.status !== 'withdrawn' && (!state?.tenantId || r.tenantId === state.tenantId)) ?? null
   const askReopen = useMutation({
-    mutationFn: (reason: string) => api.post('/accounting/period-close/reopen-requests', { reason }),
-    onSuccess: () => { setFeedback({ ok: true, msg: 'Sent to the CEO. Nothing changes until the CEO approves.' }); setAskReason(''); refresh() },
+    mutationFn: (reason: string) => api.post('/accounting/period-close/reopen-requests', { reason, ...(askFrom ? { from: askFrom } : {}) }),
+    onSuccess: () => { setFeedback({ ok: true, msg: 'Sent to the CEO. Nothing changes until the CEO approves.' }); setAskReason(''); setAskFrom(''); refresh() },
     onError: (err: Error) => setFeedback({ ok: false, msg: err.message || 'The request was not sent' }),
   })
   const reopenDecision = useMutation({
@@ -248,6 +251,9 @@ export default function PeriodClosePage() {
   const lockedThroughDisplay = state?.lockedThrough
     ? history?.locks[0]?.lockedThroughLabel ?? new Date(state.lockedThrough).toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi' })
     : 'Open'
+
+  // The Karachi day the books are closed through (YYYY-MM-DD) — the latest day a reopening may start from.
+  const closedThroughDay = state?.lockedThrough ? new Date(state.lockedThrough).toLocaleDateString('en-CA', { timeZone: 'Asia/Karachi' }) : ''
 
   return (
     <div className="min-h-screen bg-s-bg">
@@ -433,7 +439,9 @@ export default function PeriodClosePage() {
           <div className="s-card p-4 space-y-3 border-l-4" style={{ borderLeftColor: 'var(--erp-warning)' }}>
             <h3 className="text-sm font-semibold text-s-text">Reopening asked for — waiting for the CEO</h3>
             <p className="text-sm text-s-text break-words">
-              {pendingReopen.requestedByName ?? 'Finance'} asked to reopen the books closed through <strong>{pendingReopen.lockedThroughLabel}</strong>: {pendingReopen.reason}
+              {pendingReopen.requestedByName ?? 'Finance'} asked to reopen the books {pendingReopen.reopenFromLabel
+                ? <>from <strong>{pendingReopen.reopenFromLabel}</strong> to <strong>{pendingReopen.lockedThroughLabel}</strong> (earlier days stay closed)</>
+                : <>closed through <strong>{pendingReopen.lockedThroughLabel}</strong> (the latest close only)</>}: {pendingReopen.reason}
             </p>
             {pendingReopen.blockedBy && <p role="alert" className="text-xs text-s-red">It can no longer be approved as asked: {pendingReopen.blockedBy}. Reject it and ask again.</p>}
             <p className="text-xs text-s-muted">Nothing has changed yet. Once approved, the CEO and finance can post, edit and cancel entries dated in that period until the books are closed again.</p>
@@ -458,13 +466,14 @@ export default function PeriodClosePage() {
 
         {isFinance && state?.lockedThrough && !pendingReopen && (
           <div className="s-card p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-s-text">Ask the CEO to reopen the latest close</h3>
+            <h3 className="text-sm font-semibold text-s-text">Ask the CEO to reopen a closed period</h3>
             <p className="text-xs text-s-muted">
               Only the CEO reopens closed books. Your request goes to the CEO&rsquo;s approvals; nothing changes until it is approved. Once approved, you can post, edit and cancel entries dated in that period until the books are closed again.
             </p>
             {lastDecided?.status === 'rejected' && (
               <p className="text-xs text-s-red break-words">Your last request ({lastDecided.lockedThroughLabel}) was rejected{lastDecided.decidedByName ? ` by ${lastDecided.decidedByName}` : ''}: {lastDecided.decisionNote ?? '—'}</p>
             )}
+            <ReopenFromField id="ask-reopen-from" value={askFrom} onChange={setAskFrom} closedThrough={closedThroughDay} />
             <FieldLabel htmlFor="ask-reopen-reason" className="block">Why it must be reopened (at least 10 characters)</FieldLabel>
             <Input id="ask-reopen-reason" type="text" value={askReason} onChange={(e) => setAskReason(e.target.value)}
               placeholder="e.g. supplier bill for August arrived late" className="w-full" />
@@ -476,10 +485,11 @@ export default function PeriodClosePage() {
 
         {isAdmin && state?.lockedThrough && (
           <div className="s-card p-4 space-y-3 border-l-4 border-s-red">
-            <h3 className="text-sm font-semibold text-s-text">Reopen the latest close</h3>
+            <h3 className="text-sm font-semibold text-s-text">Reopen a closed period</h3>
             <p className="text-xs text-s-muted">
-              Removes only the most recent close. The reopening is written to the accounting audit trail and raised in the Exceptions inbox. Say why. Reopened this way, only you can post into it — approve a request from finance instead if finance should post there.
+              The reopening is written to the accounting audit trail and raised in the Exceptions inbox. Say why. Reopened this way, only you can post into it — approve a request from finance instead if finance should post there.
             </p>
+            <ReopenFromField id="reopen-from" value={reopenFrom} onChange={setReopenFrom} closedThrough={closedThroughDay} />
             <FieldLabel htmlFor="reopen-reason" className="block">Reason (required)</FieldLabel>
             <Input id="reopen-reason" type="text" value={reopenReason} onChange={(e) => setReopenReason(e.target.value)}
               placeholder="e.g. supplier bill for August arrived late"
@@ -531,6 +541,25 @@ export default function PeriodClosePage() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+
+// Which period to reopen: the first day to open. Empty = the latest close only.
+function ReopenFromField({ id, value, onChange, closedThrough }: { id: string; value: string; onChange: (v: string) => void; closedThrough: string }) {
+  const tooLate = !!value && !!closedThrough && value > closedThrough
+  return (
+    <div className="space-y-1">
+      <FieldLabel htmlFor={id} className="block">Reopen from (first day to open)</FieldLabel>
+      <Input id={id} type="date" value={value} max={closedThrough || undefined} onChange={(e) => onChange(e.target.value)} className="w-full" />
+      <p className={`text-xs break-words ${tooLate ? 'text-s-red' : 'text-s-muted'}`}>
+        {tooLate
+          ? `That day is not closed — the books are closed through ${closedThrough}.`
+          : value
+            ? `Opens ${value} to ${closedThrough}. Everything before ${value} stays closed.`
+            : 'Leave empty to reopen only the latest close. Pick a date to open further back — everything before it stays closed.'}
+      </p>
     </div>
   )
 }

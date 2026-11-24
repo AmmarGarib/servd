@@ -525,6 +525,8 @@ model PeriodReopenRequest {
   tenantId      String
   /// The close being asked to reopen (the company's latest lock when it was raised).
   lockedThrough DateTime
+  /// The first day asked to be opened (every close covering it or later is removed); null = the latest close only.
+  reopenFrom    DateTime?
   reason        String
   status        String    @default("pending") // pending | approved | rejected | withdrawn
   requestedById String

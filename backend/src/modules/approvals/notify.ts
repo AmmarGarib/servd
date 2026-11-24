@@ -356,8 +356,9 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       return v && { ref: `Void cash voucher ${v.number} — ${v.payeeName}`, amountCents: v.amountCents }
     }
     case 'period_reopen': {
-      const r = await db.periodReopenRequest.findUnique({ where: { id }, select: { lockedThrough: true } })
-      return r && { ref: `Reopen the books closed through ${r.lockedThrough.toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', year: 'numeric' })}` }
+      const r = await db.periodReopenRequest.findUnique({ where: { id }, select: { lockedThrough: true, reopenFrom: true } })
+      const day = (d: Date) => d.toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', year: 'numeric' })
+      return r && { ref: r.reopenFrom ? `Reopen the books from ${day(r.reopenFrom)} to ${day(r.lockedThrough)}` : `Reopen the books closed through ${day(r.lockedThrough)}` }
     }
     case 'intern_enrollment': {
       const r = await db.intern.findUnique({ where: { id }, select: { internCode: true, fullName: true, internshipType: true, monthlyStipendCents: true } })
