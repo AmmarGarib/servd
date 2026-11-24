@@ -29,7 +29,7 @@ import { resolveTenantScope } from '../../lib/tenantScope.js'
 import { effectiveModulesForUser } from '../../lib/moduleAccess.js'
 import { moneyAggregatesSql, moneyFlowWhereSql, moneyCodesOf } from './paymentsRegister.js'
 import { MANUAL_PREFIX, MANUAL_JOURNAL_POSTERS, OPEN_CHANGE_STATUSES, splitDescription } from './manualJournal.js'
-import { closedBooksThrough } from './closedBooks.js'
+import { closedBooksThroughFor } from './closedBooks.js'
 import { parsePktEndOfDay, parsePktStartOfDay } from './dates.js'
 import type { UserRole } from '@prisma/client'
 
@@ -173,7 +173,7 @@ export async function annotateEntries(
     }),
     prisma.cashVoucher.findMany({ where: { postedJournalEntryId: { in: ids } }, select: { postedJournalEntryId: true, number: true } }),
     prisma.salesTaxPayment.findMany({ where: { journalEntryId: { in: ids }, linked: true }, select: { journalEntryId: true } }),
-    viewer.isCeo ? Promise.resolve(new Map<string, Date | null>()) : (async () => new Map(await Promise.all(tenantIds.map(async (t) => [t, await closedBooksThrough(prisma, t)] as const))))(),
+    viewer.isCeo ? Promise.resolve(new Map<string, Date | null>()) : (async () => new Map(await Promise.all(tenantIds.map(async (t) => [t, await closedBooksThroughFor(prisma, t, viewer.id)] as const))))(),
   ])
   const names = await userNames(pending.map((p) => p.preparedById))
   const revOf = new Map(revs.map((r) => [`${r.tenantId}|${r.reference}`, r]))

@@ -38,7 +38,7 @@ import { journalsRoutes } from './journalsRoutes.js'
 import { mirrorDraftRoutes } from './mirrorDraftRoutes.js'
 import { annotateEntries, viewerOf } from './journalsRegister.js'
 import { tagLineTx } from '../../lib/subAccounts.js'
-import { closedBooksThrough } from './closedBooks.js'
+import { closedBooksThroughFor, reopenedOpenToFinance } from './closedBooks.js'
 import { approvalWaiting } from '../approvals/notify.js'
 import { requireModule } from '../notifications/requireModule.js'
 import { queueStaffNotify, notifyStaffMany } from '../../lib/staffNotify.js'
@@ -406,7 +406,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       // Finance's own same-amount edit: the register accounts stay their modules',
       // and closed / reopened books stay the CEO's (the entry's day or the new day).
       await assertNoControlledLines(prisma, tenantId, body.lines)
-      const through = await closedBooksThrough(prisma, tenantId)
+      const through = await closedBooksThroughFor(prisma, tenantId, su.id)
       const newDate = body.entryDate ? new Date(body.entryDate) : null
       if (through && (original.entryDate <= through || (newDate && !Number.isNaN(newDate.getTime()) && newDate <= through))) {
         throw new AppError('CEO_ONLY_CLOSED_BOOKS', 'This change touches closed books — only the CEO can change it.', 403)
@@ -463,7 +463,7 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     const tenantId = line.journalEntry.tenantId
     const su = req.staffUser!
     if (su.role !== 'admin') {
-      const through = await closedBooksThrough(prisma, tenantId)
+      const through = await closedBooksThroughFor(prisma, tenantId, su.id)
       if (through && line.journalEntry.entryDate <= through) {
         throw new AppError('CEO_ONLY_CLOSED_BOOKS', `This entry is dated ${fmtPktDate(line.journalEntry.entryDate)}, in closed books — only the CEO can change it.`, 403)
       }
@@ -1160,48 +1160,13 @@ export async function accountingRoutes(fastify: FastifyInstance) {
     const body = z.object({ reason: z.string().trim().min(5).max(500) }).parse(req.body)
     const tenantId = req.staffUser!.tenantId
     if (!tenantId) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company — books are closed per company', 422)
-    const latest = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' } })
-    if (!latest) throw new AppError('NOTHING_TO_REOPEN', 'This company has no closed period', 422)
-    // F4: the close record (overrides, acknowledgement reasons) is kept for
-    // ever in the Trash (type 'period_lock', the CEO's — never restored:
-    // close the month again through the checklist; never erased).
-    await prisma.$transaction(async (tx) => {
-      await moveToTrash(tx, req, {
-        type: 'period_lock', entityId: latest.id, tenantId,
-        title: `Books closed through ${fmtPktDate(latest.lockedThrough)}`,
-        subtitle: latest.note ?? null, reason: body.reason,
-        snapshot: takeSnapshot('PeriodLock', latest),
-      })
-      await tx.periodLock.delete({ where: { id: latest.id } })
-      // The reopened month stays the CEO's until it is closed again.
-      await rememberReopened(tx, tenantId, latest.lockedThrough)
-    })
-    const now = await prisma.periodLock.findFirst({ where: { tenantId }, orderBy: { lockedThrough: 'desc' }, select: { lockedThrough: true } })
-
-    await audit({ category: 'accounting',
-      action: 'period.reopen',
-      entity: 'PeriodLock',
-      entityId: latest.id,
-      userId: req.staffUser!.id, tenantId,
-      userEmail: req.staffUser!.email,
-      before: latest,
-      after: { lockedThrough: now?.lockedThrough ?? null },
-      metadata: { reason: body.reason, ip: req.ip },
-    })
-    const { flagException } = await import('../../lib/exceptions.js')
-    await flagException({
-      tenantId,
-      kind: 'period_reopened',
-      severity: 'high',
-      title: `Period reopened — books were closed through ${fmtPktDate(latest.lockedThrough)}`,
-      description: `${req.staffUser!.email} reopened the books. Postings dated after ${now ? fmtPktDate(now.lockedThrough) : 'the start of the ledger'} are allowed again. Reason: ${body.reason}. Review any new entries before re-closing.`,
-      entityType: 'PeriodLock',
-      entityId: latest.id,
-      actorId: req.staffUser!.id,
-      metadata: { lockedThrough: latest.lockedThrough, originalLockedBy: latest.lockedBy, note: latest.note, reason: body.reason },
-    })
-    return { reopened: { lockedThrough: latest.lockedThrough }, lockedThrough: now?.lockedThrough ?? null }
+    const { reopenLatestClose } = await import('./periodReopen.js')
+    const r = await reopenLatestClose(req, tenantId, body.reason)
+    return { reopened: { lockedThrough: r.reopenedThrough }, lockedThrough: r.lockedThrough }
   })
+
+  // Finance asks the CEO to reopen the latest close (owner, 2026-11-24) — periodReopen.ts.
+  await fastify.register((await import('./periodReopen.js')).periodReopenRoutes, { prefix: '/period-close' })
 
   // The active company's close state and, for the date being closed
   // (?lockedThrough=YYYY-MM-DD, else yesterday — the latest a close can
@@ -1222,6 +1187,8 @@ export async function accountingRoutes(fastify: FastifyInstance) {
       lockedThrough: lock?.lockedThrough ?? null, lockedAt: lock?.lockedAt ?? null, lockedBy: lock?.lockedBy ?? null,
       note: lock?.note ?? null, overrides: lock?.overrides ?? null, overrideReason: lock?.overrideReason ?? null,
       reopenedThrough: reopened,
+      // Reopened at finance's request (owner, 2026-11-24): finance holding `accounting` posts there too.
+      reopenedForFinance: tenantId && reopened ? await reopenedOpenToFinance(prisma, tenantId) : false,
     }
     if (!tenantId) {
       return { ...base, tenantId: null, closesFiscalYear: null, yearEndFirst: false, yearEndDate: null, raastUnmatched: { count: 0, cents: 0, through: null }, through: null, checks: [], months: [], isYearEnd: false, fiscalYear: null, ready: false }

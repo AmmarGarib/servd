@@ -508,10 +508,11 @@ export async function reconciliationRoutes(fastify: FastifyInstance) {
     const scope = await resolveTenantScope(req)
     if (scope.tenantIds.length === 0) throw new AppError('NO_ACTIVE_COMPANY', 'Pick a company first', 422)
     if (!body.dryRun && req.staffUser!.role !== 'admin') {
-      const { reopenedThrough } = await import('../accounting/closedBooks.js')
+      const { reopenedThrough, mayWorkReopened } = await import('../accounting/closedBooks.js')
       for (const tid of scope.tenantIds) {
         const re = await reopenedThrough(prisma, tid)
-        if (re) {
+        // …unless the month was reopened at finance's request (owner, 2026-11-24): finance works in it too.
+        if (re && !(await mayWorkReopened(prisma, tid, req.staffUser!.id))) {
           throw new AppError('REOPENED_BOOKS_CEO_ONLY',
             'The CEO has reopened closed books in this company, so re-posting could land in them — only the CEO can run it until those months are closed again.', 409)
         }

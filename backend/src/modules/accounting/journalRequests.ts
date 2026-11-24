@@ -373,8 +373,8 @@ export async function raiseChangeRequest(req: FastifyRequest, tenantId: string, 
   // Closed / reopened books stay the CEO's (owner, 2026-10-16): anyone else may
   // not even raise a change there — the entry's own date or the edit's new date.
   if (req.staffUser?.role !== 'admin') {
-    const { closedBooksThrough } = await import('./closedBooks.js')
-    const through = await closedBooksThrough(prisma, tenantId)
+    const { closedBooksThroughFor } = await import('./closedBooks.js')
+    const through = await closedBooksThroughFor(prisma, tenantId, req.staffUser?.id)
     if (through) {
       const entry = await prisma.journalEntry.findFirst({ where: { id: entryId, tenantId }, select: { entryDate: true } })
       const newDate = body.entryDate ? new Date(body.entryDate) : null

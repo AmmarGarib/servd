@@ -158,6 +158,7 @@ export const APPROVAL_NOTIFY: Readonly<Record<ApprovalType, ApprovalNotifySpec>>
   staff_offboard: spec(() => '/hr/employees'),
   employee_delete: spec(() => '/hr/employees'),
   cash_voucher_void: spec(() => '/ceo/approvals?type=cash_voucher_void'),
+  period_reopen: spec(() => '/accounting/period-close'),
   // Intern Management (owner, 2026-11-06): the CEO approves enrolments; stipends go HR → finance → the CEO.
   intern_enrollment: spec((id) => `/hr/interns/${encodeURIComponent(id)}`),
   intern_payroll_finance: spec((id) => `/hr/interns/payroll/${encodeURIComponent(id)}`, {
@@ -353,6 +354,10 @@ async function describeInner(type: ApprovalType, id: string): Promise<ApprovalFa
       if (!r) return null
       const v = await db.cashVoucher.findUnique({ where: { id: r.voucherId }, select: { number: true, payeeName: true, amountCents: true } })
       return v && { ref: `Void cash voucher ${v.number} — ${v.payeeName}`, amountCents: v.amountCents }
+    }
+    case 'period_reopen': {
+      const r = await db.periodReopenRequest.findUnique({ where: { id }, select: { lockedThrough: true } })
+      return r && { ref: `Reopen the books closed through ${r.lockedThrough.toLocaleDateString('en-GB', { timeZone: 'Asia/Karachi', day: 'numeric', month: 'short', year: 'numeric' })}` }
     }
     case 'intern_enrollment': {
       const r = await db.intern.findUnique({ where: { id }, select: { internCode: true, fullName: true, internshipType: true, monthlyStipendCents: true } })

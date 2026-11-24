@@ -518,6 +518,26 @@ model CashVoucherVoidRequest {
   @@map("cash_voucher_void_requests")
 }
 
+/// Finance asks the CEO to reopen the latest closed period (owner, 2026-11-24; accounting/periodReopen.ts).
+/// tenantId = the company whose books are closed. One pending per company (kept in code under an advisory lock).
+model PeriodReopenRequest {
+  id            String    @id @default(uuid())
+  tenantId      String
+  /// The close being asked to reopen (the company's latest lock when it was raised).
+  lockedThrough DateTime
+  reason        String
+  status        String    @default("pending") // pending | approved | rejected | withdrawn
+  requestedById String
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([tenantId, status])
+  @@map("period_reopen_requests")
+}
+
 model EmployeeDeleteRequest {
   id            String    @id @default(uuid())
   tenantId      String

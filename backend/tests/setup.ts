@@ -284,6 +284,9 @@ async function applyRawSqlObjects(prisma: PrismaClient): Promise<void> {
   // Void a paid cash voucher with the CEO's approval (owner, 2026-11-18): one pending per voucher, status / reason CHECKs (RLS out).
   for (const statement of migrationSection('20261118120000_cash_voucher_void',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
+  // Finance asks the CEO to reopen a closed period (owner, 2026-11-24): status / reason CHECKs (RLS out).
+  for (const statement of migrationSection('20261124140000_period_reopen_requests',
+    '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)
   // Wage changes and guest-list downloads go to the CEO (owner, 2026-10-27): kind / status / reason / approved CHECKs (RLS out).
   for (const statement of migrationSection('20261027180000_wage_export_approvals',
     '-- ─── SQL-only objects', '-- ─── Row-level security')) await applyIdempotent(prisma, statement)

@@ -30,6 +30,7 @@ import { stationChanges } from '../stations/approvalProvider.js'
 import { staffOffboards } from '../auth/offboardApprovalProvider.js'
 import { employeeDeletes } from '../hr/employeeDeleteApprovalProvider.js'
 import { cashVoucherVoids } from '../trustops/voucherVoidApprovalProvider.js'
+import { periodReopens } from '../accounting/periodReopenApprovalProvider.js'
 import { internEnrollments, internPayrollFinanceReviews, internPayrollRuns } from '../hr/internApprovalProvider.js'
 import { reservationOverbooks } from '../reservations/overbookProvider.js'
 import { marketingTasks } from '../marketingBoard/approvalProvider.js'
@@ -1595,6 +1596,7 @@ export const APPROVAL_PROVIDERS: readonly ApprovalProvider[] = [
   staffOffboards,
   employeeDeletes,
   cashVoucherVoids,
+  periodReopens,
   internEnrollments,
   internPayrollFinanceReviews,
   internPayrollRuns,

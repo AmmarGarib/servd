@@ -118,6 +118,7 @@ export const APPROVAL_TYPES = [
   'staff_offboard',        // HR asked to switch a login off (offboard), waiting for the CEO
   'employee_delete',       // HR asked to delete an employee record (no history), waiting for the CEO
   'cash_voucher_void',     // finance asked to void a PAID cash voucher (cash back, expense undone), waiting for the CEO (owner, 2026-11-18)
+  'period_reopen',         // finance asked to reopen a closed period, waiting for the CEO (owner, 2026-11-24)
   // Intern Management (owner, 2026-11-06; modules/hr/interns.ts).
   'intern_enrollment',      // HR enrolled an intern — the CEO approves (pending_approval → active)
   'intern_payroll_finance', // an intern stipend payroll HR sent to finance — finance passes it to the CEO or returns it
@@ -345,6 +346,12 @@ export const APPROVAL_RIGHTS: Readonly<Record<ApprovalType, ApprovalRight>> = {
     // never handed over (owner, 2026-11-18: "finance requests it with a reason and you approve it"). Finance never
     // decides; the CEO's own void applies at once.
     label: 'Void paid cash voucher', section: 'ceo', queueModule: 'accounting', roles: ADMIN_ONLY,
+    delegable: false, mustHoldModule: null, ownership: 'company',
+  },
+  period_reopen: {
+    // POST /accounting/period-close/reopen-requests/:id/approve | reject (modules/accounting/periodReopen.ts): the CEO
+    // only, never handed over (owner, 2026-11-24). Finance never decides; the CEO's own reopen applies at once.
+    label: 'Reopen closed period', section: 'ceo', queueModule: 'accounting', roles: ADMIN_ONLY,
     delegable: false, mustHoldModule: null, ownership: 'company',
   },
   intern_enrollment: {
@@ -970,7 +977,7 @@ export async function auditApproval(
   e: { type: string; id: string; tenantId: string | null; decision: string; grant: ApprovalGrant; entity?: string; metadata?: Record<string, unknown> },
 ): Promise<void> {
   const section = isApprovalType(e.type) ? APPROVAL_RIGHTS[e.type].section : 'ceo'
-  const money = section === 'finance' || ['purchase_order', 'grn_finance', 'grn', 'cash_voucher', 'cash_voucher_void', 'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'stock_difference', 'on_account_client', 'payroll_run', 'intern_payroll', 'shift_correction'].includes(e.type)
+  const money = section === 'finance' || ['purchase_order', 'grn_finance', 'grn', 'cash_voucher', 'cash_voucher_void', 'period_reopen', 'fixed_asset_request', 'bad_debt', 'raast_void', 'grni_writeoff', 'stock_difference', 'on_account_client', 'payroll_run', 'intern_payroll', 'shift_correction'].includes(e.type)
   await audit({
     category: money ? 'accounting' : 'identity',
     action: 'approval.decide',
@@ -1185,6 +1192,10 @@ export async function approvalSubject(type: string, id: string, db: Db = service
       const r = await db.cashVoucherVoidRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, createdAt: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.createdAt })
     }
+    case 'period_reopen': {
+      const r = await db.periodReopenRequest.findUnique({ where: { id }, select: { tenantId: true, status: true, requestedById: true, createdAt: true } })
+      return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.requestedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.createdAt })
+    }
     case 'intern_enrollment': {
       const r = await db.intern.findUnique({ where: { id }, select: { tenantId: true, status: true, createdById: true, submittedById: true, submittedAt: true } })
       return r && subject({ companyIds: [r.tenantId], ownerTenantId: r.tenantId, submitterIds: [r.createdById, r.submittedById], viaHeadOfficeId: null, status: r.status, submittedAt: r.submittedAt })
@@ -1342,6 +1353,7 @@ const WAITING_STATUS: Partial<Record<ApprovalType, readonly string[]>> = {
   staff_offboard: ['pending'],
   employee_delete: ['pending'],
   cash_voucher_void: ['pending'],
+  period_reopen: ['pending'],
   intern_enrollment: ['pending_approval'],
   intern_payroll_finance: ['finance_review'],
   intern_payroll: ['finance_checked'],

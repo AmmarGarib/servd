@@ -48,7 +48,7 @@ import { uploadRecordFiles, type PickedFile } from '@/components/files/recordFil
 
 interface Account { id: string; tenantId: string | null; code: string; name: string; type: string; isActive: boolean; subAccounts?: Array<{ id: string; name: string; code: string | null }> }
 interface Brand { id: string; name: string; tenantId: string | null }
-interface CurrentLock { tenantId?: string | null; lockedThrough: string | null; reopenedThrough?: string | null }
+interface CurrentLock { tenantId?: string | null; lockedThrough: string | null; reopenedThrough?: string | null; reopenedForFinance?: boolean }
 interface DraftLine {
   key: number; accountId: string; debit: string; credit: string; memo: string; conceptId: string; subAccountId: string
   /** Its amount was filled to balance the entry (owner, 2026-10-27); it follows the other lines until typed into. */
@@ -233,6 +233,9 @@ function JournalsPage() {
   // A month the CEO reopened: only the CEO posts there (closedBooks.ts).
   const reopenedThrough = lock?.reopenedThrough ? pktDate(lock.reopenedThrough) : null
   const dateReopened = !dateLocked && !!reopenedThrough && companyIds.length === 1 && date <= reopenedThrough
+  // Reopened at finance's request (owner, 2026-11-24): finance posts there too, like the CEO.
+  const myRoleForReopened = useAuthStore((st) => st.user?.role ?? null)
+  const mayWorkReopened = isAdmin || (!!lock?.reopenedForFinance && myRoleForReopened === 'finance')
 
   // A credit to a money account (cash 1010 / 1011, banks 10xx) = a payment: the register asks how it is classified.
   // The server decides for good (paymentsRegister.ts) — a transfer between money accounts is not a payment there.
@@ -265,7 +268,7 @@ function JournalsPage() {
   if (debitTotal === 0) blockers.push('Enter the amounts')
   else if (difference !== 0) blockers.push(`Debits and credits differ by ${fmtPkr(Math.abs(difference))}`)
   if (dateLocked) blockers.push(`Books are closed through ${lockedThrough} — pick a later date`)
-  if (dateReopened && !isAdmin) blockers.push(`${date} is in a month the CEO reopened (through ${reopenedThrough}) — only the CEO can post there; pick a later date`)
+  if (dateReopened && !mayWorkReopened) blockers.push(`${date} is in a month the CEO reopened (through ${reopenedThrough}) — only the CEO can post there; pick a later date`)
   if (!date || date < dateBounds().min || date > dateBounds().max) blockers.push(`Pick a date between ${dateBounds().min} and ${dateBounds().max}`)
 
   const post = useMutation({
@@ -528,11 +531,14 @@ function JournalsPage() {
                   aria-invalid={dateLocked || !date || date < dateBounds().min || date > dateBounds().max ? true : undefined}
                   aria-describedby={dateLocked ? 'journal-date-note' : undefined} />
                 {dateLocked && <span id="journal-date-note" role="alert" className="block text-xs text-s-red mt-1">Books are closed through {lockedThrough} — pick a later date.</span>}
-                {dateReopened && <span role={isAdmin ? 'status' : 'alert'} className={`block text-xs mt-1 ${isAdmin ? 'text-s-muted' : 'text-s-red'}`}>
-                  {isAdmin ? `This month is reopened (through ${reopenedThrough}) — only you can post into it.` : `The CEO reopened the books through ${reopenedThrough} — only the CEO can post there. Pick a later date.`}
+                {dateReopened && <span role={mayWorkReopened ? 'status' : 'alert'} className={`block text-xs mt-1 ${mayWorkReopened ? 'text-s-muted' : 'text-s-red'}`}>
+                  {isAdmin
+                    ? (lock?.reopenedForFinance ? `This month is reopened (through ${reopenedThrough}) at finance's request — you and finance can post into it.` : `This month is reopened (through ${reopenedThrough}) — only you can post into it.`)
+                    : mayWorkReopened ? `The CEO reopened the books through ${reopenedThrough} at finance's request — you can post into it until it is closed again.`
+                    : `The CEO reopened the books through ${reopenedThrough} — only the CEO can post there. Pick a later date.`}
                 </span>}
                 {!dateLocked && !dateReopened && reopenedThrough && companyIds.length === 1 && (
-                  <span className="block text-xs text-s-muted mt-1">Reopened by the CEO through {reopenedThrough} (CEO only).</span>
+                  <span className="block text-xs text-s-muted mt-1">Reopened by the CEO through {reopenedThrough} ({lock?.reopenedForFinance ? 'CEO and finance' : 'CEO only'}).</span>
                 )}
                 {!dateLocked && date && (date < dateBounds().min || date > dateBounds().max) && <span role="alert" className="block text-xs text-s-red mt-1">Pick a date between {dateBounds().min} and {dateBounds().max}.</span>}
               </Field>

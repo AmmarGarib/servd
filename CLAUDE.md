@@ -3874,6 +3874,25 @@ the CEO only until the CEO closes through it again (403
 Cancelling / reversing an entry DATED in closed or reopened books is the
 CEO's only (`reverseJournalEntry` checks it). Open months work as before.
 
+**Finance asks; a month reopened at finance's request is open to finance (owner, 2026-11-24: "Where to request to open
+a closed period to do postings in that closed period?" → "Build both" — LOOSENS the CEO-only window above for that case
+only).** Contract: header of `accounting/periodReopen.ts`. `reopenLatestClose` is the ONE reopen engine (the CEO's direct
+route calls it). Finance (role `finance` holding `accounting`) raises `POST /accounting/period-close/reopen-requests
+{reason ≥10}` for the ACTIVE company's latest close → 202, nothing changes; `period_reopen_requests` (tenantId, RLS,
+merge repoint; one pending per company in code under an advisory lock — 409 `REOPEN_PENDING`; migration
+`20261124140000`). Approval type `period_reopen` (section ceo, never delegable; provider
+`accounting/periodReopenApprovalProvider.ts`): `…/:id/approve` (the request claimed and the close reopened in one
+transaction; 409 `CLOSE_CHANGED` when the latest close is no longer the one asked for) | `/reject {note ≥10}` |
+`/withdraw` (asker or CEO); another company 404. An APPROVED request also marks the window open to finance (Setting
+`ledger.reopenedForFinance:<tenantId>`, cleared with the window when the books are closed again):
+`closedBooks.ts mayWorkReopened` / `closedBooksThroughFor(db, tenantId, actorId)` — a finance login of that company
+holding `accounting` posts, edits and cancels entries dated in the REOPENED window; months still closed stay refused
+for everyone, and a window the CEO reopened DIRECTLY stays the CEO's. Every non-CEO closed-books check reads
+`closedBooksThroughFor` (journal posting / reversal, text edits, amend, sub-account tags, journal requests, the
+Journals list, Backfill unposted). `GET /accounting/period-close` returns `reopenedForFinance`. Admin: Period close
+("Ask the CEO to reopen", the waiting card with Approve / Reject / Withdraw) and the Journals date notes. Tests:
+`tests/periodReopenRequest.test.ts`.
+
 ### Parked (owner, 2026-10-13)
 
 Delivery and customers, and corporate clients on account, were PARKED on

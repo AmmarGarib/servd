@@ -236,6 +236,7 @@ beforeAll(async () => {
     await api.register(receivableRoutes, { prefix: '/accounting/receivables' })
     await api.register(customerAccountRoutes, { prefix: '/accounting/customer-accounts' })
     await api.register(intercompanyRoutes, { prefix: '/accounting/intercompany' })
+    await api.register((await import('../src/modules/accounting/periodReopen.js')).periodReopenRoutes, { prefix: '/accounting/period-close' })
     await api.register(reconciliationRoutes, { prefix: '/reconciliation' })
     await api.register(grniRoutes, { prefix: '/procurement/grni' })
     // No /accounting/stock-differences here: the type answers 404 → not listed.
@@ -264,6 +265,8 @@ describe('two companies', () => {
       // Intern Management (owner, 2026-11-06) reads /hr/interns and /hr/interns/payroll/runs (HR routes): listed, none waiting.
       'intern_enrollment', 'intern_payroll', 'intern_payroll_finance',
       'on_account_client', 'payroll_finance_review', 'payroll_run',
+      // Reopen a closed period (owner, 2026-11-24) reads /accounting/period-close/reopen-requests: listed, none waiting.
+      'period_reopen',
       'purchase_order', 'raast_void', 'recipe', 'staff_login',
       // HR's login offboards (owner, 2026-11-05) read /auth/staff/offboard-requests: listed, none waiting.
       'staff_offboard',

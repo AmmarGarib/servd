@@ -65,6 +65,10 @@ const fixRolesOf = (path: string): readonly string[] => FIX_ROLES[path.split('?'
 
 interface Override { key: string; title?: string; count?: number; cents?: number; via?: string }
 
+interface ReopenRequest {
+  id: string; tenantId: string; status: string; reason: string; lockedThroughLabel: string; createdAt: string
+  requestedByName: string | null; decidedByName: string | null; decisionNote: string | null; blockedBy: string | null; canWithdraw: boolean
+}
 interface CloseState {
   tenantId: string | null
   lockedThrough: string | null
@@ -198,6 +202,28 @@ export default function PeriodClosePage() {
     },
     onError: (err: Error) => setFeedback({ ok: false, msg: err.message || 'Failed to reopen' }),
   })
+
+  // Finance asks the CEO to reopen the latest close (owner, 2026-11-24) — the CEO approves in the approvals inbox.
+  const isFinance = myRole === 'finance'
+  const [askReason, setAskReason] = useState('')
+  const { data: reopenRequests } = useQuery({
+    queryKey: ['period-close', 'reopen-requests'],
+    queryFn: () => api.get<{ items: ReopenRequest[] }>('/accounting/period-close/reopen-requests'),
+    enabled: isAdmin || isFinance,
+  })
+  const pendingReopen = (reopenRequests?.items ?? []).find((r) => r.status === 'pending' && (!state?.tenantId || r.tenantId === state.tenantId)) ?? null
+  const lastDecided = (reopenRequests?.items ?? []).find((r) => r.status !== 'pending' && r.status !== 'withdrawn' && (!state?.tenantId || r.tenantId === state.tenantId)) ?? null
+  const askReopen = useMutation({
+    mutationFn: (reason: string) => api.post('/accounting/period-close/reopen-requests', { reason }),
+    onSuccess: () => { setFeedback({ ok: true, msg: 'Sent to the CEO. Nothing changes until the CEO approves.' }); setAskReason(''); refresh() },
+    onError: (err: Error) => setFeedback({ ok: false, msg: err.message || 'The request was not sent' }),
+  })
+  const reopenDecision = useMutation({
+    mutationFn: ({ id, path, body }: { id: string; path: 'approve' | 'reject' | 'withdraw'; body?: unknown }) => api.post(`/accounting/period-close/reopen-requests/${id}/${path}`, body ?? {}),
+    onSuccess: (_d, v) => { setFeedback({ ok: true, msg: v.path === 'approve' ? 'Period reopened — finance may post into it until it is closed again.' : v.path === 'reject' ? 'Request rejected — the books stay closed.' : 'Request withdrawn.' }); setRejectNote(''); refresh() },
+    onError: (err: Error) => setFeedback({ ok: false, msg: err.message || 'That did not go through' }),
+  })
+  const [rejectNote, setRejectNote] = useState('')
 
   const saveFy = useMutation({
     mutationFn: () => api.patch(`/tenants/${state!.tenantId}`, { fiscalYearEndMonth: fyMonth, ...(fyReason.trim() ? { reason: fyReason.trim() } : {}) }),
@@ -403,11 +429,56 @@ export default function PeriodClosePage() {
           )}
         </div>
 
+        {pendingReopen && (
+          <div className="s-card p-4 space-y-3 border-l-4" style={{ borderLeftColor: 'var(--erp-warning)' }}>
+            <h3 className="text-sm font-semibold text-s-text">Reopening asked for — waiting for the CEO</h3>
+            <p className="text-sm text-s-text break-words">
+              {pendingReopen.requestedByName ?? 'Finance'} asked to reopen the books closed through <strong>{pendingReopen.lockedThroughLabel}</strong>: {pendingReopen.reason}
+            </p>
+            {pendingReopen.blockedBy && <p role="alert" className="text-xs text-s-red">It can no longer be approved as asked: {pendingReopen.blockedBy}. Reject it and ask again.</p>}
+            <p className="text-xs text-s-muted">Nothing has changed yet. Once approved, the CEO and finance can post, edit and cancel entries dated in that period until the books are closed again.</p>
+            {isAdmin && (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" disabled={reopenDecision.isPending || !!pendingReopen.blockedBy} onClick={() => reopenDecision.mutate({ id: pendingReopen.id, path: 'approve' })}>
+                    {reopenDecision.isPending ? 'Working…' : 'Approve — reopen the period'}
+                  </Button>
+                </div>
+                <FieldLabel htmlFor="reopen-reject" className="block">To reject, say why (at least 10 characters)</FieldLabel>
+                <Input id="reopen-reject" type="text" value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} className="w-full" />
+                <Button variant="danger" type="submit" disabled={reopenDecision.isPending || rejectNote.trim().length < 10}
+                  onClick={() => reopenDecision.mutate({ id: pendingReopen.id, path: 'reject', body: { note: rejectNote.trim() } })}>Reject</Button>
+              </>
+            )}
+            {!isAdmin && pendingReopen.canWithdraw && (
+              <Button variant="secondary" type="submit" disabled={reopenDecision.isPending} onClick={() => reopenDecision.mutate({ id: pendingReopen.id, path: 'withdraw' })}>Withdraw the request</Button>
+            )}
+          </div>
+        )}
+
+        {isFinance && state?.lockedThrough && !pendingReopen && (
+          <div className="s-card p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-s-text">Ask the CEO to reopen the latest close</h3>
+            <p className="text-xs text-s-muted">
+              Only the CEO reopens closed books. Your request goes to the CEO&rsquo;s approvals; nothing changes until it is approved. Once approved, you can post, edit and cancel entries dated in that period until the books are closed again.
+            </p>
+            {lastDecided?.status === 'rejected' && (
+              <p className="text-xs text-s-red break-words">Your last request ({lastDecided.lockedThroughLabel}) was rejected{lastDecided.decidedByName ? ` by ${lastDecided.decidedByName}` : ''}: {lastDecided.decisionNote ?? '—'}</p>
+            )}
+            <FieldLabel htmlFor="ask-reopen-reason" className="block">Why it must be reopened (at least 10 characters)</FieldLabel>
+            <Input id="ask-reopen-reason" type="text" value={askReason} onChange={(e) => setAskReason(e.target.value)}
+              placeholder="e.g. supplier bill for August arrived late" className="w-full" />
+            <Button type="submit" onClick={() => askReopen.mutate(askReason.trim())} disabled={askReopen.isPending || askReason.trim().length < 10} className="w-full">
+              {askReopen.isPending ? 'Sending…' : 'Send to the CEO'}
+            </Button>
+          </div>
+        )}
+
         {isAdmin && state?.lockedThrough && (
           <div className="s-card p-4 space-y-3 border-l-4 border-s-red">
             <h3 className="text-sm font-semibold text-s-text">Reopen the latest close</h3>
             <p className="text-xs text-s-muted">
-              Removes only the most recent close. The reopening is written to the accounting audit trail and raised in the Exceptions inbox. Say why.
+              Removes only the most recent close. The reopening is written to the accounting audit trail and raised in the Exceptions inbox. Say why. Reopened this way, only you can post into it — approve a request from finance instead if finance should post there.
             </p>
             <FieldLabel htmlFor="reopen-reason" className="block">Reason (required)</FieldLabel>
             <Input id="reopen-reason" type="text" value={reopenReason} onChange={(e) => setReopenReason(e.target.value)}

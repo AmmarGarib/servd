@@ -753,8 +753,8 @@ export async function textEditManualJournal(tx: Prisma.TransactionClient, args: 
   const open = await openChangeRequestOf(tx, tenantId, entryId)
   if (open) throw changePending(open)
   if (actor.role !== 'admin') {
-    const { closedBooksThrough } = await import('./closedBooks.js')
-    const through = await closedBooksThrough(tx, tenantId)
+    const { closedBooksThroughFor } = await import('./closedBooks.js')
+    const through = await closedBooksThroughFor(tx, tenantId, actor.id)
     if (through && e.entryDate <= through) {
       throw new AppError('CEO_ONLY_CLOSED_BOOKS', `This entry is dated ${fmtPktDate(e.entryDate)}, in closed books — only the CEO can change it.`, 403)
     }
