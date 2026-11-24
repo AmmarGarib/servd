@@ -13,12 +13,12 @@ import { useAuthStore } from '../../../store/auth'
 interface Acc { id: string; code: string; name: string; type: string; isActive: boolean }
 interface Preview {
   lineCount: number; entryCount: number; debitCents: number; creditCents: number; netCents: number
-  firstDate: string | null; lastDate: string | null; subAccounts: number; blockers: { code: string; message: string }[]
+  firstDate: string | null; lastDate: string | null; subAccounts: number; blockers: { code: string; message: string }[]; warnings?: string[]
 }
 interface MergeRow {
   id: string; status: string; reason: string; fromCode: string; fromName: string; intoCode: string; intoName: string
   lineCount: number; debitCents: number; creditCents: number; requestedByName: string | null; decidedByName: string | null
-  decisionNote: string | null; blockedBy: string | null; canWithdraw: boolean; canUndo: boolean; createdAt: string
+  decisionNote: string | null; blockedBy: string | null; warnings?: string[]; canWithdraw: boolean; canUndo: boolean; createdAt: string
 }
 const KEY = ['account-merges']
 
@@ -68,6 +68,9 @@ export function MergeDialog({ account, accounts, onClose }: { account: Acc; acco
                 {preview.subAccounts > 0 && <><dt>Sub-accounts moving too</dt><dd className="text-right">{preview.subAccounts}</dd></>}
               </dl>
             )}
+            {(preview.warnings ?? []).map((w) => (
+              <p key={w} className="text-xs break-words" style={{ color: 'var(--erp-warning)' }}>Note: {w}</p>
+            ))}
             {preview.blockers.map((b) => (
               <p key={b.code + b.message} role="alert" className="text-xs font-semibold break-words" style={{ color: 'var(--erp-danger)' }}>Cannot merge: {b.message}</p>
             ))}
@@ -114,6 +117,7 @@ export function MergeRequests() {
           <p className="text-xs break-words" style={{ color: 'var(--muted)' }}>
             {r.lineCount} line{r.lineCount === 1 ? '' : 's'} · debits {fmtPkr(r.debitCents)} · credits {fmtPkr(r.creditCents)} · asked by {r.requestedByName ?? '—'}: {r.reason}
           </p>
+          {(r.warnings ?? []).map((w) => <p key={w} className="text-xs break-words" style={{ color: 'var(--erp-warning)' }}>Note: {w}</p>)}
           {r.blockedBy && <p role="alert" className="text-xs break-words" style={{ color: 'var(--erp-danger)' }}>Cannot be merged now: {r.blockedBy}</p>}
           {r.status === 'pending' && isAdmin && (
             <div className="space-y-2">

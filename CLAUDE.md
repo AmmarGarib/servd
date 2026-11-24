@@ -3909,7 +3909,10 @@ removed and a lock through the day before is kept, so earlier days stay closed; 
   the ask and inside the merge's transaction: one company (else 404), same type and P&L heading (422
   `MERGE_TYPE_MISMATCH` / `MERGE_SECTION_MISMATCH`), BOTH opened by hand — never a template / module / controlled
   account, a brand's sales account, a bank's ledger account, a fixed-asset class or head-office account (422
-  `MERGE_NOT_HAND_MADE`), no entry of the old account in closed books (409 `ENTRIES_IN_CLOSED_BOOKS` — reopen from that
+  `MERGE_NOT_HAND_MADE`; EXCEPT an inter-company "Due from / Due to <company>" account, either side — owner, 2026-11-24:
+  "Allow merge for 2150 Due to GS Foods also": `warnings` say the pair's two books stop agreeing unless the other company
+  merges the same way, as the OLD account it stays switched on, and manual entries moved INTO it cannot be edited /
+  cancelled from Journals), no entry of the old account in closed books (409 `ENTRIES_IN_CLOSED_BOOKS` — reopen from that
   date first), one waiting merge per account (409 `MERGE_PENDING`). Sub-accounts follow; other companies' account links
   follow to the kept code. Tables `account_merges` / `account_merge_lines` (tenantId, RLS, merge repoint; migration
   `20261124180000`). Admin: "Merge" on a row of Chart of accounts (`chart-of-accounts/MergeAccounts.tsx`).

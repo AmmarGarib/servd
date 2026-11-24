@@ -199,3 +199,26 @@ describe('shareholder funding against the agreed split', () => {
     expect(await prisma.shareholder.count({ where: { tenantId: T.A } })).toBe(2)
   })
 })
+
+describe('an inter-company account may be merged (owner, 2026-11-24)', () => {
+  it('either side, with warnings; as the old account it stays switched on; other controlled accounts never', async () => {
+    const due = await prisma.account.create({ data: { tenantId: T.A, code: '2150', name: `Due to ${P} B`, type: 'liability', controlledBy: 'intercompany', counterpartyTenantId: T.B } })
+    await postJournalEntry({ tenantId: T.A, sourceType: 'ic.transfer', sourceId: `${P}-ic1`, description: 'IC charge', entryDate: nov, postedBy: U['ceoA']!.id,
+      lines: [{ accountCode: '6302', type: 'debit', amountCents: 62_574_800 }, { accountCode: '2150', type: 'credit', amountCents: 62_574_800 }] })
+    const pre = (await call('finA', 'GET', `${R}/preview?fromAccountId=${due.id}&intoAccountId=${A.loan2}`)).json()
+    expect(pre.blockers).toEqual([])
+    expect(pre.warnings.length).toBe(2)
+    const done = await call('ceoA', 'POST', R, { fromAccountId: due.id, intoAccountId: A.loan2, reason: 'One figure for GS shareholding' })
+    expect(done.statusCode, done.body).toBe(201)
+    expect(await balOf(T.A, '2150')).toBe(0)
+    // Still on: servd keeps posting inter-company movements to it.
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: due.id } })).isActive).toBe(true)
+    // The other way round is allowed too (a hand-made account INTO the inter-company account).
+    const back = await call('ceoA', 'POST', R, { fromAccountId: A.loan, intoAccountId: due.id, reason: 'Fold the partner loan in (test)' })
+    expect(back.statusCode, back.body).toBe(201)
+    // A fixed-asset register account is still never merged.
+    const fa = await prisma.account.create({ data: { tenantId: T.A, code: '2399', name: 'Kept by a module', type: 'liability', controlledBy: 'fixed_asset' } })
+    expect(code(await call('ceoA', 'POST', R, { fromAccountId: fa.id, intoAccountId: A.loan2, reason: 'Should be refused always' }))).toBe('MERGE_NOT_HAND_MADE')
+  })
+})
+

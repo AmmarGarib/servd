@@ -24,6 +24,10 @@
 //   • both OPENED BY HAND: never an account servd posts to (template / module codes, controlled accounts, a brand's
 //     sales account, a bank's ledger account, a fixed-asset class account, a head-office mapping) — 422
 //     MERGE_NOT_HAND_MADE. Their balances are tied to registers that a merge would break.
+//     EXCEPTION (owner, 2026-11-24: "Allow merge for 2150 Due to GS Foods also"): an INTER-COMPANY "Due from / Due to
+//     <company>" account may be either side. `warnings` (preview, list, approval card) say what follows: the pair's
+//     two books stop agreeing unless the other company merges the same way; as the OLD account it is NOT switched
+//     off (servd keeps posting to it); manual entries moved INTO it can no longer be edited / cancelled from Journals.
 //   • the kept account is switched on — 422 MERGE_INTO_INACTIVE
 //   • no entry of the old account is dated in CLOSED books — 409 ENTRIES_IN_CLOSED_BOOKS (reopen from that date first)
 //   • one waiting merge per account — 409 MERGE_PENDING
@@ -60,6 +64,9 @@ export interface MergeBlocker { code: string; message: string; status: number }
 /** Why this account is one servd posts to itself (never merged), or null when it was opened by hand. */
 async function systemReason(db: Db, acc: Acc): Promise<string | null> {
   const label = `${acc.code} ${acc.name}`
+  // An inter-company "Due from / Due to <company>" account MAY be merged (owner, 2026-11-24: "Allow merge for 2150 Due
+  // to GS Foods also") — see IC_NOTE in mergeCheck. Every other controlled account never.
+  if (acc.controlledBy === 'intercompany') return null
   if (acc.controlledBy) return `${label} is kept by a servd module`
   if (SYSTEM_ACCOUNT_CODES.has(acc.code) || SYSTEM_POSTED_CODES.has(acc.code)) return `${label} is an account servd posts to itself`
   if (!acc.tenantId) return `${label} has no company`
@@ -92,6 +99,14 @@ export async function mergeCheck(db: Db, tenantId: string, fromId: string, intoI
     const why = await systemReason(db, a)
     if (why) block('MERGE_NOT_HAND_MADE', `${why} — only accounts opened by hand can be merged`)
   }
+  // Inter-company accounts (owner, 2026-11-24): allowed, with what it means spelled out — never a silent break.
+  const warnings: string[] = []
+  const isIc = (a: Acc) => a.controlledBy === 'intercompany'
+  if (isIc(from) || isIc(into)) {
+    warnings.push('One of these is an inter-company account. After the merge this company\'s balance with the other company will no longer agree with the other company\'s books unless its matching accounts are merged the same way — the month close will warn about the difference.')
+    if (isIc(from)) warnings.push(`${from.code} ${from.name} stays switched on after the merge: servd keeps posting new inter-company transfers, cost splits and recharges to it, so it will fill again.`)
+    if (isIc(into) && !isIc(from)) warnings.push(`Journal entries moved into ${into.code} ${into.name} can no longer be edited or cancelled from Journals (only inter-company transfers post there) — undo the merge first if one needs changing.`)
+  }
   if (!into.isActive) block('MERGE_INTO_INACTIVE', `${into.code} ${into.name} is switched off — switch it on first`)
 
   const sums = await db.journalLine.groupBy({ by: ['type'], _sum: { amountCents: true }, _count: { _all: true }, where: { accountId: from.id } })
@@ -116,7 +131,7 @@ export async function mergeCheck(db: Db, tenantId: string, fromId: string, intoI
   const subAccounts = await db.subAccount.count({ where: { accountId: from.id } })
   return {
     from, into, lineCount, entryCount: span._count._all, debitCents, creditCents, netCents: debitCents - creditCents,
-    firstDate: span._min.entryDate, lastDate: span._max.entryDate, subAccounts, blockers,
+    firstDate: span._min.entryDate, lastDate: span._max.entryDate, subAccounts, blockers, warnings,
   }
 }
 const throwFirst = (blockers: MergeBlocker[]) => { const b = blockers[0]; if (b) throw new AppError(b.code, b.message, b.status) }
@@ -157,7 +172,8 @@ async function applyMergeTx(tx: Tx, m: { id: string; tenantId: string; fromAccou
     }
   }
   if (moved.length) await tx.account.update({ where: { id: m.intoAccountId }, data: { subAccountsEnabled: true } })
-  await tx.account.update({ where: { id: m.fromAccountId }, data: { isActive: false, subAccountsEnabled: false } })
+  // The old account is switched off — except an inter-company account, which servd keeps posting to.
+  if (c.from.controlledBy !== 'intercompany') await tx.account.update({ where: { id: m.fromAccountId }, data: { isActive: false, subAccountsEnabled: false } })
   // Other companies' accounts linked to the old code follow to the kept code (their own rows: service client).
   await serviceClient.account.updateMany({ where: { relatedTenantId: m.tenantId, relatedAccountCode: c.from.code }, data: { relatedAccountCode: c.into.code } })
   await tx.accountMerge.update({
@@ -189,7 +205,7 @@ export async function accountMergeRoutes(fastify: FastifyInstance) {
     into: { id: c.into.id, code: c.into.code, name: c.into.name, type: c.into.type },
     lineCount: c.lineCount, entryCount: c.entryCount, debitCents: c.debitCents, creditCents: c.creditCents, netCents: c.netCents,
     firstDate: c.firstDate ? fmtPktDate(c.firstDate) : null, lastDate: c.lastDate ? fmtPktDate(c.lastDate) : null,
-    subAccounts: c.subAccounts, blockers: c.blockers.map((b) => ({ code: b.code, message: b.message })),
+    subAccounts: c.subAccounts, blockers: c.blockers.map((b) => ({ code: b.code, message: b.message })), warnings: c.warnings,
   })
 
   fastify.get<{ Querystring: { fromAccountId?: string; intoAccountId?: string } }>('/preview', { preHandler: gate }, async (req) => {
@@ -242,11 +258,12 @@ export async function accountMergeRoutes(fastify: FastifyInstance) {
     return {
       items: await Promise.all(rows.map(async (r) => {
         // A waiting merge shows what blocks it NOW (the approve button reads it).
-        const blockedBy = r.status === 'pending'
-          ? (await mergeCheck(prisma, r.tenantId, r.fromAccountId, r.intoAccountId, { ignoreMergeId: r.id }).then((c) => c.blockers[0]?.message ?? null).catch(() => 'one of the accounts is gone'))
-          : null
+        const now = r.status === 'pending'
+          ? await mergeCheck(prisma, r.tenantId, r.fromAccountId, r.intoAccountId, { ignoreMergeId: r.id }).then((c) => ({ blockedBy: c.blockers[0]?.message ?? null, warnings: c.warnings })).catch(() => ({ blockedBy: 'one of the accounts is gone', warnings: [] as string[] }))
+          : { blockedBy: null, warnings: [] as string[] }
+        const blockedBy = now.blockedBy
         return {
-          ...r, companyName: t.get(r.tenantId) ?? null, requestedByName: u.get(r.requestedById) ?? null,
+          ...r, warnings: now.warnings, companyName: t.get(r.tenantId) ?? null, requestedByName: u.get(r.requestedById) ?? null,
           decidedByName: r.decidedById ? u.get(r.decidedById) ?? null : null, blockedBy,
           canWithdraw: r.status === 'pending' && (me.role === 'admin' || r.requestedById === me.id),
           canUndo: r.status === 'done' && me.role === 'admin',

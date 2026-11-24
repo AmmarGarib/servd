@@ -13,7 +13,7 @@ const LINK = '/configuration/chart-of-accounts'
 interface Row {
   id: string; tenantId: string; reason: string; requestedById: string; createdAt: string
   fromCode: string; fromName: string; intoCode: string; intoName: string; lineCount: number; debitCents: number; creditCents: number
-  companyName: string | null; requestedByName: string | null; blockedBy: string | null
+  companyName: string | null; requestedByName: string | null; blockedBy: string | null; warnings?: string[]
 }
 
 export const accountMerges: ApprovalProvider = {
@@ -39,6 +39,7 @@ export const accountMerges: ApprovalProvider = {
         { label: 'Entries to move', value: `${r.lineCount} line${r.lineCount === 1 ? '' : 's'} — debits ${fmtPkrCents(r.debitCents)}, credits ${fmtPkrCents(r.creditCents)}` },
         { label: 'What happens', value: `Every entry of ${r.fromCode} moves to ${r.intoCode} as posted (same date, narration and voucher number). ${r.fromCode} ends empty and is switched off. Nothing is posted.` },
         { label: 'Asked by', value: r.requestedByName ?? '—' },
+        ...(r.warnings ?? []).map((w) => ({ label: 'Note', value: w })),
         ...(r.blockedBy ? [{ label: 'Blocked by', value: r.blockedBy }] : []),
       ],
       waitingSince: r.createdAt,
