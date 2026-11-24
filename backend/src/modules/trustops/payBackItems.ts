@@ -16,13 +16,15 @@ export interface PayBackBill {
   supplier: { name: string }
   po: { id: string; reference: string | null } | null
   lines: PayBackItem[]
+  /** The bill's own figures, so the voucher adds up: items + sales tax on the invoice − withholding = what is paid back. */
+  itemsCents: number; taxCents: number; whtCents: number; totalCents: number
 }
 
 export async function payBackBillOf(db: Db, billId: string, tenantId: string): Promise<PayBackBill | null> {
   const bill = await db.supplierBill.findFirst({
     where: { id: billId, supplier: { tenantId } },
     select: {
-      id: true, billNumber: true, status: true, supplier: { select: { name: true } }, po: { select: { id: true, reference: true } },
+      id: true, billNumber: true, status: true, subtotalCents: true, taxCents: true, whtCents: true, totalCents: true, supplier: { select: { name: true } }, po: { select: { id: true, reference: true } },
       lines: {
         orderBy: { id: 'asc' },
         select: {
@@ -36,6 +38,7 @@ export async function payBackBillOf(db: Db, billId: string, tenantId: string): P
   if (!bill) return null
   return {
     id: bill.id, billNumber: bill.billNumber, status: bill.status, supplier: bill.supplier, po: bill.po,
+    itemsCents: Number(bill.subtotalCents), taxCents: Number(bill.taxCents), whtCents: Number(bill.whtCents), totalCents: Number(bill.totalCents),
     lines: bill.lines.map((l) => {
       const total = Number(l.lineTotalCents)
       const factor = l.poLine?.orderUnit && l.poLine.orderUnitFactor && l.poLine.orderUnitFactor > 0 ? l.poLine.orderUnitFactor : null

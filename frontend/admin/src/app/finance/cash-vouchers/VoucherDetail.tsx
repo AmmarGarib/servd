@@ -341,7 +341,12 @@ export function VoucherDetail({ id }: { id: string }) {
                   <dt className="text-xs uppercase tracking-wider text-white/40">Pays back for</dt>
                   <dd className="text-white/85 font-semibold break-words">{`${v.reimbursedBill.po?.reference ?? 'PO'} — bill ${v.reimbursedBill.billNumber} of ${v.reimbursedBill.supplier.name}`}</dd>
                   {(v.reimbursedBill.lines?.length ?? 0) > 0 && (
-                    <ItemsTable lines={v.reimbursedBill.lines!} totalLabel="Bill items total" totalCents={v.reimbursedBill.lines!.reduce((x, l) => x + l.totalCents, 0)} />
+                    <ItemsTable lines={v.reimbursedBill.lines!} totalLabel="Items total" totalCents={v.reimbursedBill.lines!.reduce((x, l) => x + l.totalCents, 0)}
+                      extra={[
+                        ...(v.reimbursedBill.taxCents ? [{ label: 'Sales tax on the invoice', cents: v.reimbursedBill.taxCents }] : []),
+                        ...(v.reimbursedBill.whtCents ? [{ label: 'Less: tax withheld', cents: -v.reimbursedBill.whtCents }] : []),
+                        ...((v.reimbursedBill.taxCents || v.reimbursedBill.whtCents) ? [{ label: 'Bill total paid back', cents: (v.reimbursedBill.totalCents ?? 0) - (v.reimbursedBill.whtCents ?? 0), strong: true }] : []),
+                      ]} />
                   )}
                 </div>
               )
@@ -402,7 +407,7 @@ export function VoucherDetail({ id }: { id: string }) {
 }
 
 /** The items a PO voucher or a pay-back voucher is for. */
-function ItemsTable({ lines, totalLabel, totalCents }: { lines: Array<{ id: string; item: string; quantity: number; unit: string; rateCents: number; totalCents: number }>; totalLabel: string; totalCents: number }) {
+function ItemsTable({ lines, totalLabel, totalCents, extra }: { lines: Array<{ id: string; item: string; quantity: number; unit: string; rateCents: number; totalCents: number }>; totalLabel: string; totalCents: number; extra?: Array<{ label: string; cents: number; strong?: boolean }> }) {
   return (
         <div className="mt-2 overflow-x-auto">
           <table className="w-full text-xs">
@@ -429,6 +434,12 @@ function ItemsTable({ lines, totalLabel, totalCents }: { lines: Array<{ id: stri
                 <td colSpan={3} className="py-1.5 text-right text-white/55 font-semibold">{totalLabel}</td>
                 <td className="py-1.5 text-right text-white/90 font-black whitespace-nowrap">PKR {formatPkr(totalCents, { decimals: true })}</td>
               </tr>
+              {(extra ?? []).map((x) => (
+                <tr key={x.label}>
+                  <td colSpan={3} className={`py-1.5 text-right ${x.strong ? 'text-white/85 font-bold' : 'text-white/55 font-semibold'}`}>{x.label}</td>
+                  <td className={`py-1.5 text-right whitespace-nowrap ${x.strong ? 'text-white/90 font-black' : 'text-white/85 font-semibold'}`}>{x.cents < 0 ? '(' : ''}PKR {formatPkr(Math.abs(x.cents), { decimals: true })}{x.cents < 0 ? ')' : ''}</td>
+                </tr>
+              ))}
             </tfoot>
           </table>
         </div>

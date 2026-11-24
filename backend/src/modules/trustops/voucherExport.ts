@@ -148,6 +148,10 @@ async function buildDoc(v: VoucherRow): Promise<VoucherDoc> {
         const qty = l.quantity.toLocaleString('en-PK', { maximumFractionDigits: 3 })
         return `${l.item}: ${qty} ${l.unit} @ PKR ${formatPkr(l.rateCents, { decimals: true })}/${l.unit} = PKR ${formatPkr(l.totalCents, { decimals: true })}`
       })
+      // The voucher pays the BILL: items + the invoice's sales tax (− withholding). Shown so the total adds up.
+      if (bill.taxCents) poItems.push(`Sales tax on the invoice = PKR ${formatPkr(bill.taxCents, { decimals: true })}`)
+      if (bill.whtCents) poItems.push(`Less: tax withheld = PKR ${formatPkr(bill.whtCents, { decimals: true })}`)
+      if (bill.taxCents || bill.whtCents) poItems.push(`Bill total to pay back = PKR ${formatPkr(bill.totalCents - bill.whtCents, { decimals: true })}`)
     }
   }
 

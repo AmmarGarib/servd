@@ -152,6 +152,18 @@ export function VoucherSheet({ v, companyName, categoryLabel }: { v: CashVoucher
                       <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{formatPkr(l.totalCents, { decimals: true })}</span>
                     </span>
                   ))}
+                  {!!v.reimbursedBill.taxCents && (
+                    <span style={{ display: 'flex', justifyContent: 'space-between', gap: '4mm' }}>
+                      <span>Sales tax on the invoice</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{formatPkr(v.reimbursedBill.taxCents, { decimals: true })}</span>
+                    </span>
+                  )}
+                  {!!v.reimbursedBill.whtCents && (
+                    <span style={{ display: 'flex', justifyContent: 'space-between', gap: '4mm' }}>
+                      <span>Less: tax withheld</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>({formatPkr(v.reimbursedBill.whtCents, { decimals: true })})</span>
+                    </span>
+                  )}
                 </span>
               } />
             )}
