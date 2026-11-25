@@ -177,7 +177,11 @@ describe('shareholder funding against the agreed split', () => {
     await post(T.A, '1010', '2301', 578_000_00, nov, 'Partner loan')
     await post(T.A, '1010', '2302', 580_430_00, nov, 'GS loan')
     const set = { shareholders: [{ name: 'Yousuf', sharePercent: 60, accountCodes: ['2301'] }, { name: 'GS Foods', sharePercent: 40, accountCodes: ['2302'] }] }
-    expect((await call('finA', 'PUT', S, set)).statusCode).toBe(403)
+    // Finance sets it up too (owner, 2026-11-25); a manager never.
+    expect((await call('mgrA', 'PUT', S, set)).statusCode).toBe(403)
+    expect((await call('finA', 'PUT', S, set)).statusCode).toBe(200)
+    expect((await call('finA', 'GET', S)).json().canEdit).toBe(true)
+    expect(code(await call('finB', 'PUT', S, { shareholders: [{ name: 'X', sharePercent: 100, accountCodes: ['2301'] }] }))).toBe('ACCOUNT_NOT_ALLOWED')
     expect(code(await call('ceoA', 'PUT', S, { shareholders: [{ ...set.shareholders[0], sharePercent: 50 }, set.shareholders[1]] }))).toBe('SHARES_NOT_100')
     expect(code(await call('ceoA', 'PUT', S, { shareholders: [set.shareholders[0], { ...set.shareholders[1], accountCodes: ['2301'] }] }))).toBe('ACCOUNT_LISTED_TWICE')
     expect(code(await call('ceoA', 'PUT', S, { shareholders: [set.shareholders[0], { ...set.shareholders[1], accountCodes: ['6302'] }] }))).toBe('ACCOUNT_NOT_ALLOWED')

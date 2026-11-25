@@ -3922,7 +3922,7 @@ removed and a lock through the day before is kept, so earlier days stay closed; 
   the liability / equity account codes holding what they put in. A company with none set shows nothing — that is how
   it is one company's only. `GET /accounting/shareholders?asOf=` (CEO, co-owner, management, finance; the ACTIVE
   company): funded = credits − debits of their accounts, expected = total × share, variance, and `topUpCents` (what
-  each must add for the agreed split with nobody taking money out). `PUT` = the CEO only (422 `SHARES_NOT_100` /
+  each must add for the agreed split with nobody taking money out). `PUT` = the CEO or finance holding `accounting` (owner, 2026-11-25: "Let finance set up shareholders also"; 422 `SHARES_NOT_100` /
   `ACCOUNT_NOT_ALLOWED` / `ACCOUNT_LISTED_TWICE`). Read-only over the ledger; no posting or report reads it. Admin:
   Accounting → Shareholder funding (`/accounting/shareholders`). Tests for both: `tests/accountMerge.test.ts`.
 

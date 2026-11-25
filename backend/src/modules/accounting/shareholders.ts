@@ -11,7 +11,8 @@
 //
 //   GET /accounting/shareholders?asOf=YYYY-MM-DD   CEO, co-owner, management, finance — the ACTIVE company
 //   GET /accounting/shareholders/accounts          the active company's liability / equity accounts (the picker)
-//   PUT /accounting/shareholders {shareholders:[{name, sharePercent, accountCodes[]}]}   the CEO only — replaces the
+//   PUT /accounting/shareholders {shareholders:[{name, sharePercent, accountCodes[]}]}   the CEO or finance holding
+//        `accounting` (owner, 2026-11-25) — replaces the
 //        list; shares must add up to 100 (422 SHARES_NOT_100); an account of another type or company 422
 //        ACCOUNT_NOT_ALLOWED; one account under two shareholders 422 ACCOUNT_LISTED_TWICE. [] clears it. Audited
 //        `shareholders.set`.
@@ -22,10 +23,15 @@ import { prisma } from '../../lib/prisma.js'
 import { AppError } from '../../lib/errors.js'
 import { audit } from '../../lib/audit.js'
 import { toCents } from '../../lib/money.js'
-import { requireAuth, ADMIN_ONLY } from '../auth/middleware.js'
+import type { UserRole } from '@prisma/client'
+import { requireAuth } from '../auth/middleware.js'
+import { requireModule } from '../notifications/requireModule.js'
 import { parsePktEndOfDay } from './dates.js'
 
 const FUNDING_TYPES = ['liability', 'equity']
+// Who sets a company's shareholders: the CEO, and finance holding `accounting` (owner, 2026-11-25: "Let finance set up
+// shareholders also").
+const EDITORS = ['admin', 'finance'] as UserRole[]
 
 /** Credits − debits per account code of one company, as at `asOf` (all time when null). */
 async function fundingByCode(tenantId: string, codes: string[], asOf: Date | null): Promise<Map<string, { name: string; balanceCents: number }>> {
@@ -78,7 +84,7 @@ export async function shareholderRoutes(fastify: FastifyInstance) {
     const asOf = req.query.asOf ? parsePktEndOfDay(req.query.asOf) : null
     if (asOf && Number.isNaN(asOf.getTime())) throw new AppError('INVALID_DATE', 'That is not a date', 422)
     const company = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { name: true } })
-    return { tenantId, companyName: company?.name ?? null, asOf: req.query.asOf ?? null, canEdit: req.staffUser!.role === 'admin', ...(await shareholdingOf(tenantId, asOf)) }
+    return { tenantId, companyName: company?.name ?? null, asOf: req.query.asOf ?? null, canEdit: EDITORS.includes(req.staffUser!.role), ...(await shareholdingOf(tenantId, asOf)) }
   })
 
   fastify.get('/accounts', { preHandler: readers }, async (req) => {
@@ -88,7 +94,7 @@ export async function shareholderRoutes(fastify: FastifyInstance) {
     return { accounts: accounts.map((a) => ({ ...a, balanceCents: balances.get(a.code)?.balanceCents ?? 0 })) }
   })
 
-  fastify.put('/', { preHandler: requireAuth(...ADMIN_ONLY) }, async (req) => {
+  fastify.put('/', { preHandler: [requireAuth(...EDITORS), requireModule('accounting')] }, async (req) => {
     const body = z.object({
       shareholders: z.array(z.object({
         name: z.string().trim().min(1).max(120),
@@ -112,7 +118,7 @@ export async function shareholderRoutes(fastify: FastifyInstance) {
     ])
     await audit({
       category: 'accounting', action: 'shareholders.set', entity: 'Shareholder', entityId: tenantId, tenantId,
-      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, before, after: list,
+      userId: req.staffUser!.id, userEmail: req.staffUser!.email ?? null, before, after: list, metadata: { actorRole: req.staffUser!.role },
     })
     return { saved: true, ...(await shareholdingOf(tenantId, null)) }
   })
