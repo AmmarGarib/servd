@@ -207,7 +207,10 @@ describe('an inter-company account may be merged (owner, 2026-11-24)', () => {
       lines: [{ accountCode: '6302', type: 'debit', amountCents: 62_574_800 }, { accountCode: '2150', type: 'credit', amountCents: 62_574_800 }] })
     const pre = (await call('finA', 'GET', `${R}/preview?fromAccountId=${due.id}&intoAccountId=${A.loan2}`)).json()
     expect(pre.blockers).toEqual([])
-    expect(pre.warnings.length).toBe(2)
+    expect(pre.warnings.length).toBe(3)
+    expect(pre.warnings[0]).toContain('merge the other way round')
+    // Keeping the inter-company account: no such hint.
+    expect((await call('finA', 'GET', `${R}/preview?fromAccountId=${A.loan2}&intoAccountId=${due.id}`)).json().warnings.some((w: string) => w.includes('other way round'))).toBe(false)
     const done = await call('ceoA', 'POST', R, { fromAccountId: due.id, intoAccountId: A.loan2, reason: 'One figure for GS shareholding' })
     expect(done.statusCode, done.body).toBe(201)
     expect(await balOf(T.A, '2150')).toBe(0)

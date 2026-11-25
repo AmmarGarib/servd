@@ -104,6 +104,8 @@ export async function mergeCheck(db: Db, tenantId: string, fromId: string, intoI
   const isIc = (a: Acc) => a.controlledBy === 'intercompany'
   if (isIc(from) || isIc(into)) {
     warnings.push('One of these is an inter-company account. After the merge this company\'s balance with the other company will no longer agree with the other company\'s books unless its matching accounts are merged the same way — the month close will warn about the difference.')
+    // The usual wish is ONE account that inter-company postings also land in (owner, 2026-11-25): say how.
+    if (isIc(from) && !isIc(into)) warnings.unshift(`To keep ONE account that inter-company transactions also post to, merge the other way round: open Merge on ${into.code} ${into.name} and keep ${from.code} ${from.name}. You can rename ${from.code} afterwards.`)
     if (isIc(from)) warnings.push(`${from.code} ${from.name} stays switched on after the merge: servd keeps posting new inter-company transfers, cost splits and recharges to it, so it will fill again.`)
     if (isIc(into) && !isIc(from)) warnings.push(`Journal entries moved into ${into.code} ${into.name} can no longer be edited or cancelled from Journals (only inter-company transfers post there) — undo the merge first if one needs changing.`)
   }
