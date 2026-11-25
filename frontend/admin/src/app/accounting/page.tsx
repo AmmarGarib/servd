@@ -80,6 +80,7 @@ const LEDGER_LINKS: Array<{ href: string; label: string }> = [
   { href: '/accounting/sales-tax-return', label: 'Sales Tax Return' },
   { href: '/accounting/statutory',        label: 'Statutory Payments' },
   { href: '/accounting/fixed-assets',    label: 'Fixed Assets' },
+  { href: '/accounting/shareholders',     label: 'Shareholder Funding' },
   { href: '/accounting/audit-log',        label: 'Audit Log' },
   { href: '/hr/payroll',                  label: 'Payroll' },
   { href: '/allocations',                 label: 'Cost Allocation' },
