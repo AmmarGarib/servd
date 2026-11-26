@@ -2288,6 +2288,15 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   the form shows estimate → actual and both totals). **Units:** a line is ordered in the item's unit, its family
   (g / kg, ml / l, pcs / items / dozen) or the item's buying unit, the rate per that unit (`poUnits.ts`; `items` =
   `pcs`). Tests: `tests/poApprovalChain.test.ts`, `tests/apFinanceFinal.test.ts`, `tests/wave3Finance.test.ts`.
+- **Purchases report (owner, 2026-11-26: "all purchases made supplier wise and including items purchased with amounts
+  and totals" → "Build both, give option to select").** `procurement/purchasesReport.ts` (contract in its header), READ
+  ONLY over bills, receipts and POs — no new store. `GET /procurement/purchases-report?from&to&basis&supplierId?&format=`
+  (procurement team + finance; GATED `procurement | accounting`; companies in view, foreign supplier 404). `basis`:
+  `billed` (bills not draft / void, credit notes off), `grn` (every receipt not undone, at its lot cost, any approval
+  stage), `all` (receipts + bill lines NOT for a receipt + what is still to arrive on POs pending_approval / approved /
+  sent / partial / completed — each counted once; a Stage column says where it stands). Grouped by supplier with items,
+  sales tax and totals; exports through `lib/reportExport.ts`. Admin: Procurement → "Purchases report" tab
+  (`components/procurement/PurchasesReport.tsx`; finance sees it too). Tests: `tests/purchasesReport.test.ts`.
 - **PO cancel:** a PO with a pending GRNI match (a bill booked before
   delivery) cannot be cancelled (409 `PO_BILLED_AHEAD`; void the bill or raise
   a "short" credit note first); billing ahead on a cancelled PO is 409

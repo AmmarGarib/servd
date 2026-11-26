@@ -1,5 +1,6 @@
 'use client'
 import { useServdSupplierPick } from '@/components/procurement/useServdSupplierPick'
+import { PurchasesReport } from '@/components/procurement/PurchasesReport'
 import { CompanyTicks, TenantField, useMyTenants } from '../../components/ui/TenantPicker'
 import { MasterIngredientPicker, type MasterPrice } from '../../components/kitchen/MasterIngredientPicker'
 import { fmtUnitCost, priceSourceLabel } from '../../lib/unitCost'
@@ -238,7 +239,7 @@ interface PriceHistoryRow {
   supplier?: { name: string } | null
 }
 
-type Tab = 'tasks' | 'pos' | 'grns' | 'bills' | 'payments' | 'suppliers' | 'buyers' | 'aging' | 'reorder' | 'approvals' | 'history'
+type Tab = 'tasks' | 'pos' | 'grns' | 'bills' | 'payments' | 'suppliers' | 'buyers' | 'aging' | 'reorder' | 'approvals' | 'history' | 'report'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -321,7 +322,7 @@ function useCanWriteAp(): boolean {
 }
 
 // Finance raises its own POs too (owner, 2026-11-10: "Allow finance to create POs").
-const AP_ONLY_TABS: readonly Tab[] = ['tasks', 'pos', 'grns', 'bills', 'payments', 'aging']
+const AP_ONLY_TABS: readonly Tab[] = ['tasks', 'pos', 'grns', 'bills', 'payments', 'aging', 'report']
 
 export default function ProcurementPage() {
   const qc = useQueryClient()
@@ -354,7 +355,7 @@ export default function ProcurementPage() {
     try {
       const sp = new URLSearchParams(window.location.search)
       const wanted = sp.get('tab')
-      if (wanted && ['tasks', 'pos', 'grns', 'bills', 'payments', 'suppliers', 'aging', 'reorder', 'approvals', 'history'].includes(wanted)) { pickedTab.current = true; setTab(wanted as Tab) }
+      if (wanted && ['tasks', 'pos', 'grns', 'bills', 'payments', 'suppliers', 'aging', 'reorder', 'approvals', 'history', 'report'].includes(wanted)) { pickedTab.current = true; setTab(wanted as Tab) }
       if (sp.get('grn')) setGrnOpen(sp.get('grn'))
       if (sp.get('po')) { pickedTab.current = true; setTab('pos'); setOpenPo(sp.get('po')) }
       if (sp.get('new') === 'po') { pickedTab.current = true; setTab('pos'); setNewPo({ item: sp.get('item'), qty: sp.get('qty'), fromCash: sp.get('from') === 'cash', notes: sp.get('notes') }) }
@@ -370,6 +371,7 @@ export default function ProcurementPage() {
     { id: 'suppliers', label: 'Suppliers',        icon: '' },
     { id: 'buyers',    label: 'Buyers',           icon: '' },
     { id: 'aging',     label: 'Aging',            icon: '' },
+    { id: 'report',    label: 'Purchases report', icon: '' },
     { id: 'reorder',   label: 'Reorder',          icon: '' },
     { id: 'approvals', label: 'Approvals',        icon: '' },
     { id: 'history',   label: 'Price History',    icon: '' },
@@ -403,6 +405,7 @@ export default function ProcurementPage() {
         {tab === 'suppliers' && <SuppliersTab qc={qc} />}
         {tab === 'buyers'    && <BuyersTab />}
         {tab === 'aging'     && <AgingTab />}
+        {tab === 'report'    && <PurchasesReport />}
         {tab === 'reorder'   && <ReorderTab qc={qc} />}
         {tab === 'approvals' && <ApprovalsTab qc={qc} />}
         {tab === 'history'   && <PriceHistoryTab />}

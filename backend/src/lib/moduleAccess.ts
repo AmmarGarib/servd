@@ -607,6 +607,8 @@ const GATED_PREFIXES: Array<{ prefix: string; anyOf: string[]; readAnyOf?: strin
   // The one AP aging serves the Accounting AP aging page too, so finance
   // (accounting, no procurement) can open it.
   { prefix: '/procurement/ap-aging', anyOf: ['procurement', 'accounting'] },
+  // Purchases by supplier (owner, 2026-11-26): the buying team and finance both read it.
+  { prefix: '/procurement/purchases-report', anyOf: ['procurement', 'accounting'] },
   // Payables reads for finance (wave 3, UI-07): the Accounting hub's vendor
   // and PO widgets, petty cash's bill picker. Their GET routes admit
   // AP_READERS; every write (raise / approve / receive a PO, enter or pay a

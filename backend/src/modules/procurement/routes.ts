@@ -24,6 +24,7 @@ import { requireModule } from '../notifications/requireModule.js'
 import { assertNote, poTaskNotice } from './poWorkflow.js'
 import { registerPoWorkflowRoutes } from './poWorkflowRoutes.js'
 import { registerBuyerRoutes, assertListedBuyer } from './buyers.js'
+import { registerPurchasesReportRoute } from './purchasesReport.js'
 
 // Company scope: every procurement row belongs to its supplier's company, so
 // every route below scopes through the supplier (./scope.ts). Reads use
@@ -1187,6 +1188,9 @@ export async function procurementRoutes(fastify: FastifyInstance) {
   //
   // ?format=csv|xlsx|pdf exports the same report (lib/reportExport.ts): one row
   // per supplier, the total, then the CEO-only no-company suppliers.
+  // Purchases by supplier with items and totals (owner, 2026-11-26) — purchasesReport.ts.
+  registerPurchasesReportRoute(fastify)
+
   fastify.get('/ap-aging', { preHandler: requireAuth(...FINANCE_TEAM, 'procurement') }, async (req, reply) => {
     const q = z.object({
       asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Give the date as YYYY-MM-DD').optional(),
