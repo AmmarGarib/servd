@@ -2295,7 +2295,7 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   `billed` (bills not draft / void, credit notes off), `grn` (every receipt not undone, at its lot cost, any approval
   stage), `all` (receipts + bill lines NOT for a receipt + what is still to arrive on POs pending_approval / approved /
   sent / partial / completed — each counted once; a Stage column says where it stands). Grouped by supplier with items,
-  sales tax and totals; exports through `lib/reportExport.ts`. Admin: Procurement → "Purchases report" tab
+  sales tax and totals; exports through `lib/reportExport.ts`. `conceptId=<brand>|none` (owner, 2026-11-26: "Add brand filter also"): the brand on the purchase's own document — a receipt's, a PO's; a bill line takes its receipt's, else its PO's; an expense bill has none (`none` = shared); a brand outside the companies in view 404. Admin: Procurement → "Purchases report" tab
   (`components/procurement/PurchasesReport.tsx`; finance sees it too). Tests: `tests/purchasesReport.test.ts`.
 - **PO cancel:** a PO with a pending GRNI match (a bill booked before
   delivery) cannot be cancelled (409 `PO_BILLED_AHEAD`; void the bill or raise

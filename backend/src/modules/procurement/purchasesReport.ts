@@ -13,7 +13,12 @@
 //           waiting for the CEO, approved, with the buyer, or bought and waiting to be confirmed.
 // A supplier's sales tax is the tax on the documents counted (bill tax; a GRN's invoice tax).
 //
-//   GET /procurement/purchases-report?from&to&basis=billed|grn|all&supplierId?&format=csv|xlsx|pdf
+// BRAND filter (owner, 2026-11-26: "Add brand filter also") — `conceptId` = a brand of the companies in view (else
+// 404) or `none` (purchases with no brand = shared). A purchase's brand is the one on its DOCUMENT: a receipt's own
+// (`GoodsReceipt.conceptId`), a PO's (`PurchaseOrder.conceptId`); a bill line takes its receipt's, else its PO's — a
+// bill line for neither (an expense bill) has no brand. A bill's tax counts only when every line of it is counted.
+//
+//   GET /procurement/purchases-report?from&to&basis=billed|grn|all&supplierId?&conceptId?&format=csv|xlsx|pdf
 // Procurement team + finance (GATED_PREFIXES: procurement | accounting); the companies in view — a supplier of
 // another company never appears (a foreign supplierId → 404). Tests: tests/purchasesReport.test.ts.
 import type { FastifyInstance } from 'fastify'
@@ -46,7 +51,10 @@ const PO_STAGE: Record<string, string> = {
 const BILL_STAGE: Record<string, string> = { open: 'Billed — unpaid', partially_paid: 'Billed — part paid', paid: 'Billed — paid' }
 const round2 = (n: number) => Math.round(n * 1000) / 1000
 
-export async function purchasesReport(tenantIds: string[], opts: { from: Date; to: Date; basis: PurchaseBasis; supplierId?: string }) {
+export async function purchasesReport(tenantIds: string[], opts: { from: Date; to: Date; basis: PurchaseBasis; supplierId?: string; conceptId?: string }) {
+  // undefined = every brand; null = purchases with no brand; an id = that brand.
+  const brand = opts.conceptId === undefined ? undefined : opts.conceptId === 'none' ? null : opts.conceptId
+  const brandWhere = brand === undefined ? {} : { conceptId: brand }
   const supplierWhere = { tenantId: { in: tenantIds }, systemKind: null, ...(opts.supplierId ? { id: opts.supplierId } : {}) }
   const between = { gte: opts.from, lte: opts.to }
   const groups = new Map<string, Group>()
@@ -61,7 +69,7 @@ export async function purchasesReport(tenantIds: string[], opts: { from: Date; t
   // ── Receipts (grn, all) ────────────────────────────────────────────────────
   if (opts.basis !== 'billed') {
     const receipts = await prisma.goodsReceipt.findMany({
-      where: { tenantId: { in: tenantIds }, receivedAt: between, NOT: { grnStatus: 'undone' }, ...(opts.supplierId ? { supplierId: opts.supplierId } : {}) },
+      where: { tenantId: { in: tenantIds }, receivedAt: between, NOT: { grnStatus: 'undone' }, ...brandWhere, ...(opts.supplierId ? { supplierId: opts.supplierId } : {}) },
       select: { id: true, supplierId: true, receivedAt: true, grnNumber: true, grnStatus: true, invoiceNumber: true, invoiceTaxCents: true, lines: { select: { description: true, receivedQty: true, unit: true, lotUnitCostCents: true, poUnitCostCents: true } } },
       orderBy: { receivedAt: 'asc' },
     })
@@ -86,7 +94,8 @@ export async function purchasesReport(tenantIds: string[], opts: { from: Date; t
       where: { billDate: between, status: { notIn: ['draft', 'void'] }, supplier: supplierWhere },
       select: {
         billNumber: true, billDate: true, status: true, kind: true, taxCents: true, supplier: supplierSel,
-        lines: { select: { description: true, quantity: true, unitCostCents: true, lineTotalCents: true, receiptLineId: true, inventoryItem: { select: { unit: true } }, poLine: { select: { _count: { select: { receiptLines: true } } } } } },
+        lines: { select: { description: true, quantity: true, unitCostCents: true, lineTotalCents: true, receiptLineId: true, inventoryItem: { select: { unit: true } }, receiptLine: { select: { receipt: { select: { conceptId: true } } } }, poLine: { select: { purchaseOrder: { select: { conceptId: true } }, _count: { select: { receiptLines: true } } } } } },
+        po: { select: { conceptId: true } },
       },
       orderBy: { billDate: 'asc' },
     })
@@ -94,7 +103,9 @@ export async function purchasesReport(tenantIds: string[], opts: { from: Date; t
       const credit = b.kind === 'credit_note'
       if (credit && opts.basis === 'all') continue // `all` counts receipts as received; a credit note is a billing correction
       const sign = credit ? -1 : 1
-      const lines = opts.basis === 'billed' ? b.lines : b.lines.filter((l) => !l.receiptLineId && !(l.poLine && l.poLine._count.receiptLines > 0))
+      const brandOf = (l: (typeof b.lines)[number]) => (l.receiptLine ? l.receiptLine.receipt.conceptId : l.poLine ? l.poLine.purchaseOrder.conceptId : b.po?.conceptId) ?? null
+      const lines = (opts.basis === 'billed' ? b.lines : b.lines.filter((l) => !l.receiptLineId && !(l.poLine && l.poLine._count.receiptLines > 0)))
+        .filter((l) => brand === undefined || brandOf(l) === brand)
       if (lines.length === 0) continue
       const g = groupOf(b.supplier)
       for (const l of lines) {
@@ -108,7 +119,7 @@ export async function purchasesReport(tenantIds: string[], opts: { from: Date; t
   // ── Purchase orders still to arrive (all) ──────────────────────────────────
   if (opts.basis === 'all') {
     const pos = await prisma.purchaseOrder.findMany({
-      where: { orderDate: between, status: { in: Object.keys(PO_STAGE) }, supplier: supplierWhere },
+      where: { orderDate: between, status: { in: Object.keys(PO_STAGE) }, ...brandWhere, supplier: supplierWhere },
       select: { id: true, status: true, orderDate: true, reference: true, supplier: supplierSel, lines: { select: { quantityOrdered: true, quantityReceived: true, unitCostCents: true, orderUnit: true, orderUnitFactor: true, orderUnitCostCents: true, inventoryItem: { select: { name: true, unit: true } } } } },
       orderBy: { orderDate: 'asc' },
     })
@@ -136,13 +147,17 @@ export function registerPurchasesReportRoute(fastify: FastifyInstance) {
   const READERS = Array.from(new Set([...PROCUREMENT_TEAM, 'finance'])) as UserRole[]
   fastify.get('/purchases-report', { preHandler: requireAuth(...READERS) }, async (req, reply) => {
     const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Give the date as YYYY-MM-DD')
-    const q = z.object({ from: day, to: day, basis: z.enum(['billed', 'grn', 'all']).default('all'), supplierId: z.string().min(1).optional(), format: z.enum(['json', 'csv', 'xlsx', 'pdf']).optional() }).parse(req.query ?? {})
+    const q = z.object({ from: day, to: day, basis: z.enum(['billed', 'grn', 'all']).default('all'), supplierId: z.string().min(1).optional(), conceptId: z.string().min(1).optional(), format: z.enum(['json', 'csv', 'xlsx', 'pdf']).optional() }).parse(req.query ?? {})
     const from = parsePktStartOfDay(q.from)
     const to = parsePktEndOfDay(q.to)
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) throw new AppError('INVALID_DATE', 'Pick a start date on or before the end date', 422)
     const tenantIds = await scopeTenantIds(req, 'read')
     if (q.supplierId && !(await prisma.supplier.findFirst({ where: { id: q.supplierId, tenantId: { in: tenantIds } }, select: { id: true } }))) throw new NotFoundError('Supplier', q.supplierId)
-    const report = { from: q.from, to: q.to, basisLabel: BASIS_LABEL[q.basis], ...(await purchasesReport(tenantIds, { from, to, basis: q.basis, supplierId: q.supplierId })) }
+    // Never trust a client brand id: it must be a brand of the companies in view.
+    const brandRow = q.conceptId && q.conceptId !== 'none' ? await prisma.concept.findFirst({ where: { id: q.conceptId, tenantId: { in: tenantIds } }, select: { name: true } }) : null
+    if (q.conceptId && q.conceptId !== 'none' && !brandRow) throw new NotFoundError('Brand', q.conceptId)
+    const brandLabel = q.conceptId === 'none' ? 'No brand (shared)' : brandRow?.name ?? null
+    const report = { from: q.from, to: q.to, basisLabel: BASIS_LABEL[q.basis], ...(await purchasesReport(tenantIds, { from, to, basis: q.basis, supplierId: q.supplierId, conceptId: q.conceptId })), brandLabel }
     const format = exportFormatOf(q.format)
     if (!format) return report
     const many = tenantIds.length > 1
@@ -161,7 +176,7 @@ export function registerPurchasesReportRoute(fastify: FastifyInstance) {
       { supplier: 'All suppliers', ...blank, item: 'TOTAL', amountCents: report.totals.totalCents },
     ]
     return sendReportFor(req, reply, format, { base: `purchases-${q.basis}`, suffix: `${q.from}-to-${q.to}` }, {
-      title: `Purchases by supplier — ${BASIS_LABEL[q.basis]}`, period: `${q.from} to ${q.to}`,
+      title: `Purchases by supplier — ${BASIS_LABEL[q.basis]}${brandLabel ? ` — ${brandLabel}` : ''}`, period: `${q.from} to ${q.to}`,
       rows, sectionKey: 'supplier', csvEmpty: 'header', wrapKeys: ['item', 'stage', 'document'],
       labels: { rateCents: 'Rate', amountCents: 'Amount', source: 'From', document: 'Document' },
       types: { quantity: 'number' },

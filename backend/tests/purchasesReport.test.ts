@@ -17,6 +17,8 @@ let B: string
 let supA: string
 let supA2: string
 let supB: string
+let brandA: string
+let brandB: string
 let app: FastifyInstance
 const users: Record<string, { id: string; token: string }> = {}
 async function mkUser(key: string, role: string, primary: string) {
@@ -43,6 +45,11 @@ beforeAll(async () => {
   // A PO for 10 kg at 1,500: 6 kg received (GRN, waiting for finance), 4 kg still to arrive.
   const po = await prisma.purchaseOrder.create({ data: { supplierId: supA, status: 'partial', orderDate: D('2026-11-05'), reference: 'PO-TEST-1', totalCents: 1_500_000, lines: { create: [{ inventoryItemId: item, quantityOrdered: 10, quantityReceived: 6, unitCostCents: 150000 }] } }, include: { lines: true } })
   const grn = await prisma.goodsReceipt.create({ data: { tenantId: A, supplierId: supA, poId: po.id, receivedById: users['mgrA']!.id, receivedAt: D('2026-11-08'), grnNumber: `GRN-${RUN}-1`, grnStatus: 'finance_review', invoiceNumber: 'INV-9', invoiceTaxCents: 12_300, lines: { create: [{ inventoryItemId: item, description: 'Beef mince', receivedQty: 6, unit: 'kg', lotUnitCostCents: 150000, poLineId: po.lines[0]!.id }] } }, include: { lines: true } })
+  // The PO and its receipt are brand A's; everything else has no brand.
+  brandA = (await prisma.concept.create({ data: { name: `PR Brand ${RUN}`, slug: `pr-ba-${RUN}`, type: 'restaurant', tenantId: A } as never })).id
+  brandB = (await prisma.concept.create({ data: { name: `PR Brand B ${RUN}`, slug: `pr-bb-${RUN}`, type: 'restaurant', tenantId: B } as never })).id
+  await prisma.purchaseOrder.update({ where: { id: po.id }, data: { conceptId: brandA } })
+  await prisma.goodsReceipt.update({ where: { id: grn.id }, data: { conceptId: brandA } })
   // An undone receipt never counts.
   await prisma.goodsReceipt.create({ data: { tenantId: A, supplierId: supA, receivedById: users['mgrA']!.id, receivedAt: D('2026-11-09'), grnNumber: `GRN-${RUN}-2`, grnStatus: 'undone', lines: { create: [{ description: 'Undone', receivedQty: 99, unit: 'kg', lotUnitCostCents: 100 }] } } })
   // A bill for that receipt (3 kg billed so far) and a direct expense bill; one credit note; one void bill.
@@ -94,6 +101,20 @@ describe('purchases by supplier', () => {
     expect(meat.lines.find((l) => l.source === 'Purchase order')).toMatchObject({ quantity: 4, amountCents: 600_000 })
     expect(of(r, 'Dairy Two')).toMatchObject({ itemsCents: 80_000 })
     expect(r.totals.itemsCents).toBe(1_580_000)
+  })
+
+  it('brand filter: the brand on the order / delivery; a bill follows its receipt; another company\'s brand is 404', async () => {
+    const all = (await get('finA', `${RANGE}&basis=all&conceptId=${brandA}`)).json() as Rep
+    expect(all.suppliers).toHaveLength(1)
+    expect(of(all, 'Meat One')).toMatchObject({ itemsCents: 1_500_000, taxCents: 12_300 })
+    const billed = (await get('finA', `${RANGE}&basis=billed&conceptId=${brandA}`)).json() as Rep
+    expect(billed.totals).toMatchObject({ itemsCents: 450_000, taxCents: 12_300 })
+    const none = (await get('finA', `${RANGE}&basis=billed&conceptId=none`)).json() as Rep
+    expect(none.suppliers.map((s) => s.supplierName.split(' ')[0])).toEqual(['Dairy'])
+    expect(none.totals.totalCents).toBe(70_000)
+    expect(((await get('finA', `${RANGE}&basis=grn&conceptId=none`)).json() as Rep).suppliers).toHaveLength(0)
+    expect((await get('finA', `${RANGE}&conceptId=${brandB}`)).statusCode).toBe(404)
+    expect((await get('finB', `${RANGE}&conceptId=${brandA}`)).statusCode).toBe(404)
   })
 
   it('company separation, one supplier, dates, access and the export', async () => {

@@ -28,10 +28,12 @@ export function PurchasesReport() {
   const [to, setTo] = useState(todayPktIso())
   const [basis, setBasis] = useState<Basis>('all')
   const [supplierId, setSupplierId] = useState('')
+  const [conceptId, setConceptId] = useState('')
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const { data: suppliers = [] } = useQuery<{ id: string; name: string }[]>({ queryKey: ['suppliers'], queryFn: () => api.get('/procurement/suppliers') })
+  const { data: brands = [] } = useQuery<{ id: string; name: string }[]>({ queryKey: ['concepts-picker'], queryFn: () => api.get('/concepts?view=picker') })
   const ok = !!from && !!to && from <= to
-  const qs = `from=${from}&to=${to}&basis=${basis}${supplierId ? `&supplierId=${supplierId}` : ''}`
+  const qs = `from=${from}&to=${to}&basis=${basis}${supplierId ? `&supplierId=${supplierId}` : ''}${conceptId ? `&conceptId=${conceptId}` : ''}`
   const { data, isLoading, error } = useQuery<Report>({ queryKey: ['purchases-report', qs], queryFn: () => api.get(`/procurement/purchases-report?${qs}`), enabled: ok })
   const picked = BASIS.find((b) => b.id === basis)!
   const allOpen = (data?.suppliers ?? []).every((g) => open[g.supplierId] ?? true)
@@ -39,7 +41,7 @@ export function PurchasesReport() {
   return (
     <div className="space-y-4">
       <div className="s-card p-4 space-y-3">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Field label="From"><Input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className="w-full" /></Field>
           <Field label="To"><Input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className="w-full" /></Field>
           <Field label="What counts as a purchase">
@@ -53,8 +55,16 @@ export function PurchasesReport() {
               {[...suppliers].sort((a, b) => a.name.localeCompare(b.name)).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </Select>
           </Field>
+          <Field label="Brand">
+            <Select value={conceptId} onChange={(e) => setConceptId(e.target.value)} className="s-input w-full">
+              <option value="">All brands</option>
+              {[...brands].sort((a, b) => a.name.localeCompare(b.name)).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              <option value="none">No brand (shared)</option>
+            </Select>
+          </Field>
         </div>
         <p className="text-xs text-s-muted break-words">{picked.hint}</p>
+        {conceptId && <p className="text-xs text-s-muted break-words">A purchase&apos;s brand is the one on its purchase order or delivery. A bill that is not for an order or a delivery has no brand and shows under &quot;No brand (shared)&quot;.</p>}
         {!ok && <p role="alert" className="text-xs text-s-red">Pick a start date on or before the end date.</p>}
       </div>
 
