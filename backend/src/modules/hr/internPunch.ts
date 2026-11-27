@@ -45,12 +45,17 @@ function statusOfCheckIn(workingHours: string | null, checkIn: string, rule: Lat
 
 const pktDay = (at: Date) => { const k = new Date(at.getTime() + 5 * 3_600_000); return new Date(Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate())) }
 
-/** The active intern this login is, in that company (null = not an intern there). */
-export const internOfLogin = (userId: string, tenantId: string) =>
-  prisma.intern.findFirst({ where: { userId, tenantId, status: 'active' } })
+/**
+ * The active intern this login is (a login is linked to at most ONE intern — Intern.userId is unique — by the HR of
+ * the intern's own company). Whatever company the login happens to have open, the intern's punches belong to the
+ * INTERN's company (owner, 2026-11-27: an intern of the head-office company whose login opened in another company
+ * was measured against that company's outlet and got no attendance).
+ */
+export const internOfLogin = (userId: string) =>
+  prisma.intern.findFirst({ where: { userId, status: 'active' } })
 
-export async function recordInternPunch(input: { userId: string; tenantId: string; kind: 'in' | 'out'; at: Date; inAt?: Date | null }): Promise<{ recorded: boolean; status?: string; skipped?: string }> {
-  const intern = await internOfLogin(input.userId, input.tenantId)
+export async function recordInternPunch(input: { userId: string; kind: 'in' | 'out'; at: Date; inAt?: Date | null }): Promise<{ recorded: boolean; status?: string; skipped?: string }> {
+  const intern = await internOfLogin(input.userId)
   if (!intern) return { recorded: false, skipped: 'NOT_AN_INTERN' }
   // An out closes the day its in opened (a shift past midnight stays on the in's day).
   const day = pktDay(input.kind === 'out' && input.inAt ? input.inAt : input.at)
@@ -80,8 +85,8 @@ export async function recordInternPunch(input: { userId: string; tenantId: strin
 
 /**
  * Back-fill (owner, 2026-11-27: "Back-fill missed days for interns automatically"): every past check-in an intern's
- * login made on the time clock (`clock_logs`, the punch's company — a legacy punch with no company counts for the
- * intern's) that has NO attendance row becomes one — present, the day's first check-in and last check-out, source
+ * login made on the time clock (`clock_logs`, whatever company the punch was stamped with — except a company where
+ * the same login is an EMPLOYEE: those punches are that employee's attendance) that has NO attendance row becomes one — present, the day's first check-in and last check-out, source
  * 'clock'. Runs at every API boot, per company, and only ever ADDS a missing day: a day HR, the supervisor or an
  * earlier run wrote is never touched; days outside the internship and months whose stipend payroll has left draft are
  * skipped. A day with no check-in stays unmarked (HR marks it). Present / late follows the late rule above — and a
@@ -96,8 +101,9 @@ export async function backfillInternPunches(): Promise<Array<{ tenantId: string;
     let touched = 0, days = 0
     const rule = await lateRuleOf(tenantId)
     for (const intern of list) {
+      const employeeIn = (await prisma.hrEmployee.findMany({ where: { userId: intern.userId! }, select: { tenantId: true } })).map((e) => e.tenantId)
       const logs = await prisma.clockLog.findMany({
-        where: { userId: intern.userId!, OR: [{ tenantId }, { tenantId: null }], recordedAt: { gte: intern.startDate } },
+        where: { userId: intern.userId!, recordedAt: { gte: intern.startDate }, ...(employeeIn.length ? { NOT: { tenantId: { in: employeeIn } } } : {}) },
         orderBy: { recordedAt: 'asc' }, select: { type: true, recordedAt: true },
       })
       // One entry per Karachi day that has a check-in: its first in, and the last out that closed an in of that day.

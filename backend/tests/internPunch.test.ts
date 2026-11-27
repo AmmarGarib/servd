@@ -53,7 +53,12 @@ describe('intern attendance from the time clock', () => {
   })
 
   it('another company, a non-intern and an intern not approved record nothing', async () => {
-    expect(await recordInternPunch({ userId: u.one!, tenantId: B, kind: 'in', at: new Date() })).toMatchObject({ recorded: false })
+    // An intern whose login has ANOTHER company open still punches in the intern's own company.
+    await mkUser('roam', B); await mkIntern('roam', A, u.roam!)
+    const roam = await clockIn({ id: u.roam!, role: 'marketing_intern', tenantId: B }, {}) as { hrLinked?: boolean }
+    expect(roam.hrLinked).toBe(true)
+    expect(await rowOf('roam')).toMatchObject({ tenantId: A, source: 'clock' })
+    expect((await prisma.clockLog.findFirstOrThrow({ where: { userId: u.roam! } })).tenantId).toBe(A)
     expect(await prisma.internAttendance.count({ where: { tenantId: B } })).toBe(0)
     const p = await clockIn({ id: u.plain!, role: 'marketing_intern', tenantId: A }, {}) as { hrLinked?: boolean }
     expect(p.hrLinked).toBe(false)
@@ -75,6 +80,8 @@ describe('intern attendance from the time clock', () => {
       { userId: u.old!, type: 'in', recordedAt: at(20, '06:00'), tenantId: A }, { userId: u.old!, type: 'out', recordedAt: at(20, '13:00'), tenantId: A },
     ] })
     await prisma.internAttendance.create({ data: { tenantId: A, internId: interns.old!, date: dayOf(4), status: 'absent', source: 'hr' } })
+    // The login is also an EMPLOYEE of company B: its punches there are the employee's, never the intern's.
+    await prisma.hrEmployee.create({ data: { tenantId: B, employeeCode: `E-${RUN}`, fullName: 'Old in B', userId: u.old!, status: 'active' } })
     const r = await backfillInternPunches()
     expect(r.find((x) => x.tenantId === A)).toMatchObject({ days: 2 })
     const rows = await prisma.internAttendance.findMany({ where: { internId: interns.old! }, orderBy: { date: 'asc' } })
@@ -95,8 +102,8 @@ describe('intern attendance from the time clock', () => {
     const at = (daysAgo: number, hhmmUtc: string) => new Date(`${new Date(today().getTime() - daysAgo * 86_400_000).toISOString().slice(0, 10)}T${hhmmUtc}:00Z`)
     const dayOf = (n: number) => new Date(today().getTime() - n * 86_400_000)
     // 09:10 PKT = inside the 15-minute grace; 09:40 PKT = late.
-    expect(await recordInternPunch({ userId: u.late!, tenantId: A, kind: 'in', at: at(3, '04:10') })).toMatchObject({ recorded: true, status: 'present' })
-    expect(await recordInternPunch({ userId: u.late!, tenantId: A, kind: 'in', at: at(2, '04:40') })).toMatchObject({ recorded: true, status: 'late' })
+    expect(await recordInternPunch({ userId: u.late!, kind: 'in', at: at(3, '04:10') })).toMatchObject({ recorded: true, status: 'present' })
+    expect(await recordInternPunch({ userId: u.late!, kind: 'in', at: at(2, '04:40') })).toMatchObject({ recorded: true, status: 'late' })
     expect((await prisma.internAttendance.findUnique({ where: { internId_date: { internId: interns.late!, date: dayOf(2) } } }))!.status).toBe('late')
     // A clock day stored as present before the rule, and a day HR marked present with a late time.
     await prisma.internAttendance.create({ data: { tenantId: A, internId: interns.late!, date: dayOf(5), status: 'present', checkIn: '10:30', source: 'clock' } })

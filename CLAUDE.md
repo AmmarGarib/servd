@@ -383,7 +383,9 @@ module id must be placed in a workspace in the same change.
   the company's Department, supervisor = an active HrEmployee of the company — 422), `intern_events` (the complete
   history), `intern_attendance` (present / absent / late / half_day / leave / weekly_off; the intern's OWN check-in /
   check-out on the one time clock writes the day — owner, 2026-11-27: "Intern attendance not being recorded by
-  checking in"; `hr/internPunch.ts`, source `clock`, the punch's company only, active interns, never a locked month —
+  checking in"; `hr/internPunch.ts`, source `clock`, active interns, never a locked month; an intern's punch belongs to the INTERN's
+  company whatever company the login has open (`internOfLogin`, `timeclock/service.ts clockIn`: measured there, logged
+  there — owner, 2026-11-27) —
   or HR / the supervisor mark it, and their mark always wins; past check-ins with no day recorded are back-filled at
   every boot — `backfillInternPunches`, adds missing days only (owner, 2026-11-27); a check-in more than the company's late
   grace after the intern's start — the first time in `Intern.workingHours` (`startTimeOf`), else the company default
