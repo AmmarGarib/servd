@@ -191,7 +191,7 @@ export function InternForm({ mode, intern, onSaved, onCancel }: {
             </div>
           )}
         </Field>
-        {text('workingHours', 'Working hours', { disabled: closed, maxLength: 80, hint: 'e.g. 9:00 – 17:00' })}
+        {text('workingHours', 'Working hours', { disabled: closed, maxLength: 80, hint: 'Start time first, e.g. 9:00 – 17:00. A check-in after the start time (plus the company\'s grace minutes) is marked late.' })}
         <Field label="Performance remarks" error={errs['performanceRemarks']} className="sm:col-span-2">
           {({ id }) => <textarea id={id} className={`${inp} min-h-[72px]`} maxLength={2000} value={f.performanceRemarks} onChange={(e) => set('performanceRemarks', e.target.value)} />}
         </Field>

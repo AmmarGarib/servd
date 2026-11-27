@@ -385,7 +385,9 @@ module id must be placed in a workspace in the same change.
   check-out on the one time clock writes the day — owner, 2026-11-27: "Intern attendance not being recorded by
   checking in"; `hr/internPunch.ts`, source `clock`, the punch's company only, active interns, never a locked month —
   or HR / the supervisor mark it, and their mark always wins; past check-ins with no day recorded are back-filled at
-  every boot — `backfillInternPunches`, adds missing days only (owner, 2026-11-27); tests `tests/internPunch.test.ts`), `intern_payroll_runs` / `intern_stipend_slips`, `intern_certificates`. Never on
+  every boot — `backfillInternPunches`, adds missing days only (owner, 2026-11-27); a check-in more than the company's late
+  grace after the intern's start — the first time in `Intern.workingHours` (`startTimeOf`), else the company default
+  rota's start — is `late` (a label; the stipend never docks it), and clock-written days are relabelled at boot; tests `tests/internPunch.test.ts`), `intern_payroll_runs` / `intern_stipend_slips`, `intern_certificates`. Never on
   employee lists, `/hr/team`, headcount, employee payroll, labour % or the head-office pool; never auto-made an
   employee. **`EMPLOYMENT_TYPES` no longer has 'intern'** (old rows stay readable); an employee create / edit naming it
   → 422 `INTERN_NOT_AN_EMPLOYEE`. Boot step `hr/internsMigration.ts migrateLegacyInterns` (idempotent per

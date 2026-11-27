@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import bcrypt from 'bcryptjs'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { clockIn, clockOut } from '../src/modules/timeclock/service.js'
-import { recordInternPunch, backfillInternPunches } from '../src/modules/hr/internPunch.js'
+import { recordInternPunch, backfillInternPunches, startTimeOf } from '../src/modules/hr/internPunch.js'
 
 const RUN = Math.random().toString(36).slice(2, 8)
 let A: string, B: string
@@ -36,9 +36,10 @@ describe('intern attendance from the time clock', () => {
   it('check-in marks today present; check-out adds the time', async () => {
     const r = await clockIn({ id: u.one!, role: 'marketing_intern', tenantId: A }, {}) as { hrLinked?: boolean; internAttendance?: { status: string } }
     expect(r.hrLinked).toBe(true)
-    expect(r.internAttendance).toEqual({ status: 'present' })
+    // No working hours written: the company default rota's start decides present / late, so either by the clock now.
+    expect(['present', 'late']).toContain(r.internAttendance?.status)
     const row = await rowOf('one')
-    expect(row).toMatchObject({ status: 'present', source: 'clock', tenantId: A, checkOut: null })
+    expect(row).toMatchObject({ source: 'clock', tenantId: A, checkOut: null })
     expect(row!.checkIn).toMatch(/^\d\d:\d\d$/)
     await clockOut({ id: u.one!, role: 'marketing_intern', tenantId: A }, {})
     expect((await rowOf('one'))!.checkOut).toMatch(/^\d\d:\d\d$/)
@@ -80,9 +81,28 @@ describe('intern attendance from the time clock', () => {
     expect(rows.map((x) => [x.date.getTime(), x.status, x.source, x.checkIn, x.checkOut])).toEqual([
       [dayOf(4).getTime(), 'absent', 'hr', null, null],
       [dayOf(3).getTime(), 'present', 'clock', '11:00', '19:00'],
-      [dayOf(2).getTime(), 'present', 'clock', '11:30', null],
+      // no working hours written → the company default start 11:00 + 15 minutes' grace: 11:30 is late
+      [dayOf(2).getTime(), 'late', 'clock', '11:30', null],
     ])
     // Running it again adds nothing.
     expect((await backfillInternPunches()).find((x) => x.tenantId === A)).toBeUndefined()
+  })
+
+  it('late: a check-in past the working hours start + the grace is late; the back-fill relabels clock days only', async () => {
+    expect([startTimeOf('9:00 – 17:00'), startTimeOf('9am to 5pm'), startTimeOf('10.30-6'), startTimeOf('2 pm – 8 pm'), startTimeOf(''), startTimeOf('flexible')]).toEqual(['09:00', '09:00', '10:30', '14:00', null, null])
+    await mkUser('late', A); await mkIntern('late', A, u.late!)
+    await prisma.intern.update({ where: { id: interns.late! }, data: { workingHours: '9:00 – 17:00' } })
+    const at = (daysAgo: number, hhmmUtc: string) => new Date(`${new Date(today().getTime() - daysAgo * 86_400_000).toISOString().slice(0, 10)}T${hhmmUtc}:00Z`)
+    const dayOf = (n: number) => new Date(today().getTime() - n * 86_400_000)
+    // 09:10 PKT = inside the 15-minute grace; 09:40 PKT = late.
+    expect(await recordInternPunch({ userId: u.late!, tenantId: A, kind: 'in', at: at(3, '04:10') })).toMatchObject({ recorded: true, status: 'present' })
+    expect(await recordInternPunch({ userId: u.late!, tenantId: A, kind: 'in', at: at(2, '04:40') })).toMatchObject({ recorded: true, status: 'late' })
+    expect((await prisma.internAttendance.findUnique({ where: { internId_date: { internId: interns.late!, date: dayOf(2) } } }))!.status).toBe('late')
+    // A clock day stored as present before the rule, and a day HR marked present with a late time.
+    await prisma.internAttendance.create({ data: { tenantId: A, internId: interns.late!, date: dayOf(5), status: 'present', checkIn: '10:30', source: 'clock' } })
+    await prisma.internAttendance.create({ data: { tenantId: A, internId: interns.late!, date: dayOf(6), status: 'present', checkIn: '10:30', source: 'hr' } })
+    await backfillInternPunches()
+    const st = async (n: number) => (await prisma.internAttendance.findUnique({ where: { internId_date: { internId: interns.late!, date: dayOf(n) } } }))!.status
+    expect([await st(5), await st(6), await st(3)]).toEqual(['late', 'present', 'present'])
   })
 })
