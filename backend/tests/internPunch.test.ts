@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import bcrypt from 'bcryptjs'
 import { serviceClient as prisma } from '../src/lib/prisma.js'
 import { clockIn, clockOut } from '../src/modules/timeclock/service.js'
-import { recordInternPunch } from '../src/modules/hr/internPunch.js'
+import { recordInternPunch, backfillInternPunches } from '../src/modules/hr/internPunch.js'
 
 const RUN = Math.random().toString(36).slice(2, 8)
 let A: string, B: string
@@ -58,5 +58,31 @@ describe('intern attendance from the time clock', () => {
     expect(p.hrLinked).toBe(false)
     await clockIn({ id: u.draft!, role: 'marketing_intern', tenantId: A }, {})
     expect(await rowOf('draft')).toBeNull()
+  })
+
+  it('back-fill: past check-ins with no attendance become days; marked days and another company are left alone', async () => {
+    await mkUser('old', A); await mkIntern('old', A, u.old!)
+    const at = (daysAgo: number, hhmmUtc: string) => new Date(`${new Date(today().getTime() - daysAgo * 86_400_000).toISOString().slice(0, 10)}T${hhmmUtc}:00Z`)
+    const dayOf = (n: number) => new Date(today().getTime() - n * 86_400_000)
+    // 3 days ago: in 11:00 PKT, out 19:00 PKT. 2 days ago: in only. 4 days ago: HR marked absent but a punch exists.
+    // 5 days ago: a punch in company B (not this intern's company). 20 days ago: before the internship.
+    await prisma.clockLog.createMany({ data: [
+      { userId: u.old!, type: 'in', recordedAt: at(3, '06:00'), tenantId: A }, { userId: u.old!, type: 'out', recordedAt: at(3, '14:00'), tenantId: A },
+      { userId: u.old!, type: 'in', recordedAt: at(2, '06:30'), tenantId: A },
+      { userId: u.old!, type: 'in', recordedAt: at(4, '06:00'), tenantId: A }, { userId: u.old!, type: 'out', recordedAt: at(4, '13:00'), tenantId: A },
+      { userId: u.old!, type: 'in', recordedAt: at(5, '06:00'), tenantId: B }, { userId: u.old!, type: 'out', recordedAt: at(5, '13:00'), tenantId: B },
+      { userId: u.old!, type: 'in', recordedAt: at(20, '06:00'), tenantId: A }, { userId: u.old!, type: 'out', recordedAt: at(20, '13:00'), tenantId: A },
+    ] })
+    await prisma.internAttendance.create({ data: { tenantId: A, internId: interns.old!, date: dayOf(4), status: 'absent', source: 'hr' } })
+    const r = await backfillInternPunches()
+    expect(r.find((x) => x.tenantId === A)).toMatchObject({ days: 2 })
+    const rows = await prisma.internAttendance.findMany({ where: { internId: interns.old! }, orderBy: { date: 'asc' } })
+    expect(rows.map((x) => [x.date.getTime(), x.status, x.source, x.checkIn, x.checkOut])).toEqual([
+      [dayOf(4).getTime(), 'absent', 'hr', null, null],
+      [dayOf(3).getTime(), 'present', 'clock', '11:00', '19:00'],
+      [dayOf(2).getTime(), 'present', 'clock', '11:30', null],
+    ])
+    // Running it again adds nothing.
+    expect((await backfillInternPunches()).find((x) => x.tenantId === A)).toBeUndefined()
   })
 })

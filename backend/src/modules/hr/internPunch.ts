@@ -8,7 +8,7 @@
 // month whose stipend payroll has left draft (locked). HR and the supervisor still mark / correct any day as before.
 import { prisma } from '../../lib/prisma.js'
 import { pktHHMM } from './attendance.js'
-import { withinInternship } from './internAccess.js'
+import { ENROLLED, withinInternship } from './internAccess.js'
 import { attendanceLocked } from './internPayroll.js'
 
 const pktDay = (at: Date) => { const k = new Date(at.getTime() + 5 * 3_600_000); return new Date(Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate())) }
@@ -42,4 +42,58 @@ export async function recordInternPunch(input: { userId: string; tenantId: strin
     : (mine || !row.checkOut ? { checkOut: hhmm } : {}) // the latest out, unless HR typed one
   if (Object.keys(data).length) await prisma.internAttendance.update({ where: { id: row.id }, data })
   return { recorded: true, status: row.status }
+}
+
+/**
+ * Back-fill (owner, 2026-11-27: "Back-fill missed days for interns automatically"): every past check-in an intern's
+ * login made on the time clock (`clock_logs`, the punch's company — a legacy punch with no company counts for the
+ * intern's) that has NO attendance row becomes one — present, the day's first check-in and last check-out, source
+ * 'clock'. Runs at every API boot, per company, and only ever ADDS a missing day: a day HR, the supervisor or an
+ * earlier run wrote is never touched; days outside the internship and months whose stipend payroll has left draft are
+ * skipped. A day with no check-in stays unmarked (HR marks it).
+ */
+export async function backfillInternPunches(): Promise<Array<{ tenantId: string; interns: number; days: number }>> {
+  const out: Array<{ tenantId: string; interns: number; days: number }> = []
+  const interns = await prisma.intern.findMany({ where: { userId: { not: null }, status: { in: ENROLLED } } })
+  const byTenant = new Map<string, typeof interns>()
+  for (const i of interns) byTenant.set(i.tenantId, [...(byTenant.get(i.tenantId) ?? []), i])
+  for (const [tenantId, list] of byTenant) {
+    let touched = 0, days = 0
+    for (const intern of list) {
+      const logs = await prisma.clockLog.findMany({
+        where: { userId: intern.userId!, OR: [{ tenantId }, { tenantId: null }], recordedAt: { gte: intern.startDate } },
+        orderBy: { recordedAt: 'asc' }, select: { type: true, recordedAt: true },
+      })
+      // One entry per Karachi day that has a check-in: its first in, and the last out that closed an in of that day.
+      const perDay = new Map<number, { day: Date; checkIn: string; checkOut: string | null }>()
+      let open: number | null = null
+      for (const l of logs) {
+        if (l.type === 'in') {
+          const day = pktDay(l.recordedAt)
+          open = day.getTime()
+          if (!perDay.has(open)) perDay.set(open, { day, checkIn: pktHHMM(l.recordedAt), checkOut: null })
+        } else if (open !== null) {
+          perDay.get(open)!.checkOut = pktHHMM(l.recordedAt)
+          open = null
+        }
+      }
+      if (perDay.size === 0) continue
+      const have = new Set((await prisma.internAttendance.findMany({ where: { internId: intern.id }, select: { date: true } })).map((r) => r.date.getTime()))
+      const locked = new Map<string, boolean>()
+      const rows = []
+      for (const d of perDay.values()) {
+        if (have.has(d.day.getTime()) || !withinInternship(intern, d.day)) continue
+        const month = d.day.toISOString().slice(0, 7)
+        if (!locked.has(month)) locked.set(month, await attendanceLocked(prisma, intern, d.day))
+        if (locked.get(month)) continue
+        rows.push({ tenantId, internId: intern.id, date: d.day, status: 'present', checkIn: d.checkIn, checkOut: d.checkOut, source: 'clock', note: 'From the time clock (back-filled)', markedById: intern.userId })
+      }
+      if (rows.length) {
+        const r = await prisma.internAttendance.createMany({ data: rows, skipDuplicates: true })
+        if (r.count) { touched += 1; days += r.count }
+      }
+    }
+    if (days) out.push({ tenantId, interns: touched, days })
+  }
+  return out
 }

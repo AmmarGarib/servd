@@ -1364,6 +1364,15 @@ async function build() {
     fastify.log.warn(`[interns] legacy intern move skipped: ${(err as Error).message}`)
   }
 
+  // Interns' past check-ins on the time clock become attendance days where none is recorded (owner, 2026-11-27).
+  // Only adds missing days; idempotent.
+  try {
+    const { backfillInternPunches } = await import('./modules/hr/internPunch.js')
+    for (const r of await backfillInternPunches()) fastify.log.info(`[interns] back-filled ${r.days} attendance day(s) for ${r.interns} intern(s) from the time clock`)
+  } catch (err) {
+    fastify.log.warn(`[interns] attendance back-fill skipped: ${(err as Error).message}`)
+  }
+
   // Shift corrections whose apply died mid-way (left 'approved' with no
   // progress for 5 minutes) → 'failed', so the CEO's Retry finishes them.
   try {
