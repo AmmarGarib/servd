@@ -24,6 +24,7 @@ import { requireTenantId } from '../../lib/tenantScope.js'
 import { recordPunch, attendanceKeys, closeMissedDays, isMissedClockOut, type PunchEntry, type PunchResult } from '../hr/attendance.js'
 import { getFormat, STANDING_ATTENDANCE } from '../hr/service.js'
 import { pktToday } from '../hr/logic.js'
+import { recordInternPunch } from '../hr/internPunch.js'
 import { enforceClockInPolicy, flagOutOfArea, type ClockInVerdict } from './policy.js'
 import { approvalWaiting } from '../approvals/notify.js'
 
@@ -115,10 +116,13 @@ export async function clockIn(actor: Actor, body: PunchBody, ip?: string) {
       })
     : null
   heldNotice(att, actor.id)
+  // A login that is an INTERN of this company: the punch is their attendance (owner, 2026-11-27; hr/internPunch.ts).
+  const intern = emp ? null : await recordInternPunch({ userId: actor.id, tenantId, kind: 'in', at: log.recordedAt }).catch(() => null)
   await flagOutOfArea({ tenantId, employeeId: emp?.id ?? null, userId: actor.id, name: emp?.fullName ?? actor.name ?? null, kind: 'in', at: log.recordedAt, verdict })
   return {
     clockedInAt: log.recordedAt, geofenceMatched: verdict.geofenceMatched, geofenceDistanceM: verdict.geofenceDistanceM,
-    location: verdict.locationName, where: whereOut(verdict), hrLinked: !!emp, attendance: attendanceOut(att),
+    location: verdict.locationName, where: whereOut(verdict), hrLinked: !!emp || !!intern?.recorded, attendance: attendanceOut(att),
+    ...(intern?.recorded && { internAttendance: { status: intern.status } }),
     ...(open?.missed && { missedClockOut: { since: open.since, note: MISSED_OUT_NOTE } }),
   }
 }
@@ -158,8 +162,9 @@ export async function clockOut(actor: Actor, body: PunchBody = {}, ip?: string) 
     if (r.recordId) { att = r; break }
   }
   heldNotice(att, actor.id)
+  const intern = !att && tenantId ? await recordInternPunch({ userId: actor.id, tenantId, kind: 'out', at: log.recordedAt, inAt: open.since }).catch(() => null) : null
   if (tenantId && verdict) await flagOutOfArea({ tenantId, employeeId: empThere?.id ?? null, userId: actor.id, name: empThere?.fullName ?? actor.name ?? null, kind: 'out', at: log.recordedAt, verdict })
-  return { clockedOutAt: log.recordedAt, where: whereOut(verdict), attendance: attendanceOut(att) }
+  return { clockedOutAt: log.recordedAt, where: whereOut(verdict), attendance: attendanceOut(att), ...(intern?.recorded && { internAttendance: { status: intern.status } }) }
 }
 
 /** The person's reason for their own out-of-area day waiting for the HOD (POST /time-clock/hold-reason). */

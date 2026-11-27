@@ -40,7 +40,8 @@
 // Documents: the ONE record-files store, owner type intern_document (modules/recordFiles/providers.ts) —
 // /record-files/intern_document/:internId. No URL fields.
 //
-// ── Attendance (marked by HR or the supervisor; interns do not clock in) ──
+// ── Attendance (the intern's own check-in / check-out — internPunch.ts, source 'clock' — or marked by HR / the
+//    supervisor, whose mark always wins) ──
 // Statuses: present, absent, late, half_day, leave, weekly_off. One row per intern per day.
 //   GET  /hr/interns/attendance?month=YYYY-MM&internId=&departmentId=   { month, days, interns:[{…, days:{date:{status,…}}, summary}] }
 //   POST /hr/interns/attendance/bulk {internIds[1..500], from, to (≤62 days), status, checkIn?, checkOut?, note?, overwrite?}

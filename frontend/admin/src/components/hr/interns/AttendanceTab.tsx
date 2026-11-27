@@ -110,8 +110,8 @@ export function AttendanceTab() {
                       <td key={d} className="border-t border-white/[0.05] p-0.5 text-center">
                         {outside && !m ? <span aria-hidden="true" className="text-white/20">·</span> : (
                           <button type="button" disabled={mark.isPending}
-                            aria-label={`${i.fullName}, ${d}: ${m ? label(m.status) : 'not marked'}${m?.source === 'supervisor' ? ' (by supervisor)' : ''}`}
-                            title={m ? `${label(m.status)}${m.note ? ` — ${m.note}` : ''}` : workDay ? 'Not marked' : 'Not a working day'}
+                            aria-label={`${i.fullName}, ${d}: ${m ? label(m.status) : 'not marked'}${m?.source === 'supervisor' ? ' (by supervisor)' : m?.source === 'clock' ? ' (checked in)' : ''}`}
+                            title={m ? `${label(m.status)}${m.source === 'clock' ? ` — checked in${m.checkIn ? ` ${m.checkIn}` : ''}${m.checkOut ? `, out ${m.checkOut}` : ''}` : ''}${m.note ? ` — ${m.note}` : ''}` : workDay ? 'Not marked' : 'Not a working day'}
                             onClick={(e) => { anchor.current = e.currentTarget; setPick({ intern: i, date: d }) }}
                             className="h-7 w-full min-w-[28px] rounded text-[10px] font-black [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-[40px]"
                             style={m ? { color: ATTENDANCE_TONE[m.status], background: cellTint(m.status) } : { color: 'rgb(var(--fg-rgb) / 0.3)', border: '1px dashed rgb(var(--fg-rgb) / 0.12)' }}>

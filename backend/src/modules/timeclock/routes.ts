@@ -9,6 +9,7 @@
 // the day's HR attendance record. /auth/clock-in and /auth/clock-out should
 // delegate to clockIn / clockOut here (see the report) so there is one path.
 
+import { internOfLogin } from '../hr/internPunch.js'
 import type { FastifyInstance } from 'fastify'
 import type { UserRole } from '@prisma/client'
 import { prisma } from '../../lib/prisma.js'
@@ -77,7 +78,8 @@ export async function timeClockRoutes(fastify: FastifyInstance) {
       : undefined
     // Has an HR employee record in the active company: sign-in checks only these people in (owner, 2026-10-22).
     const myEmp = me.tenantId ? await prisma.hrEmployee.findFirst({ where: { userId: me.id, tenantId: me.tenantId, status: { in: ['active', 'on_leave'] } }, select: { id: true } }) : null
-    const hrLinked = !!myEmp
+    // An active intern's punch is their attendance too (owner, 2026-11-27), so sign-in checks them in like staff.
+    const hrLinked = !!myEmp || (!!me.tenantId && !!(await internOfLogin(me.id, me.tenantId)))
     // Today's (or last night's) day of mine waiting for my manager — an out-of-area punch (owner, 2026-10-22).
     const heldRec = myEmp ? await prisma.hrRecord.findFirst({
       where: { tenantId: me.tenantId!, section: 'attendance', employeeId: myEmp.id, status: 'submitted', startDate: { gte: new Date(pktToday().getTime() - 86_400_000) } },
