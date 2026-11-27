@@ -43,6 +43,16 @@ export function describeRequest(r: FaRequest): string[] {
       if (a) out.push(`Write down by ${money(a)}`)
       break
     }
+    case 'correct': {
+      const before = (p['before'] ?? null) as Record<string, unknown> | null
+      const c = num(p['costCents'])
+      if (c !== null) out.push(before && num(before['costCents']) !== null ? `Cost ${money(num(before['costCents'])!)} → ${money(c)}` : `Correct cost ${money(c)}`)
+      const d = str(p['inServiceAt'])
+      if (d) out.push(`In service from ${d.slice(0, 10)}`)
+      const k = str(p['classKey'])
+      if (k) out.push(`Class ${k.replace(/_/g, ' ')}`)
+      break
+    }
     case 'change_estimate': {
       const life = num(p['remainingLifeMonths'])
       const salvage = num(p['salvageCents'])

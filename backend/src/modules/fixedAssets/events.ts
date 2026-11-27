@@ -56,7 +56,7 @@ import {
 import {
   ACCT, postJournalEntry, reverseJournalEntry, lateDatingFor, withLateNote, type JournalLineInput,
 } from '../accounting/journal.js'
-import { syncSourcePosting } from '../accounting/sourcePosting.js'
+import { syncSourcePosting, liveRevision } from '../accounting/sourcePosting.js'
 import { inputTaxCodeFor, isAuthorityKey, INPUT_TAX_ACCOUNTS } from '../accounting/taxAuthorities.js'
 import { classOf, type Db } from './classes.js'
 import { defaultInitialAllowanceEligible } from './tax.js'
@@ -89,17 +89,17 @@ export const FA_APPROVER_ROLE = 'admin'
 
 export const REQUEST_KINDS = [
   'capitalise', 'disposal', 'pool_write_off', 'impairment', 'change_estimate', 'transfer', 'pool_transfer', 'void', 'undispose', 'count',
-  'add_existing',
+  'add_existing', 'correct',
 ] as const
 export type RequestKind = typeof REQUEST_KINDS[number]
 /** Per-layer rows the engine writes under a pool write-off / transfer (never requested). */
 export const ALLOC_KINDS = ['pool_write_off_alloc', 'pool_transfer_alloc'] as const
 
-const APPROVAL_KINDS = new Set<string>(['capitalise', 'disposal', 'pool_write_off', 'impairment', 'change_estimate', 'void', 'undispose', 'add_existing'])
-const ASSET_KINDS = new Set<string>(['disposal', 'impairment', 'change_estimate', 'transfer', 'void', 'undispose'])
+const APPROVAL_KINDS = new Set<string>(['capitalise', 'disposal', 'pool_write_off', 'impairment', 'change_estimate', 'void', 'undispose', 'add_existing', 'correct'])
+const ASSET_KINDS = new Set<string>(['disposal', 'impairment', 'change_estimate', 'transfer', 'void', 'undispose', 'correct'])
 const POOL_KINDS = new Set<string>(['pool_write_off', 'pool_transfer', 'count'])
 /** Kinds that take effect today whatever date is sent. */
-const TODAY_KINDS = new Set<string>(['transfer', 'pool_transfer', 'void', 'undispose', 'count'])
+const TODAY_KINDS = new Set<string>(['transfer', 'pool_transfer', 'void', 'undispose', 'count', 'correct'])
 
 /** True when the kind waits for the CEO (unless the CEO raised it). */
 export function needsApproval(kind: string): boolean {
@@ -183,6 +183,12 @@ export const PAYLOAD_SCHEMAS = {
     toConceptId: idSchema.nullable().optional(),
   }),
   void: z.object({}),
+  // Correct what the asset was ADDED with (owner, 2026-11-27) — see applyCorrect.
+  correct: z.object({
+    costCents: zMoneyCents('The asset\'s cost', { sign: 'positive' }).optional(),
+    inServiceAt: dateInput.optional(),
+    classKey: z.string().min(1).max(40).optional(),
+  }).refine((p) => p.costCents !== undefined || p.inServiceAt !== undefined || p.classKey !== undefined, { message: 'Give the correct cost, in-service date or class' }),
   undispose: z.object({}),
   pool_write_off: z.object({
     units: z.number().int().min(1).max(1_000_000),
@@ -510,6 +516,7 @@ async function validateRequest(db: Db, kind: string, s: Subject, payload: Record
       throw new AppError('SALVAGE_TOO_HIGH', 'Salvage value must be less than cost', 422)
     }
   }
+  if (kind === 'correct') await checkCorrect(db, asset!, payload as CorrectPayload)
   if (kind === 'transfer') {
     const p = payload as { toLocationId?: string | null; toConceptId?: string | null }
     if (p.toLocationId) await assertLocationOf(db, s.tenantId, p.toLocationId)
@@ -555,6 +562,7 @@ function headlineCents(kind: string, payload: Record<string, unknown>): number |
   if (kind === 'impairment') return (payload['amountCents'] as number | undefined) ?? null
   if (kind === 'capitalise') return (payload['costCents'] as number | undefined) ?? null
   if (kind === 'add_existing') return (payload['valueCents'] as number | undefined) ?? null
+  if (kind === 'correct') return (payload['costCents'] as number | undefined) ?? null
   return null
 }
 
@@ -885,6 +893,7 @@ async function applyInTx(tx: Tx, event: FixedAssetEvent, actorId: string): Promi
     case 'change_estimate': out = await applyChangeEstimate(tx, fresh, payload, actorId); break
     case 'transfer': out = await applyTransfer(tx, fresh, payload, actorId); break
     case 'void': out = await applyVoid(tx, fresh, actorId); break
+    case 'correct': out = await applyCorrect(tx, fresh, payload, actorId); break
     case 'pool_write_off': out = await applyPoolWriteOff(tx, fresh, payload, actorId); break
     case 'pool_transfer': out = await applyPoolTransfer(tx, fresh, payload, actorId); break
     case 'count': out = await applyCount(tx, fresh, payload); break
@@ -1148,6 +1157,108 @@ async function applyVoid(tx: Tx, event: FixedAssetEvent, actorId: string): Promi
     await tx.fixedAsset.update({ where: { id: a.id }, data: { status: 'voided', voidedAt: new Date(), voidReason: event.reason.slice(0, 500) } })
   }
   return { journalEntryId: null, payload: { voidedAssetIds: group.map((a) => a.id) } }
+}
+
+// ─── Correct cost / in-service date / class (owner, 2026-11-27: "How can edit asset details, amounts etc?" →
+// "Build both") ──────────────────────────────────────────────────────────────
+// The void-and-add-again done as ONE request on the asset itself (same id, tag, documents, history): finance asks,
+// the CEO approves (the CEO's own applies at once). Only an asset ADDED to the register by hand (add_existing — bought
+// before servd, Garibsons, or moved from a chart account): one bought through CapEx gets its cost from its CapEx line
+// (409 COST_FROM_CAPEX — void it and capitalise again), one another servd company gave keeps the giver's book value
+// (409 TRANSFERRED_IN). Refused once it has a disposal / transfer (ASSET_HAS_EVENTS), a write-down (409
+// HAS_WRITE_DOWN) or a frozen tax year (409 TAX_YEAR_FROZEN).
+// Apply, one transaction: every depreciation month charged so far is reversed, the acquisition entry is re-posted
+// (fixed_asset.acquire:<id>@n — Dr the class's cost account / Cr the SAME account the original credited) at the
+// correct cost, dated the correct in-service date (a closed month: PERIOD_LOCKED), the asset takes the new figures and
+// depreciation is charged again from the in-service month through the last completed month. Life and salvage stay
+// (change them with a change of estimate); salvage must stay below the new cost.
+export type CorrectPayload = z.infer<typeof PAYLOAD_SCHEMAS.correct>
+
+async function checkCorrect(db: Db, asset: FixedAsset, p: CorrectPayload): Promise<{ cls: Awaited<ReturnType<typeof classOf>>; cost: number; inServiceAt: Date; dateChanged: boolean }> {
+  if (asset.kind !== 'individual') throw new AppError('USE_POOL_WRITE_OFF', 'A smallwares layer is corrected through its pool', 422)
+  if (asset.capexLineId) {
+    throw new AppError('COST_FROM_CAPEX', 'This asset was bought through CapEx — its cost and date come from the CapEx line. Void it and capitalise the line again', 409)
+  }
+  assertNotTransferredIn(asset)
+  if (!asset.acquisitionCreditCode) throw new AppError('COST_FROM_CAPEX', 'This asset has no acquisition entry to correct — void it and add it again', 409)
+  const blocking = await blockingHistory(db, asset.id)
+  if (blocking) throw new AppError('ASSET_HAS_EVENTS', `This asset has ${blocking} on the books — it cannot be corrected`, 409)
+  if (await db.fixedAssetEvent.count({ where: { assetId: asset.id, kind: 'impairment', status: 'posted' } })) {
+    throw new AppError('HAS_WRITE_DOWN', 'This asset has a write-down on the books — it cannot be corrected', 409)
+  }
+  if (await db.fixedAssetTaxYear.count({ where: { assetId: asset.id } })) {
+    throw new AppError('TAX_YEAR_FROZEN', 'A frozen tax year already carries this asset — its cost, date and class can no longer change', 409)
+  }
+  const cls = await classOf(asset.tenantId, p.classKey ?? asset.category, db)
+  if (p.classKey && p.classKey !== asset.category) {
+    if (!cls.isActive) throw new AppError('CLASS_INACTIVE', `${cls.label} is switched off for this company`, 422)
+    if (cls.pooled) throw new AppError('POOLED_CLASS_NOT_ALLOWED', `${cls.label} are pooled per outlet — an individual asset cannot move into that class`, 422)
+  }
+  const current = asset.inServiceAt ?? asset.acquiredAt
+  const inServiceAt = p.inServiceAt ? parseDate(p.inServiceAt) : current
+  if (Number.isNaN(inServiceAt.getTime())) throw new AppError('IN_SERVICE_DATE', 'That date is not valid', 422)
+  if (isFuturePktDay(inServiceAt)) throw new AppError('IN_SERVICE_DATE', 'The in-service date cannot be in the future', 422)
+  const dateChanged = pktDay(inServiceAt) !== pktDay(current)
+  const cost = p.costCents ?? toCents(asset.costCents)
+  assertMoneyFits(cost, 'The asset\'s cost')
+  if (cost === toCents(asset.costCents) && !dateChanged && cls.key === asset.category) {
+    throw new AppError('NOTHING_TO_CORRECT', 'Nothing changes — give a different cost, date or class', 422)
+  }
+  if (cls.depreciable && toCents(asset.salvageCents) >= cost) throw new AppError('SALVAGE_TOO_HIGH', 'The salvage value must be less than the cost — change the salvage first', 422)
+  // The entry lands on the in-service date: that month must be open.
+  await assertOpenOn(db, asset.tenantId, inServiceAt)
+  // A cost raised on an asset moved from a chart account takes the difference out of that account: it must hold it.
+  const offset = asset.acquisitionCreditCode
+  const more = cost - toCents(asset.costCents)
+  if (more > 0 && offset !== ACCT.OWNERS_CAPITAL && offset !== ACCT.DUE_TO_GARIBSONS) {
+    const acc = await db.account.findFirst({ where: { tenantId: asset.tenantId, code: offset }, select: { id: true, name: true, type: true } })
+    if (acc?.type === 'asset') {
+      const sums = await db.journalLine.groupBy({ by: ['type'], where: { accountId: acc.id }, _sum: { amountCents: true } })
+      const balance = sums.reduce((t, l) => t + (l.type === 'debit' ? 1 : -1) * toCents(l._sum.amountCents ?? 0), 0)
+      if (balance < more) {
+        throw new AppError('SOURCE_ACCOUNT_SHORT', `${offset} ${acc.name} holds ${(balance / 100).toFixed(2)} — less than the extra ${(more / 100).toFixed(2)} this correction takes from it`, 422)
+      }
+    }
+  }
+  return { cls, cost, inServiceAt, dateChanged }
+}
+
+async function applyCorrect(tx: Tx, event: FixedAssetEvent, payload: Record<string, unknown>, actorId: string): Promise<Applied> {
+  const asset = await activeAsset(tx, event.assetId)
+  const { cls, cost, inServiceAt, dateChanged } = await checkCorrect(tx, asset, payload as CorrectPayload)
+  const reason = `Corrected: ${event.reason}`.slice(0, 200)
+  await reverseChargesFrom(tx, asset.id, null, actorId, reason)
+  const memo = tagOf(asset)
+  const offset = asset.acquisitionCreditCode!
+  // An unchanged date keeps the live entry's own date, so only a real change re-posts.
+  const { live } = await liveRevision(asset.tenantId, ACQUIRE_SOURCE, asset.id, tx)
+  const r = await syncSourcePosting({
+    tenantId: asset.tenantId, sourceType: ACQUIRE_SOURCE, id: asset.id,
+    desired: {
+      description: `Asset corrected — ${memo}: ${event.reason}`.slice(0, 500),
+      entryDate: dateChanged || !live ? inServiceAt : live.entryDate,
+      lines: [
+        { accountCode: cls.costAccountCode, type: 'debit', amountCents: cost, conceptId: asset.conceptId, memo },
+        { accountCode: offset, type: 'credit', amountCents: cost, memo },
+      ],
+    },
+    postedBy: actorId, reason, tx,
+  })
+  const before = { costCents: toCents(asset.costCents), inServiceAt: pktDay(asset.inServiceAt ?? asset.acquiredAt), classKey: asset.category }
+  const life = cls.depreciable ? (asset.usefulLifeMonths || cls.defaultLifeMonths || 12) : 0
+  await tx.fixedAsset.update({
+    where: { id: asset.id },
+    data: {
+      costCents: cost, originalCostCents: cost, category: cls.key, usefulLifeMonths: life,
+      method: cls.depreciable ? 'straight_line' : 'none',
+      ...(dateChanged ? { inServiceAt, acquiredAt: inServiceAt } : {}),
+    },
+  })
+  await chargeAssetTx(tx, asset.id, lastCompletedPeriodPkt(), actorId)
+  return {
+    journalEntryId: r.entryId, amountCents: cost,
+    payload: { before, after: { costCents: cost, inServiceAt: pktDay(inServiceAt), classKey: cls.key } },
+  }
 }
 
 /** Per-code slices of a layer's accumulated for `units` of `quantity` (remainder on the last unit out). */

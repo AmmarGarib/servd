@@ -33,7 +33,7 @@ export interface RequestResult {
 /** How a buyer can pay for an asset sale (the server also reads the old 'bank' / 'online'). */
 const SALE_METHODS = ['cash', 'bank_transfer', 'bank_deposit', 'cheque'] as const
 
-export type AssetRequestKind = 'disposal' | 'impairment' | 'change_estimate' | 'void' | 'undispose' | 'transfer'
+export type AssetRequestKind = 'disposal' | 'impairment' | 'change_estimate' | 'void' | 'undispose' | 'transfer' | 'correct'
 
 export const ASSET_REQUEST_TITLE: Record<AssetRequestKind, string> = {
   disposal: 'Dispose of this asset',
@@ -42,6 +42,7 @@ export const ASSET_REQUEST_TITLE: Record<AssetRequestKind, string> = {
   void: 'Void: capitalised in error',
   undispose: 'Undo the disposal',
   transfer: 'Move to another outlet or brand',
+  correct: 'Correct the cost, date or class',
 }
 
 const MIN_REASON = 10
@@ -94,6 +95,11 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
   const [life, setLife] = useState(pStr(pl, 'remainingLifeMonths') ?? '')
   const [changeSalvage, setChangeSalvage] = useState(pNum(pl, 'salvageCents') != null)
   const [salvage, setSalvage] = useState(pNum(pl, 'salvageCents') ?? asset.salvageCents)
+  // correct (owner, 2026-11-27): what the asset was added with
+  const [cCost, setCCost] = useState(pNum(pl, 'costCents') ?? asset.costCents)
+  const [cDate, setCDate] = useState((pStr(pl, 'inServiceAt') ?? asset.inServiceAt ?? '').slice(0, 10))
+  const [cClass, setCClass] = useState(pStr(pl, 'classKey') ?? asset.classKey)
+  const correctChanges = cCost !== asset.costCents || cDate !== (asset.inServiceAt ?? '').slice(0, 10) || cClass !== asset.classKey
   // transfer
   const [toConcept, setToConcept] = useState(pl && 'toConceptId' in pl ? (pStr(pl, 'toConceptId') ?? '__shared') : '__keep')
   const [toLocation, setToLocation] = useState(pStr(pl, 'toLocationId') ?? '__keep')
@@ -122,6 +128,12 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
           ...(toConcept !== '__keep' ? { toConceptId: toConcept === '__shared' ? null : toConcept } : {}),
           ...(toLocation !== '__keep' ? { toLocationId: toLocation } : {}),
         }
+      case 'correct':
+        return {
+          ...(cCost !== asset.costCents ? { costCents: cCost } : {}),
+          ...(cDate !== (asset.inServiceAt ?? '').slice(0, 10) ? { inServiceAt: cDate } : {}),
+          ...(cClass !== asset.classKey ? { classKey: cClass } : {}),
+        }
       default: return {}
     }
   }
@@ -130,7 +142,7 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
     mutationFn: () => api.post<RequestResult>(`${FA_BASE}/${asset.id}/requests`, {
       kind,
       reason: kind === 'transfer' && reason.trim().length < MIN_REASON ? 'Moved from the register' : reason.trim(),
-      ...(kind !== 'transfer' && kind !== 'void' && kind !== 'undispose' ? { effectiveDate: date } : {}),
+      ...(kind !== 'transfer' && kind !== 'void' && kind !== 'undispose' && kind !== 'correct' ? { effectiveDate: date } : {}),
       payload: payload(),
     }, { tenantId: asset.tenantId }),
     onSuccess: (r) => { if (r.referenceUsedBefore?.length) setReused(r); else onDone(r) },
@@ -149,6 +161,7 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
       && !(sale && isBankMethod(method) && lookups.bankAccounts.filter((b) => b.tenantId === asset.tenantId && b.accountCode).length > 1 && !bankId)
     : kind === 'impairment' ? writeDown > 0 && writeDown <= asset.nbvCents
     : kind === 'change_estimate' ? (!!life && Number(life) >= 1) || changeSalvage
+    : kind === 'correct' ? correctChanges && cCost > 0 && !!cDate && cDate <= todayIso() && cCost > asset.salvageCents
     : kind === 'transfer' ? (toConcept !== '__keep' || toLocation !== '__keep') && !sharedWithoutLocation
     : true
   )
@@ -234,6 +247,25 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
             </>
           )}
 
+          {kind === 'correct' && (
+            <>
+              <p className="text-sm text-white/70">
+                Use this when the asset was added with a wrong figure. The entry that added it is posted again with the correct figures and its depreciation is charged again from the in-service month. Life and salvage value stay as they are.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <L t="Correct cost (PKR)" hint={`Now ${money(asset.costCents)}.`}><MoneyInput value={cCost} onChange={setCCost} className={inp} /></L>
+                <L t="In service from"><input type="date" className={inp} value={cDate} max={todayIso()} onChange={(e) => setCDate(e.target.value)} /></L>
+              </div>
+              <L t="Class">
+                <Select className={inp} value={cClass} onChange={(e) => setCClass(e.target.value)}>
+                  {forCompany(lookups.classes, asset.tenantId).filter((c) => (c.isActive && !c.pooled) || c.key === asset.classKey).map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                </Select>
+              </L>
+              {cCost <= asset.salvageCents && <p className="text-xs" style={{ color: 'var(--erp-warning)' }}>The cost must be more than the salvage value ({money(asset.salvageCents)}). Change the salvage value first.</p>}
+              {!correctChanges && <p className="text-xs text-white/45">Change at least one of the three.</p>}
+            </>
+          )}
+
           {kind === 'void' && (
             <p className="text-sm text-white/70">
               Use this only when the item should never have been capitalised. The acquisition, every month of depreciation and any write-down are reversed,
@@ -270,7 +302,7 @@ export function AssetRequestModal({ asset, kind, lookups, willWait, onClose, onD
 
           {kind !== 'transfer' && (
             <ReasonField value={reason} onChange={setReason}
-              placeholder={kind === 'disposal' ? 'Sold to the scrap dealer after the compressor failed' : kind === 'void' ? 'Capitalised twice by mistake' : 'Why is this needed?'} />
+              placeholder={kind === 'disposal' ? 'Sold to the scrap dealer after the compressor failed' : kind === 'void' ? 'Capitalised twice by mistake' : kind === 'correct' ? 'The cost was typed wrong when the asset was added' : 'Why is this needed?'} />
           )}
         </div>
 

@@ -37,10 +37,11 @@ const FA_WRITERS = [...FA_WRITER_ROLES] as UserRole[]
 const APPROVER = ADMIN_ONLY as UserRole[]
 
 /** The asset kinds a request on an asset may be (pool kinds go through /pools). */
-export const ASSET_REQUEST_KINDS = ['disposal', 'impairment', 'change_estimate', 'void', 'undispose', 'transfer'] as const
+export const ASSET_REQUEST_KINDS = ['disposal', 'impairment', 'change_estimate', 'void', 'undispose', 'transfer', 'correct'] as const
 
 export const REQUEST_KIND_LABELS: Record<string, string> = {
   capitalise: 'Capitalise from CapEx',
+  correct: 'Correct cost, date or class',
   disposal: 'Dispose (sale / scrap / lost / stolen)',
   undispose: 'Undo a disposal',
   impairment: 'Write down (impairment)',

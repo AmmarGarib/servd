@@ -103,6 +103,8 @@ export default function FixedAssetPage() {
     if (a.status === 'active') {
       actions.push({ kind: 'disposal', label: 'Dispose' }, { kind: 'impairment', label: 'Write down' }, { kind: 'change_estimate', label: 'Change life or salvage' },
         { kind: 'transfer', label: 'Move' }, { kind: 'void', label: 'Void' })
+      // Correct what it was added with — only an asset added by hand (one bought through CapEx takes its cost from its CapEx line).
+      if (!a.capexLineId) actions.push({ kind: 'correct', label: 'Correct cost, date or class' })
     } else if (a.status === 'disposed') {
       actions.push({ kind: 'undispose', label: 'Undo disposal' })
     }
@@ -154,7 +156,7 @@ export default function FixedAssetPage() {
             <section className="rounded-2xl p-4" style={card}>
               <p className="text-sm font-black text-white/90">What do you need to do with it?</p>
               <p className="text-xs text-s-muted mt-0.5">
-                {isCeo ? 'As CEO, what you send posts at once.' : 'Disposals, write-downs, voids and a move to another company go to the CEO to approve. A move to another outlet or brand takes effect at once.'}
+                {isCeo ? 'As CEO, what you send posts at once.' : 'Disposals, write-downs, corrections, voids and a move to another company go to the CEO to approve. A move to another outlet or brand, and a change of name, serial number, supplier, warranty or notes, take effect at once.'}
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
                 {actions.map((x) => (
@@ -162,6 +164,7 @@ export default function FixedAssetPage() {
                     title={pendingEvents.length > 0 && x.kind !== 'transfer' ? 'A request is already waiting on this asset' : ASSET_REQUEST_TITLE[x.kind]}
                     onClick={() => { setNotice(null); setAsking(x.kind) }}>{x.label}</button>
                 ))}
+                <button className={btnGhost} title="Name, serial number, supplier, warranty and notes" onClick={() => { setNotice(null); setEditing(true) }}>Edit details</button>
                 {a.status === 'active' && (
                   <button className={btnGhost} disabled={pendingEvents.length > 0}
                     title={pendingEvents.length > 0 ? 'A request is already waiting on this asset' : 'Move this asset onto another servd company\'s register at its book value'}

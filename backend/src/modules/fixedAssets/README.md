@@ -151,6 +151,7 @@ balances only) and `depreciation_failed` → `FixedAssetRun` rows
 | transfer (outlet / brand) | finance | none — at once | `fixed_asset.transfer:<eventId>` when the brand changes |
 | pool_transfer (units) | finance | none — at once | `fixed_asset.transfer:<eventId>` when the brand changes |
 | count | finance / F&B manager | none — at once | none (counted vs on hand) |
+| correct (cost / in-service date / class of an asset added by hand) | finance | CEO | `fixed_asset.acquire:<assetId>@n` re-posted against the same offset account; every month reversed and charged again |
 | add_existing | finance | CEO | `fixed_asset.acquire:<assetId>` Dr class cost / Cr 3010 or 2210 |
 
 "Finance" = `FA_WRITER_ROLES` (admin, owner, management, finance); the

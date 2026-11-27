@@ -2049,6 +2049,17 @@ contract `docs/pos-connector-api.md`; operator runbook `docs/TAX_SETUP.md`
   left go with it, and on approval the asset's documents are COPIED under the new asset (the giver keeps its own; up to
   the 10-a-record cap). Audit `fixed_asset.move_company(.request)` in the giving company. Admin: "Move to another
   company" on the asset page (`components/fixedAssets/MoveToCompany.tsx`). Tests: `tests/fixedAssetExisting.test.ts`.
+- **Edit an asset; correct its cost, date or class (owner, 2026-11-27: "How can edit asset details, amounts etc?" →
+  "Build both").** Details (name, serial, supplier, warranty, notes) = the existing `PATCH /accounting/fixed-assets/:id`
+  (FA_WRITERS, at once, audited); the asset page shows "Edit details" in the action row too. Cost / in-service date /
+  class = request kind `correct` on the ONE queue (`events.ts checkCorrect` / `applyCorrect`; finance 202, the CEO
+  approves, the CEO's own at once): every depreciation month is reversed, `fixed_asset.acquire:<id>@n` is re-posted at
+  the correct figures against the SAME offset account, dated the in-service date (closed month 422 `PERIOD_LOCKED`),
+  and depreciation is charged again. Only an asset added by hand: CapEx-bought 409 `COST_FROM_CAPEX`, given by another
+  servd company 409 `TRANSFERRED_IN`; refused with a disposal / transfer (`ASSET_HAS_EVENTS`), a write-down (409
+  `HAS_WRITE_DOWN`), a frozen tax year (409 `TAX_YEAR_FROZEN`), salvage ≥ the new cost, or a chart source account
+  holding less than the increase (422 `SOURCE_ACCOUNT_SHORT`); 422 `NOTHING_TO_CORRECT`. Life and salvage stay
+  (change of estimate). Tests: `tests/fixedAssetCorrect.test.ts`.
 - **Asset classes are finance's too (owner, 2026-11-10: "Give it to finance also").** `PATCH
   /accounting/fixed-assets/classes/:id` (label, default life, tax rate, initial allowance, pooled, active) admits the
   CEO and finance (`fixedAssets/routes.ts CLASS_EDITORS`; the '/accounting' gate holds finance to `accounting`);
